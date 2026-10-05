@@ -98,8 +98,9 @@ integer micro-dollar amounts sum to that total. Older recorded runs without the
 ## Validation and cost
 
 The tests compare 2,400 small books with an independent exhaustive partition
-oracle, including cash, IRA and margin accounts and house uplifts. A separate
-rational-value regression checks fractional micro-dollar buy-back values. Seed
+oracle, including cash, IRA and margin accounts and house uplifts. Separate
+rational-value regressions check fractional micro-dollar buy-back values and
+odd short-share remainders. Seed
 `0xF490123` checks 20,736 margin pairs and 5,423 allowed IRA pairs: zero
 subadditivity violations and zero fallbacks. Tests also cover integer branching,
 forced resource-limit reporting, a large-quantity certificate, share covers,

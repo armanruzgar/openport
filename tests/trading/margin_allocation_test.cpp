@@ -177,6 +177,23 @@ TEST(TradingMarginAllocation, FractionalRelaxationRequiresWholeContracts) {
   EXPECT_EQ(result[0].requirement, dollars("10250"));
 }
 
+TEST(TradingMarginAllocation, OddShortSharesRoundOnlyTheUnderlyingTotal) {
+  const MarginPolicy policy{AccountType::Margin, 25, 0};
+  // 104 shares at $500.000001, holding 162.5%: exactly $84500.000169.
+  // Rounding the four-share remainder first would add a micro-dollar.
+  const std::vector<MarginStock> stock{{"SPY", -104, dollars("52000.000104")}};
+  const auto result = margin_breakdown({}, stock, policy);
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0].allocation, "exact");
+  EXPECT_EQ(result[0].requirement, dollars("84500.000169"));
+  Money parts;
+  for (const auto& part : result[0].parts) parts = parts + part.requirement;
+  EXPECT_EQ(parts, result[0].requirement);
+  // A later long call protects the whole lot; only the four shares retain
+  // their proportional cost, rounded up along with the exact strike reserve.
+  EXPECT_EQ(margin_requirement({option("SPY261105C00500000", 1)}, stock, policy), dollars("53250.000007"));
+}
+
 TEST(TradingMarginAllocation, LargeBooksCertifyTinyDualPriceResiduals) {
   for (const Quantity scale : {1, 10000}) {
     std::vector<MarginLeg> book;

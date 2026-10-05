@@ -39,8 +39,9 @@ class ExactMargin {
     }
     if (stock_ && stock_->shares < 0) {
       const auto remainder = magnitude(stock_->shares) % kLot;
-      odd_shares_ = short_shares(*stock_, remainder, policy_.house_percent);
-      base_ = base_ + Rational(odd_shares_.micros());
+      odd_shares_ = Rational(stock_->value.micros(), magnitude(stock_->shares)) *
+          Rational(remainder) * Rational(300 + policy_.house_percent, 200);
+      base_ = base_ + odd_shares_;
     }
     std::map<Timestamp, std::size_t> expiries;
     if (policy.account != AccountType::Cash) {
@@ -391,14 +392,14 @@ class ExactMargin {
     }
     if (stock_ && magnitude(stock_->shares) % kLot)
       emit(stock_->shares < 0 ? MarginPartKind::ShortShares : MarginPartKind::Long,
-           {shares_leg(*stock_, magnitude(stock_->shares) % kLot)}, Rational(odd_shares_.micros()));
+           {shares_leg(*stock_, magnitude(stock_->shares) % kLot)}, odd_shares_);
   }
   const MarginStock* stock_;
   MarginPolicy policy_;
   std::vector<const Unit*> units_, shorts_;
   std::vector<Rational> prices_, objective_;
   Rational base_;
-  Money odd_shares_;
+  Rational odd_shares_;
   std::vector<Pool> pools_;
   std::vector<Column> columns_, pairs_;
   detail::MarginSimplex::Matrix a_;
