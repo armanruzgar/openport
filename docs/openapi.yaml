@@ -9660,13 +9660,34 @@
                 "type": "null"
               }
             ]
+          },
+          "allocation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "exact"
+              },
+              {
+                "type": "string",
+                "const": "bounded"
+              },
+              {
+                "type": "string",
+                "const": "legacy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Strategy allocation: exact certifies the whole-contract minimum; bounded is the conservative allocator after the deterministic work cap; legacy re-executes an older recorded run. Null for portfolio scans."
           }
         },
         "required": [
           "underlying",
           "requirement",
           "parts",
-          "scan"
+          "scan",
+          "allocation"
         ]
       },
       "Attribution": {

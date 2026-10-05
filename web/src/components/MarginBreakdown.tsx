@@ -61,6 +61,9 @@ export function MarginBreakdown({ margin }: { margin: MarginUnderlying[] }) {
           const summed = !item.scan && item.parts.length > 1
           const fallback = !item.scan && compareMoney(sumMoney(item.parts.map((part) => part.requirement)), item.requirement) !== 0
           return [...rows,
+            ...(!item.scan && item.allocation ? [<tr key="allocation">
+              <td /><td colSpan={3} className="text-muted">{item.allocation === "exact" ? "Exact minimum" : item.allocation === "bounded" ? "Conservative margin: allocation work limit reached" : "Recorded margin method"}</td>
+            </tr>] : []),
             ...(summed || fallback || !rows.length ? [<tr key="total" className={rows.length ? "" : "border-t border-border/40"}>
               <td className="font-medium">{rows.length ? "" : item.underlying}</td>
               <td colSpan={2} className="text-muted">{fallback ? "Total, with the portfolio-margin minimum until the scan is complete" : "Total"}</td>

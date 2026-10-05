@@ -581,7 +581,7 @@ Status of the audit’s F1–F73 features. Links describe the rules and limits.
 | F46 | [Inside fills and walking limits](paper-trading.md#walking-limits) | Done |
 | F47 | [Journal and review improvements](paper-trading.md#trade-review) | Done |
 | F48 | [Run and attempt identity in exports](paper-trading.md#csv-downloads) | Done |
-| F49 | [Margin realism and account types](paper-trading.md#account-rules-and-evaluations) | Done with a bounded-search limitation: fixed-seed mixed-expiry subadditivity violations are 10/20,736 margin and 0/5,423 allowed IRA pairs; requirements never exceed the old method. |
+| F49 | [Margin realism and account types](paper-trading.md#account-rules-and-evaluations) | Done: certified whole-contract allocation across expiry pools and covers; exact oracle equality and zero fixed-seed subadditivity violations. Work-limit fallbacks are reported explicitly. |
 | F50 | [In-app run verification](runtime.md#verifying-a-run) | Done |
 | F51 | [Live forward testing and playbook ergonomics](playbooks.md#forward-tests-on-live-paper) | Done |
 | F52 | [Backtest breadth](playbooks.md#batch-backtests) | Done (joint multi-playbook backtests share one account, with deterministic ID order, per-playbook attribution and verifiable journals; compare also sums independent runs) |

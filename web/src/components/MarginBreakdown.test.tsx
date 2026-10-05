@@ -85,6 +85,20 @@ describe("margin breakdown", () => {
     expect(host.querySelector("td[title]")?.getAttribute("title")).toContain("longs expiring then or later")
   })
 
+  it("distinguishes a proved minimum from the work-limit fallback and older runs", async () => {
+    for (const [allocation, label] of [
+      ["exact", "Exact minimum"],
+      ["bounded", "Conservative margin: allocation work limit reached"],
+      ["legacy", "Recorded margin method"],
+    ] as const) {
+      await act(async () => root.render(<MarginBreakdown margin={[
+        { underlying: "SPY", requirement: "100.00", scan: null, allocation,
+          parts: [{ kind: "naked", legs: [], requirement: "100.00" }] },
+      ]} />))
+      expect(host.textContent).toContain(label)
+    }
+  })
+
   it("labels shares and contracts", () => {
     expect(marginLegLabel({ symbol: "SPY", quantity: -200 }, "SPY")).toBe("−200 SPY shares")
     expect(marginLegLabel({ symbol: "SPXW  261022P04900000", quantity: 2 }, "SPX")).toBe("+2 SPX Oct 22 4900P")

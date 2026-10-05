@@ -3072,6 +3072,8 @@ TEST_F(PaperEngine, PortfolioExplainsTheDaysPnlByGreek) {
   seed();
   ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "open", "4.20")).status, 201);
   const auto portfolio = read(*engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["margin"].size(), 1U);
+  EXPECT_EQ(portfolio["margin"][0]["allocation"], "exact");
   const auto a = portfolio["attribution"];
   for (const auto* key : {"delta", "gamma", "vega", "theta", "other", "costs", "total"}) EXPECT_TRUE(a[key].is_number()) << key;
   // One contract bought at the 4.20 ask against a 4.10 mark, and the fee.

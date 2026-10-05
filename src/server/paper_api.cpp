@@ -622,7 +622,8 @@ json margin_json(const std::vector<MarginUnderlying>& margin) {
     json scan = nullptr;
     if (item.scan) scan = {{"loss", item.scan->loss.str()}, {"spot_percent", item.scan->spot_percent},
                            {"vol_points", item.scan->vol_points}, {"minimum", item.scan->minimum.str()}};
-    result.push_back({{"underlying", item.underlying}, {"requirement", item.requirement.str()}, {"parts", parts}, {"scan", scan}});
+    result.push_back({{"underlying", item.underlying}, {"requirement", item.requirement.str()}, {"parts", parts}, {"scan", scan},
+                      {"allocation", item.allocation.empty() ? json(nullptr) : json(item.allocation)}});
   }
   return result;
 }

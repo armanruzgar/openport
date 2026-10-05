@@ -1680,50 +1680,45 @@ buy-back value (the short sale's proceeds buy the shares back on assignment); an
 call caps 100 short shares at its strike, a protected short, instead of 150% of their
 value. Short puts and short calls also pair as Reg T straddles or combinations,
 of any strikes and expiries: each pair holds the greater naked requirement (buy-back
-value included) plus the other side's buy-back value. Verticals, share covers and
-straddles compete in one minimum-cost flow, maximizing the total saving against naked
-costs: each option contract takes at most one pair, and a long call goes to the short
-shares or short call where it saves more. Pairs of options whose shorts expire together
-hold at most their combined worst loss at that expiry, a later long counting at its
-intrinsic value then, so an iron condor's two wings are not both held. Positions that
-expire together may instead need their worst loss at that expiry, when no net short
-calls make it unbounded. Each underlying needs the least of joint pairing across
-expiries, pairing without straddles (which can preserve a condor's shared worst loss),
-and taking each expiry on its own (the lesser of its verticals and naked shorts or its
-bounded worst loss). That last candidate is tried both with shares covering nothing
-and with shares first taking the covers that save most, leaving the remaining options
-to net by expiry. So a credit spread holds its width, an iron condor its wider wing
-(a calendar beside it adds nothing), a long butterfly nothing, a calendar nothing beyond its debit, a diagonal the
-strike difference when its long is further out of the money, a covered call nothing
-beyond its shares, and a short strangle its greater side plus the other side's value.
-A bounded joint allocator improves every distinct candidate, sharing one work budget
-across the starts. It tries expiry-pool merges before other merges, then moves or
-exchanges whole contracts between pairs and pools. Two holdings can move together,
-including a short and an offsetting long of another type or quantity. A pair can
-temporarily hold an unused long while forming a pool; earlier-expiring longs stay
-outside on ties so they cannot block that pool. Each trial is scored
-with the pools' actual worst losses, so a butterfly can keep a later long even when
-pairing that long elsewhere would save more in isolation. A pool uses shorts from
-one expiry and longs expiring then or later, valued at intrinsic; its call slope
-must be nonnegative. Each option contract is allocated once. Share covers remain
-reserved while options are reallocated. All amounts use exact integer micro-dollars;
-new buy-back-value tranches round up so splitting cannot create fractional savings.
+value included) plus the other side's buy-back value. Verticals, share covers,
+straddles and expiry pools compete in one integer allocation. A pool holds shorts
+from one expiry and longs expiring then or later, valued at intrinsic at the short
+expiry. Its terminal call slope must be nonnegative. Every option contract is
+allocated once; shares supply whole lots of 100. Two pools with the same expiry
+can always be combined without increasing their requirement, so one pool per
+expiry is sufficient.
 
-The search has a fixed total budget of 32,768 work units per underlying (candidate
-members and strike-payoff evaluations), split across distinct starts, with unused
-work passed to the next start. It has deterministic traversal and tie rules, and no
-wall-clock cutoff or loop over contract quantity. It keeps the best valid allocation
-found, including the original pairing and separate-expiry candidates, so it cannot
-raise their requirement or use an infeasible discounted bound. The budget can leave
-conservative margin above the global minimum; this is not an exact optimizer.
-In particular, combining mixed-expiry books on one underlying can still require
-more than their separate requirements added together. The fixed-seed regression
-probe (`0xF490123`, 2–7 non-overlapping SPY series per book, three expiries,
-quantities ±1–2, $250 buy-back value per short contract, spot $500, no house uplift)
-measures 10 violations in 20,736 margin pairs (0.048%) and 0 in 5,423 allowed IRA
-pairs. Before this improvement the same probe measured 26 and 1 respectively;
-pairing alone measured 34 and 47. These are measured rates, not guarantees of
-subadditivity. The bounded search always retains the old method as an upper bound.
+The allocator minimizes the total requirement under these rules and certifies its
+whole-contract optimum with exact rational bounds. A linear program proposes
+allocations and prices; exact integer primal checks and rational dual checks decide
+whether a result is proved. Fractional contract allocations are branched into the
+two possible integer ranges. Floating-point proposal values never become money.
+Proportional buy-back values remain rational until the underlying total is rounded
+up to the next micro-dollar. The breakdown apportions that rounding in deterministic
+part order, with parts summing exactly to the requirement. Splitting a position
+cannot manufacture fractional savings. The [model and proof](margin-allocation.md)
+explain the constraints, certificates, and subadditivity.
+
+`margin[].allocation` reports `exact` for a certified minimum, `bounded` when a
+hard work or arithmetic limit invokes the retained conservative search, and
+`legacy` for an older recorded run's allocator. Portfolio scans report null.
+The terminal shows this status beside the breakdown. Limits depend on operations,
+never elapsed time; symbol, expiry and variable order resolve ties deterministically.
+The fallback keeps the best of the previous pairing/separate-expiry candidates and
+32,768 units of joint search. Only the explicitly labeled fallback can remain
+above the optimum. New run drivers record `exact_margin: true`; absent flags retain
+the older algorithm when verifying or resuming a recording.
+
+The fixed-seed regression (`0xF490123`, three expiries, 2–7 distinct series per
+book, quantities ±1–2) checks 20,736 margin-account pairs and 5,423 permitted IRA
+pairs: both have zero subadditivity violations and zero fallbacks. Another 2,400
+small books match an independent exhaustive whole-contract oracle exactly.
+
+A credit spread holds its width, an iron condor its wider wing (a calendar beside
+it adds nothing), a long butterfly nothing, a calendar nothing beyond its debit,
+a diagonal the strike difference when its long is further out of the money,
+a covered call nothing beyond its shares, and a short strangle its greater side
+plus the other side's value.
 A butterfly beside a calendar can hold nothing. Long options and long shares are
 paid in full, so a protective put needs nothing beyond its premium; short shares
 no long call protects hold 150% of their value. A long that expires before its short does not cover it. (European puts can

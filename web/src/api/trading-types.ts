@@ -991,7 +991,11 @@ export interface MarginPart {
 /** Where a portfolio-margin scan loses most, and the contract minimum under it. */
 export interface MarginScan { loss: Money; spot_percent: number; vol_points: number; minimum: Money }
 /** Strategy margin's parts add up to the requirement; portfolio margin's scan sets it. */
-export interface MarginUnderlying { underlying: string; requirement: Money; parts: MarginPart[]; scan: MarginScan | null }
+export interface MarginUnderlying {
+  underlying: string; requirement: Money; parts: MarginPart[]; scan: MarginScan | null
+  /** Exact optimum, conservative work-cap fallback, or an older recorded allocator. */
+  allocation?: "exact" | "bounded" | "legacy" | null
+}
 export interface LiquidityUsed { symbol: string; bid_size: number; ask_size: number; bid_left: number; ask_left: number }
 /** A whole trade still held: its open legs, and every round trip of it in its realized P&L and fees. */
 export interface HeldStrategy {
