@@ -59,6 +59,7 @@ class Desk {
     bool opening_rule_checks = true;
     /// Optional run-start capability: older runs journal the entire input maps.
     bool compact_opening_rule_inputs = true;
+    bool exact_margin = true; ///< Recorded allocation algorithm; false for older runs.
     std::filesystem::path paper_journal;  ///< The main account. Empty only for explicit in-process simulations.
     /// More named accounts, one journal each (<id>.jsonl, named in <id>.name). Empty for none.
     std::filesystem::path paper_accounts;

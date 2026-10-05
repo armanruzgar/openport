@@ -318,6 +318,7 @@ TEST(Desk, CompactAndFullOpeningInputRunsRecoverVerifyAndResumeByteIdentically) 
     server::Desk::Options options;
     options.analytics.fallback_rate = 0;
     options.replay = true; options.compact_opening_rule_inputs = compact;
+    options.exact_margin = compact;
     options.paper.rules.max_volume_percent = 10;
     options.run_input = server::recording_input(file.path);
     options.paper_journal = file.directory / (compact ? "compact.jsonl" : "full.jsonl");
@@ -348,6 +349,7 @@ TEST(Desk, CompactAndFullOpeningInputRunsRecoverVerifyAndResumeByteIdentically) 
     EXPECT_EQ(trading::TradingSession::recover(recovery).snapshot_json(), snapshot);
     const auto start = json::parse(server::run_inputs(recovery).front());
     EXPECT_EQ(start.contains("compact_opening_rule_inputs"), compact);
+    EXPECT_EQ(start.contains("exact_margin"), compact);
     std::size_t checks = 0;
     for (const auto& record : recovery.records) {
       const auto payload = json::parse(record.payload);
@@ -365,6 +367,7 @@ TEST(Desk, CompactAndFullOpeningInputRunsRecoverVerifyAndResumeByteIdentically) 
     const auto original = read_file(options.paper_journal);
     options.resume = std::make_shared<trading::JournalRecovery>(recovery);
     options.compact_opening_rule_inputs = !compact; // Resume must use the recorded choice.
+    options.exact_margin = !compact;
     {
       server::Desk desk("replay", header.capabilities, header.subscription, options);
       desk.start_trading();

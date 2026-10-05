@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "margin_detail.hpp"
+#include "margin_optimizer.hpp"
 
 #include "openport/trading/evaluation.hpp"
 #include "openport/trading/risk.hpp"
@@ -775,17 +776,52 @@ class JointAllocation {
   std::vector<Score> scores_;
   Parts fixed_;
 };
-/// One underlying's requirement: the least of joint pairing across expiries,
+#include "margin_exact.inc"
+
+/// First certify the joint integer optimum. Older drivers and capped solves
+/// retain the previous allocator below: the least of pairing across expiries,
 /// verticals and share covers alone (a condor's shared worst loss may hold less
 /// without straddles), and each expiry on its own, both before and after shares
 /// cover. A cash account pairs only with shares; neither it nor an IRA pairs
 /// straddles. Bounded local improvement then allocates options jointly between
 /// those strategy parts and expiry loss pools.
 Money underlying_requirement(const std::vector<const MarginLeg*>& all, const MarginStock* stock, const MarginPolicy& policy,
-                             Parts* parts, bool improve) {
+                             Parts* parts, bool improve, std::string* solver) {
   const bool spreads = policy.account != AccountType::Cash;
   const bool search = improve && spreads && all.size() > 2;
   const auto book = book_of(all, stock, policy);
+  if (improve && policy.exact) {
+    try {
+      const bool stock_integral = !stock || stock->shares > 0 ||
+          (stock->value.micros() % magnitude(stock->shares) == 0 &&
+           (static_cast<detail::MarginWide>(stock->value.micros() / magnitude(stock->shares)) *
+            (300 + policy.house_percent)) % 200 == 0);
+      const bool integral = stock_integral && std::all_of(all.begin(), all.end(), [](const MarginLeg* leg) {
+        return leg->value.micros() % magnitude(leg->quantity) == 0;
+      });
+      // With no longs, cash-secured puts cannot improve a margin-account naked
+      // put whose full cost is already below its strike. Only straddles remain:
+      // the existing integer min-cost flow solves this case exactly.
+      if (!stock && integral && policy.account == AccountType::Margin && book.long_puts.empty() && book.long_calls.empty() &&
+          std::all_of(book.short_puts.begin(), book.short_puts.end(), [](const Unit& u) {
+            return u.naked_one <= Money::from_micros(milli(u.leg->contract.strike) * 100000);
+          })) {
+        if (solver) *solver = "exact";
+        return across(pair_units(book, true, true), nullptr, policy.house_percent, parts);
+      }
+      ExactMargin allocation(book, stock, policy);
+      if (integral) {
+        Parts seed;
+        const auto incumbent = underlying_requirement(all, stock, policy, &seed, false, nullptr);
+        allocation.incumbent(incumbent, std::move(seed));
+      }
+      const auto result = allocation.solve(parts);
+      if (solver) *solver = "exact";
+      return result;
+    } catch (const detail::MarginWorkLimit&) {
+      if (solver) *solver = "bounded";
+    }
+  } else if (solver) *solver = "legacy";
   const auto pairing = pair_units(book, spreads);
   Parts best_parts, candidate;
   std::vector<Parts> seeds;
@@ -847,7 +883,7 @@ std::vector<MarginUnderlying> strategy(const std::vector<MarginLeg>& legs, const
   for (const auto& [underlying, group] : underlyings) {
     MarginUnderlying item;
     item.underlying = underlying;
-    item.requirement = underlying_requirement(group.first, group.second, policy, explain ? &item.parts : nullptr, improve);
+    item.requirement = underlying_requirement(group.first, group.second, policy, explain ? &item.parts : nullptr, improve, &item.allocation);
     result.push_back(std::move(item));
   }
   return result;
@@ -974,6 +1010,7 @@ std::optional<std::vector<MarginUnderlying>> portfolio_margin_breakdown(const st
     // The minimum is a floor under the scanned loss, not an addition to it.
     item.requirement = std::max(worst.loss, group.minimum).prorate(100 + policy.house_percent, 100);
     item.scan = worst;
+    item.allocation.clear();
     result.push_back(std::move(item));
   }
   return result;

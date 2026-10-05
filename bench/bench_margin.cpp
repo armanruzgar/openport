@@ -22,13 +22,19 @@ void BM_MarginPairing(benchmark::State& state) {
   const auto legs = mixed_book(state.range(0));
   for (auto _ : state) benchmark::DoNotOptimize(trading::detail::pairing_margin_requirement(legs));
 }
+void report_allocation(benchmark::State& state, const std::vector<trading::MarginLeg>& legs) {
+  const auto result = trading::margin_breakdown(legs);
+  state.counters["exact"] = result.front().allocation == "exact" ? 1 : 0;
+}
 void BM_MarginJoint(benchmark::State& state) {
   const auto legs = mixed_book(state.range(0));
+  report_allocation(state, legs);
   for (auto _ : state) benchmark::DoNotOptimize(trading::margin_requirement(legs));
 }
 void BM_MarginJointLargeQuantity(benchmark::State& state) {
   auto legs = mixed_book(state.range(0));
   for (auto& leg : legs) { leg.quantity *= 10000; leg.value = leg.value * 10000; }
+  report_allocation(state, legs);
   for (auto _ : state) benchmark::DoNotOptimize(trading::margin_requirement(legs));
 }
 std::vector<trading::MarginLeg> fragmented_book() {
@@ -56,8 +62,25 @@ void BM_MarginPairingFragmented(benchmark::State& state) {
 }
 void BM_MarginJointFragmented(benchmark::State& state) {
   const auto legs = fragmented_book();
+  report_allocation(state, legs);
   for (auto _ : state) benchmark::DoNotOptimize(trading::margin_requirement(legs));
 }
+// The most expensive small mixed-expiry sample in the fixed-seed probe. It
+// requires integer branching, unlike the fragmented all-short flow above.
+void BM_MarginJointAdversarial(benchmark::State& state) {
+  std::vector<trading::MarginLeg> legs;
+  for (const auto& [symbol, quantity] : std::vector<std::pair<std::string, trading::Quantity>>{
+      {"SPY261029C00510000", -2}, {"SPY261105C00500000", 1}, {"SPY261022P00490000", -2},
+      {"SPY261105C00470000", 2}, {"SPY261029P00520000", -1}, {"SPY261022C00490000", -2},
+      {"SPY261022P00480000", 2}, {"SPY261105P00530000", 1}, {"SPY261105P00500000", -1},
+      {"SPY261029P00510000", -2}, {"SPY261105C00530000", -2}, {"SPY261029P00490000", -1},
+      {"SPY261029P00530000", -2}})
+    legs.push_back({*md::parse_osi(symbol), quantity,
+                    quantity < 0 ? trading::Money::parse("250") * -quantity : trading::Money{}, 500.0});
+  report_allocation(state, legs);
+  for (auto _ : state) benchmark::DoNotOptimize(trading::margin_requirement(legs));
+}
+BENCHMARK(BM_MarginJointAdversarial)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MarginPairing)->Arg(14)->Arg(80)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MarginJoint)->Arg(14)->Arg(80)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MarginJointLargeQuantity)->Arg(14)->Arg(80)->Unit(benchmark::kMicrosecond);

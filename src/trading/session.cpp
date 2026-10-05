@@ -861,6 +861,11 @@ std::map<std::string, double> share_prices(const State& s) {
     if (const auto price = stock_price(s, symbol)) prices[symbol] = price->dollars();
   return prices;
 }
+MarginPolicy allocation_policy(const State& s) {
+  auto policy = margin_policy(s.config.rules);
+  policy.exact = s.exact_margin;
+  return policy;
+}
 Margin margin_of(const State& s, const MarginBook& book) {
   const auto legs = margin_legs(s, book);
   Money minimum;
@@ -875,7 +880,7 @@ Margin margin_of(const State& s, const MarginBook& book) {
     for (const auto& leg : legs)
       minimum = minimum + Money::from_double(0.375 * leg.contract.multiplier) * magnitude(leg.quantity);
   }
-  const auto strategy = margin_requirement(legs, margin_stocks(s), margin_policy(s.config.rules)) + minimum;
+  const auto strategy = margin_requirement(legs, margin_stocks(s), allocation_policy(s)) + minimum;
   return {strategy, strategy};
 }
 Money requirement(const State& s, const MarginBook& book) { return margin_of(s, book).held; }
@@ -889,7 +894,7 @@ std::vector<MarginUnderlying> margin_detail(const State& s) {
     if (auto scanned = portfolio_margin_breakdown(legs, s.valuations, s.time, s.config.limits.max_valuation_age,
         s.ledger.stocks(), share_prices(s), margin_policy(s.config.rules)))
       return std::move(*scanned);
-  auto detail = margin_breakdown(legs, margin_stocks(s), margin_policy(s.config.rules));
+  auto detail = margin_breakdown(legs, margin_stocks(s), allocation_policy(s));
   if (portfolio)
     for (auto& item : detail)
       for (const auto& leg : legs)
@@ -4948,6 +4953,10 @@ TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared
 TradingSession::TradingSession(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 TradingSession::~TradingSession() = default;
 void TradingSession::set_actor(std::string actor) { impl_->actor = std::move(actor); }
+void TradingSession::set_exact_margin(bool exact) {
+  impl_->state.exact_margin = exact;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {
   impl_->opening_rule_inputs = std::move(inputs);
   impl_->compact_opening_rule_inputs = compact;

@@ -396,6 +396,8 @@ class TradingSession {
   ~TradingSession();
   /// Owner-thread command context; reset to system after applying a command.
   void set_actor(std::string actor);
+  /// Re-execute older run drivers with their recorded bounded margin allocator.
+  void set_exact_margin(bool exact);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

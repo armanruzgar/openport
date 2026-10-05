@@ -75,7 +75,7 @@ TEST(TradingMarginAllocation, SeededMixedExpirySubadditivityRate) {
     for (int strike = 470; strike <= 530; strike += 10)
       for (const char type : {'C', 'P'})
         contracts.push_back(*md::parse_osi(std::string("SPY") + expiry + type + "00" + std::to_string(strike) + "000"));
-  struct Counts { int checked = 0, pairing = 0, joint = 0; };
+  struct Counts { int checked = 0, pairing = 0, joint = 0, fallbacks = 0; };
   Counts margin, ira;
   const int trials = test::sanitizer_scale(20736, 2048);
   for (int trial = 0; trial < trials; ++trial) {
@@ -98,8 +98,16 @@ TEST(TradingMarginAllocation, SeededMixedExpirySubadditivityRate) {
       ++count.checked;
       const auto old_sum = detail::pairing_margin_requirement(a, {}, policy) + detail::pairing_margin_requirement(b, {}, policy);
       const auto old_ab = detail::pairing_margin_requirement(ab, {}, policy);
-      const auto sum = margin_requirement(a, {}, policy) + margin_requirement(b, {}, policy);
-      const auto actual = margin_requirement(ab, {}, policy);
+      const auto exact = [&](const std::vector<MarginLeg>& positions) {
+        Money requirement;
+        for (const auto& item : margin_breakdown(positions, {}, policy)) {
+          count.fallbacks += item.allocation != "exact";
+          requirement = requirement + item.requirement;
+        }
+        return requirement;
+      };
+      const auto sum = exact(a) + exact(b);
+      const auto actual = exact(ab);
       count.pairing += old_ab > old_sum;
       count.joint += actual > sum;
       EXPECT_LE(actual, old_ab) << "trial=" << trial << " account=" << static_cast<int>(account);
@@ -107,17 +115,15 @@ TEST(TradingMarginAllocation, SeededMixedExpirySubadditivityRate) {
   }
   for (const auto& [name, count] : {std::pair{"margin", margin}, std::pair{"ira", ira}}) {
     std::cout << name << " subadditivity violations: pairing=" << count.pairing << "/" << count.checked
-              << " joint=" << count.joint << "/" << count.checked << '\n';
+              << " joint=" << count.joint << "/" << count.checked << " fallbacks=" << count.fallbacks << '\n';
     RecordProperty(std::string(name) + "_checked", count.checked);
     RecordProperty(std::string(name) + "_pairing_violations", count.pairing);
     RecordProperty(std::string(name) + "_joint_violations", count.joint);
+    EXPECT_EQ(count.fallbacks, 0);
   }
   EXPECT_EQ(margin.checked, trials);
   EXPECT_EQ(ira.checked, test::sanitizer_scale(5423, 525));
-  // Before this change: pairing 34/47, joint 26/1 (margin/allowed IRA).
-  // A bounded search is not universally subadditive. Lock the measured limits
-  // while permitting future improvements; print both counts above on every run.
-  EXPECT_LE(margin.joint, test::sanitizer_scale(10, 1));
+  EXPECT_EQ(margin.joint, 0);
   EXPECT_EQ(ira.joint, 0);
 }
 
@@ -158,6 +164,52 @@ TEST(TradingMarginAllocation, LargeQuantitiesUseWholeTranches) {
   EXPECT_EQ(margin_requirement(book, {}, ira), expected);
   std::reverse(book.begin(), book.end());
   EXPECT_EQ(margin_requirement(book, {}, ira), expected);
+}
+
+TEST(TradingMarginAllocation, FractionalRelaxationRequiresWholeContracts) {
+  const std::vector<MarginLeg> book{
+      option("SPY261022P00500000", -2, "500"), option("SPY261029P00520000", 1)};
+  // The LP can give 1.04 shorts the long's zero-loss pool, leaving only 0.96
+  // shorts naked ($9840). Whole contracts require one naked short ($10250).
+  const auto result = margin_breakdown(book);
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0].allocation, "exact");
+  EXPECT_EQ(result[0].requirement, dollars("10250"));
+}
+
+TEST(TradingMarginAllocation, LargeBooksCertifyTinyDualPriceResiduals) {
+  for (const Quantity scale : {1, 10000}) {
+    std::vector<MarginLeg> book;
+    for (int i = 0; i < 80; ++i) {
+      auto contract = *md::parse_osi(i % 3 == 0 ? "SPY261029P00500000" : "SPY261022P00500000");
+      contract.type = i % 2 == 0 ? pricing::OptionType::Call : pricing::OptionType::Put;
+      contract.strike = 450.0 + i;
+      const bool shorted = i % 4 < 2;
+      book.push_back({contract, (shorted ? -2 : 2) * scale,
+                      shorted ? dollars("600.000002") * scale : Money{}, 500.0});
+    }
+    const auto result = margin_breakdown(book);
+    ASSERT_EQ(result.size(), 1U);
+    EXPECT_EQ(result[0].allocation, "exact");
+    EXPECT_EQ(result[0].requirement, dollars("8400") * scale);
+  }
+}
+
+TEST(TradingMarginAllocation, HardResourceLimitReportsConservativeFallback) {
+  std::vector<MarginLeg> book{option("SPY261022C00500000", -1, "250")};
+  for (int i = 0; i < 128; ++i) {
+    auto long_put = option("SPY261029P00500000", 1);
+    long_put.contract.strike += i;
+    book.push_back(long_put);
+  }
+  const auto result = margin_breakdown(book);
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0].allocation, "bounded");
+  EXPECT_LE(result[0].requirement, detail::pairing_margin_requirement(book));
+  std::reverse(book.begin(), book.end());
+  EXPECT_EQ(margin_requirement(book), result[0].requirement);
+  auto legacy = MarginPolicy{}; legacy.exact = false;
+  EXPECT_EQ(margin_breakdown(book, {}, legacy)[0].allocation, "legacy");
 }
 
 TEST(TradingMarginAllocation, JointBuyingPowerFillsAndRecoversIdenticalJournals) {
@@ -303,11 +355,11 @@ TEST(TradingMarginAllocation, SplittingBuybackValuesCannotCreateMicroDollarSavin
   const auto scaled = exhaustive(atoms, {});
   const auto lower = Money::from_micros((scaled.micros() + 2) / 3);
   EXPECT_EQ(lower, dollars("36200.000001"));
-  EXPECT_GE(margin_requirement(book), lower);
+  EXPECT_EQ(margin_requirement(book), lower);
   EXPECT_LT(margin_requirement(book), detail::pairing_margin_requirement(book));
 }
 
-TEST(TradingMarginAllocation, RandomSmallBooksStayBetweenBruteForceAndTheIncumbent) {
+TEST(TradingMarginAllocation, RandomSmallBooksEqualTheBruteForceOptimum) {
   std::uint32_t state = 918237;
   const auto next = [&]() { state = state * 1664525U + 1013904223U; return state >> 8; };
   std::vector<md::OptionContract> contracts;
@@ -334,7 +386,7 @@ TEST(TradingMarginAllocation, RandomSmallBooksStayBetweenBruteForceAndTheIncumbe
       const auto optimum = exhaustive(atoms, policy);
       const auto baseline = detail::pairing_margin_requirement(book, {}, policy);
       const auto actual = margin_requirement(book, {}, policy);
-      EXPECT_GE(actual, optimum);
+      EXPECT_EQ(actual, optimum);
       EXPECT_LE(actual, baseline);
       EXPECT_EQ(actual, margin_requirement(book, {}, policy));
       improved += actual < baseline;
@@ -342,6 +394,7 @@ TEST(TradingMarginAllocation, RandomSmallBooksStayBetweenBruteForceAndTheIncumbe
       for (const auto& leg : book) expected[leg.contract.osi_symbol()] = leg.quantity;
       Money total;
       for (const auto& underlying : margin_breakdown(book, {}, policy)) {
+        EXPECT_EQ(underlying.allocation, "exact");
         Money subtotal;
         for (const auto& part : underlying.parts) {
           EXPECT_GE(part.requirement, Money{});

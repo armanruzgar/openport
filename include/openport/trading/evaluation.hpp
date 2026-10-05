@@ -372,6 +372,7 @@ struct MarginPolicy {
   AccountType account = AccountType::Margin;
   std::int64_t house_percent = 0;  ///< On top of the naked and short-sale requirements, or of the scan.
   std::int64_t vol_shock = 0;      ///< Portfolio margin's implied-volatility shock, in points.
+  bool exact = true;             ///< False only when re-executing older run drivers.
 };
 [[nodiscard]] MarginPolicy margin_policy(const AccountRules& rules);
 /// Requirement for option positions and shares. Shorts pair with longs of the
@@ -382,23 +383,13 @@ struct MarginPolicy {
 /// cover too, whatever the option expires: long shares make a short call
 /// covered, for nothing more, short shares make a short put covered for its
 /// buy-back value, and a long call caps 100 short shares' requirement at its
-/// strike. Vertical, share-cover and Reg T straddle pairs are chosen together
-/// to maximize the saving against naked costs. A straddle holds the greater
-/// naked requirement plus the other side's buy-back value. Verticals whose
-/// shorts expire together hold at most their combined worst loss then.
-/// Positions that expire together may instead need their worst loss at expiry,
-/// when bounded (no net short calls). Each underlying needs the least of joint
-/// pairing across expiries, pairing without straddles (which can preserve a
-/// condor's shared worst loss), and taking each expiry on its own, both with
-/// shares covering nothing and with shares first taking their best covers.
-/// A deterministic search shares a fixed budget across all distinct feasible
-/// candidates, merging expiry pools and transferring or exchanging whole option
-/// contracts, including two holdings moved together.
+/// strike. Verticals, share covers, straddles and expiry pools are allocated jointly.
 /// Pools use same-expiry shorts and same-or-later longs, with no net short calls.
-/// The result never exceeds the old pairing/separate-expiry method, but can
-/// exceed the global minimum or the sum of separate mixed-expiry books. The
-/// fixed-seed 0xF490123 probe measures 10/20,736 margin subadditivity violations
-/// and 0/5,423 allowed IRA violations; this bounded search is not exact.
+/// Whole-contract primal allocations and exact rational dual bounds certify the
+/// integer minimum. Branching handles fractional LP allocations. A deterministic
+/// work/arithmetic cap falls back to the older bounded search; margin_breakdown
+/// reports exact, bounded or legacy. See docs/margin-allocation.md for the model
+/// and proof. Older run drivers retain their recorded allocator.
 /// Longs need nothing: their premium is paid in full, as long shares are; short
 /// shares hold their value and half again.
 /// A house percentage raises each naked requirement (beyond the buy-back value)
@@ -441,6 +432,7 @@ struct MarginUnderlying {
   Money requirement;
   std::vector<MarginPart> parts;
   std::optional<PortfolioScan> scan;
+  std::string allocation = "exact"; ///< exact, bounded (work cap), or legacy; empty for portfolio scans.
 };
 /// margin_requirement by underlying, with the parts that hold it: every position
 /// is in one or more of them, and they add up to it.

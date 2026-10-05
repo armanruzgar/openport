@@ -570,6 +570,7 @@ void Desk::start_trading() {
         return false;
       }
       if (!file.empty()) account.equity = std::make_unique<EquityStore>(file.string() + ".equity.csv", account.damaged.has_value());
+      account.session->set_exact_margin(options_.exact_margin);
       account.session->set_actor("system");
       account.sampled_snapshot = account.session->snapshot();
     } catch (const TradingError& error) {
@@ -636,6 +637,7 @@ void Desk::start_trading() {
     nlohmann::json start{{"kind", "start"}, {"input", nlohmann::json::parse(options_.run_input)},
         {"calendar", md::scheduled_days()}, {"analytics", options_.analytics}, {"dividends", dividends_}, {"symbols", subscription_.underlyings}};
     if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? 6 : 5) : 4) : 3;
+    if (options_.exact_margin) start["exact_margin"] = true;
     if (options_.opening_rule_checks) start["opening_rule_checks"] = true;
     if (options_.opening_rule_checks && options_.compact_opening_rule_inputs) start["compact_opening_rule_inputs"] = true;
     if (playbooks_ && (!options_.initial_playbooks.empty() || !playbooks_->catalogue().at("definitions").empty())) start["playbooks"] = playbooks_->catalogue();
@@ -731,6 +733,7 @@ void Desk::create_account(const TradingCommand& c, TradingReply& reply) {
     save_account_file(named, account.name + '\n');
     account.journal = journal;
     account.session = std::make_unique<TradingSession>(config, market_time_, account.journal, c.actor);
+    account.session->set_exact_margin(options_.exact_margin);
     account.session->set_actor("system");
     account.equity = std::make_unique<EquityStore>(file.string() + ".equity.csv");
   } catch (const TradingError& error) {
@@ -1941,6 +1944,7 @@ Desk::Desk(std::string provider, md::Capabilities capabilities, md::Subscription
     const auto inputs = run_inputs(*options_.resume);
     if (!inputs.empty()) {
       const auto start = nlohmann::json::parse(inputs.front());
+      options_.exact_margin = start.value("exact_margin", false);
       options_.opening_rule_checks = start.value("opening_rule_checks", false);
       options_.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);
     }

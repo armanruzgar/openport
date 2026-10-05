@@ -350,6 +350,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     options.inputs_first = driver >= 4;
     options.opening_settlement = driver >= 5;
     options.playbook_cancel_labels = driver >= 6;
+    options.exact_margin = start.value("exact_margin", false);
     options.opening_rule_checks = start.value("opening_rule_checks", false);
     options.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);
     options.candles = std::make_shared<CandleStore>();
