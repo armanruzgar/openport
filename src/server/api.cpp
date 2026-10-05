@@ -324,13 +324,16 @@ json circuit_breaker_json(const CircuitBreakerStatus& breaker) {
 json status_json(const MetricsSource& source) {
   const EngineStatus s = source.status();
   const auto now = source.wall_time();
+  auto notifications = source.configured_notifications() ? source.configured_notifications()->status() : json{
+      {"enabled", false}, {"include_simulated", false}, {"queue_depth", 0}, {"queue_capacity", 0}, {"dropped", 0}, {"channels", json::array()}};
+  // Availability is source-specific; channel settings and counters belong to the shared service.
+  if (!source.notifications()) notifications["enabled"] = false;
   return {
       {"version", OPENPORT_VERSION},
       {"trading", trading_status_json(s.trading)},
       {"accounts", account_ticks_json(s)},
       {"series", series_status_json(source)},
-      {"notifications", source.notifications() ? source.notifications()->status() : nlohmann::json{
-          {"enabled", false}, {"include_simulated", false}, {"queue_depth", 0}, {"queue_capacity", 0}, {"dropped", 0}, {"channels", nlohmann::json::array()}}},
+      {"notifications", std::move(notifications)},
       {"circuit_breaker", circuit_breaker_json(s.circuit_breaker)},
       {"market", market_json(now)},
       {"provider",

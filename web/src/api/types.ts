@@ -138,11 +138,14 @@ export interface NotificationChannel {
   last_error: string | null
 }
 export interface NotificationStatus {
+  /** Forwarding and management are available on this source; channels may still be configured when false. */
   enabled: boolean
+  /** Operator's server-config opt-in for demo/replay forwarding; absent on older servers. */
   include_simulated?: boolean
   queue_depth: number
   queue_capacity: number
   dropped: number
+  /** Public channel settings and shared counters, independent of this source's forwarding availability. */
   channels: NotificationChannel[]
 }
 

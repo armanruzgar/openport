@@ -77,15 +77,17 @@ function Channel({ channel, mode }: { channel: NotificationChannel; mode: WriteM
 export function NotificationSettings() {
   const { status, source, trading } = useLive()
   const notifications = status?.notifications
+  const mode = source === "live" && notifications?.enabled ? trading?.write ?? "disabled" : "disabled"
   return <section className="space-y-2">
     <h3 className="text-xs font-medium uppercase tracking-wide text-muted">Notifications</h3>
-    <p className="text-xs text-muted">Send paper trading alerts to Discord, Telegram, ntfy or a webhook while this browser is closed.
-      {notifications?.include_simulated ? " Demo and replay forwarding is enabled."
-        : " Demo and replay forwarding is off; opt in with include_simulated in the server notification config."} Backtests never send.</p>
-    {source !== "live" ? <p className="text-sm text-muted">Switch to live to manage notifications.</p>
-      : !notifications?.channels.length ? <p className="text-sm text-muted">No channels configured. Add them with the server's --notify-config file or OPENPORT_NOTIFY_JSON environment variable.</p>
+    <p className="text-xs text-muted">Send paper trading alerts to Discord, Telegram, ntfy or a webhook while this browser is closed.</p>
+    <p className="text-xs text-muted">{notifications?.include_simulated
+      ? "Demo and replay forwarding is on. Alerts from these runs are forwarded to enabled channels matching their event filters."
+      : "Demo and replay forwarding is off. Alerts from these runs are not forwarded, even when a channel is enabled. Set include_simulated to true in the server notification config to opt in."} Backtests never send.</p>
+    {source !== "live" && <p className="text-sm text-muted">Switch to live to manage notifications.</p>}
+    {!notifications?.channels.length ? <p className="text-sm text-muted">No channels configured. Add them with the server's --notify-config file or OPENPORT_NOTIFY_JSON environment variable.</p>
       : <>
-        {notifications.channels.map((channel) => <Channel key={`${channel.id}:${channel.enabled}:${channel.events.join()}:${channel.floor_distance}`} channel={channel} mode={trading?.write ?? "disabled"} />)}
+        {notifications.channels.map((channel) => <Channel key={`${channel.id}:${channel.enabled}:${channel.events.join()}:${channel.floor_distance}`} channel={channel} mode={mode} />)}
         <p className="text-xs text-muted">Queue: {notifications.queue_depth}/{notifications.queue_capacity} · {notifications.dropped} dropped.
           Filters apply until restart. Save lasting changes in the server config. Destinations and credentials are managed there and never shown here.</p>
       </>}

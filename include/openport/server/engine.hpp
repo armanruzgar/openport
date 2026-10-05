@@ -75,6 +75,8 @@ class MetricsSource {
       const std::string& symbol) const = 0;
   [[nodiscard]] virtual EngineStatus status() const = 0;
   [[nodiscard]] virtual Notifications* notifications() const { return nullptr; }
+  /// Public settings remain visible even when this source cannot forward events.
+  [[nodiscard]] virtual const Notifications* configured_notifications() const { return notifications(); }
   [[nodiscard]] virtual Sandboxes* sandboxes() const { return nullptr; }
   [[nodiscard]] virtual md::Timestamp wall_time() const { return md::now(); }
   /// The main account's publication.
@@ -140,6 +142,7 @@ class Engine final : public MetricsSource {
       const std::string& symbol) const override;
   [[nodiscard]] EngineStatus status() const override;
   [[nodiscard]] Notifications* notifications() const override { return options_.notifications.get(); }
+  [[nodiscard]] const Notifications* configured_notifications() const override { return configured_notifications_.get(); }
   [[nodiscard]] Sandboxes* sandboxes() const override { return options_.sandboxes.get(); }
   [[nodiscard]] md::Timestamp wall_time() const override { return options_.clock(); }
   [[nodiscard]] std::shared_ptr<const TradingView> trading_view() const override;
@@ -167,6 +170,7 @@ class Engine final : public MetricsSource {
   md::Provider& provider_;
   md::Subscription subscription_;
   Options options_;
+  std::shared_ptr<Notifications> configured_notifications_;
   md::EventQueue queue_;
   std::unique_ptr<md::RecordingSink> recorder_;
   Desk desk_;  // engine thread only

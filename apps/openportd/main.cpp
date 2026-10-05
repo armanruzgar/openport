@@ -614,7 +614,8 @@ int run(int argc, char** argv) {
     const auto* value = std::getenv(name);
     return value ? std::string(value) : std::string{};
   });
-  if (!settings.sandboxes.capacity && (!offline || notification_config.include_simulated) && !notification_config.channels.empty())
+  // Keep public channel settings visible; each engine applies its forwarding policy.
+  if (!settings.sandboxes.capacity && !notification_config.channels.empty())
     engine_options.notifications = std::make_shared<server::Notifications>(notification_config,
         std::make_unique<net::HttpClient>(), server::Notifications::Options{});
   engine_options.candles = candles;

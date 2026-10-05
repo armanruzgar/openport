@@ -134,6 +134,12 @@ TEST(WebServer, ReplayAlertsReachWebhookAndNtfyOnlyWithOptInAndDoNotResendHistor
     const auto status = json::parse(call(host, "GET", "/api/replay/status").body);
     EXPECT_EQ(status.at("notifications").at("enabled"), enabled);
     EXPECT_EQ(status.at("notifications").at("include_simulated"), enabled);
+    const auto& configured = status.at("notifications").at("channels");
+    ASSERT_EQ(configured.size(), 2U);
+    EXPECT_EQ(configured[0].at("id"), "hook");
+    EXPECT_EQ(configured[1].at("id"), "phone");
+    EXPECT_TRUE(configured[0].at("enabled").get<bool>());
+    EXPECT_TRUE(configured[1].at("enabled").get<bool>());
     const auto alert = call(host, "POST", "/api/replay/alerts", {{"scope", "underlying"}, {"symbol", "SPX"},
         {"metric", "price"}, {"direction", "at_or_above"}, {"level", "5001"}, {"label", "Local receiver"}, {"repeat", true}});
     ASSERT_EQ(alert.status, 201) << alert.body;

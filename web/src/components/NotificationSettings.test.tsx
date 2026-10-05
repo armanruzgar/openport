@@ -18,8 +18,8 @@ const notifications: NotificationStatus = {
   channels: [{ id: "phone", type: "telegram", enabled: true, events: ["fill", "floor"], floor_distance: "500.00",
     delivered: 3, failures: 1, dropped: 2, last_attempt: "2026-09-22T14:00:00Z", last_delivery: null, last_error: "HTTP_429" }],
 }
-function live(source: "live" | "replay" = "live", configured: NotificationStatus | undefined = notifications, mode: "open" | "disabled" = "open") {
-  const state = liveState({ ...status, notifications: configured }, null, "open", 0, "main", () => {}, source)
+function live(source: "live" | "replay" = "live", configured: NotificationStatus | undefined = notifications, mode: "open" | "disabled" = "open", simulated = false) {
+  const state = liveState({ ...status, provider: { ...status.provider, simulated }, notifications: configured }, null, "open", 0, "main", () => {}, source)
   vi.mocked(useLive).mockReturnValue({ ...state, trading: state.trading ? { ...state.trading, write: mode } : { enabled: true, reason: null, account_version: "1", write: mode, kill_latched: false, fee_per_contract: "0.65", initial_cash: "100000.00" } })
 }
 async function render() { await act(async () => root.render(<QueryClientProvider client={client}><NotificationSettings /></QueryClientProvider>)) }
@@ -68,17 +68,46 @@ describe("notification settings", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Could not queue")
     expect(host.textContent).not.toContain("secret-token")
   })
-  it("hides actions on replays", async () => {
+  it("shows replay channels read-only", async () => {
     live("replay"); await render()
     expect(host.textContent).toContain("Switch to live")
-    expect(host.querySelector("button")).toBeNull()
+    expect(host.textContent).toContain("phone")
+    expect(host.textContent).not.toContain("No channels configured")
+    expect(button("Test phone").disabled).toBe(true)
+    expect(button("Save filters").disabled).toBe(true)
+    expect(host.querySelector<HTMLInputElement>('[role="switch"]')?.disabled).toBe(true)
     expect(api.testNotification).not.toHaveBeenCalled()
   })
-  it("reports the operator's simulated forwarding opt-in", async () => {
-    live(); await render()
+  it.each([false, true])("keeps configured demo/replay channels visible with include_simulated=%s", async (include_simulated) => {
+    for (const source of ["live", "replay"] as const) {
+      live(source, { ...notifications, enabled: include_simulated, include_simulated }, "open", true)
+      await render()
+      expect(host.textContent).toContain("phone")
+      expect(host.textContent).toContain("telegram")
+      expect(host.textContent).toContain("3 delivered · 1 failed attempts · 2 dropped")
+      expect(host.textContent).not.toContain("No channels configured")
+      const toggle = host.querySelector<HTMLInputElement>('[aria-label="Enable phone"]')!
+      expect(toggle.checked).toBe(true)
+      expect(toggle.disabled).toBe(source === "replay" || !include_simulated)
+      expect(button("Test phone").disabled).toBe(source === "replay" || !include_simulated)
+      if (include_simulated) {
+        expect(host.textContent).toContain("Demo and replay forwarding is on")
+        expect(host.textContent).toContain("enabled channels matching their event filters")
+        expect(host.textContent).not.toContain("are not forwarded")
+      } else {
+        expect(host.textContent).toContain("Demo and replay forwarding is off")
+        expect(host.textContent).toContain("are not forwarded, even when a channel is enabled")
+        expect(host.textContent).toContain("Set include_simulated to true")
+        await act(async () => button("Test phone").click())
+        expect(api.testNotification).not.toHaveBeenCalled()
+      }
+    }
+  })
+  it("keeps live channel controls available without the simulated opt-in", async () => {
+    live("live", { ...notifications, include_simulated: false }); await render()
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Enable phone"]')?.disabled).toBe(false)
+    expect(button("Test phone").disabled).toBe(false)
     expect(host.textContent).toContain("Demo and replay forwarding is off")
-    live("live", { ...notifications, include_simulated: true }); await render()
-    expect(host.textContent).toContain("Demo and replay forwarding is enabled")
   })
   it("explains server configuration when no channels exist or the server is older", async () => {
     live("live", { ...notifications, channels: [] }); await render()

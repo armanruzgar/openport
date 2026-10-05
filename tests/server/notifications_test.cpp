@@ -632,6 +632,22 @@ TEST(Notifications, ReplayDemoAndDrillEnginesDoNotNotifyByDefault) {
     server::Engine engine(provider, {{"SPX"}}, options);
     engine.start();
     EXPECT_EQ(engine.notifications(), nullptr);
+    const auto response = server::handle_api({"GET", "/api/status"}, engine);
+    ASSERT_EQ(response.status, 200);
+    const auto status = json::parse(response.body).at("notifications");
+    EXPECT_FALSE(status.at("enabled").get<bool>());
+    EXPECT_FALSE(status.at("include_simulated").get<bool>());
+    EXPECT_EQ(status.at("queue_capacity"), 256);
+    ASSERT_EQ(status.at("channels").size(), 1U);
+    EXPECT_EQ(status.at("channels")[0].at("id"), "phone");
+    EXPECT_TRUE(status.at("channels")[0].at("enabled").get<bool>());
+    EXPECT_EQ(response.body.find("private-token"), std::string::npos);
+    EXPECT_EQ(response.body.find("private.example"), std::string::npos);
+    std::optional<server::ApiResponse> test_response;
+    server::handle_api_async({"POST", "/api/notifications/test", R"({"channel":"phone"})"}, engine,
+        [&](auto reply) { test_response = std::move(reply); });
+    ASSERT_TRUE(test_response);
+    EXPECT_EQ(test_response->status, 503);
     server::TradingCommand trip; trip.kind = server::TradingCommand::Kind::Trip;
     trip.reason = "notification test";
     std::promise<server::TradingReply> done;
@@ -653,6 +669,11 @@ TEST(Notifications, SimulatedOptInEnablesDemoAndReplayEngines) {
     server::Engine engine(provider, {{"SPX"}}, options);
     engine.start();
     ASSERT_EQ(engine.notifications(), h.notifications.get());
+    const auto status = json::parse(server::handle_api({"GET", "/api/status"}, engine).body).at("notifications");
+    EXPECT_TRUE(status.at("enabled").get<bool>());
+    EXPECT_TRUE(status.at("include_simulated").get<bool>());
+    ASSERT_EQ(status.at("channels").size(), 1U);
+    EXPECT_EQ(status.at("channels")[0].at("id"), "phone");
     server::TradingCommand trip; trip.kind = server::TradingCommand::Kind::Trip;
     trip.reason = "notification test";
     std::promise<server::TradingReply> done;
@@ -680,6 +701,8 @@ TEST(Notifications, SandboxServerStaysSilentWithSimulatedOptIn) {
   server::Engine engine(provider, {{"SPX"}}, options);
   engine.start();
   EXPECT_EQ(engine.notifications(), nullptr);
+  EXPECT_EQ(engine.configured_notifications(), nullptr);
+  EXPECT_TRUE(json::parse(server::handle_api({"GET", "/api/status"}, engine).body).at("notifications").at("channels").empty());
   engine.stop();
   EXPECT_EQ(h.state().at("queue_depth"), 0);
 }

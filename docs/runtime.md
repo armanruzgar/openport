@@ -1346,6 +1346,9 @@ Generic webhooks and ntfy use one second per destination and honour numeric
 `GET /api/status` includes `notifications`: enabled, `include_simulated`, queue depth/capacity, total
 dropped deliveries and each channel's public settings, successful deliveries,
 failed attempts, drops, last attempt, last successful delivery and last error code.
+Configured channels remain visible when demo/replay forwarding is off; `enabled`
+is false on that source, while `channels[].enabled` retains each channel's setting.
+Queue and delivery counters describe the shared service, including other engines.
 The browser refreshes status periodically. Times in delivery status are wall time;
 event payload times are market time. Counters reset on restart.
 
@@ -1358,6 +1361,12 @@ Changes last until restart. Update the file or environment for lasting settings.
 Removing an event or disabling a channel clears matching queued messages; a request
 already in flight can finish. The Notifications section in Alerts settings exposes
 these controls and never receives credentials.
+It always lists configured channels, including on demo and replay, and separately
+states whether demo/replay alerts are forwarded. The channel Enabled switches do
+not override the operator's `include_simulated` setting. Demo/replay alerts are
+not forwarded until that setting is true, and then follow enabled channels and
+their event filters. Channel controls are read-only when forwarding is unavailable
+or while viewing a replay; switch to live to manage them when forwarding is enabled.
 
 Delivery is best effort. The queue is memory-only; a crash or shutdown can lose
 pending alerts, and a request whose reply was lost can be delivered twice. One slow

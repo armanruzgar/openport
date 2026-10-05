@@ -19946,7 +19946,8 @@
             "description": "Operator opt-in to demo and replay forwarding. Recovery/catch-up history, verification, backtests and sandbox servers never send. Older servers omit this field."
           },
           "enabled": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Notification forwarding and management are available on this source. False on demo/replay when include_simulated is off, even with configured channels."
           },
           "queue_depth": {
             "type": "number",
@@ -19962,6 +19963,7 @@
           },
           "channels": {
             "type": "array",
+            "description": "Public settings and shared delivery counters for all configured channels, even when this source cannot forward. A channel's enabled setting does not override include_simulated. Sandbox servers expose no channels.",
             "items": {
               "$ref": "#/components/schemas/NotificationChannel"
             }

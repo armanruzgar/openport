@@ -42,6 +42,7 @@ Engine::Options driver_options(md::Provider& provider, const md::Subscription& s
 
 Engine::Engine(md::Provider& provider, md::Subscription subscription, Options options)
     : provider_(provider), subscription_(std::move(subscription)), options_(driver_options(provider, subscription_, options)),
+      configured_notifications_(options.sandboxes ? nullptr : options.notifications),
       queue_(md::kEventQueueCapacity, options.paper_enabled || options.replay),
       desk_(std::string(provider.name()), provider.capabilities(), subscription_, options_) {
   replay_ = dynamic_cast<providers::ReplayProvider*>(&provider_);
