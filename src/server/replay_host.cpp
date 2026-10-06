@@ -496,7 +496,7 @@ class ReplayHost::History {
     return path;
   }
   /// Rewrites a retired run's metadata with its final playback state, which then
-  /// reads finished. A crash leaves the start state that create wrote.
+  /// reads finished. An interruption leaves the last start/resume state.
   void finish(const Session& session) const {
     if (!writable_ || !session.durable || session.id.empty() || session.finalized) return;
     const bool finalized = session.provider->finished();
@@ -607,7 +607,7 @@ class ReplayHost::History {
       }
       item["id"] = id;  // A copied sidecar cannot redirect its journal's history routes.
       if (!item.contains("plan") && item.contains("plan_name")) item["plan"] = plan_id(item.at("plan_name").get<std::string>());
-      // Metadata a crash left still holds the start state: the run is over, and it
+      // Interrupted metadata still holds the start state: playback stopped and
       // settled through its last journaled time.
       if (!finalized && item.contains("fast_forwarding")) {
         item["fast_forwarding"] = false;
@@ -616,7 +616,7 @@ class ReplayHost::History {
         item["paused"] = true;
         item["settled_through"] = item.value("time", json(nullptr));
       }
-      // A run a crash interrupted, whose metadata still holds its start state, can
+      // A run interrupted by shutdown or a crash, with its start state intact, can
       // continue: POST /api/replay {"resume"}. A stopped or replaced run has ended.
       item["interrupted"] = !finalized && !item.contains("error");
       item["finished"] = true;
@@ -888,7 +888,7 @@ void ReplayHost::stop() {
   if (const auto session = current()) session->provider->abort();
   const std::lock_guard control_lock(control_mutex_);
   stop_verifier();
-  stop_session();
+  stop_session(true);
 }
 
 void ReplayHost::stop_verifier() {
@@ -897,7 +897,7 @@ void ReplayHost::stop_verifier() {
   verifier_stop_ = false;
 }
 
-void ReplayHost::stop_session() {
+void ReplayHost::stop_session(bool shutdown) {
   // A retiring journal becomes history only after Engine::stop has flushed it.
   const std::lock_guard handoff(handoff_mutex_);
   std::shared_ptr<Session> old;
@@ -908,8 +908,11 @@ void ReplayHost::stop_session() {
   // Drain callbacks while this thread still owns the session; its last reference
   // must not be released by a completion running on the engine thread.
   if (old) {
+    // Provider shutdown also sets finished(), so remember whether playback had
+    // already ended before stopping it. Leave interrupted metadata resumable.
+    const bool ended = old->provider->finished();
     old->engine->stop();
-    history_->finish(*old);
+    if (!shutdown || ended) history_->finish(*old);
   }
   old.reset();
 }

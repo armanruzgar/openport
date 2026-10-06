@@ -71,7 +71,7 @@ class ReplayHost {
   struct Session;
   class DemoRecordings;
   class History;
-  void stop_session();  // control_mutex_ held
+  void stop_session(bool shutdown = false);  // control_mutex_ held
   void control(const ApiRequest& request, const ApiCompletion& complete);
   void resume(const std::string& id, int speed, bool paused, const ApiCompletion& complete,
               bool restart = false, const std::string& at = {});

@@ -2111,9 +2111,16 @@ TEST(ReplayRun, KeptJournalFlushesAtPauseStepFinishStopAndTeardown) {
     EXPECT_LT(syncs.load(), recovered.records.size());
     EXPECT_TRUE(server::verify_run(journal).matched);
     const auto metadata = json::parse(read_file(std::filesystem::path(journal).replace_extension(".json")));
-    EXPECT_EQ(metadata.at("journal").at("transactions"), recovered.records.size());
-    EXPECT_EQ(metadata.at("journal").at("head"), recovered.head);
-    EXPECT_EQ(metadata.at("journal").at("bytes"), std::filesystem::file_size(journal));
+    if (ending == "teardown") {
+      // Shutdown flushes the journal but leaves unfinished playback resumable.
+      EXPECT_FALSE(metadata.at("finished").get<bool>());
+      EXPECT_FALSE(metadata.contains("journal"));
+    } else {
+      EXPECT_TRUE(metadata.at("finished").get<bool>());
+      EXPECT_EQ(metadata.at("journal").at("transactions"), recovered.records.size());
+      EXPECT_EQ(metadata.at("journal").at("head"), recovered.head);
+      EXPECT_EQ(metadata.at("journal").at("bytes"), std::filesystem::file_size(journal));
+    }
   }
 }
 

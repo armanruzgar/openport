@@ -2,6 +2,7 @@
 #include "support/recording.hpp"
 #include "support/scripted_market.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -781,6 +782,82 @@ TEST(ReplayHost, FinishedRunsListTheirFinalPlaybackStateAndPlanId) {
   history = json::parse(call(restarted, "GET", "/api/replay").body)["history"];
   ASSERT_EQ(history.size(), 1U);
   check(history[0]);
+}
+
+// AU4: daemon shutdown must flush an active run without retiring its sidecar.
+TEST(ReplayHost, CleanShutdownResumesTheSameJournalUntilDeleteReplacementOrEof) {
+  using nlohmann::json;
+  for (const std::string ending : {"delete", "replacement", "eof"}) {
+    SCOPED_TRACE(ending);
+    test::RecordingFile file;
+    drill_recording(file.path);
+    server::Engine::Options base;
+    base.paper_journal = file.directory / "main.jsonl";
+    std::string id;
+    std::string prefix;
+    const auto bytes = [](const std::filesystem::path& path) {
+      std::ifstream in(path);
+      return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    {
+      server::ReplayHost host({file.directory, base, false});
+      const auto started = call(host, "POST", "/api/replay", R"({"file":"session.oprec","paused":true,"speed":0})");
+      ASSERT_EQ(started.status, 201) << started.body;
+      id = json::parse(started.body)["replay"]["id"];
+      ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(host.tick())["replay"]["fast_forwarding"].get<bool>(); }));
+      ASSERT_EQ(call(host, "PUT", "/api/replay", R"({"until":"10:00"})").status, 200);
+      host.stop();
+    }
+    const auto journal = file.directory / "replays" / (id + ".jsonl");
+    prefix = bytes(journal);
+    ASSERT_FALSE(prefix.empty());
+    // A resumed run must also survive another clean shutdown.
+    for (const std::string until : {"10:30", "11:00"}) {
+      server::ReplayHost host({file.directory, base, false});
+      const auto history = json::parse(call(host, "GET", "/api/replay").body)["history"];
+      ASSERT_EQ(history.size(), 1U);
+      EXPECT_EQ(history[0]["interrupted"], true) << history[0];
+      EXPECT_EQ(history[0]["progress"], 1.0);
+      EXPECT_EQ(history[0]["paused"], true);
+      EXPECT_EQ(history[0]["settled_through"], until == "10:30" ? "2026-09-16T14:00:00.000Z" : "2026-09-16T14:30:00.000Z");
+      EXPECT_FALSE(history[0].contains("journal"));
+      const auto resumed = call(host, "POST", "/api/replay", json{{"resume", id}, {"speed", 0}}.dump());
+      ASSERT_EQ(resumed.status, 201) << resumed.body;
+      EXPECT_EQ(json::parse(resumed.body)["replay"]["id"], id);
+      ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(host.tick())["replay"]["fast_forwarding"].get<bool>(); }));
+      EXPECT_EQ(bytes(journal), prefix);
+      ASSERT_EQ(call(host, "PUT", "/api/replay", json{{"until", until}}.dump()).status, 200);
+      if (until == "11:00") {
+        if (ending == "delete") {
+          ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
+        } else if (ending == "replacement") {
+          ASSERT_EQ(call(host, "POST", "/api/replay", R"({"file":"session.oprec","paused":true,"speed":0})").status, 201);
+        } else {
+          ASSERT_EQ(call(host, "PUT", "/api/replay", R"({"until":"16:00"})").status, 200);
+          ASSERT_TRUE(test::recording_eventually([&] { return json::parse(host.tick())["replay"]["finished"].get<bool>(); }));
+        }
+      }
+      host.stop();
+      const auto continued = bytes(journal);
+      EXPECT_TRUE(continued.starts_with(prefix));
+      EXPECT_GT(continued.size(), prefix.size());
+      prefix = continued;
+      const auto verified = server::verify_run(journal);
+      EXPECT_TRUE(verified.matched) << verified.message;
+    }
+    server::ReplayHost host({file.directory, base, false});
+    const auto history = json::parse(call(host, "GET", "/api/replay").body)["history"];
+    const auto entry = std::find_if(history.begin(), history.end(), [&](const json& value) { return value["id"] == id; });
+    ASSERT_NE(entry, history.end());
+    EXPECT_EQ((*entry)["interrupted"], false);
+    const auto final = trading::FileJournal::read(journal.string());
+    EXPECT_EQ((*entry)["journal"]["head"], final.head);
+    EXPECT_EQ((*entry)["journal"]["transactions"], final.records.size());
+    EXPECT_EQ((*entry)["journal"]["bytes"], std::filesystem::file_size(journal));
+    const auto ended = call(host, "POST", "/api/replay", json{{"resume", id}}.dump());
+    EXPECT_EQ(ended.status, 409) << ended.body;
+    EXPECT_EQ(json::parse(ended.body)["error"]["code"], "REPLAY_NOT_RESUMABLE");
+  }
 }
 
 // F69: a run a crash interrupted could only be opened read-only. Resuming re-executes
