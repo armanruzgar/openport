@@ -250,8 +250,10 @@ Sandbox demos also offer `POST /api/sandboxes` without a token. It returns
 `{account, token, idle_seconds, simulated: true}` once; it returns 404 when disabled
 and 429 `SANDBOX_CAPACITY` when full, `SANDBOX_CLIENT_RATE` after 3 creations per
 client in a rolling hour, or `SANDBOX_GLOBAL_RATE` after 30 globally. Sandbox
-order submissions, previews, what-if requests and modifications share 60 requests
-per account per rolling minute; excess requests return 429 `SANDBOX_ORDER_RATE`.
+order submissions, previews, what-if requests, modifications, share trades and
+their previews share 60 requests per account per rolling minute; excess requests
+return 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and share closes remain available
+at the order cap.
 The three rate-limit codes carry `Retry-After` seconds until the oldest counted
 request leaves that bucket's window, rounded up to at least 1. Capacity has no
 known free time, so `SANDBOX_CAPACITY` omits the header. Creation returns 503

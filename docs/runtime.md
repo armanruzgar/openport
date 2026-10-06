@@ -968,8 +968,9 @@ Pending creations count toward capacity. Creation returns HTTP 429 with
 `SANDBOX_CAPACITY` when all slots are occupied, `SANDBOX_CLIENT_RATE` when the
 client's creation limit is reached, or `SANDBOX_GLOBAL_RATE` at the global limit.
 Each account permits 60 order requests per rolling minute, including previews,
-what-if requests and modifications; excess requests return HTTP 429
-`SANDBOX_ORDER_RATE`. Cancels and flatten remain available at the order cap.
+what-if requests, modifications, share trades and their previews; excess requests
+return HTTP 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and share closes remain
+available at the order cap.
 The three rate-limit codes carry `Retry-After`: seconds until the oldest counted
 request leaves that bucket's rolling window, rounded up to at least 1 second.
 `SANDBOX_CAPACITY` has no `Retry-After` because the next free time is unknown.

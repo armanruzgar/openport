@@ -3737,10 +3737,11 @@ are removed on restart. An expired sandbox token returns 403 `SANDBOX_EXPIRED`.
 Creation returns 429 `SANDBOX_CAPACITY` when all account slots are occupied,
 `SANDBOX_CLIENT_RATE` after 3 creations per client in a rolling hour, or
 `SANDBOX_GLOBAL_RATE` after 30 globally. Order submissions, previews, what-if
-requests and modifications share 60 requests per account per rolling minute;
-excess requests return 429 `SANDBOX_ORDER_RATE`. Cancels and flatten remain
-available. Rate-limit responses carry `Retry-After` seconds until the oldest
-counted request leaves that bucket's window, rounded up to at least 1.
+requests, modifications, share trades and their previews share 60 requests per
+account per rolling minute; excess requests return 429 `SANDBOX_ORDER_RATE`.
+Cancels, flatten and share closes remain available at the order cap. Rate-limit
+responses carry `Retry-After` seconds until the oldest counted request leaves
+that bucket's window, rounded up to at least 1.
 `SANDBOX_CAPACITY` omits the header because the next free time is unknown.
 Creation may return 503 `SANDBOX_UNAVAILABLE` for an unavailable command inbox
 (with `Retry-After: 1`) or trading storage (without the header). Notification
