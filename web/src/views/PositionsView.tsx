@@ -23,6 +23,7 @@ import { Badge, Empty, PageHeader, Panel, Tile, toneOf, toneText } from "../comp
 import { fixed, signedPercent } from "../lib/format"
 import { timestampET } from "../lib/freshness"
 import { attributionParts, describeAttribution } from "../lib/attribution"
+import { matchingPayload } from "../lib/payload"
 import { contractLabel, osiLabel } from "../lib/journal"
 import { strategyGroups, type StrategyGroup } from "../lib/positions"
 import { closingLegs } from "../lib/strategy"
@@ -41,12 +42,13 @@ export function Table({ label, headers, children, left = 1 }: { label: string; h
 }
 
 /** Fetches the position's chain so the closing ticket has a live quote. */
-function CloseTicket({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+export function CloseTicket({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
   const { version } = useLive()
   const expiry = `${position.expiry}${position.settlement}`
   const chain = useQuery({
     queryKey: ["chain", position.underlying, expiry, 0, version(position.underlying)],
     queryFn: ({ signal }) => api.chain(position.underlying, expiry, 0, signal),
+    placeholderData: (previous) => matchingPayload(previous, position.underlying, expiry),
   })
   const row = chain.data?.strikes.find((r) => r.strike === position.strike)
   const quote = row?.[position.type] ?? null

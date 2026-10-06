@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
 import { useOpenOrders } from "../api/trading"
@@ -7,6 +7,7 @@ import type { NewOrder, Order, TradingStatus } from "../api/trading-types"
 import type { Chain } from "../api/types"
 import { days, expiryLabel, fixed } from "../lib/format"
 import { closingPlan, rollPlan, rollSides, type StrategyGroup } from "../lib/positions"
+import { matchingPayload } from "../lib/payload"
 import { describeTrail } from "../lib/ticket"
 import type { StrategyLeg } from "../lib/strategy"
 import { formatMoney, signedMoney } from "../lib/trading"
@@ -21,11 +22,17 @@ import { Badge, toneOf, toneText } from "./ui"
 /** Every chain the legs trade in, all strikes, for their live quotes. */
 function useChains(underlying: string, ids: readonly string[]) {
   const { version } = useLive()
+  // useQueries does not supply previous data to placeholder callbacks.
+  const previous = useRef(new Map<string, Chain>())
   const results = useQueries({ queries: ids.map((id) => ({
     queryKey: ["chain", underlying, id, 0, version(underlying)],
     queryFn: ({ signal }: { signal: AbortSignal }) => api.chain(underlying, id, 0, signal),
+    placeholderData: () => matchingPayload(previous.current.get(id), underlying, id),
   })) })
   const chains = results.map((r) => r.data).filter((c): c is Chain => c != null)
+  useEffect(() => {
+    previous.current = new Map(chains.map((chain) => [chain.expiry.id, chain]))
+  }, [chains])
   return { chains, ready: chains.length === ids.length, error: results.find((r) => r.error)?.error }
 }
 const withQuotes = (legs: StrategyLeg[], chains: readonly Chain[]) => legs.map((leg) => ({ ...leg,
@@ -49,6 +56,7 @@ export function RollDialog({ group, trading, onClose }: { group: StrategyGroup; 
   const summary = useQuery({
     queryKey: ["summary", group.underlying, version(group.underlying)],
     queryFn: ({ signal }) => api.summary(group.underlying, signal),
+    placeholderData: (previous) => matchingPayload(previous, group.underlying),
   })
   // The same expiry rolls to new strikes; later ones keep them unless changed.
   const later = (summary.data?.expiries ?? []).filter((e) => e.id >= group.expiry)

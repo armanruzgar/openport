@@ -12,7 +12,10 @@ import { renderTimeout, waitForRender } from "../test/render"
 import { OrderTicket } from "./OrderTicket"
 import { EditOrderDialog, FlattenDialog } from "./OrderActions"
 import { StrategyTicket } from "./StrategyTicket"
-import { expiry } from "../test/trading-fixtures"
+import { CloseTicket } from "../views/PositionsView"
+import { CloseStrategyDialog } from "./StrategyActions"
+import type { Chain } from "../api/types"
+import { chain, expiry } from "../test/trading-fixtures"
 import type { StrategyLeg } from "../lib/strategy"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
@@ -709,4 +712,67 @@ it("blocks flat-time openings but leaves reductions available", async () => {
   await choose("Side", "Sell")
   expect(host.textContent).not.toContain("FLAT_TIME")
   expect(button("Submit order").disabled).toBe(false)
+})
+
+
+describe.each(["single", "together"] as const)("%s close ticket quote refresh", { timeout: renderTimeout }, (kind) => {
+  it("keeps the typed limit, quantity, focus and scroll while new market quotes load", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} })
+    vi.spyOn(api, "previewOrder").mockRejectedValue(new Error("fixture preview"))
+    const position = portfolio.positions[0]!
+    const secondExpiry = { ...expiry, id: "2026-10-23PM", expiry: "2026-10-23" }
+    const secondQuote = { ...quote, symbol: "SPXW  261023C07000000" }
+    const secondChain = { ...chain, expiry: secondExpiry, strikes: [{ ...chain.strikes[0]!, call: secondQuote }] }
+    const legs: StrategyLeg[] = [quote, secondQuote].map((q, i) => ({
+      symbol: q.symbol!, underlying: "SPX", expiry: i ? secondExpiry.id : expiry.id,
+      strike: 7000, type: "call", side: "sell", ratio: 1, quote: q,
+    }))
+    vi.mocked(api.portfolio).mockResolvedValue({ ...portfolio, positions: [position,
+      { ...position, symbol: secondQuote.symbol!, expiry: secondExpiry.expiry }] })
+    client.setQueryDefaults(["chain"], { staleTime: Infinity })
+    client.setQueryData(["chain", "SPX", expiry.id, 0, 1], chain)
+    client.setQueryData(["chain", "SPX", secondExpiry.id, 0, 1], secondChain)
+    const pending = new Map<string, (data: Chain) => void>()
+    vi.spyOn(api, "chain").mockImplementation((_symbol, id) => new Promise<Chain>((resolve) => { pending.set(id!, resolve) }))
+    const renderClose = () => act(async () => root.render(<QueryClientProvider client={client}>
+      {kind === "single" ? <CloseTicket position={position} trading={trading} onClose={() => {}} />
+        : <CloseStrategyDialog plan={{ legs, units: 2 }} underlying="SPX" trading={trading} onClose={() => {}} />}
+    </QueryClientProvider>))
+    await renderClose()
+    const limitName = kind === "single" ? "Limit price" : "Net limit"
+    await setField(limitName, "0.95")
+    await setField("Quantity", "1")
+    const limit = field(limitName)
+    const dialog = host.querySelector("dialog")!
+    limit.focus()
+    dialog.scrollTop = 150
+    const preserved = () => {
+      expect(field(limitName)).toBe(limit)
+      expect(limit.value).toBe("0.95")
+      expect(field("Quantity").value).toBe("1")
+      expect(host.querySelector("dialog")).toBe(dialog)
+      expect(dialog.scrollTop).toBe(150)
+      expect(document.activeElement).toBe(limit)
+    }
+    vi.mocked(useLive).mockReturnValue(liveState({ ...status,
+      underlyings: status.underlyings.map((u) => ({ ...u, version: 2 })) }, null, "open"))
+    await renderClose()
+    expect(pending.size).toBe(kind === "single" ? 1 : 2)
+    preserved()
+    await act(async () => pending.get(expiry.id)!({ ...chain, version: 2,
+      strikes: [{ ...chain.strikes[0]!, call: { ...quote, bid: 0.7, ask: 0.8, mid: 0.75 } }] }))
+    await waitForRender(() => expect(host.textContent).toContain("0.70"))
+    preserved()
+    if (kind === "together") {
+      await act(async () => pending.get(secondExpiry.id)!({ ...secondChain, version: 2,
+        strikes: [{ ...secondChain.strikes[0]!, call: { ...secondQuote, bid: 0.6, ask: 0.7, mid: 0.65 } }] }))
+      await waitForRender(() => expect(host.textContent).toContain("0.60"))
+      preserved()
+    }
+    await waitForRender(() => expect(host.textContent).toContain("Preview failed"))
+    await click(kind === "single" ? "Submit order" : "Submit strategy order")
+    expect(api.submitOrder).toHaveBeenCalledWith(expect.objectContaining({
+      limit_price: kind === "single" ? "0.95" : "-0.95", quantity: 1,
+    }), trading.write)
+  })
 })
