@@ -980,6 +980,47 @@ TEST(Desk, OnlyExplicitReplayJournalsBatchSyncs) {
   }
 }
 
+TEST(Desk, LowDiskReasonIsPublishedForLiveAndReplayAccounts) {
+  for (const bool replay : {false, true}) {
+    SCOPED_TRACE(replay);
+    test::RecordingFile file;
+    test::ScriptedMarket market;
+    bool low_disk = false;
+    server::Desk::Options options;
+    options.replay = replay;
+    options.paper_journal = file.directory / "account.jsonl";
+    options.journal_io.free_bytes = [&](int) { return low_disk ? 12345ULL : 1024ULL * 1024 * 1024; };
+    server::Desk desk("test", {}, {{"SPX"}}, options);
+    desk.start_trading();
+    desk.replay_batch(market_batch(market), market.time);
+    const auto before = desk.trading_view()->snapshot;
+    low_disk = true;
+    server::TradingCommand order;
+    order.order = market.market("low-disk");
+    const auto reply = command(desk, order, market.time, market.time);
+    EXPECT_EQ(reply.error_code, "TRADING_UNAVAILABLE");
+    const auto status = desk.trading_status();
+    EXPECT_TRUE(status.reason.starts_with("JOURNAL_IO: "));
+    EXPECT_EQ(status.write, "disabled");
+    ASSERT_EQ(desk.accounts().size(), 1U);
+    EXPECT_EQ(desk.accounts().front().trading.reason, status.reason);
+    for (const auto& message : {reply.decision.message, status.reason}) {
+      EXPECT_NE(message.find("Journal commit failed: Disk nearly full: filesystem device"), std::string::npos);
+      EXPECT_NE(message.find(file.directory.filename().string()), std::string::npos);
+      EXPECT_NE(message.find("12345 free bytes"), std::string::npos);
+      EXPECT_NE(message.find("67108864"), std::string::npos);
+      EXPECT_NE(message.find("no in-memory transition published; stop trading and recover"), std::string::npos);
+      EXPECT_EQ(message.find(file.directory.string()), std::string::npos);
+    }
+    EXPECT_TRUE(desk.trading_view()->snapshot->journal_failed);
+    EXPECT_EQ(desk.trading_view()->snapshot->account_version, before->account_version);
+    low_disk = false;
+    EXPECT_EQ(command(desk, order, market.time, market.time).error_code, "TRADING_UNAVAILABLE");
+    EXPECT_EQ(desk.trading_status().reason, status.reason);
+    desk.stop();
+  }
+}
+
 TEST(Desk, FailedBoundarySyncDisablesTradingAndPreservesThePublishedAccount) {
   test::RecordingFile file;
   test::ScriptedMarket market;

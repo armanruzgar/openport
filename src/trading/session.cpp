@@ -4914,7 +4914,11 @@ struct TradingSession::Impl {
         failed->journal_failed = true;
         failed->quality_flags.push_back(Reason::JOURNAL_IO);
         snapshot = std::move(failed);
-        throw TradingError(Reason::JOURNAL_IO, "Journal commit failed; no in-memory transition published; stop trading and recover");
+        std::string message = "Journal commit failed";
+        try { throw; }
+        catch (const std::exception& error) { message += ": " + std::string(error.what()); }
+        catch (...) {}  // Keep the recovery guidance for non-standard exceptions too.
+        throw TradingError(Reason::JOURNAL_IO, message + "; no in-memory transition published; stop trading and recover");
       }
     }
     state = std::move(next);

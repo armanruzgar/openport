@@ -663,6 +663,40 @@ TEST(TradingJournal, LowDiskNamesFilesystemFreeBytesAndReserveWithoutAPath) {
   }
   EXPECT_TRUE(file.read().empty());
 }
+TEST(TradingJournal, SessionPreservesLowDiskDiagnosticWithoutPublishingTheTransaction) {
+  TemporaryJournal file;
+  test::ScriptedMarket market;
+  bool low_disk = false;
+  FileJournal::Options options;
+  options.hooks.free_bytes = [&](int) { return low_disk ? 12345ULL : 1024ULL * 1024 * 1024; };
+  const auto journal = FileJournal::create(file.path, options);
+  TradingSession session({}, market.time, journal);
+  market.seed(session);
+  const auto before = session.snapshot();
+  const auto contents = file.read();
+  low_disk = true;
+  try {
+    session.submit(market.market("low-disk"), market.time);
+    FAIL() << "Low disk transaction succeeded";
+  } catch (const TradingError& error) {
+    EXPECT_EQ(error.code(), Reason::JOURNAL_IO);
+    const std::string message = error.what();
+    EXPECT_NE(message.find("Journal commit failed: Disk nearly full: filesystem device"), std::string::npos);
+    EXPECT_NE(message.find(std::filesystem::path(file.path).parent_path().filename().string()), std::string::npos);
+    EXPECT_NE(message.find("12345 free bytes"), std::string::npos);
+    EXPECT_NE(message.find("67108864"), std::string::npos);
+    EXPECT_NE(message.find("no in-memory transition published; stop trading and recover"), std::string::npos);
+    EXPECT_EQ(message.find(std::filesystem::path(file.path).parent_path().string()), std::string::npos);
+  }
+  EXPECT_TRUE(session.snapshot()->journal_failed);
+  EXPECT_EQ(session.snapshot()->quality_flags.back(), Reason::JOURNAL_IO);
+  EXPECT_EQ(session.snapshot()->account_version, before->account_version);
+  EXPECT_EQ(session.snapshot()->account.cash, before->account.cash);
+  EXPECT_TRUE(session.snapshot()->recent_orders.empty());
+  EXPECT_EQ(file.read(), contents);
+  low_disk = false;
+  EXPECT_THROW(session.submit(market.market("still-stopped"), market.time), TradingError);
+}
 TEST(TradingJournal, DryRunAndReadOnlyInspectionLeaveDamageUntouched) {
   TemporaryJournal file;
   {
