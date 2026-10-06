@@ -119,6 +119,45 @@ TEST(TradingRisk, ABookOverItsDeltaLimitStillClosesHedgesAndTradesOtherUnderlyin
   EXPECT_EQ(s.snapshot()->recent_orders[1].status, OrderStatus::Filled);
   EXPECT_EQ(s.snapshot()->recent_orders[1].filled_notional, m("4.60"));
 }
+TEST(TradingRisk, ClosingAHedgeOverTheDeltaLimitIsRefusedButClosingExposureFills) {
+  ScriptedMarket call;
+  ScriptedMarket put = call;
+  put.contract = *md::parse_osi("SPXW261022P05000000");
+  TradingSession s({}, call.time);
+  call.seed(s);
+  s.define(put.contract, call.time);
+  s.on_quotes({put.quote()}, {put.valuation(-0.5)}, call.time);
+  ASSERT_TRUE(s.submit(call.market("calls", 3), call.time).decision.ok());
+  ASSERT_TRUE(s.submit(put.market("hedge"), call.time).decision.ok());
+  const auto held_delta = s.snapshot()->risk.underlyings.at("SPX").position.dollar_delta;
+  ASSERT_DOUBLE_EQ(held_delta, 500'000);
+  auto limits = s.config().limits;
+  limits.per_underlying.dollar_delta = 0.8 * held_delta;
+  ASSERT_TRUE(s.set_limits(limits, call.time).decision.ok());
+
+  const auto warnings = s.warnings();
+  const RiskWarning* delta_warning = nullptr;
+  for (const auto& warning : warnings) {
+    if (warning.code == "DELTA_LIMIT" && warning.scope == "SPX") {
+      delta_warning = &warning;
+    }
+  }
+  ASSERT_NE(delta_warning, nullptr);
+  EXPECT_EQ(delta_warning->message,
+            "SPX's dollar delta 500,000 is over its 400,000 limit: orders that raise it are refused; "
+            "closes and hedges that lower it still go");
+
+  const auto rejected = s.submit(put.market("close-hedge", 1, Side::Sell), call.time).decision;
+  EXPECT_EQ(rejected.code, Reason::DELTA_LIMIT);
+  EXPECT_EQ(rejected.scope, "SPX");
+  EXPECT_EQ(rejected.actual, 750'000);
+  EXPECT_EQ(rejected.limit, 400'000);
+  EXPECT_DOUBLE_EQ(s.snapshot()->risk.underlyings.at("SPX").position.dollar_delta, held_delta);
+  const auto close = s.submit(call.market("close-call", 1, Side::Sell), call.time);
+  ASSERT_TRUE(close.decision.ok());
+  EXPECT_EQ(s.snapshot()->recent_orders.back().status, OrderStatus::Filled);
+  EXPECT_DOUBLE_EQ(s.snapshot()->risk.underlyings.at("SPX").position.dollar_delta, 250'000);
+}
 TEST(TradingRisk, AggregateAndUnderlyingVegaLimitsHaveIndependentChecks) {
   ScriptedMarket a;
   ScriptedMarket b;

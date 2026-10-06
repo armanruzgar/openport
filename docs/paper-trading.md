@@ -1170,11 +1170,14 @@ Overflowing analytical exposures mark risk incomplete and block trading.
 
 An order is refused only when, with it pending, a bucket's reserved risk exceeds its
 limit **and** exceeds that bucket's reserved risk without the order. An order that
-cannot raise any bucket's reserved risk is accepted, and fills, even while the held
+does not raise any bucket's reserved risk is accepted, and fills, even while the held
 book is already over a limit, whether the market or a tighter limit put it there: a
-close, a hedge no larger than the position, or an order on another underlying that
-fits that underlying's and the aggregate's limits. Orders that add to an over-limit
-side still reject.
+close that lowers exposure, a hedge no larger than the position, or an order on
+another underlying that fits that underlying's and the aggregate's limits. A close
+that removes a hedge, such as selling a protective put held against long calls,
+can raise exposure. If it leaves the bucket further over its limit, it is refused
+with `DELTA_LIMIT` or `VEGA_LIMIT`. Close the exposed side first, or use Flatten,
+which closes the whole book.
 
 Pre-trade checks require a supported registered unexpired contract, an open session that takes the order,
 valid order/tick, max order quantity, valid fresh quote, price band, complete marks
@@ -1518,7 +1521,7 @@ in words, and `actual` and `limit` numbers whose meaning depends on the code:
 
 | Code | When | `actual`, `limit` |
 | --- | --- | --- |
-| `DELTA_LIMIT`, `VEGA_LIMIT` | A bucket's held exposure is over its limit: orders that add to it are refused, while closes and hedges still go | The absolute exposure and the limit |
+| `DELTA_LIMIT`, `VEGA_LIMIT` | A bucket's held exposure is over its limit. Orders that do not raise its reserved risk still go: a close that lowers exposure, a hedge no larger than the position, or an order on another underlying within its own and the aggregate's limits. Removing a hedge, such as selling a protective put against long calls, can leave the bucket further over its limit and be refused with these codes. Close the exposed side first, or use Flatten to close the whole book | The absolute exposure and the limit |
 | `DELTA_HEADROOM` | An underlying is within max(1%, one standard deviation of its move to today's close) of a move that takes its dollar delta to its own limit or the account's. Per 1% move, dollar delta changes by dollar gamma plus 1% of itself; this is a first-order estimate | The signed percent move, and the threshold |
 | `SOFT_FLOOR` | Equity is at or below the soft floor, which latches at once, closes positions and refuses opening orders; lower settings wait until rollover or an account reset applies them | Equity and the soft floor |
 | `SOFT_FLOOR_UNUSED` | Informational: a percent soft floor is set on a plan without a drawdown floor, where it does nothing; use an absolute floor instead | No numeric threshold |

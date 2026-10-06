@@ -3517,16 +3517,16 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
     out.push_back({std::move(code), urgent ? "warning" : "info", std::move(scope), std::move(symbol), std::move(message), actual, limit});
   };
   if (now.risk.complete) {
-    // Over a limit, orders that add to the excess are refused; closes and hedges still go.
+    // Over a limit, orders that raise reserved risk are refused; orders that lower it still go.
     const auto over = [&](const std::string& scope, const RiskBucket& b) {
       const auto name = scope == "aggregate" ? std::string("The account's") : scope + "'s";
       if (const auto delta = std::abs(b.position.dollar_delta); delta > b.limits.dollar_delta)
         add("DELTA_LIMIT", true, scope, {}, name + " dollar delta " + whole(b.position.dollar_delta) + " is over its " +
-            whole(b.limits.dollar_delta) + " limit: orders that add to it are refused, while closes and hedges still go",
+            whole(b.limits.dollar_delta) + " limit: orders that raise it are refused; closes and hedges that lower it still go",
             delta, b.limits.dollar_delta);
       if (const auto vega = std::abs(b.position.vega); vega > b.limits.vega)
         add("VEGA_LIMIT", true, scope, {}, name + " vega " + whole(b.position.vega) + " is over its " + whole(b.limits.vega) +
-            " limit: orders that add to it are refused, while closes and hedges still go", vega, b.limits.vega);
+            " limit: orders that raise it are refused; closes and hedges that lower it still go", vega, b.limits.vega);
     };
     for (const auto& [name, bucket] : now.risk.underlyings) over(name, bucket);
     over("aggregate", now.risk.aggregate);
