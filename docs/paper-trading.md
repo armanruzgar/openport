@@ -515,8 +515,8 @@ date, and in the **curb** session, 16:15 to 17:00 ET after a full day (see
 [runtime notes](runtime.md#product-sessions-and-cboe-clocks)). As on Cboe, the overnight and curb
 sessions accept limit executions only. Plain DAY/IOC limits trade there; DAY ends with
 the session it entered (`DAY_END`). Legacy DAY/GTC triggers and bracket exits still
-wait for regular hours. GTC limits and held exits may be accepted between
-sessions with fresh data, but do not trade outside regular hours.
+wait for regular hours. GTC limits and held exits can be placed during a product's
+curb and overnight sessions with fresh data, but rest until regular hours.
 
 **EXTO** trades all product sessions of its trading date, ending at the last session
 close (normally 17:00 ET for these index products, the regular close on early-close
@@ -559,8 +559,9 @@ run again before a fill and on limit changes: a failed check cancels with
 earliest leg's last trade, or with `EXPIRY_CUTOFF` at the account's earlier auto-close
 deadline, even when no position is held; their `day_end` is that deadline. Evaluation
 decisions and account resets cancel them too.
-A plain GTC limit can be submitted outside a session if the data and other checks
-permit it; submission does not make it match there. Holidays and
+When none of a product's sessions is open (between sessions, weekends or holidays),
+new orders, GTC included, are refused with `SESSION_CLOSED`; GTC orders placed
+earlier remain working through the gap and wait for regular hours. Holidays and
 early closes follow NYSE's rules from 2022 on, and the overnight session runs into
 most holidays until 11:30 ET, as Cboe schedules it (see the runtime notes).
 
@@ -1087,13 +1088,9 @@ its last session's end while it is closed, so a position in a closed market keep
 closing mark: an SPY position held overnight does not block SPX trading in the
 overnight session, and the day rolls over on it. An AM series past its last trade
 keeps its closing mark and valuation until settlement time and does not block the
-curb or overnight sessions. The quote reducer ignores observations and valuations
-stamped at or after last trade for these series, including retirement 0/0 quotes;
-the boundary is exclusive. PM series and settlement processing are unchanged.
-Journal recovery restores recorded state without reapplying this filter. Old
-journals retain their recorded books and valuations (including any retirement
-data already stored); derived freshness can differ only after last trade because
-of the freshness cap. Awaiting-settlement positions retain their last
+curb or overnight sessions. Quotes and valuations that arrive for such a series at
+or after its last trade, such as the 0/0 quote a feed shows once it stops trading,
+do not replace that close. Awaiting-settlement positions retain their last
 mark and are always incomplete. If no mark exists, market value/unrealised are null;
 the equity field is only a partial estimate and must be read with its completeness
 flag. Normal session fills always establish a mark first.
