@@ -37,7 +37,7 @@ command with the [quick start](#quick-start).
 - **A prop-firm-style simulator**: orders fill against the quotes the feed displays,
   under evaluation rules, with optional latency and simulated size impact, and a
   hash-chained journal that survives restarts.
-- **905 C++, 556 web and 56 Python tests**, built in CI with GCC 13 on Ubuntu and
+- **1,640 C++, 964 web and 132 Python tests**, built in CI with GCC 13 on Ubuntu and
   Apple Clang on macOS, warnings as errors.
 
 Timings are medians on an Apple M2 Max: the IV solve from `openport_bench`, and the SPX
@@ -47,9 +47,8 @@ pass (over 23 passes) and the Cboe comparison on live data during the session, a
 No market open, or no data? The **demo market** plays simulated trading days you can
 trade: twenty scenarios, including SPX, SPY, QQQ, XSP, NDX, RUT and VIX options,
 from a reversal or a selloff to an afternoon waterfall, a pin into the close or a
-position held overnight and over a
-weekend, each run on a fresh or repeatable seed, with generated prices labelled as
-simulated on every page:
+position held overnight and over a weekend. Each run uses a fresh or repeatable seed,
+with generated prices labelled as simulated on every page:
 
 ![The demo market: five of its simulated days, then SPX and QQQ trading one of them at 120 times real time](docs/screenshots/demo-market.gif)
 
@@ -58,26 +57,33 @@ simulated on every page:
 - **Analytics**: the chain with bid/mid/ask IV, Greeks, volume and liquidity; SVI
   smiles and term structure; model-free IV, skew, realized volatility and IV rank;
   gamma and vanna exposure with the gamma flip and walls.
-- **Evaluations**: a profit target and a trailing drawdown floor decide pass or fail,
-  with buying-power rules, personal guardrails, a reduce-only kill switch and breach
-  estimates.
-- **Account margin**: cash, IRA and margin accounts, with strategy or portfolio
-  margin, house requirements and an optional portfolio IV shock selected in the terminal.
-- **Orders and strategies**: DAY/GTC, all-session EXTO/GTC_EXTO protection, timestamp
-  GTD and limit flattening overnight and in curb. Up to four legs picked on the chain
-  or built from templates, with probability of profit, OCO exits and rolls.
-  Opt-in inside fills trade limits at or beyond midpoint, and
-  [walking limits](docs/paper-trading.md#walking-limits-f46) step toward a chosen cap on market time.
-  Optional [itemized fees](docs/paper-trading.md#fees) include open/close commission,
-  per-leg caps, clearing, regulatory, index and exercise charges.
-- **Journal**: a P&L calendar, reports by tag and hold time, and a review of every
-  trade with its context, excursions and R-multiple.
-- **Replay and backtests**: trade any recorded or imported day again at up to 300×,
-  and run versioned playbooks over many days.
+- **Evaluations**: daily loss bases, static or trailing floors, best-day and
+  per-trade consistency, minimum days and trades, flat time, news and holding
+  restrictions, instrument and opening-hour limits, and two-step evaluations.
+  Custom plans add payout rules, scaling, reset costs and limits; funded plans
+  stay hidden in the terminal unless already funded or explicitly enabled.
+- **Orders and strategies**: up to four opening legs, rolls, trailing stops,
+  stop-limits, OCO/OTO chains and brackets that protect partial remainders. Flatten
+  works until flat: spreads close as one order and exits stay until the last contract
+  is closed, with limit flatten overnight and in curb. EXTO/GTC_EXTO, timestamp GTD
+  and conditions on another symbol, a study or the time of day support entries and exits.
+- **Fills and fees**: displayed-size fills, optional Conservative latency and impact,
+  inside fills, [walking limits](docs/paper-trading.md#walking-limits) and
+  [itemized fees](docs/paper-trading.md#fees). These do not simulate queue position.
+- **Margin and shares**: cash, IRA and margin accounts, strategy or portfolio margin,
+  house requirements and optional IV shocks; share trades for hedges, covered calls
+  and collars, with buying-power previews.
+- **Risk**: held-book warnings, what-if adjustments, P&L profiles by date and IV,
+  beta weighting to SPY/SPX, probability cones and a reduce-only kill switch.
+- **Journal**: whole trades across rolls, entry/exit context, excursions, R-multiples,
+  a P&L calendar and exports carrying attempt and replay-run identity.
+- **Replay and playbooks**: multi-day runs, stepping, in-app verification and stress
+  scenarios; versioned setups, joint backtests and live paper forward tests.
 - **Scripting and alerts**: an OpenAPI contract, a Python client and an MCP server;
-  alerts in the terminal and to Discord, Telegram, ntfy or a webhook.
+  account alerts in the terminal and to Discord, Telegram, ntfy or a webhook.
 
 The [full feature list](docs/features.md) has every rule, order type and report.
+On delayed data, a pass is practice, not proof of real-time performance.
 
 ## Quick start
 
