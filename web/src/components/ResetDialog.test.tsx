@@ -29,6 +29,15 @@ beforeEach(() => {
   vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
   vi.spyOn(api, "resetAccount").mockResolvedValue(account)
 })
+it("labels the Practice option as Practice in the reset dialog", async () => {
+  await act(async () => root.render(<QueryClientProvider client={client}>
+    <ResetDialog trading={{ ...status.trading!, write: "open" }} attempt={2} initial="practice" onClose={() => {}} />
+  </QueryClientProvider>))
+  const option = host.querySelector('input[value="practice"]')?.closest("label")
+  expect(option?.textContent).toContain("Practice")
+  expect(option?.querySelector(".text-faint")?.textContent).toContain("Practice")
+  expect(option?.textContent).not.toContain("Evaluation")
+})
 it.each(["reset", "create"])("submits itemized fees when starting an account attempt (%s)", async (kind) => {
   vi.spyOn(api, "createAccount").mockResolvedValue({ account: { id: "fees", name: "Fees", account_version: "1", plan: "Practice", equity: "100000.00" } })
   const plan = plans.find((entry) => entry.id === "intraday-100k")!

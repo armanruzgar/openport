@@ -131,10 +131,24 @@ describe("simulator pages", () => {
     expect(failed).toContain("Evaluation failed")
     expect(failed).toContain("reached the drawdown floor")
     expect(failed).toContain("Start a new attempt")
-    const practice = render(<DashboardView />, { ...account, rules: { ...account.rules, plan: "Practice", profit_target: null, max_drawdown: null },
+    const practice = render(<DashboardView />, { ...account, rules: { ...account.rules, plan_id: "practice", plan: "Practice", profit_target: null, max_drawdown: null },
       evaluation: { ...account.evaluation, enabled: false, floor: null, target_equity: null, target_remaining: null, drawdown_buffer: null } })
+    expect(practice).toContain("Practice · Practice · attempt")
+    expect(practice).not.toContain("Practice · Evaluation")
     expect(practice).toContain("No evaluation running")
     expect(practice).toContain("Start an evaluation")
+  })
+  it("labels the practice program step and plans table consistently", () => {
+    const plan = plans.find((entry) => entry.id === "practice")!
+    const practice = { ...account, rules: plan.rules }
+    expect(ruleText(practice).find((entry) => entry.title === "Program step")?.body).toBe("Practice")
+    const html = render(<RulesView />, practice, [plan])
+    const row = html.split("<tr").slice(1).find((entry) => entry.includes(">Practice<"))
+    const cells = row?.match(/<td[^>]*>.*?<\/td>/g)
+    expect(cells?.[2]).toContain(">Practice<")
+    expect(row).not.toContain("Evaluation")
+    expect(planFacts(plan)).toContain("Practice")
+    expect(planFacts(plan)).not.toContain("Evaluation")
   })
   it("shows a passed attempt's target as reached although the liquidation sold below it", () => {
     // B37: liquidation sells at the bid, so equity can end just under the target that passed.
