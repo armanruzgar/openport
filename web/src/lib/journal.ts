@@ -2,7 +2,11 @@ import type { ShareSource, ShareTrade, Trade } from "../api/trading-types"
 import type { TradeGroup } from "./positions"
 
 /** A closed or open trade in the journal: an option contract's, or shares from exercise and assignment. */
-export type JournalTrade = Trade | ShareTrade
+type JournalOptionTrade = Trade & {
+  /** Display identity and side of every leg in an aggregated journal entry. */
+  journalGroup?: { label: string; side: "call" | "put" | "mixed" }
+}
+export type JournalTrade = JournalOptionTrade | ShareTrade
 export const isShares = (trade: JournalTrade): trade is ShareTrade => "kind" in trade && trade.kind === "shares"
 
 /** Journal analytics are display summaries in dollars; accounting stays exact on the server. */
@@ -152,7 +156,7 @@ const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /** `winRate` is wins over decided trades, as everywhere: a breakeven is neither a win nor a loss. */
 export interface Bucket { label: string; net: number; trades: number; wins: number; losses: number; winRate: number | null }
-/** Closed trades grouped by holding time, the weekday or month of the trading date they closed on (an overnight close counts toward the session's day), or tag (a trade counts under each of its tags). Shares count only without a call or put side. */
+/** Closed trades grouped by holding time, the weekday or month of the trading date they closed on (an overnight close counts toward the session's day), or tag (a trade counts under each of its tags). Shares and mixed call/put groups count only under All. */
 export function tradeBuckets(trades: readonly JournalTrade[], dimension: Dimension, side: Side = "all"): Bucket[] {
   const tags = dimension === "tag" ? [...tradeTags(trades), "untagged"] : []
   const labels = dimension === "duration" ? durationBuckets.map((b) => b.label) : dimension === "weekday" ? weekdays : dimension === "month" ? months : tags
@@ -165,7 +169,7 @@ export function tradeBuckets(trades: readonly JournalTrade[], dimension: Dimensi
     else if (net < 0) bucket.losses++
   }
   for (const trade of trades) {
-    if (trade.status !== "closed" || !trade.closed || (side !== "all" && (isShares(trade) || trade.type !== side))) continue
+    if (trade.status !== "closed" || !trade.closed || (side !== "all" && (isShares(trade) || (trade.journalGroup?.side ?? trade.type) !== side))) continue
     if (dimension === "tag") {
       const own = trade.tags?.length ? trade.tags : ["untagged"]
       for (const tag of own) count(out[labels.indexOf(tag)], tradeNet(trade))
@@ -225,7 +229,7 @@ export function orderLabel(order: { symbol: string | null; underlying: string; l
 
 /** A trade's name in the journal: "SPX Oct 22 5000C", or "SPY 200 shares" (short ones say so). */
 export function journalLabel(trade: JournalTrade): string {
-  return isShares(trade) ? `${trade.symbol} ${trade.max_shares} shares${trade.direction === "short" ? " short" : ""}` : contractLabel(trade)
+  return isShares(trade) ? `${trade.symbol} ${trade.max_shares} shares${trade.direction === "short" ? " short" : ""}` : trade.journalGroup?.label ?? contractLabel(trade)
 }
 
 /** How shares came or went: "Exercised SPY Oct 16 500C at expiry", "Assigned SPY Oct 16 500P", "Sold". */
@@ -282,10 +286,10 @@ export function strategyResults(trades: readonly Trade[], filledUnits?: number):
  * its first opening to its last close, closed only once every leg is. Single round
  * trips pass through as they are.
  */
-export function wholeEntries(groups: readonly TradeGroup[]): Trade[] {
+export function wholeEntries(groups: readonly TradeGroup[]): JournalOptionTrade[] {
   return groups.map((group) => {
     const [first, ...rest] = group.trades
-    if (!first || (!rest.length && !group.whole)) return first!
+    if (!first || (!rest.length && !group.whole && !group.order)) return first!
     const sum = (pick: (t: Trade) => string | null | undefined) => group.trades.reduce((total, t) => total + dollars(pick(t)), 0).toFixed(6)
     const open = group.trades.some((t) => t.status === "open")
     const closed = open ? null : group.trades.map((t) => t.closed ?? "").sort().at(-1) ?? null
@@ -293,6 +297,10 @@ export function wholeEntries(groups: readonly TradeGroup[]): Trade[] {
     const days = group.trades.map((t) => t.trading_day ?? "").filter(Boolean).sort()
     return {
       ...first, id: group.whole?.id ?? first.id, status: open ? "open" : "closed", opened, closed,
+      journalGroup: {
+        label: group.label,
+        side: group.trades.every((t) => t.type === first.type) ? first.type : "mixed",
+      },
       trading_day: open ? null : days.at(-1) ?? first.trading_day,
       duration_seconds: closed ? (Date.parse(closed) - Date.parse(opened)) / 1000 : null,
       opened_contracts: group.trades.reduce((total, t) => total + t.opened_contracts, 0),

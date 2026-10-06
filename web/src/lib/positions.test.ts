@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { Fill, Order, Position, Trade, WholeTrade } from "../api/trading-types"
 import type { ChainRow } from "../api/types"
 import { order, portfolio, quote, trades } from "../test/trading-fixtures"
-import { wholeEntries } from "./journal"
+import { contractLabel, journalLabel, journalStats, tradeBuckets, wholeEntries } from "./journal"
 import { closingPlan, rollPlan, settlementTime, strategyGroups, tradeGroups } from "./positions"
 
 const base = portfolio.positions[0]!
@@ -136,6 +136,46 @@ describe("strategies in the journal", () => {
     expect(entries[0]!.status).toBe("closed")
     expect(entries[0]!.trading_day).toBe("2026-09-24")
     expect(entries[1]).toBe(list[4])
+    const stats = journalStats([entries[0]!])
+    expect(journalLabel(stats.best!)).toBe("Whole trade · SPX Oct 16 6900/6890/6850/6840 P")
+    expect(journalLabel(stats.worst!)).toBe(groups[0]!.label)
+    expect(journalLabel(entries[1]!)).toBe(contractLabel(list[4]!))
+    expect(tradeBuckets([entries[0]!], "duration", "put").reduce((n, b) => n + b.trades, 0)).toBe(1)
+    expect(tradeBuckets([entries[0]!], "duration", "call").every((b) => b.trades === 0)).toBe(true)
+  })
+
+  it.each([false, true])("counts a condor only under All, regardless of leg order (whole: %s)", (whole) => {
+    const opening = combo("7", [[6900, "sell"], [6890, "buy"]], 1, "-2.00")
+    opening.legs!.push(
+      { symbol: "SPXW  261016C07100000", side: "sell", ratio: 1 },
+      { symbol: "SPXW  261016C07110000", side: "buy", ratio: 1 },
+    )
+    const list = opening.legs!.map((l, i): Trade => ({
+      ...leg(String(i), [6900, 6890, 7100, 7110][i]!, l.side === "buy" ? "long" : "short", `f${i}`, "closed", "10.00"),
+      symbol: l.symbol, type: i < 2 ? "put" : "call", expiry: "2026-10-16", group: "0",
+    }))
+    const fills = list.map((_, i) => fill(`f${i}`, "7"))
+    const wholes: WholeTrade[] = whole ? [{ id: "0", attempt: 1, underlying: "SPX", status: "closed",
+      opened: list[0]!.opened, closed: list[0]!.closed, trading_day: "2026-09-23", round_trips: list.map((t) => t.id), entries: 2,
+      gross: "40.00", fees: "0", net: "40.00", unrealised: null, review: null, review_since: null }] : []
+    for (const members of [list, [...list].reverse()]) {
+      const groups = tradeGroups(members, fills, [opening], wholes)
+      const entries = wholeEntries(groups)
+      expect(entries).toHaveLength(1)
+      expect(journalLabel(journalStats(entries).best!)).toBe(groups[0]!.label)
+      expect(groups[0]!.label).toContain(whole ? "Whole trade" : "Iron condor")
+      const count = (items: typeof entries, side: "all" | "call" | "put") =>
+        tradeBuckets(items, "duration", side).reduce((n, b) => n + b.trades, 0)
+      expect(count(entries, "all")).toBe(1)
+      expect(count(entries, "call")).toBe(0)
+      expect(count(entries, "put")).toBe(0)
+      expect(count(members, "all")).toBe(4)
+      expect(count(members, "call")).toBe(2)
+      expect(count(members, "put")).toBe(2)
+      const calls = wholeEntries(tradeGroups(members.filter((t) => t.type === "call"), fills, [opening], wholes))
+      expect(count(calls, "call")).toBe(1)
+      expect(count(calls, "put")).toBe(0)
+    }
   })
 })
 
