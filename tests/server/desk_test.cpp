@@ -2607,6 +2607,11 @@ TEST(ReplayRun, RestartRefusesVerificationAndChangedOrTruncatedSources) {
   const auto refused = replay_call(host, "POST", "/api/replay", {{"restart", id}});
   EXPECT_EQ(refused.status, 409);
   EXPECT_EQ(json::parse(refused.body).at("error").at("code"), "VERIFICATION_RUNNING");
+  EXPECT_EQ(json::parse(refused.body).at("error").at("message"), "Wait for verification before restarting this run");
+  const auto resume_refused = replay_call(host, "POST", "/api/replay", {{"resume", id}});
+  EXPECT_EQ(resume_refused.status, 409);
+  EXPECT_EQ(json::parse(resume_refused.body).at("error").at("code"), "VERIFICATION_RUNNING");
+  EXPECT_EQ(json::parse(resume_refused.body).at("error").at("message"), "Wait for verification before resuming this run");
   release.set_value();
   ASSERT_TRUE(test::recording_eventually([&] { return json::parse(replay_call(host, "GET", "/api/replay/history/" + id + "/verify").body).at("status") != "running"; }));
   { std::ofstream changed(file.path, std::ios::app); changed << "changed"; }

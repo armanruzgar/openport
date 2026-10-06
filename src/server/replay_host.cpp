@@ -1163,7 +1163,9 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     {
       const std::lock_guard handoff(handoff_mutex_);
       if (history_->verifying() == id) {
-        complete(api_error(409, "VERIFICATION_RUNNING", "Wait for verification before resuming this run"));
+        complete(api_error(409, "VERIFICATION_RUNNING", restart
+            ? "Wait for verification before restarting this run"
+            : "Wait for verification before resuming this run"));
         return;
       }
     }
