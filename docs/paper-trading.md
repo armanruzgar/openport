@@ -689,8 +689,12 @@ Prices and studies come from the same analytics that value the contracts: the
 underlying's spot (quoted, or implied by parity), the model-free 30-day volatility
 (the 30-day at-the-money volatility when the strip cannot give one), the 7-day
 at-the-money volatility and the ratio of the 9-day and 30-day model-free volatilities, as
-on the Volatility page. A demo or scenario day lists expiries only a few weeks out, so
-only `iv7` is available there. The server
+on the Volatility page. Demo and scenario days cover the 7-day maturity for `iv7`,
+but `iv30` and `term_ratio` are available only while usable listed expiries bracket
+30 days (or land exactly on it); the analytics do not extrapolate beyond the last
+expiry. This can be the ETFs' next-month PM monthly while the index AM monthly
+falls just short of 30 days. `iv30` needs usable model-free or at-the-money inputs;
+`term_ratio` needs both the 9-day and 30-day model-free volatilities. The server
 supplies them with each market batch to the accounts whose armed orders watch them, and
 the account keeps the latest of each; one older than the valuation age, or missing
 because the feed does not carry that underlying, never triggers. Like any trigger they
