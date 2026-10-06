@@ -1,7 +1,7 @@
 import type { Account, EvaluationDay, Money, PayoutStatus, PayoutRules, Plan } from "../api/trading-types"
 import { showFundedAccounts } from "./features"
 import { sameProgram } from "./program-costs"
-import { compareMoney, formatMoney, sumMoney } from "./trading"
+import { compareMoney, ruleMoney, formatMoney, sumMoney } from "./trading"
 
 /** Verification is always offered; funded plans share the Payouts page's visibility. */
 export function offeredPlans(plans: Plan[], account?: Pick<Account, "rules">, showFunded = showFundedAccounts): Plan[] {
@@ -47,7 +47,7 @@ export function payoutChecks(status: PayoutStatus): PayoutCheck[] {
   const checks: PayoutCheck[] = [
     { label: "Funded account is active", ok: status.active },
     { label: "No open positions or working orders", ok: status.flat },
-    { label: `Qualifying days of ${formatMoney(status.qualifying_profit, 0)}+ net realised profit`,
+    { label: `Qualifying days of ${ruleMoney(status.qualifying_profit)}+ net realised profit`,
       ok: status.qualifying_days >= status.required_days, value: `${status.qualifying_days} of ${status.required_days}` },
   ]
   if (status.consistency_percent != null) checks.push({ label: "Payout consistency",

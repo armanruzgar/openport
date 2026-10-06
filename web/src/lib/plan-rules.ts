@@ -1,11 +1,16 @@
 import type { Account, AccountRules, DailyLossBasis, Evaluation, EventWindow, Money, Objective, PlanEvent, SizeScaling } from "../api/trading-types"
-import { compareMoney, validMoney, formatMoney, subtractMoney } from "./trading"
+import { compareMoney, ruleMoney, validMoney, formatMoney, subtractMoney } from "./trading"
 import { newYorkDate } from "./journal"
 
 export function phaseFact(rules: AccountRules): string {
   if (rules.phase === "verification") return "Step 2 of 2: verification"
   if (rules.phase === "funded") return "Funded account (simulated)"
-  return rules.plan_id?.startsWith("two-step-") || rules.plan?.startsWith("Two-step Challenge") ? "Step 1 of 2: challenge" : "Evaluation"
+  if (rules.plan_id?.startsWith("two-step-") || rules.plan?.startsWith("Two-step Challenge")) return "Step 1 of 2: challenge"
+  // Match AccountRules::evaluation() on the server.
+  const evaluation = [rules.profit_target, rules.max_drawdown, rules.daily_loss_limit].some((amount) => compareMoney(amount, "0") === 1)
+    || (rules.time_limit_days ?? 0) > 0 || (rules.inactivity_days ?? 0) > 0
+    || rules.no_overnight || (rules.hold_restrictions?.length ?? 0) > 0
+  return evaluation ? "Evaluation" : "Practice"
 }
 
 /** "18:00" as "6:00 pm"; "24:00" as "midnight". */
@@ -27,9 +32,9 @@ export const dailyLossBasisText: Record<DailyLossBasis, string> = {
 /** The floor in a few words: static, or trailing and where it locks. */
 export function drawdownFact(rules: AccountRules, initialCash: Money): string {
   if (!rules.max_drawdown) return "No drawdown floor"
-  const amount = formatMoney(rules.max_drawdown, 0)
-  if (rules.drawdown_mode === "static") return `${amount} static drawdown: the floor stays at ${formatMoney(subtractMoney(initialCash, rules.max_drawdown), 0)}`
-  const lock = rules.lock_at_start ? ", locks at the starting balance" : rules.lock_balance ? `, locks at ${formatMoney(rules.lock_balance, 0)}` : ""
+  const amount = ruleMoney(rules.max_drawdown)
+  if (rules.drawdown_mode === "static") return `${amount} static drawdown: the floor stays at ${ruleMoney(subtractMoney(initialCash, rules.max_drawdown))}`
+  const lock = rules.lock_at_start ? ", locks at the starting balance" : rules.lock_balance ? `, locks at ${ruleMoney(rules.lock_balance)}` : ""
   return `${amount} trailing drawdown (${rules.drawdown_mode === "intraday" ? "intraday" : "end of day"})${lock}`
 }
 /** How the floor moves, for plan tables. */
@@ -41,7 +46,7 @@ export function floorMoves(rules: AccountRules): string {
 }
 export function dailyLossFact(rules: AccountRules): string | null {
   if (!rules.daily_loss_limit) return null
-  return `${formatMoney(rules.daily_loss_limit, 0)} daily loss limit from ${dailyLossBasisText[rules.daily_loss_basis ?? "equity"]}: ${
+  return `${ruleMoney(rules.daily_loss_limit)} daily loss limit from ${dailyLossBasisText[rules.daily_loss_basis ?? "equity"]}: ${
     rules.daily_loss_action === "fail" ? "fails the attempt" : "closes every position and locks the day"}`
 }
 export function scalingFact(rules: Pick<AccountRules, "scaling">): string | null {
@@ -53,7 +58,7 @@ export function objectiveFacts(rules: AccountRules): string[] {
   const facts: string[] = []
   if (rules.min_trading_days) facts.push(`At least ${rules.min_trading_days} trading ${rules.min_trading_days === 1 ? "day" : "days"}`)
   if (rules.min_profitable_days) facts.push(`At least ${rules.min_profitable_days} profitable ${rules.min_profitable_days === 1 ? "day" : "days"}${
-    rules.profitable_day_profit ? ` of ${formatMoney(rules.profitable_day_profit, 0)}+` : ""}`)
+    rules.profitable_day_profit ? ` of ${ruleMoney(rules.profitable_day_profit)}+` : ""}`)
   if (rules.consistency_percent) facts.push(`Best day at most ${rules.consistency_percent}% of ${
     rules.consistency_basis === "positive_days" ? "the profitable days' total" : "the total profit"}`)
   if (rules.phase !== "funded" && rules.microscalp_percent) facts.push(`Profit from round trips under ${rules.microscalp_seconds}s at most ${rules.microscalp_percent}% of attempt profit`)
@@ -63,7 +68,7 @@ export function objectiveFacts(rules: AccountRules): string[] {
 }
 export function targetFact(rules: AccountRules): string {
   if (!rules.profit_target) return rules.phase === "funded" ? "Funded: no profit target" : "No profit target"
-  return `${formatMoney(rules.profit_target, 0)} profit target${rules.profit_basis === "balance" ? " on the closed balance" : ""}`
+  return `${ruleMoney(rules.profit_target)} profit target${rules.profit_basis === "balance" ? " on the closed balance" : ""}`
 }
 export function dayEndFact(rules: AccountRules): string | null {
   return dayEnd(rules) === "17:00" ? null : `Trading day ends at ${clockText(dayEnd(rules))} ET`
@@ -123,7 +128,7 @@ export const objectiveLabels: Record<string, string> = {
 }
 /** An objective's standing in a few characters: dollars, days or percent. */
 export function objectiveValue(o: Objective): string {
-  if (o.code === "PROFIT_TARGET") return `${formatMoney(o.actual?.toFixed(2))} of ${formatMoney(o.required.toFixed(2), 0)}`
+  if (o.code === "PROFIT_TARGET") return `${formatMoney(o.actual?.toFixed(2))} of ${ruleMoney(o.required.toFixed(2))}`
   if (o.code === "CONSISTENCY" || o.code === "TRADE_CONSISTENCY" || o.code === "MICROSCALPING") return `${o.actual == null ? "—" : `${Math.round(o.actual)}%`} of ${o.required}% max`
   return `${o.actual ?? 0} of ${o.required}`
 }

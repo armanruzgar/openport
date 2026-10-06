@@ -31,6 +31,11 @@ export function formatMoney(value: Money | null | undefined, digits = 2): string
   const [whole = "0", fraction] = decimalString(rounded, digits).split(".")
   return `${parsed.units < 0n && rounded !== 0n ? "−" : ""}$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${fraction ? `.${fraction}` : ""}`
 }
+/** Rule amounts retain cents, while whole-dollar presets stay compact. */
+export function ruleMoney(value: Money | null | undefined): string {
+  const parsed = decimal(value)
+  return formatMoney(value, parsed && parsed.units % (10n ** BigInt(parsed.scale)) === 0n ? 0 : 2)
+}
 /** P&L style: "+$267.50", "−$10.65", "$0.00". */
 export function signedMoney(value: Money | null | undefined, digits = 2): string {
   const text = formatMoney(value, digits)

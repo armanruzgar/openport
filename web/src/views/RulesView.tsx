@@ -12,7 +12,7 @@ import { TradingError } from "../components/TradingControls"
 import { Empty, PageHeader, Panel } from "../components/ui"
 import { lockReason, offeredPlans, payoutCap, payoutRuleFacts } from "../lib/payouts"
 import { sizeScalingFact, scalingFact, clockText, dailyLossBasisText, dailyLossFact, dayEnd, floorMoves, objectiveFacts, timeRuleEntries } from "../lib/plan-rules"
-import { compareMoney, formatMoney, subtractMoney } from "../lib/trading"
+import { compareMoney, ruleMoney, formatMoney, subtractMoney } from "../lib/trading"
 
 function Rule({ title, children }: { title: string; children: ReactNode }) {
   return <div className="border-b border-border/50 py-3 last:border-0">
@@ -38,25 +38,25 @@ export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
     funded ? { title: "Funded account", body: <>There is no profit target: trade the account and withdraw from its profits under the payout rules below.
         The account stays open while its drawdown and any inactivity limit are respected.</> }
     : { title: "Profit target", body: r.profit_target
-      ? <>Pass by reaching <strong className="text-foreground">{formatMoney(e.target_equity)}</strong> {balance
+      ? <>Pass by reaching <strong className="text-foreground">{ruleMoney(e.target_equity)}</strong> {balance
           ? <>on the closed balance (cash plus what your positions cost, so realised P&amp;L after fees), with every position closed: open profit counts only once you close the trade</>
-          : "equity"}, {formatMoney(r.profit_target)} above your {formatMoney(e.starting_balance)} starting balance.
+          : "equity"}, {ruleMoney(r.profit_target)} above your {ruleMoney(e.starting_balance)} starting balance.
         {objectives.length
           ? <> The pass also waits for: {objectives.map((o) => o.charAt(0).toLowerCase() + o.slice(1)).join("; ")}. Until then, reaching the target does not end the attempt: keep trading, and protect it.</>
           : r.time_limit_days ? " There is no minimum number of trading days." : " There is no time limit and no minimum number of trading days."} Once you pass, the attempt is complete and the system tries to close positions. You can close any leftovers; opening orders require a new attempt.</>
       : "This account has no profit target." },
     { title: fixed ? "Static drawdown" : "Trailing drawdown", body: r.max_drawdown
-      ? <>Equity may never touch the floor, now <strong className="text-foreground">{formatMoney(e.floor)}</strong>{fixed
-          ? <>: {formatMoney(r.max_drawdown)} below your {formatMoney(e.starting_balance)} starting balance. It is static: it stays there for the whole attempt, whatever equity does.</>
+      ? <>Equity may never touch the floor, now <strong className="text-foreground">{ruleMoney(e.floor)}</strong>{fixed
+          ? <>: {ruleMoney(r.max_drawdown)} below your {ruleMoney(e.starting_balance)} starting balance. It is static: it stays there for the whole attempt, whatever equity does.</>
           : e.floor_locked
-          ? <>. It has locked at {formatMoney(lockAt)} and no longer trails.</>
-          : <>: {formatMoney(r.max_drawdown)} below your highest equity ({formatMoney(e.peak)}).
+          ? <>. It has locked at {ruleMoney(lockAt)} and no longer trails.</>
+          : <>: {ruleMoney(r.max_drawdown)} below your highest equity ({formatMoney(e.peak)}).
             {r.drawdown_mode === "intraday" ? " The floor rises with every new equity high during the session." : " The floor rises only once a day, from each day's closing equity."} It never moves down.
-            {lockAt && <> Once it reaches {r.lock_at_start ? <>your {formatMoney(lockAt)} starting balance</> : formatMoney(lockAt)} it locks there and stops trailing.</>}</>}{" "}
+            {lockAt && <> Once it reaches {r.lock_at_start ? <>your {ruleMoney(lockAt)} starting balance</> : ruleMoney(lockAt)} it locks there and stops trailing.</>}</>}{" "}
         Breaches are checked on every update in every mode; touching the floor {funded ? "closes the funded account" : "fails the attempt"} and starts liquidation. Closing leftover positions is still allowed.</>
       : "This account has no drawdown floor." },
     ...(r.daily_loss_limit ? [{ title: "Plan daily loss limit", body: <>
-        Each trading day, equity may not touch {formatMoney(r.daily_loss_limit)} below {dailyLossBasisText[r.daily_loss_basis ?? "equity"]}
+        Each trading day, equity may not touch {ruleMoney(r.daily_loss_limit)} below {dailyLossBasisText[r.daily_loss_basis ?? "equity"]}
         {e.daily_loss ? <>: today <strong className="text-foreground">{formatMoney(e.daily_loss.level)}</strong>, {compareMoney(e.daily_loss.room, "0") === 1
           ? <>{formatMoney(e.daily_loss.room)} below current equity</>
           : <>which equity has reached{compareMoney(e.daily_loss.room, "0") === -1
@@ -84,14 +84,14 @@ export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
         A lower limit keeps existing positions; reducing orders remain allowed.
       </> }] : []),
     ...(p ? [{ title: "Payouts", body: <>
-        A payout needs <strong className="text-foreground">{p.qualifying_days} qualifying days</strong> since the previous one: days that end with at least {formatMoney(p.qualifying_profit)} of net realised profit, after fees.
-        Request it with no open positions or working orders. Each payout may take up to {p.withdrawal_percent}% of the profit above your {formatMoney(e.starting_balance)} starting balance,
-        at least {formatMoney(p.minimum)}{p.caps.length ? <> and at most {p.caps.map((cap, i) => `${formatMoney(cap, 0)} for payout ${i + 1}${i === p.caps.length - 1 && i > 0 ? " and later" : ""}`).join(", ")}</> : null}; you keep {p.split_percent}%.
+        A payout needs <strong className="text-foreground">{p.qualifying_days} qualifying days</strong> since the previous one: days that end with at least {ruleMoney(p.qualifying_profit)} of net realised profit, after fees.
+        Request it with no open positions or working orders. Each payout may take up to {p.withdrawal_percent}% of the profit above your {ruleMoney(e.starting_balance)} starting balance,
+        at least {ruleMoney(p.minimum)}{p.caps.length ? <> and at most {p.caps.map((cap, i) => `${ruleMoney(cap)} for payout ${i + 1}${i === p.caps.length - 1 && i > 0 ? " and later" : ""}`).join(", ")}</> : null}; you keep {p.split_percent}%.
         Each finished day counts once, toward the payout cycle in progress when it closes.
         {payoutRuleFacts(p, e.starting_balance).map((fact) => <span className="block" key={fact}>{fact}.</span>)}
         {!!p.consistency_percents?.length && <span className="block">Consistency includes losses and the day in progress. The request day remains in the next cycle in full; earlier finished days reset after each payout.</span>}
         A withdrawal is not a loss: the day's starting equity {r.lock_balance ? "and a floor that has not locked yet move" : "moves"} down with it.
-        {payoutCap(p.caps, e.payouts.length + 1) && <> Your next payout is number {e.payouts.length + 1}, capped at {formatMoney(payoutCap(p.caps, e.payouts.length + 1))}.</>}
+        {payoutCap(p.caps, e.payouts.length + 1) && <> Your next payout is number {e.payouts.length + 1}, capped at {ruleMoney(payoutCap(p.caps, e.payouts.length + 1))}.</>}
       </> }] : []),
     ...(r.max_volume_percent ? [{ title: "Maximum share of option volume", body: `Acceptance and fill checks cap held plus opening contracts on each option leg at ${r.max_volume_percent}% of its current trading date’s volume. Ratios count. Resting orders that would exceed the cap cancel with MAX_VOLUME_SHARE. Unknown or stale volume refuses; pure reductions and shares are exempt. Scenario backtests support this rule with generated opening volume. Recording days need current-date option volume or the backtest request returns HTTP 400.` }] : []),
     ...(r.no_hedging ? [{ title: "No hedging", body: "Opening orders cannot oppose held dollar delta on the same underlying, including options and shares. Pure reductions and system exits remain available. Missing or stale valuations refuse an opening." }] : []),
@@ -191,11 +191,11 @@ function Rules({ trading }: { trading: TradingStatus }) {
         <Panel title="Evaluation plans">
           <PlanTable label="Evaluation plans" plans={plans.data.plans.filter((p) => p.rules.phase !== "funded")} columns={[
             ["Step", (p) => phaseFact(p.rules)],
-            ["Profit target", (p) => p.rules.profit_target ? formatMoney(p.rules.profit_target, 0) : "—", true],
-            ["Drawdown", (p) => p.rules.max_drawdown ? formatMoney(p.rules.max_drawdown, 0) : "—", true],
+            ["Profit target", (p) => p.rules.profit_target ? ruleMoney(p.rules.profit_target) : "—", true],
+            ["Drawdown", (p) => p.rules.max_drawdown ? ruleMoney(p.rules.max_drawdown) : "—", true],
             ["Floor moves", (p) => floorMoves(p.rules)],
             ["Daily loss limit", (p) => p.rules.daily_loss_limit ? <span title={dailyLossFact(p.rules) ?? undefined}>
-              {formatMoney(p.rules.daily_loss_limit, 0)} · {p.rules.daily_loss_action === "fail" ? "fails" : "locks the day"}</span> : "—"],
+              {ruleMoney(p.rules.daily_loss_limit)} · {p.rules.daily_loss_action === "fail" ? "fails" : "locks the day"}</span> : "—"],
             ["To pass", (p) => p.rules.profit_target ? [p.rules.profit_basis === "balance" ? "Target, closed" : "Target", ...objectiveFacts(p.rules)].join(" · ") : "—"],
             ["Strategies", (p) => p.rules.buy_only ? "Buy only" : p.rules.defined_risk ? "Defined risk" : "Any"],
             ["Margin", (p) => p.rules.margin === "portfolio" ? "Portfolio" : "Strategy"],
@@ -206,12 +206,12 @@ function Rules({ trading }: { trading: TradingStatus }) {
         {offeredPlans(plans.data.plans, data).some((p) => p.rules.phase === "funded") && <Panel title="Funded accounts">
           <PlanTable label="Funded accounts" plans={offeredPlans(plans.data.plans, data).filter((p) => p.rules.phase === "funded")} columns={[
             ["Trailing drawdown", (p) => p.rules.max_drawdown
-              ? `${formatMoney(p.rules.max_drawdown, 0)} ${p.rules.drawdown_mode === "static" ? "static" : p.rules.drawdown_mode === "intraday" ? "intraday" : "at close"}` : "—"],
-            ["Floor locks at", (p) => p.rules.lock_balance ? formatMoney(p.rules.lock_balance, 0) : "—", true],
+              ? `${ruleMoney(p.rules.max_drawdown)} ${p.rules.drawdown_mode === "static" ? "static" : p.rules.drawdown_mode === "intraday" ? "intraday" : "at close"}` : "—"],
+            ["Floor locks at", (p) => p.rules.lock_balance ? ruleMoney(p.rules.lock_balance) : "—", true],
             ["Strategies", (p) => p.rules.buy_only ? "Buy only" : p.rules.defined_risk ? "Defined risk" : "Any"],
             ["Margin", (p) => p.rules.margin === "portfolio" ? "Portfolio" : "Strategy"],
             ["Slippage", (p) => `${p.rules.slippage_ticks ?? 0} ticks`],
-            ["Payout after", (p) => p.rules.payouts ? `${p.rules.payouts.qualifying_days} days of ${formatMoney(p.rules.payouts.qualifying_profit, 0)}+` : "—"],
+            ["Payout after", (p) => p.rules.payouts ? `${p.rules.payouts.qualifying_days} days of ${ruleMoney(p.rules.payouts.qualifying_profit)}+` : "—"],
             ["Your share", (p) => p.rules.payouts ? `${p.rules.payouts.split_percent}%` : "—"],
           ]} lock={(p) => lockReason(p, plans.data.plans, data)} enabled={trading.enabled} onStart={setStart} />
         </Panel>}
@@ -236,7 +236,7 @@ function PlanTable({ label, plans, columns, lock, enabled, onStart }: {
           const locked = lock(p)
           return <tr key={p.id} className="border-t border-border/40">
             <td className="px-2 py-2"><div className="font-medium">{p.name}</div><div className="max-w-64 truncate text-[11px] text-muted" title={p.summary}>{p.summary}</div></td>
-            <td className="px-2 py-2 tabular">{formatMoney(p.initial_cash, 0)}</td>
+            <td className="px-2 py-2 tabular">{ruleMoney(p.initial_cash)}</td>
             {columns.map(([header, cell, numeric]) => <td key={header} className={`px-2 py-2 ${numeric ? "tabular" : ""}`}>{cell(p)}</td>)}
             <td className="px-2 py-2 text-right"><button type="button" className="trade-button" title={locked ?? undefined}
               disabled={!enabled || locked != null} onClick={() => onStart(p.id)}>{locked ? "Locked" : "Start"}</button></td>

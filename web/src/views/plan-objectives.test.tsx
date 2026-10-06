@@ -158,7 +158,7 @@ describe("plan objectives in the terminal", () => {
     const page = document.createElement("div")
     page.innerHTML = render(<RulesView />, value)
     const text = page.textContent!.replace(/\s+/g, " ")
-    expect(text).toContain(`Each trading day, equity may not touch $250.00 below the day's equity high: today $99,750.00, ${reached}.`)
+    expect(text).toContain(`Each trading day, equity may not touch $250 below the day's equity high: today $99,750.00, ${reached}.`)
     expect(text).toContain("Today is locked.")
     expect(text).not.toMatch(/−\$[\d,.]+ below current equity/)
     expect(text).not.toContain("below current equity")
@@ -167,7 +167,7 @@ describe("plan objectives in the terminal", () => {
     const page = document.createElement("div")
     page.innerHTML = render(<RulesView />, planned)
     const text = page.textContent!.replace(/\s+/g, " ")
-    expect(text).toContain("Each trading day, equity may not touch $2,000.00 below the day's opening balance: today $98,150.00, $2,117.50 below current equity.")
+    expect(text).toContain("Each trading day, equity may not touch $2,000 below the day's opening balance: today $98,150.00, $2,117.50 below current equity.")
     expect(text).not.toContain("which equity has reached")
   })
   it("lowercases each objective after the first in the objectives sentence", () => {

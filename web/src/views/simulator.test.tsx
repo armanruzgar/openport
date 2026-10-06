@@ -195,8 +195,8 @@ describe("simulator pages", () => {
   })
   it("explains the active rules with the account's numbers and lists presets", () => {
     const texts = Object.fromEntries(ruleText(account, "0.65", "5000.00").map((rule) => [rule.title, renderToStaticMarkup(<>{rule.body}</>)] as const))
-    expect(texts["Profit target"]).toContain("$110,000.00")
-    expect(texts["Trailing drawdown"]).toContain("$95,300.00")
+    expect(texts["Profit target"]).toContain("$110,000")
+    expect(texts["Trailing drawdown"]).toContain("$95,300")
     expect(texts["Trailing drawdown"]).toContain("rises with every new equity high")
     expect(texts["Strategies"]).toContain("Buy-only")
     expect(texts["Expiring positions"]).toContain("last trade, working orders on it are cancelled")

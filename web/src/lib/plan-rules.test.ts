@@ -2,11 +2,39 @@ import { describe, expect, it } from "vitest"
 import type { AccountRules } from "../api/trading-types"
 import { customPlan, planForm } from "../components/PlanEditor"
 import { account, fundedAccount } from "../test/trading-fixtures"
-import { clockText, dailyLossFact, dayEndFact, decisionLabel, drawdownFact, floorMoves, objectiveFacts, objectiveValue, targetFact, planEntryNotice, timeRuleFacts, timeRuleNotices } from "./plan-rules"
+import { phaseFact, clockText, dailyLossFact, dayEndFact, decisionLabel, drawdownFact, floorMoves, objectiveFacts, objectiveValue, targetFact, planEntryNotice, timeRuleFacts, timeRuleNotices } from "./plan-rules"
 
 const rules: AccountRules = { ...account.rules, buy_only: false }
 
 describe("plan rule texts", () => {
+  it("labels practice using the server's evaluation conditions and preserves program steps", () => {
+    const practice: AccountRules = { ...rules, plan_id: "practice", plan: "Practice",
+      profit_target: null, max_drawdown: null, daily_loss_limit: null,
+      time_limit_days: 0, inactivity_days: 0, no_overnight: false, hold_restrictions: [] }
+    expect(phaseFact(practice)).toBe("Practice")
+    expect(phaseFact({ ...practice, profit_target: "0.00", max_drawdown: "0", daily_loss_limit: "0" })).toBe("Practice")
+    const triggers: Partial<AccountRules>[] = [
+      { profit_target: "0.01" }, { max_drawdown: "0.01" }, { daily_loss_limit: "0.01" },
+      { time_limit_days: 1 }, { inactivity_days: 1 }, { no_overnight: true }, { hold_restrictions: ["weekend"] },
+    ]
+    for (const trigger of triggers) expect(phaseFact({ ...practice, ...trigger })).toBe("Evaluation")
+    expect(phaseFact({ ...practice, phase: "verification" })).toBe("Step 2 of 2: verification")
+    expect(phaseFact({ ...practice, phase: "funded" })).toBe("Funded account (simulated)")
+    expect(phaseFact({ ...practice, plan_id: "two-step-challenge" })).toBe("Step 1 of 2: challenge")
+  })
+  it("preserves cents in rule amounts and keeps whole-dollar presets compact", () => {
+    expect(dailyLossFact({ ...rules, daily_loss_limit: "13.25" })).toContain("$13.25 daily loss limit")
+    expect(drawdownFact({ ...rules, max_drawdown: "2812.50" }, "50000")).toContain("$2,812.50 trailing drawdown")
+    expect(targetFact({ ...rules, profit_target: "3000.50" })).toBe("$3,000.50 profit target")
+    expect(targetFact({ ...rules, profit_target: "3000.00" })).toBe("$3,000 profit target")
+    expect(drawdownFact({ ...rules, max_drawdown: "13.25", drawdown_mode: "static" }, "1000"))
+      .toBe("$13.25 static drawdown: the floor stays at $986.75")
+    expect(drawdownFact({ ...rules, lock_balance: "100000.50" }, "100000")).toContain("locks at $100,000.50")
+    expect(objectiveFacts({ ...rules, min_profitable_days: 1, profitable_day_profit: "13.25" }))
+      .toContain("At least 1 profitable day of $13.25+")
+    expect(objectiveValue({ code: "PROFIT_TARGET", met: false, actual: 0, required: 3000.50, message: "" }))
+      .toBe("$0.00 of $3,000.50")
+  })
   it("names static and locking floors, and older servers' floors as before", () => {
     expect(drawdownFact(rules, "100000.00")).toBe("$5,000 trailing drawdown (intraday)")
     expect(drawdownFact({ ...rules, drawdown_mode: "static" }, "100000.00")).toBe("$5,000 static drawdown: the floor stays at $95,000")

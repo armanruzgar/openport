@@ -93,14 +93,26 @@ describe("funded accounts and payouts", () => {
     expect(pass).toContain("Evaluation passed")
     expect(pass).toContain("Start funded account")
   })
+  it("preserves cents in starting balances and payout rule amounts", () => {
+    const custom: Account = { ...fundedAccount, rules: { ...fundedAccount.rules,
+      payouts: { ...fundedAccount.rules.payouts!, qualifying_profit: "200.25", caps: ["2000.50"] } } }
+    const facts = planFacts({ initial_cash: "50000.50", rules: custom.rules })
+    expect(facts).toContain("$50,000.50 starting balance")
+    expect(facts).toContain("Payout every 8 days of $200.25+ net profit")
+    const payout = ruleText(custom).find((rule) => rule.title === "Payouts")!
+    const text = renderToStaticMarkup(<>{payout.body}</>)
+    expect(text).toContain("$200.25")
+    expect(text).toContain("$2,000.50 for payout 1")
+    expect(text).toContain("capped at $2,000.50")
+  })
   it("states the funded rules and locks funded plans until their evaluation passes", () => {
     const texts = ruleText(fundedAccount, "0.65", "5000.00")
     expect(texts.map((t) => t.title).slice(0, 4)).toEqual(["Account type and margin", "Funded account", "Trailing drawdown", "Payouts"])
     const [, drawdown, payout] = texts.slice(1).map((rule) => renderToStaticMarkup(<>{rule.body}</>))
-    expect(drawdown).toContain("It has locked at $100,000.00 and no longer trails.")
+    expect(drawdown).toContain("It has locked at $100,000 and no longer trails.")
     expect(drawdown).toContain("closes the funded account")
-    for (const text of ["8 qualifying days", "$200.00", "up to 50%", "$2,000 for payout 1", "$6,000 for payout 4 and later", "you keep 80%",
-      "Each finished day counts once", "Your next payout is number 2, capped at $3,000.00."])
+    for (const text of ["8 qualifying days", "$200", "up to 50%", "$2,000 for payout 1", "$6,000 for payout 4 and later", "you keep 80%",
+      "Each finished day counts once", "Your next payout is number 2, capped at $3,000."])
       expect(payout).toContain(text)
     const rules = render(<RulesView />, account)
     expect(rules).toContain("Pass Intraday 100K to unlock")

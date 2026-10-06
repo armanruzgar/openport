@@ -7,7 +7,7 @@ import { FeeModelPicker } from "./FeeModelPicker"
 import { lockReason, offeredPlans, payoutRuleFacts } from "../lib/payouts"
 import { resetQuote } from "../lib/program-costs"
 import { phaseFact, sizeScalingFact, scalingFact, dailyLossFact, dayEndFact, drawdownFact, objectiveFacts, targetFact, timeRuleFacts, tradeRuleFacts } from "../lib/plan-rules"
-import { compareMoney, formatMoney } from "../lib/trading"
+import { compareMoney, ruleMoney, formatMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
 import { customPlan, PlanEditor, planForm, type PlanForm } from "./PlanEditor"
@@ -21,7 +21,7 @@ export function planFacts(plan: Pick<Plan, "initial_cash" | "rules">): string[] 
   const dailyLoss = dailyLossFact(r), dayEnd = dayEndFact(r)
   return [
     phaseFact(r),
-    `${formatMoney(plan.initial_cash, 0)} starting balance`,
+    `${ruleMoney(plan.initial_cash)} starting balance`,
     ...(([r.evaluation_fee, r.reset_fee, r.activation_fee].some((fee) => compareMoney(fee, "0") === 1) || r.max_resets) ? [
       `Purchase ${formatMoney(r.evaluation_fee ?? "0")}, reset ${formatMoney(r.reset_fee ?? "0")}, activation ${formatMoney(r.activation_fee ?? "0")}`,
       r.max_resets ? `${r.max_resets} resets per plan` : "Unlimited resets",
@@ -43,7 +43,7 @@ export function planFacts(plan: Pick<Plan, "initial_cash" | "rules">): string[] 
     ...(r.impact_ticks ? [`${r.impact_ticks} extra ${r.impact_ticks === 1 ? "tick" : "ticks"} per displayed-size block`] : []),
     ...(r.expiry_cutoff_seconds > 0 ? [`Auto-close ${Math.round(r.expiry_cutoff_seconds / 60)} min before expiry`] : []),
     ...(dayEnd ? [dayEnd] : []),
-    ...(p ? [`Payout every ${p.qualifying_days} days of ${formatMoney(p.qualifying_profit, 0)}+ net profit`,
+    ...(p ? [`Payout every ${p.qualifying_days} days of ${ruleMoney(p.qualifying_profit)}+ net profit`,
       `Up to ${p.withdrawal_percent}% of profit per payout, ${p.split_percent}% to you`, ...payoutRuleFacts(p, plan.initial_cash)] : []),
   ]
 }
