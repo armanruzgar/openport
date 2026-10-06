@@ -165,9 +165,9 @@ std::vector<Objective> objectives_with(const Evaluation& e, const AccountRules& 
     } else {
       o.met = consistent(*stats.best_day, rules.consistency_percent, basis);
       if (basis > Money{}) o.actual = stats.best_day->dollars() / basis.dollars() * 100;
-      o.message = "The best day, " + dollars(*stats.best_day) + " on " + md::format_date(stats.best_day_date) + ", is " +
-          (basis > Money{} ? std::to_string(static_cast<int>(*o.actual + 0.5)) + "% of " + of + dollars(basis)
-                           : "all of " + of + dollars(basis)) +
+      o.message = "The best day, " + dollars(*stats.best_day) + " on " + md::format_date(stats.best_day_date) + ", " +
+          (basis > Money{} ? "is " + std::to_string(static_cast<int>(*o.actual + 0.5)) + "% of " + of + dollars(basis)
+                           : "exceeds " + of + dollars(basis)) +
           "; at most " + std::to_string(rules.consistency_percent) + "% may come from one day";
     }
     out.push_back(std::move(o));

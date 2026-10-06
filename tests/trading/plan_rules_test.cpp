@@ -726,6 +726,35 @@ TEST(PlanRules, AConsistencyRuleNeedsTheBestDayWithinItsShareOfTheTotal) {
   EXPECT_TRUE(objective(evaluation_objectives(e, positive, now), Reason::CONSISTENCY)->met); // 300 of 600
 }
 
+TEST(PlanRules, ConsistencyDescribesNonpositiveTotalProfitWithoutClaimingAShare) {
+  auto rules = plan("3000");
+  rules.consistency_percent = 40;
+  Evaluation e;
+  e.started = 1;
+  e.starting_balance = m("10000");
+  e.days.push_back({{2026, 9, 16}, m("10000"), m("10815.55"), {}, {}, {}, false, {}, {}, {}, 0, 0, 0, Reason::NONE});
+  e.day_open_equity = m("10815.55");
+  for (const auto total : {"-679.95", "0", "1000"}) {
+    SCOPED_TRACE(total);
+    const auto equity = e.starting_balance + m(total);
+    const auto objectives = evaluation_objectives(e, rules, {equity, equity, {}, true});
+    const auto* consistency = objective(objectives, Reason::CONSISTENCY);
+    ASSERT_NE(consistency, nullptr);
+    EXPECT_FALSE(consistency->met);
+    const std::string prefix = "The best day, $815.55 on 2026-09-16, ";
+    const std::string suffix = "; at most 40% may come from one day";
+    if (m(total) > Money{}) {
+      EXPECT_EQ(consistency->message, prefix + "is 82% of the total profit $1000.00" + suffix);
+      ASSERT_TRUE(consistency->actual.has_value());
+      EXPECT_NEAR(*consistency->actual, 81.555, 0.000001);
+    } else {
+      EXPECT_EQ(consistency->message, prefix + "exceeds the total profit " +
+          (m(total) < Money{} ? "-$679.95" : "$0.00") + suffix);
+      EXPECT_FALSE(consistency->actual.has_value());
+    }
+  }
+}
+
 TEST(PlanRules, ATargetOnTheClosedBalanceNeedsTheTradeClosed) {
   ScriptedMarket f;
   auto rules = plan("100", "1000");
