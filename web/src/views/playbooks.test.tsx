@@ -47,6 +47,17 @@ async function value(selector: string, text: string) {
   await act(async () => { Object.getOwnPropertyDescriptor(prototype, "value")!.set!.call(field, text); field.dispatchEvent(new Event(field instanceof HTMLTextAreaElement ? "input" : "change", { bubbles: true })) })
 }
 describe("Playbooks page and staged actions", { timeout: renderTimeout }, () => {
+  it.each(["page", "shared card"])("renders preview warnings on the %s", async (surface) => {
+    const saved = catalogue()
+    const message = "The stop's trigger, at or above 0.40, is already reached (now 0.50): it fires as soon as the entry fills"
+    saved.staged[0]!.warnings = [{ code: "STOP_REACHED", message }]
+    vi.mocked(api.playbooks).mockResolvedValue(saved)
+    await render(surface === "page" ? <PlaybooksView /> : <StagedOrders />)
+    await waitForRender(() => expect(host.textContent).toContain(message))
+    const warning = [...host.querySelectorAll('[role="status"]')].find((node) => node.textContent?.includes(message))
+    expect(warning?.classList.contains("text-warn")).toBe(true)
+    expect(api.stagedAction).not.toHaveBeenCalled()
+  })
   it("shows the additional written exits and preserves technical rules in the editor", async () => {
     const saved = catalogue()
     const definition = saved.definitions["put-spread"]!.versions[0]!

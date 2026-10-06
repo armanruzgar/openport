@@ -109,6 +109,36 @@ json breadth_setup() {
   setup["management"] = {{"close_by", "15:45"}, {"take_profit_percent", 1}, {"trailing_stop", {{"percent", 50}}}};
   return setup;
 }
+TEST(Playbooks, StageCarriesReachedStopPreviewWarnings) {
+  for (const bool replay : {false, true}) {
+    const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+    server::Desk::Options options; options.replay = replay;
+    options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+    server::Desk desk("test", {}, {{"SPX"}}, options);
+    desk.start_trading();
+    // Entry credit 0.10; closing natural 0.30 already exceeds the 0.20 stop.
+    desk.replay_batch(breadth_batch(time, 8.2), time, time);
+    auto setup = breadth_setup();
+    setup["management"] = {{"close_by", "15:45"}, {"stop_credit_multiple", 2}};
+    ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", setup}}, time).decision.ok());
+    const auto staged = command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "stage"}}, time);
+    const auto stages = json::parse(staged.playbook_result).at("staged");
+    ASSERT_EQ(stages.size(), 1U) << staged.playbook_result;
+    EXPECT_EQ(stages[0].at("net"), "-0.10");
+    const auto& warnings = stages[0].at("warnings");
+    ASSERT_FALSE(warnings.empty());
+    const auto found = std::find_if(warnings.begin(), warnings.end(), [](const auto& warning) {
+      return warning.at("code") == "STOP_REACHED";
+    });
+    ASSERT_NE(found, warnings.end()) << warnings;
+    EXPECT_NE(found->at("message").get<std::string>().find("fires as soon as the entry fills"), std::string::npos);
+    EXPECT_TRUE(desk.trading_view()->snapshot->recent_orders.empty());
+    desk.replay_batch(breadth_batch(time + md::kNanosPerMinute, 10), time + md::kNanosPerMinute, time + md::kNanosPerMinute);
+    const auto refreshed = json::parse(desk.trading_view()->playbooks_json).at("staged");
+    ASSERT_EQ(refreshed.size(), 1U);
+    EXPECT_TRUE(refreshed[0].at("warnings").empty()) << refreshed;
+  }
+}
 TEST(Playbooks, TrailingExitUsesNaturalProfitAndRecovers) {
   for (const bool replay : {false, true}) {
     test::RecordingFile file;

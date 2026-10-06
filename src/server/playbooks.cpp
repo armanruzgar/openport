@@ -793,12 +793,15 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
           contracts += "|" + leg.symbol + (leg.side == Side::Buy ? "+" : "-") + std::to_string(leg.ratio);
         const auto stage_id = std::to_string(fingerprint(contracts));
         order.client_order_id = "playbook:" + stage_id + ":" + std::to_string(current->snapshot->account_version);
+        json warnings = json::array();
+        for (const auto& warning : final_preview.warnings)
+          warnings.push_back({{"code", warning.code}, {"message", warning.message}});
         json stage{{"id", stage_id}, {"key", stage_key}, {"playbook", id}, {"version", definition.at("version")},
             {"name", definition.at("name")}, {"underlying", symbol}, {"time", now}, {"request", order}, {"order", order_request_json(order)},
             {"legs", setup.at("legs")}, {"units", order.quantity}, {"net", debit.str()},
             {"max_loss", final_preview.max_loss ? json(final_preview.max_loss->str()) : json(nullptr)},
             {"max_loss_basis", final_preview.max_loss_basis}, {"close_by", md::format_timestamp(playbook_deadline(definition, now))},
-            {"management", definition.at("management")}, {"simulated", true}};
+            {"management", definition.at("management")}, {"warnings", std::move(warnings)}, {"simulated", true}};
         reason = "Ready";
         if (mode == "auto") {
           const auto reply = send(order);

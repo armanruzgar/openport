@@ -31,6 +31,8 @@ export interface PlaybookTrade {
   buying_power?: string; return_on_buying_power?: number | null
 }
 export interface StagedOrder {
+  /** Preview advice; absent from older servers. */
+  warnings?: { code: string; message: string }[]
   /** HTTP order body; absent from older servers. */
   order?: NewOrder
   /** Legacy internal journal encoding, unsuitable for HTTP submission. */

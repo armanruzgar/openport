@@ -17945,6 +17945,13 @@
           "close_by": {
             "type": "string"
           },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderWarning"
+            },
+            "description": "Transient advice from the final order preview, in preview order; empty when there is none. Does not change automatic submission."
+          },
           "management": {
             "type": "object"
           },
@@ -17968,6 +17975,7 @@
           "max_loss",
           "close_by",
           "management",
+          "warnings",
           "simulated"
         ]
       },

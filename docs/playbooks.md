@@ -102,7 +102,10 @@ all normal risk checks.
 Management uses the existing combo bracket conventions. `take_profit_percent` is
 the closing premium as a percentage of the entry premium: 50 buys back half a
 credit; 150 receives one and a half times a debit. `stop_credit_multiple` must be
-greater than one and needs a credit entry. Alternatively, `stop_underlying` takes
+greater than one and needs a credit entry. A stop already reached by the current
+closing natural fires as soon as the entry fills, so the room allowed by
+`stop_credit_multiple` must exceed the spread's own bid-ask cost. Alternatively,
+`stop_underlying` takes
 `level` and `direction: above|below`. Bracket levels are fixed at submission and do
 not follow later entry fills. The take-profit limit sits on the legs' smallest tick,
 a nickel for SPX, NDX and RUT spreads and a cent for SPY, QQQ and IWM, and rounds to
@@ -147,7 +150,10 @@ seconds for demo days and scenarios. A rule that turns on the clock, such as a
 window opening, a cooldown ending or a `close_by` deadline, therefore takes effect
 at the first update at or after that time: a cooldown ending at 10:05:07 allows the
 next entry at 10:05:15, which trades that snapshot's quotes. A stage holds selected
-contracts, units, exits and a version tag. Each stage's `order` is the exact body
+contracts, units, exits and a version tag. Its `warnings` array contains the final
+preview's `{code, message}` advice (including `STOP_REACHED`), or is empty; these
+warnings are transient, never journaled, and do not change whether Auto sends.
+Each stage's `order` is the exact body
 shape accepted by `POST /api/orders` (or `/api/replay/orders`): decimal-string
 prices, word-valued side/type/time_in_force, legs, optional bracket, tags, note and
 client_order_id. Clients may review or submit it themselves; normal validation,
