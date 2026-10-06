@@ -21,8 +21,8 @@ constexpr std::string_view kPage = R"({
     {
       "greeks": {"delta": -0.0484, "gamma": 0.0004, "theta": -0.8494, "vega": 1.5783},
       "details": {"contract_type": "put", "exercise_style": "european",
-                  "expiration_date": "2026-10-05", "shares_per_contract": 100,
-                  "strike_price": 7405, "ticker": "O:SPXW261005P07405000"},
+                  "expiration_date": "2036-10-06", "shares_per_contract": 100,
+                  "strike_price": 7405, "ticker": "O:SPXW361006P07405000"},
       "implied_volatility": 0.1575,
       "last_quote": {"ask": 4.6, "ask_size": 172, "bid": 4.4, "bid_size": 314,
                      "last_updated": 1790103279803625000, "midpoint": 4.5, "timeframe": "REAL-TIME"},
@@ -31,7 +31,7 @@ constexpr std::string_view kPage = R"({
                            "timeframe": "REAL-TIME"}
     },
     {
-      "details": {"ticker": "O:SPXW261005C09000000", "exercise_style": "european",
+      "details": {"ticker": "O:SPXW361006C09000000", "exercise_style": "european",
                   "shares_per_contract": 100},
       "last_quote": {"bid": 0.05, "ask": 0.1, "bid_size": 10, "ask_size": 20,
                      "last_updated": 1790103279000000000, "timeframe": "REAL-TIME"},
@@ -64,7 +64,7 @@ TEST(Massive, ParsesAPageInAnyFieldOrder) {
   EXPECT_DOUBLE_EQ(page.underlying_price, 7777.27);
 
   const auto& put = page.contracts[0];
-  EXPECT_EQ(put.symbol, "SPXW261005P07405000");
+  EXPECT_EQ(put.symbol, "SPXW361006P07405000");
   EXPECT_TRUE(put.european);
   EXPECT_TRUE(put.has_quote);
   EXPECT_TRUE(put.realtime);
@@ -289,7 +289,7 @@ TEST(MassiveDividends, FetchesEachTickerAndKeepsWhatAFailureCannotRefresh) {
 TEST(Massive, DayVolumeUsesItsOwnClockAndMissingValuesStayUnknown) {
   for (const std::string value : {"0", "873", "null", "-1"}) {
     const auto page = providers::parse_massive_chain_page(
-        "{\"status\":\"OK\",\"results\":[{\"details\":{\"ticker\":\"O:SPXW261005P07405000\"},"
+        "{\"status\":\"OK\",\"results\":[{\"details\":{\"ticker\":\"O:SPXW361006P07405000\"},"
         "\"day\":{\"volume\":" + value + ",\"last_updated\":1790103279000000000}}]}");
     providers::MassiveProvider provider({"test-key"});
     Collector sink;

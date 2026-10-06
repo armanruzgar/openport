@@ -12,17 +12,17 @@ namespace {
 using namespace openport;
 
 constexpr std::string_view kQuotes =
-    R"({"timestamp":"2026-09-22T15:33:42.125","symbol":"SPXW","expiration":"2026-10-05","strike":7405.0,"right":"put","bid_size":314,"bid_exchange":5,"bid":4.4,"bid_condition":50,"ask_size":172,"ask_exchange":5,"ask":4.6,"ask_condition":50}
-{"timestamp":"2026-09-22T15:33:42.125","symbol":"SPXW","expiration":"20261005","strike":7800.0,"right":"call","bid_size":12,"bid":41.5,"ask_size":9,"ask":42.3}
-{"timestamp":"2026-09-22T15:33:41.000","symbol":"SPX","expiration":"2026-10-16","strike":8000.0,"right":"call","bid":70.0,"ask":72.4,"bid_size":3,"ask_size":3}
+    R"({"timestamp":"2026-09-22T15:33:42.125","symbol":"SPXW","expiration":"2036-10-06","strike":7405.0,"right":"put","bid_size":314,"bid_exchange":5,"bid":4.4,"bid_condition":50,"ask_size":172,"ask_exchange":5,"ask":4.6,"ask_condition":50}
+{"timestamp":"2026-09-22T15:33:42.125","symbol":"SPXW","expiration":"20361006","strike":7800.0,"right":"call","bid_size":12,"bid":41.5,"ask_size":9,"ask":42.3}
+{"timestamp":"2026-09-22T15:33:41.000","symbol":"SPX","expiration":"2036-10-17","strike":8000.0,"right":"call","bid":70.0,"ask":72.4,"bid_size":3,"ask_size":3}
 )";
 
 constexpr std::string_view kImpliedVols =
-    R"({"symbol":"SPXW","expiration":"2026-10-05","strike":7405.0,"right":"put","timestamp":"2026-09-22T15:33:42.125","bid":4.4,"ask":4.6,"implied_vol":0.1575,"iv_error":0.0001,"underlying_timestamp":"2026-09-22T15:33:42.100","underlying_price":7777.27}
+    R"({"symbol":"SPXW","expiration":"2036-10-06","strike":7405.0,"right":"put","timestamp":"2026-09-22T15:33:42.125","bid":4.4,"ask":4.6,"implied_vol":0.1575,"iv_error":0.0001,"underlying_timestamp":"2026-09-22T15:33:42.100","underlying_price":7777.27}
 )";
 
 constexpr std::string_view kOpenInterest =
-    R"({"symbol":"SPXW","expiration":"2026-10-05","strike":7405.0,"right":"put","timestamp":"2026-09-22T06:30:00.000","open_interest":1520}
+    R"({"symbol":"SPXW","expiration":"2036-10-06","strike":7405.0,"right":"put","timestamp":"2026-09-22T06:30:00.000","open_interest":1520}
 )";
 
 class Collector final : public md::EventSink {
@@ -45,8 +45,8 @@ TEST(ThetaData, ParsesNdjsonRows) {
   const auto rows = providers::parse_theta_rows(kQuotes);
   ASSERT_EQ(rows.size(), 3u);
   EXPECT_EQ(rows[0].root, "SPXW");
-  EXPECT_EQ(rows[0].expiry, (md::Date{2026, 10, 5}));
-  EXPECT_EQ(rows[1].expiry, (md::Date{2026, 10, 5}));  // YYYYMMDD also accepted
+  EXPECT_EQ(rows[0].expiry, (md::Date{2036, 10, 6}));
+  EXPECT_EQ(rows[1].expiry, (md::Date{2036, 10, 6}));  // YYYYMMDD also accepted
   EXPECT_DOUBLE_EQ(rows[0].strike, 7405.0);
   EXPECT_EQ(rows[0].type, pricing::OptionType::Put);
   EXPECT_DOUBLE_EQ(rows[0].bid, 4.4);
@@ -69,7 +69,7 @@ TEST(ThetaData, MergesQuotesImpliedVolsAndOpenInterest) {
 
   const auto definitions = sink.all<md::ContractDefinition>();
   ASSERT_EQ(definitions.size(), 3u);
-  EXPECT_EQ(definitions[0].contract.osi_symbol(), "SPXW  261005P07405000");
+  EXPECT_EQ(definitions[0].contract.osi_symbol(), "SPXW  361006P07405000");
   EXPECT_EQ(definitions[2].contract.settlement, md::Settlement::AM);  // monthly SPX
 
   EXPECT_EQ(sink.all<md::OptionQuote>().size(), 3u);
@@ -252,7 +252,7 @@ TEST(ThetaData, DoesNotInventVolumeAndMapsItOnlyWhenSupplied) {
   for (const std::string value : {"0", "321", "null", "-1"}) {
     const auto rows = providers::parse_theta_rows(
         "{\"timestamp\":\"2026-09-22T15:33:42.125\",\"symbol\":\"SPXW\","
-        "\"expiration\":\"2026-10-05\",\"strike\":7405,\"right\":\"put\",\"volume\":" + value + "}");
+        "\"expiration\":\"2036-10-06\",\"strike\":7405,\"right\":\"put\",\"volume\":" + value + "}");
     sink.events.clear();
     provider.publish_chain("SPX", rows, {}, {}, {}, sink);
     const auto volumes = sink.all<md::OptionVolume>();
