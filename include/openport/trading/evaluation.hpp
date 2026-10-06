@@ -414,7 +414,8 @@ enum class MarginPartKind {
 struct MarginPart {
   MarginPartKind kind = MarginPartKind::Naked;
   /// OSI symbols, or the underlying for shares, with the signed contracts or
-  /// shares the part takes; a position can be split between parts.
+  /// shares the part takes; each symbol appears once, in first-appearance order.
+  /// A position can be split between parts.
   std::vector<std::pair<std::string, Quantity>> legs;
   Money requirement;
 };

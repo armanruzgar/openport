@@ -281,7 +281,15 @@ std::pair<std::string, Quantity> leg_of(const Unit& u, Quantity n) {
   return u.stock ? shares_leg(*u.stock, n * kLot) : option_leg(u, n);
 }
 void add(Parts* parts, MarginPartKind kind, std::vector<std::pair<std::string, Quantity>> legs, Money requirement) {
-  if (parts) parts->push_back({kind, std::move(legs), requirement});
+  if (!parts) return;
+  std::vector<std::pair<std::string, Quantity>> merged;
+  for (auto& [symbol, quantity] : legs) {
+    const auto existing = std::find_if(merged.begin(), merged.end(),
+                                       [&](const auto& leg) { return leg.first == symbol; });
+    if (existing == merged.end()) merged.emplace_back(std::move(symbol), quantity);
+    else existing->second += quantity;
+  }
+  parts->push_back({kind, std::move(merged), requirement});
 }
 /// Longs no part holds: their premium is paid in full, as long shares are.
 void add_longs(Parts* parts, const std::vector<std::pair<const Unit*, Quantity>>& longs) {

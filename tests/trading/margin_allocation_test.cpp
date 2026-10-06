@@ -177,6 +177,33 @@ TEST(TradingMarginAllocation, FractionalRelaxationRequiresWholeContracts) {
   EXPECT_EQ(result[0].requirement, dollars("10250"));
 }
 
+TEST(TradingMarginAllocation, ButterflyWorstLossListsEachPositionOnce) {
+  const std::vector<MarginLeg> book{
+      option("SPXW260917C05975000", 1), option("SPXW260917C05985000", -2),
+      option("SPXW260917C05995000", 1)};
+  for (const bool exact : {false, true}) {
+    SCOPED_TRACE(exact);
+    MarginPolicy policy;
+    policy.exact = exact;
+    const auto result = margin_breakdown(book, {}, policy);
+    ASSERT_EQ(result.size(), 1U);
+    EXPECT_EQ(result[0].allocation, exact ? "exact" : "legacy");
+    EXPECT_EQ(result[0].requirement, Money{});
+    EXPECT_EQ(result[0].requirement, margin_requirement(book, {}, policy));
+    ASSERT_EQ(result[0].parts.size(), 1U);
+    const auto& part = result[0].parts[0];
+    EXPECT_EQ(part.kind, MarginPartKind::WorstLoss);
+    EXPECT_EQ(part.requirement, Money{});
+    ASSERT_EQ(part.legs.size(), 3U);
+    std::map<std::string, Quantity> positions;
+    for (const auto& [symbol, quantity] : part.legs)
+      EXPECT_TRUE(positions.emplace(symbol, quantity).second);
+    EXPECT_EQ(positions.at(book[1].contract.osi_symbol()), -2);
+    EXPECT_EQ(positions.at(book[0].contract.osi_symbol()), 1);
+    EXPECT_EQ(positions.at(book[2].contract.osi_symbol()), 1);
+  }
+}
+
 TEST(TradingMarginAllocation, OddShortSharesRoundOnlyTheUnderlyingTotal) {
   const MarginPolicy policy{AccountType::Margin, 25, 0};
   // 104 shares at $500.000001, holding 162.5%: exactly $84500.000169.
