@@ -964,11 +964,24 @@ when storage is unavailable, and switches to that account. A refused sandbox
 token is cleared so the visitor can create another. Operator token entry remains.
 
 Creation permits 3 accounts per client and 30 globally in a rolling hour.
-Pending creations count toward capacity. At capacity or a creation rate limit,
-the server returns HTTP 429 with a reason. Each account permits 60 order requests
-per rolling minute, including previews and modifications. Cancels and flatten
-remain available at the order cap. Limits use an independent monotonic clock;
-they never advance the trading reducer's market time.
+Pending creations count toward capacity. Creation returns HTTP 429 with
+`SANDBOX_CAPACITY` when all slots are occupied, `SANDBOX_CLIENT_RATE` when the
+client's creation limit is reached, or `SANDBOX_GLOBAL_RATE` at the global limit.
+Each account permits 60 order requests per rolling minute, including previews,
+what-if requests and modifications; excess requests return HTTP 429
+`SANDBOX_ORDER_RATE`. Cancels and flatten remain available at the order cap.
+The three rate-limit codes carry `Retry-After`: seconds until the oldest counted
+request leaves that bucket's rolling window, rounded up to at least 1 second.
+`SANDBOX_CAPACITY` has no `Retry-After` because the next free time is unknown.
+Limits use an independent monotonic clock; they never advance the trading
+reducer's market time.
+
+Creation returns HTTP 503 `SANDBOX_UNAVAILABLE` if the command inbox or trading
+storage is unavailable. An inbox rejection carries `Retry-After: 1`; a storage
+failure has no known retry time and omits it. The notification test and channel
+settings routes return HTTP 503 `NOTIFICATIONS_UNAVAILABLE` without `Retry-After`
+when their source has no notification service. Sandbox tokens cannot use those
+admin routes.
 
 Sandbox tokens use `read` and `trade:ACCOUNT` scopes, with reads restricted to the
 account and the simulated market. They permit orders, previews, cancels, flatten,
@@ -1354,7 +1367,9 @@ event payload times are market time. Counters reset on restart.
 
 `POST /api/notifications/test` with `{"channel":"phone"}` requires admin and
 returns 202 when queued, not when delivered. Unknown, disabled and full channels
-return 404, 409 and 429; an unavailable service returns 503.
+return 404, 409 and 429; a missing notification service returns 503
+`NOTIFICATIONS_UNAVAILABLE` without `Retry-After`, as does the channel settings
+route below.
 `PUT /api/notifications/channels/phone` accepts only `enabled`, `events` and
 `floor_distance`, requires admin and returns the public notification status.
 Changes last until restart. Update the file or environment for lasting settings.

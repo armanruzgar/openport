@@ -522,6 +522,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests and modifications. Cancels and flatten remain available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the oldest counted order request leaves the account's rolling minute, rounded up to at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1043,6 +1062,25 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests and modifications. Cancels and flatten remain available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the oldest counted order request leaves the account's rolling minute, rounded up to at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1080,6 +1118,25 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests and modifications. Cancels and flatten remain available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the oldest counted order request leaves the account's rolling minute, rounded up to at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1125,6 +1182,25 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "429": {
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests and modifications. Cancels and flatten remain available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the oldest counted order request leaves the account's rolling minute, rounded up to at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -1217,6 +1293,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests and modifications. Cancels and flatten remain available.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the oldest counted order request leaves the account's rolling minute, rounded up to at least 1.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
                 }
               }
             }
@@ -4258,6 +4353,16 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "NOTIFICATIONS_UNAVAILABLE: this source has no notification service. No Retry-After header is returned. NOTIFICATION_TEST_FAILED: the notification service is stopped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -4301,6 +4406,16 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "NOTIFICATIONS_UNAVAILABLE: this source has no notification service. No Retry-After header is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -4357,13 +4472,52 @@
             }
           },
           "404": {
-            "description": "Sandboxes are disabled"
+            "description": "NOT_FOUND: sandboxes are disabled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
           "429": {
-            "description": "Capacity or creation rate limit reached"
+            "description": "SANDBOX_CAPACITY: all account slots are occupied, including pending creations. SANDBOX_CLIENT_RATE: 3 creations per client in a rolling hour. SANDBOX_GLOBAL_RATE: 30 creations globally in a rolling hour.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "For SANDBOX_CLIENT_RATE and SANDBOX_GLOBAL_RATE, seconds until the oldest counted creation leaves that bucket's rolling hour, rounded up to at least 1. Omitted for SANDBOX_CAPACITY because the next free time is unknown.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           },
           "503": {
-            "description": "Trading storage or command inbox unavailable"
+            "description": "SANDBOX_UNAVAILABLE: trading storage or the command inbox is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "1 second when the command inbox rejects creation. Omitted for a trading storage failure, whose retry time is unknown.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
           }
         }
       }

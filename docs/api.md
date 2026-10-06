@@ -154,7 +154,7 @@ The web terminal uses these routes, so anything it does can be scripted:
 | `POST /api/trades/group`, `/api/trades/ungroup` | Join open round trips' trades into one whole trade, or take a round trip out of its trade |
 | `PUT /api/risk/limits`, `PUT /api/risk/guardrails`, `POST /api/risk/kill` | Set per-symbol `underlying_overrides` (a full replacement map, omitted/empty removes all); tighten rules now or queue looser values for rollover; set personal guardrails; trip or reset the kill switch |
 | `GET /api/plans`, `POST /api/account/reset` | The plans, and a new attempt; optional `fill_model` selects `as_displayed`, `conservative` or `midpoint`, and optional `margin`, `account_type` (`margin`, `cash`, `ira`), `house_margin_percent` and `pm_vol_shock` set the account's margin |
-| `POST /api/sandboxes` | Create a private demo practice account and return its token once; unauthenticated when enabled, 404 when off, 429 at capacity or a creation rate limit |
+| `POST /api/sandboxes` | Create a private demo practice account and return its token once; unauthenticated when enabled, 404 when off, 429 `SANDBOX_CAPACITY`, `SANDBOX_CLIENT_RATE` or `SANDBOX_GLOBAL_RATE`, 503 `SANDBOX_UNAVAILABLE`; rate limits carry `Retry-After` |
 | `PATCH /api/accounts/{id}`, `DELETE /api/accounts/{id}` | Admin: rename/archive/unarchive or delete named live accounts; archived accounts are readable but frozen, `GET /api/accounts?archived=true` includes them; deletion retains files and reserves the ID |
 | `GET /api/accounts`, `POST /api/accounts` | List the accounts or create one (`plan_id` accompanies each plan name; null for custom evaluation/verification rules; custom funded rules are refused), with optional `copy_settings_from` (active limits and guardrails), `fill_model` and margin settings as for a reset; account routes take `?account=ID`; sandbox tokens default to their own account, other credentials to main |
 | `GET`, `POST`, `PUT`, `DELETE /api/replay` | List recordings, scenarios and run history; start `{file}` or `{scenario}` (`demo` also accepted), with `plan`, `speed`, `start_at`, `paused` and scenario `seed`/`date`, or continue an interrupted saved run with `{resume}`; control or stop. `/api/replay/X` mirrors `/api/X`; replay scope also permits reset, limits, guardrails and kill on the isolated account |
@@ -248,7 +248,17 @@ documents every field, rule and reason code.
 
 Sandbox demos also offer `POST /api/sandboxes` without a token. It returns
 `{account, token, idle_seconds, simulated: true}` once; it returns 404 when disabled
-and 429 at capacity or a creation rate limit. `GET /api/status` includes
+and 429 `SANDBOX_CAPACITY` when full, `SANDBOX_CLIENT_RATE` after 3 creations per
+client in a rolling hour, or `SANDBOX_GLOBAL_RATE` after 30 globally. Sandbox
+order submissions, previews, what-if requests and modifications share 60 requests
+per account per rolling minute; excess requests return 429 `SANDBOX_ORDER_RATE`.
+The three rate-limit codes carry `Retry-After` seconds until the oldest counted
+request leaves that bucket's window, rounded up to at least 1. Capacity has no
+known free time, so `SANDBOX_CAPACITY` omits the header. Creation returns 503
+`SANDBOX_UNAVAILABLE` if the command inbox (with `Retry-After: 1`) or trading
+storage (without the header) is unavailable. Notification admin routes return
+503 `NOTIFICATIONS_UNAVAILABLE` without `Retry-After` when the source has no
+notification service. `GET /api/status` includes
 `sandboxes: {enabled: true, idle_seconds}` when offered.
 
 Share trades and previews have `/api/replay/stocks/trade` and
