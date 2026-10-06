@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(openport
-  VERSION 0.3.1
+  VERSION 0.4.0
   DESCRIPTION "Options pricing, volatility surfaces, matching and real-time risk"
   LANGUAGES CXX)
 
