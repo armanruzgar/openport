@@ -206,7 +206,7 @@ describe("simulator pages", () => {
     const defined = Object.fromEntries(ruleText({ ...account, rules: { ...account.rules, buy_only: false, defined_risk: true } }, "0.65", "5000.00")
       .map((rule) => [rule.title, renderToStaticMarkup(<>{rule.body}</>)] as const))
     expect(defined["Strategies"]).toContain("Defined risk only: each short option needs a long of the same type")
-    expect(texts["Exercise and assignment"]).toContain("Dividends are paid when the server knows them, from a dividend file or from Massive")
+    expect(texts["Exercise and assignment"]).toContain("Dividends come from a dividend file, from Massive or, in the demo feed and scenario replays, from the simulated calendar and the scenario&#x27;s own dividend entries. At the day&#x27;s rollover into the ex-date, shares held then receive the dividend and short shares pay it.")
     const html = render(<RulesView />)
     for (const text of ["Rules", "Profit target", "Trailing drawdown", "Evaluation plans", "Intraday 100K", "Every new high", "Buy only", "5 min before", "Start"])
       expect(html).toContain(text)
