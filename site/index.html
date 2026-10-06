@@ -43,7 +43,7 @@
         <a class="button primary" href="#quick-start">Install OpenPort <span aria-hidden="true">↓</span></a>
         <a class="button" href="#demo">Watch demo <span aria-hidden="true">▷</span></a>
       </div>
-      <p class="hero-note">Your API keys, your data and your trades stay on your machine.</p>
+      <p class="hero-note">Your data and trades stay on your machine unless you enable external notifications.</p>
     </section>
 
     <figure id="demo" class="demo" tabindex="-1" aria-labelledby="demo-title" aria-describedby="demo-caption">
@@ -82,8 +82,9 @@
         <h2 id="evaluation-title">Trade like an evaluation</h2>
       </div>
       <div class="feature-body">
-        <p>A profit target and a trailing drawdown floor decide pass or fail. Build multi-leg strategies, set brackets, and review each attempt in the journal. Record a session and trade it again in replay, or start a simulated day in the demo market.</p>
-        <p>Orders fill against displayed quotes. On the default delayed feed, a pass is practice, not proof: a real-time chart shows where the market went next.</p>
+        <p>Practise with daily loss limits, static or trailing floors, consistency rules and minimum days and trades. Custom plans add flat times, news and holding restrictions, instrument and opening-hour limits. Two-step evaluations track challenge and verification; simulated funded rules cover payouts and scaling, with evaluation, reset and activation costs recorded separately.</p>
+        <p>Trade single legs and strategies with trailing stops, stop-limits, OCO/OTO chains and brackets that protect partial remainders. Flatten works until flat: spreads close as one order and exits stay until the last contract is closed, with limit flatten overnight and in curb. Use all-session protection, timed expiry or conditions on another symbol, a study or the time of day. Choose fill models, itemized fees and cash, IRA or margin account rules.</p>
+        <p>Orders fill against displayed quotes. On the default delayed feed, a pass is practice, not proof: a real-time chart shows where the market went next. Funded plans stay hidden in the terminal unless already funded or explicitly enabled; OpenPort funds no one.</p>
         <a href="https://github.com/38st/openport/blob/main/docs/paper-trading.md">Rules, fills and simulation limits <span aria-hidden="true">↗</span></a>
       </div>
     </section>
@@ -103,6 +104,18 @@
         <p>Against Cboe’s published IVs on 2026-09-24 during the session, median differences were <strong>0.012 vol points for SPX, 0.030 for QQQ and 0.028 for SPY</strong>, across every expiry on out-of-the-money options within 10% of the forward.</p>
         <p>Exposure assumes dealers are long calls and short puts: a modelling convention, not knowledge of anyone’s positions.</p>
         <a href="https://github.com/38st/openport/blob/main/docs/methods.md">Methods, assumptions and measurements <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+
+    <section class="feature" aria-labelledby="practice-title">
+      <div class="feature-heading">
+        <p class="eyebrow">Replay and review</p>
+        <h2 id="practice-title">Practise, replay and compare</h2>
+      </div>
+      <div class="feature-body">
+        <p>Replay recorded or simulated sessions across several days. Pause, step and verify saved runs, or rehearse quote stalls, gaps and halts in stress scenarios. Backtest several playbooks on one account, then compare their live paper forward tests with saved backtests.</p>
+        <p>Check held-book warnings, compare what-if adjustments and plot risk by date and volatility, with beta weighting and probability cones. Review whole trades across rolls and export their attempt and run identity. These are simulated results and model estimates, not predictions.</p>
+        <a href="https://github.com/38st/openport/blob/main/docs/features.md">Features and limits <span aria-hidden="true">↗</span></a>
       </div>
     </section>
 
