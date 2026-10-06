@@ -438,8 +438,10 @@ even when that outer timestamp is at or before T.
 
 When paper trading and writes are enabled, every run gets a `FileJournal` in
 `replays/` beside `--paper-journal`, including runs without an explicit plan (which
-use `practice`). Names include the scenario or recording, date, seed or `recording`,
-start time and a unique suffix. A JSON sidecar holds the replay metadata. Account
+use `practice`). New run names include the scenario or recording, date, seed or
+`recording`, start time and a unique suffix. Restarted runs are named
+`SCENARIO-restart-…` (or use the recording's name) with a unique suffix; their
+sidecar's `restarted_from` names the source run. A JSON sidecar holds the replay metadata. Account
 records retain the existing hash chain and schema; repair and compaction commands
 include these journals. Runs from a prior process are treated as finished, including
 ones interrupted by a crash or a clean server shutdown, until one is resumed (below).
