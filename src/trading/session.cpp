@@ -189,6 +189,11 @@ std::string quote_problem(const QuoteObservation& q) {
   if (*q.ask < *q.bid) return "Crossed: the bid is above the ask";
   return "A side shows no displayed size";
 }
+/// AM series retain observations strictly before last trade. PM expiry and
+/// settlement keep their existing paths; retirement data cannot refresh an AM close.
+bool retired_observation(const md::OptionContract& contract, Timestamp time) {
+  return contract.last_trade_time() < contract.expiry_time() && time >= contract.last_trade_time();
+}
 /// Whether a position's quote marks it now: markable, and inside the freshness window.
 /// A far option nobody bids for is marked; only a valid quote trades.
 bool marked_now(const State& s, const std::string& symbol) {
@@ -5562,6 +5567,7 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (quote.quoted < 0 || quote.quoted > quote.time) throw TradingError(Reason::INVALID_TIME, "Quote was first given after its time");
       if (quote.quoted == quote.time) quote.quoted = 0;
       if (!seen.insert(quote.symbol).second) throw TradingError(Reason::INVALID_QUOTE, "One observation per contract per batch is required");
+      if (retired_observation(s.contracts.at(quote.symbol), quote.time)) continue;
       auto& book = s.books[quote.symbol];
       if (quote.observation == book.quote.observation && quote.time >= book.quote.time) {
         // The same quote, confirmed current at a later time: it and its mark stay
@@ -5587,6 +5593,7 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (!s.contracts.contains(valuation.symbol)) throw TradingError(Reason::UNKNOWN_CONTRACT, "Valuation references unregistered OSI");
       if (valuation.time < 0 || valuation.time > time) throw TradingError(Reason::INVALID_TIME, "Valuation is future-dated or negative");
       if (!seen.insert(valuation.symbol).second) throw TradingError(Reason::MISSING_VALUATION, "One valuation per contract per batch is required");
+      if (retired_observation(s.contracts.at(valuation.symbol), valuation.time)) continue;
       const auto prior = s.valuations.find(valuation.symbol);
       if (prior != s.valuations.end() && valuation.time < prior->second.time) continue;
       if (!valid_valuation(valuation)) {

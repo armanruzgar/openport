@@ -1087,7 +1087,13 @@ its last session's end while it is closed, so a position in a closed market keep
 closing mark: an SPY position held overnight does not block SPX trading in the
 overnight session, and the day rolls over on it. An AM series past its last trade
 keeps its closing mark and valuation until settlement time and does not block the
-curb or overnight sessions. Awaiting-settlement positions retain their last
+curb or overnight sessions. The quote reducer ignores observations and valuations
+stamped at or after last trade for these series, including retirement 0/0 quotes;
+the boundary is exclusive. PM series and settlement processing are unchanged.
+Journal recovery restores recorded state without reapplying this filter. Old
+journals retain their recorded books and valuations (including any retirement
+data already stored); derived freshness can differ only after last trade because
+of the freshness cap. Awaiting-settlement positions retain their last
 mark and are always incomplete. If no mark exists, market value/unrealised are null;
 the equity field is only a partial estimate and must be read with its completeness
 flag. Normal session fills always establish a mark first.

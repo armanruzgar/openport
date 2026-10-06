@@ -191,9 +191,37 @@ TEST(TradingSessions, AmClosingMarksAndValuationsStayFreshUntilSettlementTime) {
   // A closing observation at the inclusive freshness boundary stays usable.
   const auto close = am.contract.last_trade_time() - s.config().limits.max_quote_age;
   tick(s, am, close);
+  const auto closing_observation = am.observation;
+  const auto retire = [&](Timestamp time, bool missing = false) {
+    am.time = time;
+    ++am.observation;
+    auto value = am.valuation();
+    value.valid = false;
+    ASSERT_TRUE(s.on_quotes({am.quote("0.00", "0.00")},
+        missing ? std::vector<Valuation>{} : std::vector<Valuation>{value}, time).decision.ok());
+    EXPECT_EQ(s.valuations().at(am.symbol()).time, close);
+    EXPECT_TRUE(valid_valuation(s.valuations().at(am.symbol())));
+    const auto snapshot = s.snapshot();
+    EXPECT_EQ(snapshot->positions.front().mark, m("4.10"));
+    EXPECT_EQ(snapshot->positions.front().mark_time, close);
+    EXPECT_TRUE(snapshot->positions.front().fresh);
+    EXPECT_TRUE(snapshot->valuation_complete);
+    EXPECT_TRUE(snapshot->risk.complete);
+  };
+  retire(am.contract.last_trade_time());
+  retire(am.contract.last_trade_time() + 15 * md::kNanosPerSecond, true);
   for (const auto time : {at(thursday, 16, 20), at(thursday, 21, 0)}) {
     SCOPED_TRACE(time);
     tick(s, weekly, time);
+    retire(time);
+    // Even apparently valid late data cannot replace or refresh the close.
+    tick(s, am, time, "8.00", "8.20");
+    EXPECT_EQ(s.valuations().at(am.symbol()).time, close);
+    // Nor can a repeat of the last pre-close observation refresh its timestamp.
+    const auto next_observation = am.observation;
+    am.observation = closing_observation;
+    ASSERT_TRUE(s.on_quotes({am.quote()}, {}, time).decision.ok());
+    am.observation = next_observation;
     const auto snapshot = s.snapshot();
     ASSERT_FALSE(snapshot->positions.empty());
     const auto& held = snapshot->positions.front();

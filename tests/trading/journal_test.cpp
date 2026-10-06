@@ -30,6 +30,34 @@ class TemporaryJournal {
  private:
   std::filesystem::path directory_;
 };
+TEST(TradingJournal, AmRetirementKeepsClosingDataThroughRecoveryAndSettlement) {
+  TemporaryJournal file;
+  auto sink = FileJournal::create(file.path);
+  test::ScriptedMarket f;
+  f.contract = *md::parse_osi("SPX260918C06020000");
+  f.time = f.contract.last_trade_time() - 15 * md::kNanosPerSecond;
+  TradingSession session({}, f.time, sink);
+  f.seed(session);
+  ASSERT_TRUE(session.submit(f.market("entry"), f.time).decision.ok());
+  const auto close = f.time;
+  for (const auto time : {f.contract.last_trade_time(),
+                         md::new_york_to_utc({2026, 9, 17}, 21, 0)}) {
+    f.time = time;
+    ++f.observation;
+    auto value = f.valuation();
+    value.valid = false;
+    ASSERT_TRUE(session.on_quotes({f.quote("0.00", "0.00")}, {value}, time).decision.ok());
+    auto recovered = TradingSession::recover(FileJournal::read(file.path));
+    EXPECT_EQ(recovered.snapshot_json(), session.snapshot_json());
+    EXPECT_EQ(recovered.valuations().at(f.symbol()).time, close);
+    EXPECT_TRUE(recovered.snapshot()->valuation_complete);
+    EXPECT_TRUE(recovered.snapshot()->risk.complete);
+  }
+  ASSERT_TRUE(session.settle(f.symbol(), Money::parse("6210"), f.contract.expiry_time()).decision.ok());
+  EXPECT_TRUE(session.snapshot()->positions.empty());
+  EXPECT_EQ(TradingSession::recover(FileJournal::read(file.path)).snapshot_json(), session.snapshot_json());
+}
+
 TEST(TradingJournal, EveryReasonRoundTripsIncludingScalingAndCalendarCodes) {
   EXPECT_EQ(static_cast<int>(Reason::NEWS_BLACKOUT), static_cast<int>(Reason::MAX_VOLUME_SHARE) + 1);
   EXPECT_EQ(static_cast<int>(Reason::HOLD_RESTRICTED), static_cast<int>(Reason::NEWS_BLACKOUT) + 1);
