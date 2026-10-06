@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <future>
 #include <fstream>
+#include <sstream>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
 
@@ -570,6 +571,29 @@ TEST(ReplayHost, DrillsReachTheEngineBeforeTradingAndKeepTheirJournalsAcrossRest
   base.paper_journal = file.directory / "main.jsonl";
   std::string id;
   json expected;
+  const auto check_exports = [&](server::ReplayHost& host, const std::string& prefix) {
+    const auto trades = json::parse(call(host, "GET", prefix + "/trades").body);
+    ASSERT_EQ(trades["run"]["id"], id);
+    for (const auto* name : {"trades", "fills"}) {
+      const auto items = json::parse(call(host, "GET", prefix + "/" + name).body).at(name);
+      ASSERT_FALSE(items.empty());
+      for (const auto* query : {"", "?account=main"}) {
+        const auto response = call(host, "GET", prefix + "/" + name + ".csv" + query);
+        ASSERT_EQ(response.status, 200) << response.body;
+        EXPECT_EQ(response.content_type, "text/csv; charset=utf-8");
+        std::istringstream csv(response.body);
+        std::string line;
+        ASSERT_TRUE(std::getline(csv, line));
+        ASSERT_TRUE(line.starts_with("account,"));
+        std::size_t rows = 0;
+        while (std::getline(csv, line)) {
+          EXPECT_EQ(line.substr(0, line.find(',')), id);
+          ++rows;
+        }
+        EXPECT_EQ(rows, items.size());
+      }
+    }
+  };
   {
     server::ReplayHost host({file.directory, base, false});
     for (const auto* time : {"9:30", "24:00", "15:60", "garbage", "08:00", "17:00", ""}) {
@@ -604,6 +628,7 @@ TEST(ReplayHost, DrillsReachTheEngineBeforeTradingAndKeepTheirJournalsAcrossRest
     ASSERT_EQ(bought.status, 201) << bought.body;
     EXPECT_EQ(json::parse(bought.body)["order"]["status"], "filled");
     expected = json::parse(call(host, "GET", "/api/replay/fills").body);
+    check_exports(host, "/api/replay");
     EXPECT_TRUE(json::parse(call(host, "GET", "/api/replay").body)["history"].empty());
     ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
     const auto history = json::parse(call(host, "GET", "/api/replay").body)["history"];
@@ -620,6 +645,7 @@ TEST(ReplayHost, DrillsReachTheEngineBeforeTradingAndKeepTheirJournalsAcrossRest
   const auto history = json::parse(call(restarted, "GET", "/api/replay").body)["history"];
   ASSERT_EQ(history.size(), 1U);
   EXPECT_EQ(history[0]["id"], id);
+  check_exports(restarted, "/api/replay/history/" + id);
   EXPECT_EQ(json::parse(call(restarted, "GET", "/api/replay/history/" + id + "/fills").body), expected);
   EXPECT_EQ(call(restarted, "GET", "/api/replay/history/" + id + "/account").status, 200);
   EXPECT_EQ(call(restarted, "GET", "/api/replay/history/" + id + "/trades").status, 200);

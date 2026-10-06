@@ -197,14 +197,19 @@ TEST(TradeReviewApi, ExportsNameTheirRunAttemptAndClosingTradingDay) {
   const auto newest = csv_record(rows[0], rows[1]), oldest = csv_record(rows[0], rows[3]);
   EXPECT_EQ(newest["attempt"], "2"); EXPECT_EQ(oldest["attempt"], "1");
   EXPECT_EQ(newest["run_id"], "reversal-2026-09-22-7"); EXPECT_EQ(newest["scenario"], "reversal");
+  for (std::size_t i = 1; i < rows.size(); ++i)
+    EXPECT_EQ(csv_record(rows[0], rows[i])["account"], body["run"]["id"]);
   EXPECT_EQ(newest["seed"], "7"); EXPECT_EQ(newest["recording"], "");
   const auto trades = csv_rows(server::handle_api({"GET", "/api/trades.csv"}, source).body);
+  for (std::size_t i = 1; i < trades.size(); ++i)
+    EXPECT_EQ(csv_record(trades[0], trades[i])["account"], body["run"]["id"]);
   EXPECT_EQ(csv_record(trades[0], trades[1])["trading_day"], "2026-09-22");
   EXPECT_EQ(csv_record(trades[0], trades[1])["seed"], "7");
   // A live account leaves the run columns empty.
   source.view->run.reset();
   const auto live = csv_rows(server::handle_api({"GET", "/api/trades.csv"}, source).body);
   EXPECT_EQ(csv_record(live[0], live[1])["run_id"], "");
+  EXPECT_EQ(csv_record(live[0], live[1])["account"], "main");
   EXPECT_TRUE(json::parse(server::handle_api({"GET", "/api/trades"}, source).body)["run"].is_null());
 }
 TEST(TradeReviewApi, ClosedTradesSayWhetherAStopAFlattenOrALiquidationClosedThem) {

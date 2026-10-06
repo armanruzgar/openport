@@ -2802,7 +2802,11 @@ notes are preserved. Money retains micro-dollar precision, with two to six decim
 row field is included, with nested context, review and attribution fields in dotted columns;
 arrays, including tags and fill IDs, join with `;`. Missing values are empty cells.
 Times remain ISO UTC and each row adds `new_york_date`, account, account version,
-current provider and a price-source label. Exports from a replay, running or saved, also
+current provider and a price-source label. For `/api/replay/trades.csv`,
+`/api/replay/fills.csv` and their `/api/replay/history/ID` equivalents, `account`
+is the replay run ID, matching the JSON trades view's `run.id` and the CSV `run_id`,
+even when `account=main` selects the internal replay account. Ordinary account
+exports retain the selected account ID (default `main`). Exports from a replay, running or saved, also
 name the run on every row: `run_id`, and `scenario` and `seed` or the `recording` it
 replayed (empty for a live account), so rows from several practice runs stay apart once
 merged; `GET /api/trades` gives the same as `run`. Fill rows carry their `attempt`, as

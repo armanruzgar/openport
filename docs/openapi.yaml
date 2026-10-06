@@ -944,7 +944,7 @@
       ],
       "get": {
         "summary": "GET /api/fills.csv",
-        "description": "Read the current publication.",
+        "description": "Read the current publication. Every row names its account in the account column; replay exports (active or archived) use run_id, matching the JSON trades view's run.id, even when account=main selects the internal replay account.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -1010,7 +1010,7 @@
       ],
       "get": {
         "summary": "GET /api/trades.csv",
-        "description": "Read the current publication. Trade CSV includes settlement_value and settlement_source before the final time_stop_orders column: a JSON array of objects with order_id, reason and note for related automatic playbook cancellations and closes.",
+        "description": "Read the current publication. Trade CSV includes settlement_value and settlement_source before the final time_stop_orders column: a JSON array of objects with order_id, reason and note for related automatic playbook cancellations and closes. Every row names its account in the account column; replay exports (active or archived) use run_id, matching the JSON trades view's run.id, even when account=main selects the internal replay account.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -3015,7 +3015,7 @@
       ],
       "get": {
         "summary": "GET /api/fills.csv",
-        "description": "Read the current publication.",
+        "description": "Read the current publication. Every row names its account in the account column; replay exports (active or archived) use run_id, matching the JSON trades view's run.id, even when account=main selects the internal replay account.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -3092,7 +3092,7 @@
       ],
       "get": {
         "summary": "GET /api/trades.csv",
-        "description": "Read the current publication. Trade CSV includes settlement_value and settlement_source before the final time_stop_orders column: a JSON array of objects with order_id, reason and note for related automatic playbook cancellations and closes.",
+        "description": "Read the current publication. Trade CSV includes settlement_value and settlement_source before the final time_stop_orders column: a JSON array of objects with order_id, reason and note for related automatic playbook cancellations and closes. Every row names its account in the account column; replay exports (active or archived) use run_id, matching the JSON trades view's run.id, even when account=main selects the internal replay account.",
         "x-scope": "read",
         "responses": {
           "200": {
