@@ -84,6 +84,22 @@ describe("the alert watcher", () => {
     expect(titles()).toHaveLength(2)
   })
 
+  it("announces a delivery shortfall once even with fill alerts off", async () => {
+    alertStore.set({ ...noAlerts, fills: false, sound: false })
+    live(5000)
+    deliveries([])
+    await render(<AlertWatcher />)
+    const fill = { ...exercised, buying_power_after: "-83000.000001" }
+    deliveries([fill])
+    await render(<AlertWatcher />)
+    expect(shown).toHaveLength(1)
+    expect(shown[0]!.body).toContain("Buying power after delivery: −$83,000.000001")
+    expect(shown[0]!.body).toContain("closes that free buying power remain allowed")
+    deliveries([fill])
+    await render(<AlertWatcher />)
+    expect(shown).toHaveLength(1)
+  })
+
   it("fires a price alert once, in the page and as a browser notification", async () => {
     alertStore.set({ fills: false, sound: false, prices: [
       { id: "up", symbol: "SPX", direction: "above", level: 5000, created: "2026-09-23T19:00:00.000Z" },

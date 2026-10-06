@@ -3633,12 +3633,15 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
           ? "the account closes the position at its pre-expiry cutoff at " + clock_text(cutoff) +
             " at the market; only contracts still held into expiry because a close cannot fill are "
           : std::string("held into expiry ") + (magnitude(contracts) == 1 ? "it is " : "they are ");
-      add("EXPIRY_DELIVERY", !before_cutoff && power < Money{}, c.underlying, x.symbol,
+      add("EXPIRY_DELIVERY", power < Money{}, c.underlying, x.symbol,
           std::to_string(magnitude(contracts)) + " " + (contracts > 0 ? "long " : "short ") + contract_name(c) + " expiring today " +
           (magnitude(contracts) == 1 ? "is " : "are ") + dollars(x.intrinsic) + " in the money: " + expiry +
           (contracts > 0 ? "exercised" : "assigned") + ", " +
           (shares > 0 ? "buying " : "selling ") + std::to_string(magnitude(shares)) + " " + c.underlying + " shares at the strike (" +
-          dollars(strike * magnitude(shares)) + "). Buying power once the options expiring in the money today deliver: " + dollars(power),
+          dollars(strike * magnitude(shares)) + "). Buying power once the options expiring in the money today deliver: " + dollars(power) +
+          (power < Money{} && rules.buying_power
+              ? ". Openings that use buying power are refused until the shortfall is resolved; closes that free buying power remain allowed. Close or reduce before expiry to avoid this shortfall"
+              : ""),
           power.dollars(), 0.0);
     }
   }
@@ -5783,6 +5786,8 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
       if (const auto mark = s.stock_marks.find(underlying); mark == s.stock_marks.end() || mark->second.time <= time)
         s.stock_marks[underlying] = {settlement, time};
       trade_shares(s, underlying, shares, settlement, StockSource::Delivery, symbol);
+      if (s.config.rules.buying_power)
+        s.stock_fills.mut(s.stock_fills.size() - 1).buying_power_after = buying_power(s).total.available;
       event(events, "delivery", Json{{"symbol", symbol}, {"underlying", underlying}, {"shares", shares}, {"price", settlement}});
     }
     return CommandResult{};
@@ -5845,6 +5850,8 @@ void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp cl
     s.closures.push_back({symbol, -contracts, intrinsic, s.time, ClosureKind::Assignment, s.fills.size(), fee});
     trade_shares(s, contract.underlying, shares, *price, StockSource::Assignment, symbol);
     sync_exits(s, symbol, events);
+    if (s.config.rules.buying_power)
+      s.stock_fills.mut(s.stock_fills.size() - 1).buying_power_after = buying_power(s).total.available;
     event(events, "assignment", Json{{"symbol", symbol}, {"contracts", contracts}, {"of", short_contracts}, {"reason", reason},
                                      {"intrinsic", intrinsic}, {"mark", mark->second.price},
                                      {"underlying", contract.underlying}, {"shares", shares}, {"price", *price}});

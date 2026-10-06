@@ -596,7 +596,16 @@ inline void from_json(const Json& j, Closure& c) {
   j.at("time").get_to(c.time); j.at("kind").get_to(c.kind); j.at("after_fill").get_to(c.after_fill);
   added_field(j, "fee", c.fee);
 }
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(StockFill, id, symbol, shares, price, time, source, option)
+inline void to_json(Json& j, const StockFill& f) {
+  j = Json{{"id", f.id}, {"symbol", f.symbol}, {"shares", f.shares}, {"price", f.price},
+           {"time", f.time}, {"source", f.source}, {"option", f.option}};
+  if (f.buying_power_after) j["buying_power_after"] = *f.buying_power_after;
+}
+inline void from_json(const Json& j, StockFill& f) {
+  j.at("id").get_to(f.id); j.at("symbol").get_to(f.symbol); j.at("shares").get_to(f.shares);
+  j.at("price").get_to(f.price); j.at("time").get_to(f.time); j.at("source").get_to(f.source);
+  j.at("option").get_to(f.option); added_field(j, "buying_power_after", f.buying_power_after);
+}
 inline void to_json(Json& j, const DividendPayment& d) {
   j = Json{{"symbol", d.symbol}, {"ex_date", d.ex_date}, {"per_share", d.per_share}, {"shares", d.shares},
            {"amount", d.amount}, {"time", d.time}};

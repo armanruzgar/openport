@@ -12018,6 +12018,10 @@
       "StockFill": {
         "type": "object",
         "properties": {
+          "buying_power_after": {
+            "description": "Exact buying power immediately after automatic share delivery on a plan enforcing buying power. Negative values trigger a delivery shortfall alert: openings consuming unavailable buying power are refused until resolved; closes that free buying power remain allowed. Null for older journal records, other fills or plans without buying-power checks.",
+            "anyOf": [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+          },
           "id": {
             "type": "string"
           },
@@ -16173,7 +16177,7 @@
       },
       "RiskWarning": {
         "type": "object",
-        "description": "Something about the held book worth acting on. actual and limit depend on the code: DELTA_LIMIT and VEGA_LIMIT the exposure and its limit; DELTA_HEADROOM the signed percent move that takes dollar delta to a limit and the threshold it is within; SOFT_FLOOR and SOFT_FLOOR_ROLLOVER equity and the soft floor; FLOOR_RATCHET the floor tomorrow and today; EXPIRY_DELIVERY buying power once the options expiring in the money today deliver, and zero; EARLY_ASSIGNMENT the mark and intrinsic value, or the time value and the dividend; EX_DIVIDEND the dividend a share. Before the account's pre-expiry cutoff, EXPIRY_DELIVERY is info and names the cutoff time when the position closes at the market; only contracts still held because a close cannot fill are exercised or assigned. Without a cutoff, or at or after it with the position still held, it is warning when delivery leaves negative buying power, otherwise info.",
+        "description": "Something about the held book worth acting on. actual and limit depend on the code: DELTA_LIMIT and VEGA_LIMIT the exposure and its limit; DELTA_HEADROOM the signed percent move that takes dollar delta to a limit and the threshold it is within; SOFT_FLOOR and SOFT_FLOOR_ROLLOVER equity and the soft floor; FLOOR_RATCHET the floor tomorrow and today; EXPIRY_DELIVERY buying power once the options expiring in the money today deliver, and zero; EARLY_ASSIGNMENT the mark and intrinsic value, or the time value and the dividend; EX_DIVIDEND the dividend a share. EXPIRY_DELIVERY names the strike delivery cost and projected buying power including fees and working reservations; it is warning whenever that buying power is negative, even before the pre-expiry cutoff, otherwise info. Before the cutoff it names the time for closing at market; only contracts still held because a close cannot fill deliver. On buying-power-enforced plans it explains that openings consuming unavailable buying power are refused until resolved, while closes that free buying power remain allowed.",
         "properties": {
           "code": {
             "type": "string",

@@ -417,6 +417,10 @@ void Notifications::observe(std::string_view account, const TradingView& view, b
     // Expiry deliveries use Settlement closures; stock fills identify the option's side.
     for (std::size_t i = previous->stock_fills.size(); i < current.stock_fills.size(); ++i) {
       const auto& fill = current.stock_fills[i];
+      if (fill.buying_power_after && *fill.buying_power_after < trading::Money{})
+        emit("alert", fill.time, "Buying power after delivery: $" + fill.buying_power_after->str() +
+            ". Openings that use buying power are refused until the shortfall is resolved; closes that free buying power remain allowed.",
+            {{"symbol", fill.option}, {"buying_power_after", fill.buying_power_after->str()}});
       if (fill.source != trading::StockSource::Delivery) continue;
       const auto assigned = expiry_assignments.find(fill.option);
       if (assigned == expiry_assignments.end()) continue;

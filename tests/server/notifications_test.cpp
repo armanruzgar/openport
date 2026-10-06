@@ -470,6 +470,24 @@ TEST(Notifications, ExpiryDeliveriesDistinguishShortAssignmentFromLongExercise) 
   EXPECT_EQ(json::parse(h.http->calls[0].body)["event"], "assignment");
   EXPECT_EQ(json::parse(h.http->calls[1].body)["event"], "exercise");
 }
+TEST(Notifications, DeliveryShortfallAlertsOnceWithRecordedExactBuyingPower) {
+  auto config = channel(); config["events"] = {"alert"};
+  Harness h(json::array({config}));
+  auto snapshot = std::make_shared<trading::TradingSnapshot>();
+  h.notifications->observe("main", view(snapshot));
+  snapshot = std::make_shared<trading::TradingSnapshot>(*snapshot);
+  snapshot->stock_fills.push_back({1, "SPY", 300, Money::parse("610"), 1, trading::StockSource::Delivery,
+                                  "call", Money::parse("-83000.000001")});
+  snapshot->stock_fills.push_back({2, "SPY", 100, {}, 1, trading::StockSource::Assignment, "put", Money::parse("0")});
+  h.notifications->observe("main", view(snapshot));
+  h.notifications->observe("main", view(snapshot)); h.drain();
+  ASSERT_EQ(h.http->calls.size(), 1U);
+  const auto alert = json::parse(h.http->calls[0].body);
+  EXPECT_EQ(alert["event"], "alert");
+  EXPECT_EQ(alert["details"]["buying_power_after"], "-83000.000001");
+  EXPECT_NE(h.http->calls[0].body.find("Openings that use buying power are refused"), std::string::npos);
+  EXPECT_NE(h.http->calls[0].body.find("closes that free buying power remain allowed"), std::string::npos);
+}
 TEST(Notifications, FloorUsesBreachRoomPerChannelAndRearmsAfterRecovery) {
   auto narrow = channel("ntfy", "narrow"); narrow["floor_distance"] = "100";
   Harness h(json::array({channel(), narrow}));

@@ -2389,6 +2389,7 @@ TEST(PaperRecovery, SettlementProvenanceIsDurableAndStopReleasesJournalWriter) {
 TEST(PaperRecovery, EtfOptionsSettleAtTheQuarterHourOnTheClosingPrint) {
   const auto path = paper_path();
   auto options = paper_options(); options.paper_journal = path;
+  options.paper.rules.buying_power = true;
   test::ScriptedMarket market;
   market.contract = *md::parse_osi("SPY260922C00500000");
   PaperProvider provider;
@@ -2428,7 +2429,7 @@ TEST(PaperRecovery, EtfOptionsSettleAtTheQuarterHourOnTheClosingPrint) {
   const auto fills = read(engine, "/api/trades?status=all")["stock_fills"];
   ASSERT_EQ(fills.size(), 1);
   EXPECT_EQ(fills[0], json({{"id", "1"}, {"symbol", "SPY"}, {"shares", 100}, {"price", "501.00"},
-      {"time", md::format_timestamp(market.contract.expiry_time())}, {"source", "expiry_exercise"}, {"option", market.symbol()}}));
+      {"time", md::format_timestamp(market.contract.expiry_time())}, {"source", "expiry_exercise"}, {"option", market.symbol()}, {"buying_power_after", snapshot->buying_power.available.str()}}));
   EXPECT_EQ(shares["opened_by"], "expiry_exercise");
   EXPECT_EQ(shares["option"], market.symbol());
   EXPECT_EQ(shares["closed_by"], nullptr);

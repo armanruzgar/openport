@@ -337,6 +337,7 @@ struct StockFill {
   Timestamp time = 0;
   StockSource source = StockSource::Trade;
   std::string option;  ///< The OSI that delivered them, for Delivery and Exercise.
+  std::optional<Money> buying_power_after = {};  ///< Automatic delivery with buying-power checks; absent in old journals.
 };
 
 /// Buying power. Under strategy margin it is cash: long premium is paid in full and

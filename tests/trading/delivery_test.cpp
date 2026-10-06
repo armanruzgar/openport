@@ -42,6 +42,61 @@ const MarkedStock* stock(const TradingSession& s, std::string_view symbol) {
 double day_pnl(const TradingSession& s) { return (s.snapshot()->equity - s.snapshot()->start_of_day_equity).dollars(); }
 
 
+TEST(TradingDelivery, ExpiryShortfallRefusesOpeningsAllowsClosesAndRecovers) {
+  for (const bool assignment : {false, true}) {
+    SCOPED_TRACE(assignment);
+    const auto expiring = *md::parse_osi(assignment ? "SPY260922P00520000" : "SPY260922C00500000");
+    const auto later = *md::parse_osi("SPY261022C00500000");
+    Spy f;
+    auto c = roomy();
+    c.rules.buying_power = true;
+    if (assignment) c.rules.max_drawdown = m("10000");  // Evaluation, alongside practice exercise.
+    c.rules.fees = FeeSchedule{};
+    c.rules.fees->exercise = m("0.000001");
+    std::string pattern = (std::filesystem::temp_directory_path() / "openport-shortfall-XXXXXX").string();
+    ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
+    const auto path = (std::filesystem::path(pattern) / "session.jsonl").string();
+    auto journal = FileJournal::create(path);
+    TradingSession s(c, f.time, journal);
+    f.define(s, expiring); f.define(s, later);
+    f.quote(s, expiring, "10", "10.20");
+    ASSERT_TRUE(s.submit(f.market("expiry", expiring, 3, assignment ? Side::Sell : Side::Buy), f.time).decision.ok());
+    f.quote(s, later, "14", "14.20");
+    ASSERT_TRUE(s.submit(f.market("later", later, 1), f.time).decision.ok());
+    const auto warnings = s.warnings();
+    const auto warning = std::find_if(warnings.begin(), warnings.end(), [](const auto& w) { return w.code == "EXPIRY_DELIVERY"; });
+    ASSERT_NE(warning, warnings.end());
+    EXPECT_EQ(warning->severity, "warning");
+    EXPECT_NE(warning->message.find(assignment ? "$156000.00" : "$150000.00"), std::string::npos);
+    f.time = expiring.expiry_time();
+    ASSERT_TRUE(s.settle(expiring.osi_symbol(), m("510"), f.time).decision.ok());
+    ASSERT_EQ(s.snapshot()->stocks.size(), 1U);
+    EXPECT_EQ(s.snapshot()->stocks[0].position.shares, 300);
+    EXPECT_LT(s.snapshot()->account.cash, Money{});
+    const auto power = s.snapshot()->buying_power.available;
+    EXPECT_EQ(power, m(assignment ? "-54420.000003" : "-54480.000003"));
+    EXPECT_EQ(warning->actual, power.dollars());
+    EXPECT_EQ(s.snapshot()->stock_fills.back().buying_power_after, power);
+    f.quote(s, later, "14", "14.20");  // Rollover requires a fresh closing mark on the remaining option.
+    auto recovered = TradingSession::recover(FileJournal::read(path, journal->head()));
+    EXPECT_EQ(recovered.snapshot_json(), s.snapshot_json());
+    EXPECT_EQ(recovered.snapshot()->stock_fills.back().buying_power_after, power);
+    // Delivery after the close is resolved when the share market next opens.
+    f.time = md::new_york_to_utc({2026, 9, 23}, 10, 0);
+    ASSERT_TRUE(recovered.roll_day(f.time).decision.ok());
+    f.quote(recovered, later, "14", "14.20");
+    EXPECT_EQ(recovered.submit(f.market("blocked", later, 1), f.time).decision.code, Reason::BUYING_POWER);
+    EXPECT_EQ(recovered.trade_stock("SPY", 1, f.time).decision.code, Reason::BUYING_POWER);
+    ASSERT_TRUE(recovered.submit(f.market("close-option", later, 1, Side::Sell), f.time).decision.ok());
+    ASSERT_TRUE(recovered.trade_stock("SPY", -1, f.time).decision.ok());
+    EXPECT_LT(recovered.snapshot()->buying_power.available, Money{});
+    ASSERT_TRUE(recovered.trade_stock("SPY", -299, f.time).decision.ok());
+    EXPECT_GT(recovered.snapshot()->buying_power.available, Money{});
+    ASSERT_TRUE(recovered.submit(f.market("resolved", later, 1), f.time).decision.ok());
+    std::filesystem::remove_all(pattern);
+  }
+}
+
 TEST(TradingDelivery, BuyOnlyPutExerciseRequiresLongSharesButExpiryStillDelivers) {
   const auto put = *md::parse_osi("SPY260922P00520000");
   for (const auto shares : {0, 99, 100, 150}) {

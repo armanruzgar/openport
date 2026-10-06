@@ -63,6 +63,14 @@ describe("delivery alerts", () => {
     expect(deliveryMessage(exercised)).toEqual({ title: "Exercised SPY Sep 22 500C at expiry", body: "Bought 100 SPY at $501.00" })
     expect(deliveryMessage({ ...exercised, source: "assignment", shares: -100, option: null }))
       .toEqual({ title: "Assigned a SPY option", body: "Sold 100 SPY at $501.00" })
+    const deficit = deliveryMessage({ ...exercised, buying_power_after: "-83000.000001" })
+    expect(deficit.body).toContain("Buying power after delivery: −$83,000.000001")
+    expect(deficit.body).toContain("Openings that use buying power are refused")
+    expect(deficit.body).toContain("closes that free buying power remain allowed")
+    expect(deliveryMessage({ ...exercised, buying_power_after: "-0.000001" }).body).toContain("shortfall")
+    for (const power of [null, "0.00", "100.00"]) {
+      expect(deliveryMessage({ ...exercised, buying_power_after: power })).toEqual(deliveryMessage(exercised))
+    }
     expect(unordered(exercised)).toBe(true)
     expect(unordered({ ...exercised, source: "early_exercise" })).toBe(false)
     expect(unordered({ ...exercised, source: "trade" })).toBe(false)

@@ -957,7 +957,7 @@ json share_source(const StockFill& fill) {
 json stock_fill_json(const StockFill& fill) {
   return {{"id", std::to_string(fill.id)}, {"symbol", fill.symbol}, {"shares", fill.shares},
           {"price", fill.price.str()}, {"time", md::format_timestamp(fill.time)}, {"source", share_source(fill)},
-          {"option", nullable(fill.option)}};
+          {"option", nullable(fill.option)}, {"buying_power_after", money(fill.buying_power_after)}};
 }
 const char* closure_name(ClosureKind kind) {
   return kind == ClosureKind::Settlement ? "settlement" : kind == ClosureKind::Exercise ? "exercise"

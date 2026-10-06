@@ -30,6 +30,19 @@ class TemporaryJournal {
  private:
   std::filesystem::path directory_;
 };
+TEST(TradingJournal, OlderStockFillsKeepTheirBytesWithoutDeliveryBuyingPower) {
+  const StockFill original{1, "SPY", 100, Money::parse("510"), 1, StockSource::Delivery, "call"};
+  const Json legacy = original;
+  EXPECT_FALSE(legacy.contains("buying_power_after"));
+  const auto restored = legacy.get<StockFill>();
+  EXPECT_FALSE(restored.buying_power_after);
+  EXPECT_EQ(Json(restored), legacy);
+  auto recorded = original;
+  recorded.buying_power_after = Money::parse("-0.000001");
+  const auto current = Json(recorded).get<StockFill>();
+  EXPECT_EQ(current.buying_power_after, recorded.buying_power_after);
+}
+
 TEST(TradingJournal, AmRetirementKeepsClosingDataThroughRecoveryAndSettlement) {
   TemporaryJournal file;
   auto sink = FileJournal::create(file.path);

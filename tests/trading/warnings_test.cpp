@@ -168,11 +168,29 @@ TEST(TradingWarnings, InTheMoneyEquityOptionsExpiringTodaySayWhatDeliveryLeaves)
   EXPECT_EQ(find(index.warnings(), "EXPIRY_DELIVERY"), nullptr);
 }
 
+TEST(TradingWarnings, FundedDeliveryIsInformationalAndDoNotExerciseSuppressesIt) {
+  const auto call = *md::parse_osi("SPY260922C00500000");
+  Spy f; auto c = config(); c.initial_cash = m("100000"); c.rules.buying_power = true;
+  TradingSession s(c, f.time);
+  ASSERT_TRUE(s.define(call, f.time).decision.ok());
+  f.quote(s, call, "10", "10.20");
+  ASSERT_TRUE(s.submit(f.market("call", call, 1), f.time).decision.ok());
+  const auto warnings = s.warnings();
+  const auto* delivery = find(warnings, "EXPIRY_DELIVERY");
+  ASSERT_NE(delivery, nullptr);
+  EXPECT_EQ(delivery->severity, "info");
+  EXPECT_EQ(delivery->actual, 48979.35);
+  EXPECT_EQ(delivery->message.find("shortfall"), std::string::npos);
+  ASSERT_TRUE(s.instruct_exercise(call.osi_symbol(), true, f.time).decision.ok());
+  EXPECT_EQ(find(s.warnings(), "EXPIRY_DELIVERY"), nullptr);
+}
+
 TEST(TradingWarnings, ExpiryDeliveryNamesTheCutoffUntilItPasses) {
   const auto call = *md::parse_osi("SPY260922C00500000");
   Spy f; f.time = md::new_york_to_utc({2026, 9, 22}, 16, 8);
   auto c = config(); c.initial_cash = m("100000");
   c.rules.expiry_cutoff = 5 * md::kNanosPerMinute;
+  c.rules.buying_power = true;
   TradingSession s(c, f.time);
   ASSERT_TRUE(s.define(call, f.time).decision.ok());
   f.quote(s, call, "10.00", "10.20");
@@ -180,7 +198,8 @@ TEST(TradingWarnings, ExpiryDeliveryNamesTheCutoffUntilItPasses) {
   auto warnings = s.warnings();
   const auto* delivery = find(warnings, "EXPIRY_DELIVERY");
   ASSERT_NE(delivery, nullptr);
-  EXPECT_EQ(delivery->severity, "info");
+  EXPECT_EQ(delivery->severity, "warning");
+  EXPECT_NE(delivery->message.find("Openings that use buying power are refused"), std::string::npos);
   EXPECT_NE(delivery->message.find("pre-expiry cutoff at 16:10:00 ET at the market"), std::string::npos) << delivery->message;
   EXPECT_NE(delivery->message.find("only contracts still held into expiry because a close cannot fill are exercised"),
             std::string::npos) << delivery->message;

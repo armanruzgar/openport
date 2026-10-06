@@ -83,9 +83,11 @@ export const unordered = (fill: StockFill) => fill.source === "assignment" || fi
 /** "Assigned SPY Oct 16 600P" / "Bought 200 SPY at $510.00" */
 export function deliveryMessage(fill: StockFill) {
   const contract = fill.option ? osiLabel(fill.option, fill.symbol) : `a ${fill.symbol} option`
+  const shortfall = fill.buying_power_after != null && fill.buying_power_after.startsWith("-") && /[1-9]/.test(fill.buying_power_after)
+    ? `. Buying power after delivery: ${formatMoney(fill.buying_power_after, 6)}. Openings that use buying power are refused until the shortfall is resolved; closes that free buying power remain allowed.` : ""
   return {
     title: fill.source === "assignment" ? `Assigned ${contract}` : `Exercised ${contract} at expiry`,
-    body: `${fill.shares > 0 ? "Bought" : "Sold"} ${Math.abs(fill.shares)} ${fill.symbol} at ${formatMoney(fill.price)}`,
+    body: `${fill.shares > 0 ? "Bought" : "Sold"} ${Math.abs(fill.shares)} ${fill.symbol} at ${formatMoney(fill.price)}${shortfall}`,
   }
 }
 /** "SPY dividend" / "+$380.00 on 200 shares at $1.90", or "on 100 shares short" when paid. */

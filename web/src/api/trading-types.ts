@@ -378,7 +378,7 @@ export interface AttemptSummary {
 /**
  * Something about the held book worth acting on. `actual` and `limit` depend on the
  * code (docs/paper-trading.md, Risk warnings).
- * EXPIRY_DELIVERY is info before the account's pre-expiry cutoff closes at market;
+ * EXPIRY_DELIVERY warns whenever projected buying power is negative, including before the cutoff;
  * delivery applies only to contracts still held if a close cannot fill.
  */
 export interface RiskWarning {
@@ -585,7 +585,8 @@ export interface ShareTrade {
   tags?: string[]
 }
 /** One change in shares held, and how it came about. */
-export interface StockFill { id: string; symbol: string; shares: number; price: Money; time: string; source: ShareSource; option: string | null }
+/** buying_power_after records automatic delivery with buying-power checks; null/absent for older records and other fills. */
+export interface StockFill { id: string; symbol: string; shares: number; price: Money; time: string; source: ShareSource; option: string | null; buying_power_after?: Money | null }
 /** A dividend paid on (negative: charged to short) shares held into its ex-date. */
 export interface DividendPaid { symbol: string; ex_date: string; per_share: Money; shares: number; amount: Money; time: string }
 /** A trade with more than one entry: a roll, an adjustment or round trips the account grouped. */
