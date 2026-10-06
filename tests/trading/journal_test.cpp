@@ -66,7 +66,8 @@ TEST(TradingJournal, EveryReasonRoundTripsIncludingScalingAndCalendarCodes) {
   for (int i = 0; i <= static_cast<int>(kLastReason); ++i) {
     const auto reason = static_cast<Reason>(i);
     const nlohmann::json encoded = reason;
-    EXPECT_NE(encoded, "UNKNOWN");
+    ASSERT_TRUE(encoded.is_string());
+    EXPECT_NE(encoded.get<std::string>(), std::string("UNKNOWN"));
     EXPECT_EQ(nlohmann::json::parse(encoded.dump()).get<Reason>(), reason);
   }
 }
