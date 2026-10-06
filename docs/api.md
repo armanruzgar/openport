@@ -332,8 +332,14 @@ Journal warnings begin at 256 MiB or 100,000 verified records. Live accounts
 suggest offline `--compact-journals`; replay warnings note that compaction breaks
 exact run verification. Replay history adds `journal_size` and
 `verification_cost: {estimated_seconds, warning}`; verification responses add
-`cost` in the same shape. Estimates use the slower of 10 MiB/s or 2,000 records/s,
-with a minimum of one second; warnings begin at 30 seconds. They are estimates,
+`cost` in the same shape. CLI and HTTP estimates use the maximum of the journal estimate
+(the slower of 10 MiB/s or 2,000 records/s, minimum one second) and an input
+estimate: (4 seconds + 5 seconds per played hour) × max(1, scenario underlyings / 3).
+Played time is the journal start through its last market time or a later sidecar
+`settled_through`. Scenarios count only time within their recorded-calendar sessions,
+excluding closed nights/weekends; recordings count the continuous played span
+without underlying scaling. If input metadata cannot be determined, only the journal
+estimate is used. Seconds round up; warnings begin at 30 seconds. They are estimates,
 not bounds: recording generation, analytics and hardware can take longer.
 The terminal displays the warning before the trader presses Verify.
 

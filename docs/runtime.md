@@ -1429,11 +1429,18 @@ selected journals were inspected/repaired; exit 1 means at least one failed
 `--file` require `--repair-journals`; invalid options exit 2. Repair preserves the
 original in a timestamped sibling backup.
 
-Replay verification reports an estimated cost before work starts: the slower of
-10 MiB of journal per second or 2,000 transactions per second, with at least one
-second. The CLI initially estimates from file size; saved-run HTTP responses can
-also use transaction counts. At 30 seconds, a warning is shown. Hardware,
-analytics and input generation can take longer. `ReplayHost::stop()` closes its
+Replay verification reports an estimated cost before work starts. Both the CLI
+and HTTP use the maximum of the journal estimate (10 MiB/s or 2,000 transactions/s,
+whichever is slower, minimum one second) and the replay input estimate: 4 seconds
+plus 5 seconds per played hour, multiplied by max(1, scenario underlyings / 3).
+The conservative hourly rate allows for wide option chains. Played time runs from
+the journal start through the last journaled market time or the sidecar's later
+`settled_through`. Scenarios count only overlap with their recorded-calendar
+sessions, excluding closed nights and weekends; recordings use the continuous
+played span without underlying scaling. Missing or unusable input metadata falls
+back to the journal estimate. Estimates round up to whole seconds. At 30 seconds,
+a warning is shown. Hardware, analytics and input generation can take longer.
+`ReplayHost::stop()` closes its
 control queue and refuses queued or subsequent starts with 503 `ENGINE_STOPPING`.
 
 Newly closed recordings have an optional `.oprec.end` index, bound to device,

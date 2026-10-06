@@ -23060,7 +23060,7 @@
           "estimated_seconds",
           "warning"
         ],
-        "description": "Coarse estimate from 10 MiB/s of journal or 2,000 transactions/s, whichever is slower, minimum one second. Hardware and input generation may take longer. Warning at 30 seconds."
+        "description": "Maximum of journal throughput (10 MiB/s or 2,000 transactions/s, minimum one second) and replay input work ((4 seconds + 5 seconds per played hour) times max(1, scenario underlyings / 3)), rounded up. Played span is journal start through last market time or later sidecar settled_through. Scenarios count only recorded-calendar session time, excluding closed nights/weekends; recordings use continuous played time without underlying scaling. Unavailable input metadata falls back to journal throughput. CLI and HTTP use the same estimate. Hardware and input generation may take longer. Warning at 30 seconds."
       },
       "BacktestEvaluationDay": {
         "type": "object",
