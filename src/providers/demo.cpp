@@ -593,6 +593,7 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
     const double revert = std::exp(-static_cast<double>(w.step) / (50.0 * 60 * md::kNanosPerSecond));
     double deviation = 0;
     double close_level = base_level;
+    double close_spy = 0, close_qqq = 0;
     double close_ndx = kNdxOpen, close_rut = kRutOpen, close_vix = kVixCenter;
     double event_iv = carried_iv;
     for (std::int64_t step = 0; w.first + step * w.step <= w.last; ++step, ++tick) {
@@ -600,7 +601,7 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
       const bool after_close = regular && now > w.close;
       const double progress = std::min(1.0, static_cast<double>(now - w.first) / session);
       if (step > 0) {
-        // Busier at the open and into the close; after the close only SPY and QQQ trade, quietly.
+        // Busier at the open and into the close; quieter latent moves after it.
         const double pace = !regular ? 1.0
             : after_close ? 0.3 : 0.8 + 0.8 * std::exp(-progress / 0.06) + 0.5 * std::exp(-(1 - progress) / 0.08);
         deviation = revert * deviation + step_vol * pace * random.normal();
@@ -660,6 +661,12 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
       double qqq = kQqqOpen * std::exp(kQqqBeta * (log_level - log_reference) + idio);
       if (const auto it = paid.find("SPY"); it != paid.end()) spy = std::max(0.01, spy - it->second);
       if (const auto it = paid.find("QQQ"); it != paid.end()) qqq = std::max(0.01, qqq - it->second);
+      // Revision 8 uses the stock close for ETF marks and option pricing while
+      // their options continue trading. Preserve latent draws for old recordings.
+      if (revision >= 8 && regular) {
+        if (!after_close) { close_spy = spy; close_qqq = qqq; }
+        else { spy = close_spy; qqq = close_qqq; }
+      }
       const double ndx = kNdxOpen * std::exp(kQqqBeta * (log_level - log_reference) + idio);
       const double rut = kRutOpen * std::exp(kRutBeta * (log_level - log_reference) + rut_idio);
       const double vix = vix_level(ratio, play.spot_vol, noise, play.iv_shift, event_iv);
@@ -682,7 +689,7 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
           for (const auto& [symbol, price] : std::array<std::pair<const char*, double>, 4>{{
               {"XSP", level / 10}, {"NDX", ndx}, {"RUT", rut}, {"VIX", vix}}})
             if (chains.contains(symbol) && !frozen(symbol)) sink.publish(md::UnderlyingQuote{symbol, now, 0, 0, cents(price)});
-        // The index prints until the close; SPY and QQQ trade on after it.
+        // The index stops printing at the close; ETF quotes retain that close at revision 8.
         if (!after_close && chains.contains("SPX") && !frozen("SPX")) sink.publish(md::UnderlyingQuote{"SPX", now, 0, 0, cents(level)});
         for (const auto& [symbol, price] : {std::pair<const char*, double>{"SPY", spy}, {"QQQ", qqq}}) {
           if (!chains.contains(symbol) || frozen(symbol)) continue;

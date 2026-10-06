@@ -400,7 +400,7 @@ export interface RunInput {
   size?: number
   builtin?: boolean
   generator?: number
-  /** Scenario output revision: 7 adds two-sided liquid wings; older runs keep their saved revision. */
+  /** Scenario output revision: 8 freezes ETF prices at the stock close while options trade on; older runs keep their saved revision. */
   revision?: number
   seed?: string
 }

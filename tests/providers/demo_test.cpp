@@ -18,6 +18,7 @@
 #include "openport/providers/scenario.hpp"
 #include "openport/trading/types.hpp"
 #include "support/sanitizer.hpp"
+#include "support/scripted_market.hpp"
 
 namespace {
 using namespace openport;
@@ -336,18 +337,84 @@ TEST(DemoMarket, RevisionFiveKeepsItsZeroVolumeOpening) {
 }
 
 TEST(DemoMarket, AmericanAndOpeningVolumeRevisionsAreUnchanged) {
-  const auto scenario = providers::parse_scenario(R"({"id":"legacy-etfs","title":"Legacy ETFs","description":"Prices and volume before revision 7.",
+  const auto scenario = providers::parse_scenario(R"({"id":"legacy-etfs","title":"Legacy ETFs","description":"Prices and volume before revision 8.",
     "symbols":["SPY","QQQ"],"date":"2026-09-17","seed":8642,"generator":1,"volatility":0,"iv_shift":0,"spot_vol":0,
     "session":"regular","drift":[[1,0]]})", "legacy-etfs.json");
   // Full, unsampled fingerprints pin American prices, cash dividends, sizes,
   // opening volume and snapshot boundaries independently of the current default.
   const std::map<int, std::uint64_t> expected{{4, 18106293555510851014ULL},
-      {5, 18106293555510851014ULL}, {6, 11540777372096814243ULL}};
+      {5, 18106293555510851014ULL}, {6, 11540777372096814243ULL}, {7, 13541412236454696694ULL}};
   for (const auto& [revision, hash] : expected) {
     const auto path = temporary("legacy-etfs");
     providers::write_scenario_recording(path, scenario, scenario.date, scenario.seed, revision);
     EXPECT_EQ(recording_hash(path, true), hash) << revision;
     remove_recording(path);
+  }
+}
+
+TEST(DemoMarket, RevisionEightHoldsEtfsAtStockCloseWhileOptionsTradeOn) {
+  const test::SanitizerScenarioScale scale;
+  const auto scenario = providers::parse_scenario(R"({"id":"etf-close","title":"ETF close","description":"Stock close regression.",
+    "symbols":["SPY","QQQ"],"date":"2026-09-17","seed":8642,"generator":1,"volatility":0.2,"iv_shift":0,"spot_vol":-1,
+    "session":"regular","drift":[[1,0.01]]})", "etf-close.json");
+  for (const md::Date date : {md::Date{2026, 9, 17}, md::Date{2026, 11, 27}}) {
+    for (const int revision : {7, 8}) {
+      SCOPED_TRACE(md::format_date(date) + " revision " + std::to_string(revision));
+      const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
+      const auto path = temporary("etf-close");
+      providers::write_scenario_recording(path, scenario, date, scenario.seed, revision);
+      md::RecordingReader reader(path);
+      std::map<std::string, trading::Money> closes, exercise_prices, expiry_prices;
+      std::map<std::string, bool> moved;
+      std::map<std::string, md::Timestamp> last_stock, last_option;
+      std::map<md::InstrumentId, std::string> roots;
+      while (const auto event = reader.next()) {
+        if (const auto* d = std::get_if<md::ContractDefinition>(&event->event)) {
+          roots[d->id] = d->contract.root;
+        } else if (const auto* q = std::get_if<md::UnderlyingQuote>(&event->event)) {
+          const auto price = trading::Money::from_double(q->last);
+          if (q->ts == close) closes[q->symbol] = price;
+          if (q->ts > close) {
+            ASSERT_TRUE(closes.contains(q->symbol));
+            if (revision == 8) { EXPECT_EQ(price, closes.at(q->symbol)); }
+            moved[q->symbol] = moved[q->symbol] || price != closes.at(q->symbol);
+            last_stock[q->symbol] = q->ts;
+            if (q->ts == close + 5 * md::kNanosPerMinute) exercise_prices[q->symbol] = price;
+            if (q->ts == close + 15 * md::kNanosPerMinute) expiry_prices[q->symbol] = price;
+          }
+        } else if (const auto* option = std::get_if<md::OptionQuote>(&event->event)) {
+          if (option->ts > close && option->ask > 0) last_option[roots.at(option->id)] = option->ts;
+        }
+      }
+      for (const auto* symbol : {"SPY", "QQQ"}) {
+        EXPECT_TRUE(closes.contains(symbol));
+        EXPECT_EQ(last_stock[symbol], close + 15 * md::kNanosPerMinute);
+        EXPECT_GE(last_option[symbol], close + 14 * md::kNanosPerMinute);
+        EXPECT_EQ(moved[symbol], revision == 7);
+        if (revision == 8) {
+          test::ScriptedMarket market;
+          market.contract = {symbol, symbol, date, 400, pricing::OptionType::Call,
+                             pricing::ExerciseStyle::American, md::Settlement::PM};
+          market.time = close;
+          trading::TradingSession account({}, market.time);
+          market.seed(account);
+          ASSERT_TRUE(account.submit(market.market("delivery", 2), market.time).decision.ok());
+          market.time += 5 * md::kNanosPerMinute;
+          account.on_quotes({}, {}, market.time, {{symbol, market.time, exercise_prices.at(symbol)}});
+          const auto exercised = account.exercise(market.symbol(), 1, market.time);
+          ASSERT_TRUE(exercised.decision.ok()) << exercised.decision.message;
+          ASSERT_EQ(account.snapshot()->stock_fills.size(), 1U);
+          EXPECT_EQ(account.snapshot()->stock_fills.back().price, closes.at(symbol));
+          market.time = market.contract.expiry_time();
+          const auto settled = account.settle(market.symbol(), expiry_prices.at(symbol), market.time);
+          ASSERT_TRUE(settled.decision.ok()) << settled.decision.message;
+          ASSERT_EQ(account.snapshot()->stock_fills.size(), 2U);
+          EXPECT_EQ(account.snapshot()->stock_fills.back().price, closes.at(symbol));
+          EXPECT_EQ(account.snapshot()->stocks.front().position.basis, closes.at(symbol) * 200);
+        }
+      }
+      remove_recording(path);
+    }
   }
 }
 
