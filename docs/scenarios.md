@@ -340,9 +340,13 @@ Replay and scenario accounts may enable [playbooks](playbooks.md) in auto mode.
 Pause a new run, enable its copied definition and step the market clock. Entries
 use the normal preview, risk and order paths; time stops submit reducing orders at
 their market-time deadlines. Definitions and commands enter run provenance, so the
-same scenario, seed and commands reproduce the fills and journal. Live-feed accounts
-cannot use auto mode. Missing volatility history in a replay prevents an entry
-condition from passing; it never borrows future or live-feed history.
+same scenario, seed and commands reproduce the fills and journal. Missing volatility
+history in a replay prevents an entry condition from passing; it never borrows future
+or live-feed history.
+
+[Live paper Auto](playbooks.md#forward-tests-on-live-paper) is also available, requires
+a known market time and records forward-test windows. Replays and backtests never
+inherit forward tests.
 
 ## Runs and drills
 

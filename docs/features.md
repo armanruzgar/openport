@@ -387,7 +387,9 @@ submitted close's label without duplicating orders.
 - [x] Headless playbook batch backtests, independent days and carried-account evaluation attempts, API and terminal reports
 - [x] Homebrew formula, Docker Compose and opt-in browser update notices
 - [x] External notifications through Discord, Telegram, ntfy and generic webhooks
-- [x] Versioned playbooks, staged orders, replay auto mode, adherence and historical pass-odds estimates
+- [x] Versioned playbooks, staged orders, live paper and replay Auto, adherence and historical pass-odds estimates.
+  [Live paper Auto](playbooks.md#forward-tests-on-live-paper) requires a known market time
+  and records forward-test windows; replays and backtests never inherit forward tests.
 - [x] Private visitor sandbox accounts on public simulated demos, with idle expiry and rate limits
 - [x] Checked OpenAPI contract, Python client and MCP tools, scoped tokens and actors
 - [x] Plan-locked limits, personal guardrails, order previews and size to floor, breach
