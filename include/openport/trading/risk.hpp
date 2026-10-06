@@ -30,7 +30,8 @@ struct RiskSnapshot {
 /// The market time a contract's quotes and valuations must be recent to: `now`
 /// while one of its sessions is open, otherwise the end of its last session, so
 /// a closed market's close stays current until it reopens (an SPY position
-/// overnight, while SPX trades).
+/// overnight, while SPX trades). Capped at the contract's last trade, even when
+/// its root has later sessions before settlement.
 [[nodiscard]] Timestamp observation_time(const md::OptionContract& contract, Timestamp now);
 
 /// Shares count at their dollar delta, at `stock_prices` (fresh prices by

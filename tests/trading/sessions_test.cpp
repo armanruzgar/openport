@@ -177,6 +177,53 @@ TEST(TradingSessions, AmSettledSeriesStopAtTheRegularCloseBeforeExpiry) {
   EXPECT_TRUE(s.submit(weekly.limit("weekly-night", 1, "4.00"), weekly.time).decision.ok());
 }
 
+TEST(TradingSessions, AmClosingMarksAndValuationsStayFreshUntilSettlementTime) {
+  constexpr md::Date thursday{2026, 9, 17};
+  ScriptedMarket am, weekly;
+  am.contract = *md::parse_osi("SPX   260918C06020000");
+  weekly.contract = *md::parse_osi("SPXW260918P06020000");
+  am.time = weekly.time = at(thursday, 10, 0);
+  TradingSession s(roomy(), am.time);
+  am.seed(s);
+  weekly.seed(s);
+  ASSERT_TRUE(s.submit(am.market("held-am"), am.time).decision.ok());
+  ASSERT_EQ(am.contract.last_trade_time(), at(thursday, 16, 15));
+  // A closing observation at the inclusive freshness boundary stays usable.
+  const auto close = am.contract.last_trade_time() - s.config().limits.max_quote_age;
+  tick(s, am, close);
+  for (const auto time : {at(thursday, 16, 20), at(thursday, 21, 0)}) {
+    SCOPED_TRACE(time);
+    tick(s, weekly, time);
+    const auto snapshot = s.snapshot();
+    ASSERT_FALSE(snapshot->positions.empty());
+    const auto& held = snapshot->positions.front();
+    EXPECT_EQ(held.position.contract.osi_symbol(), am.symbol());
+    EXPECT_EQ(held.mark, m("4.10"));
+    EXPECT_EQ(held.mark_time, close);
+    EXPECT_TRUE(held.fresh);
+    EXPECT_FALSE(held.awaiting_settlement);
+    EXPECT_TRUE(snapshot->valuation_complete);
+    EXPECT_TRUE(snapshot->risk.complete);
+    EXPECT_TRUE(snapshot->scenarios.complete);
+    EXPECT_TRUE(snapshot->quality_flags.empty());
+    const auto placed = s.submit(weekly.limit(std::to_string(time), 1, "4.10"), time);
+    ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+    ASSERT_TRUE(placed.order_id);
+    EXPECT_EQ(order(s, *placed.order_id).status, OrderStatus::Working);
+    tick(s, weekly, time + md::kNanosPerSecond, "4.00", "4.10");
+    EXPECT_EQ(order(s, *placed.order_id).status, OrderStatus::Filled);
+  }
+  tick(s, weekly, am.contract.expiry_time() + md::kNanosPerSecond);
+  const auto snapshot = s.snapshot();
+  ASSERT_FALSE(snapshot->positions.empty());
+  EXPECT_TRUE(snapshot->positions.front().awaiting_settlement);
+  EXPECT_FALSE(snapshot->positions.front().fresh);
+  EXPECT_EQ(snapshot->positions.front().mark, m("4.10"));
+  EXPECT_FALSE(snapshot->valuation_complete);
+  EXPECT_FALSE(snapshot->risk.complete);
+  EXPECT_FALSE(snapshot->scenarios.complete);
+}
+
 TEST(TradingSessions, ExitsAndTriggeredOrdersWaitForTheRegularSession) {
   ScriptedMarket f;
   TradingSession s(roomy(), f.time);

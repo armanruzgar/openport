@@ -98,7 +98,9 @@ std::optional<BreachLevel> solve_level(const std::function<std::optional<double>
 }  // namespace
 Timestamp observation_time(const md::OptionContract& contract, Timestamp now) {
   const auto session = md::trading_session(contract.root, now);
-  return session.open || session.market_time == md::kInvalidTimestamp ? now : std::min(now, session.market_time);
+  const auto observed = session.open || session.market_time == md::kInvalidTimestamp ? now : std::min(now, session.market_time);
+  // A series can stop trading before settlement while its root keeps trading.
+  return std::min(observed, contract.last_trade_time());
 }
 RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*>& orders,
     const Contracts& contracts,

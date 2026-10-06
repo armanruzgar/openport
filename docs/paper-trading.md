@@ -1085,7 +1085,9 @@ held position lacks a fresh mark. Freshness (`max_quote_age`, and `max_valuation
 for Greeks) is measured at the market time while the contract's market is open, and at
 its last session's end while it is closed, so a position in a closed market keeps its
 closing mark: an SPY position held overnight does not block SPX trading in the
-overnight session, and the day rolls over on it. Awaiting-settlement positions retain their last
+overnight session, and the day rolls over on it. An AM series past its last trade
+keeps its closing mark and valuation until settlement time and does not block the
+curb or overnight sessions. Awaiting-settlement positions retain their last
 mark and are always incomplete. If no mark exists, market value/unrealised are null;
 the equity field is only a partial estimate and must be read with its completeness
 flag. Normal session fills always establish a mark first.

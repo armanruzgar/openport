@@ -64,6 +64,24 @@ TEST(TradingRisk, FreshQuotesAndValuationsAreRequired) {
   s.on_quotes({f.quote()}, {}, f.time);
   EXPECT_EQ(s.submit(f.market("staleval"), f.time).decision.code, Reason::MISSING_VALUATION);
 }
+TEST(TradingRisk, LastTradeCapsFreshnessWithoutRevivingStaleValuations) {
+  ScriptedMarket f;
+  f.contract = *md::parse_osi("SPX260918C06020000");
+  const Limits limits;
+  f.time = f.contract.last_trade_time() - limits.max_valuation_age;
+  Ledger ledger;
+  ledger.fill(f.contract, 1, m("4.20"), {});
+  for (const auto now : {md::new_york_to_utc({2026, 9, 17}, 16, 20),
+                         md::new_york_to_utc({2026, 9, 17}, 21, 0)}) {
+    SCOPED_TRACE(now);
+    auto value = f.valuation();
+    EXPECT_EQ(observation_time(f.contract, now), f.contract.last_trade_time());
+    EXPECT_TRUE(portfolio_risk(ledger, {}, {}, {{f.symbol(), value}}, limits, now).complete);
+    --value.time;
+    EXPECT_FALSE(portfolio_risk(ledger, {}, {}, {{f.symbol(), value}}, limits, now).complete);
+  }
+}
+
 TEST(TradingRisk, PendingOrdersReserveWorstSubsetWithoutNettingOppositeSides) {
   ScriptedMarket f;
   SessionConfig c;
