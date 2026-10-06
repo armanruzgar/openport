@@ -252,7 +252,29 @@ TEST(MultiDayReplay, StartsAndStepsToADateAndTimeInTheRunsSessions) {
   EXPECT_EQ((*demo)["end"], at(monday, 16, 15));
   EXPECT_EQ((*demo)["session"], "regular");
   // A bare time in none of the sessions, and a date and time after the run, are refused.
-  EXPECT_EQ(call(host, "POST", "/api/replay", {{"scenario", "weekend"}, {"start_at", "17:30"}}).status, 400);
+  const auto bare = call(host, "POST", "/api/replay", {{"scenario", "weekend"}, {"start_at", "17:30"}});
+  EXPECT_EQ(bare.status, 400);
+  EXPECT_EQ(json::parse(bare.body)["error"]["message"],
+      "start_at 17:30 falls in none of this run's sessions at or after 2026-11-27T14:30:00.000Z; give a date and time");
+  for (const auto& [time, next] : std::vector<std::pair<std::string, std::string>>{
+           {"2026-11-27T18:00", "2026-11-29T20:15"},
+           {"2026-11-29T09:00", "2026-11-29T20:15"},
+           {"2026-11-30T09:27", "2026-11-30T09:30"},
+           {"2026-11-30T14:27:00Z", "2026-11-30T09:30"}}) {
+    SCOPED_TRACE(time);
+    const auto refused = call(host, "POST", "/api/replay",
+        {{"scenario", "weekend"}, {"seed", "5"}, {"paused", true}, {"start_at", time}});
+    ASSERT_EQ(refused.status, 400) << refused.body;
+    EXPECT_EQ(json::parse(refused.body)["error"]["code"], "INVALID_REQUEST");
+    EXPECT_EQ(json::parse(refused.body)["error"]["message"],
+        "start_at " + time + " falls between this run's sessions; the next session opens at " + next + " ET");
+    const auto state = json::parse(call(host, "GET", "/api/replay").body);
+    EXPECT_TRUE(state["replay"].is_null());
+    EXPECT_TRUE(state["history"].empty());
+    if (std::filesystem::exists(file.directory / "replays")) {
+      EXPECT_TRUE(std::filesystem::is_empty(file.directory / "replays"));
+    }
+  }
   EXPECT_EQ(call(host, "POST", "/api/replay", {{"scenario", "weekend"}, {"start_at", "2026-12-01T09:30"}}).status, 400);
   // A bare start_at is its first occurrence in the run: Friday afternoon.
   const auto started = call(host, "POST", "/api/replay",
@@ -263,6 +285,10 @@ TEST(MultiDayReplay, StartsAndStepsToADateAndTimeInTheRunsSessions) {
   const auto replay = [&] { return json::parse(call(host, "GET", "/api/replay").body)["replay"]; };
   ASSERT_TRUE(test::recording_eventually([&] { return !replay()["fast_forwarding"].get<bool>(); }));
   EXPECT_EQ(replay()["time"], at(friday, 13, 0));
+  const auto bare_until = call(host, "PUT", "/api/replay", {{"until", "17:30"}});
+  EXPECT_EQ(bare_until.status, 400);
+  EXPECT_EQ(json::parse(bare_until.body)["error"]["message"],
+      "until 17:30 falls in none of this run's sessions at or after 2026-11-27T18:00:00.000Z; give a date and time");
   // A bare until at the current time stays on Friday rather than skipping to Monday.
   const auto same_time = call(host, "PUT", "/api/replay", {{"until", "13:00"}});
   ASSERT_EQ(same_time.status, 200) << same_time.body;
@@ -303,6 +329,17 @@ TEST(MultiDayReplay, StartsAndStepsToADateAndTimeInTheRunsSessions) {
   const auto history = json::parse(call(host, "GET", "/api/replay").body)["history"];
   ASSERT_EQ(history.size(), 1U);
   EXPECT_EQ(history[0]["sessions"], sessions);
+  // Dated starts include both boundaries and the interior of a later session.
+  server::ReplayHost later_host({file.directory, base, true, scenarios});
+  const auto later_replay = [&] { return json::parse(call(later_host, "GET", "/api/replay").body)["replay"]; };
+  for (const auto time : {"2026-11-30T09:30", "2026-11-30T10:00", "2026-11-30T16:15"}) {
+    SCOPED_TRACE(time);
+    const auto later = call(later_host, "POST", "/api/replay",
+        {{"scenario", "weekend"}, {"seed", "scenario"}, {"paused", true}, {"start_at", time}});
+    ASSERT_EQ(later.status, 201) << later.body;
+    ASSERT_TRUE(test::recording_eventually([&] { return !later_replay()["fast_forwarding"].get<bool>(); }));
+    EXPECT_EQ(later_replay()["time"], md::format_timestamp(*md::parse_datetime(std::string(time) + ":00", md::Zone::NewYork)));
+  }
 }
 
 TEST(MultiDayReplay, OpeningVolumeAdmitsCappedOrdersAndResetsOnTheNextDate) {

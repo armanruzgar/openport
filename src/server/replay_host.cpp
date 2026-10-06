@@ -133,10 +133,10 @@ std::optional<md::Timestamp> dated_time(std::string value, const char* field) {
   if (!parsed) throw std::invalid_argument(std::string(field) + " must be New York HH:MM, or a date and time such as 2026-09-17T10:30");
   return parsed;
 }
-/// A bare New York "HH:MM[:SS]" in a multi-session run: its first occurrence after
-/// `after` inside one of the run's sessions.
+/// A bare New York "HH:MM[:SS]" in a multi-session run: its first occurrence at or after
+/// `from` inside one of the run's sessions.
 md::Timestamp session_time(const std::string& value, const std::vector<providers::ScenarioWindow>& windows,
-                           md::Timestamp after, const char* field) {
+                           md::Timestamp from, const char* field) {
   const auto parsed = md::parse_datetime("2000-01-03T" + value + (value.size() == 5 ? ":00" : ""), md::Zone::Utc);
   if ((value.size() != 5 && value.size() != 8) || !parsed)
     throw std::invalid_argument(std::string(field) + " must be New York HH:MM, or a date and time such as 2026-09-17T10:30");
@@ -145,11 +145,11 @@ md::Timestamp session_time(const std::string& value, const std::vector<providers
     // A session spans at most two New York dates.
     for (const auto day : {md::new_york_time(w.first).date, md::new_york_time(w.last).date}) {
       const auto candidate = md::new_york_to_utc(day, seconds / 3600, seconds / 60 % 60, seconds % 60);
-      if (candidate != md::kInvalidTimestamp && candidate > after && candidate >= w.first && candidate <= w.last) return candidate;
+      if (candidate != md::kInvalidTimestamp && candidate >= from && candidate >= w.first && candidate <= w.last) return candidate;
     }
   }
-  throw std::invalid_argument(std::string(field) + " " + value + " falls in none of this run's sessions after " +
-                              md::format_timestamp(after) + "; give a date and time");
+  throw std::invalid_argument(std::string(field) + " " + value + " falls in none of this run's sessions at or after " +
+                              md::format_timestamp(from) + "; give a date and time");
 }
 
 md::Timestamp control_time(std::string value, const std::vector<providers::ScenarioWindow>& windows,
@@ -172,7 +172,7 @@ md::Timestamp control_time(std::string value, const std::vector<providers::Scena
   }
   if (const auto dated = dated_time(value, field)) return *dated;
   // A bare time is its next occurrence at or after the replay's time.
-  if (windows.size() > 1) return session_time(value, windows, current - 1, field);
+  if (windows.size() > 1) return session_time(value, windows, current, field);
   const auto date = md::trading_date(provider.header().started);
   auto day = date;
   if (md::new_york_time(provider.header().started).date < date && value.substr(0, 5) >= "20:15")
@@ -185,7 +185,7 @@ md::Timestamp control_time(std::string value, const std::vector<providers::Scena
 md::Timestamp start_time(const std::string& value, const std::vector<providers::ScenarioWindow>& windows,
                          md::Timestamp first, md::Date date, bool overnight) {
   if (const auto dated = dated_time(value, "start_at")) return *dated;
-  if (windows.size() > 1) return session_time(value, windows, first - 1, "start_at");
+  if (windows.size() > 1) return session_time(value, windows, first, "start_at");
   if (overnight && value.substr(0, 5) >= "20:15") date = md::date_from_days(md::days_since_epoch(date) - 1);
   if (value.size() == 5 || value.size() == 8) {
     if (const auto parsed = md::parse_datetime(md::format_date(date) + "T" + value + (value.size() == 5 ? ":00" : ""), md::Zone::NewYork))
@@ -1526,6 +1526,18 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
         session->target = start_time(session->start_at, session->windows, first, date, overnight);
         if (session->target < first || session->target > last)
           throw std::invalid_argument(session->windows.size() > 1 ? "start_at must be within the run's sessions" : "start_at must be within the recording's session");
+        if (session->windows.size() > 1) {
+          const auto window = std::find_if(session->windows.begin(), session->windows.end(),
+              [&](const auto& w) { return session->target <= w.last; });
+          // The outer bounds above guarantee a window; a target before its open is in a gap.
+          if (session->target < window->first) {
+            const auto open = md::new_york_time(window->first);
+            char time[32];
+            std::snprintf(time, sizeof(time), "%02d:%02d", open.seconds / 3600, open.seconds / 60 % 60);
+            throw std::invalid_argument("start_at " + session->start_at + " falls between this run's sessions; the next session opens at " +
+                                        md::format_date(open.date) + "T" + time + " ET");
+          }
+        }
       }
       static std::atomic<unsigned> runs{0};
       session->id = slug(demo ? day->id : name) + "-" + session->date + "-" + (demo ? session->seed : "recording") +
