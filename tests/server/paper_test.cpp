@@ -4084,6 +4084,37 @@ TEST(PaperBreach, ImpliedVarianceToTheCloseSharesTheFrontExpiryInTradingTime) {
   EXPECT_FALSE(implied_variance_to_close(metrics));
 }
 
+TEST(PaperBreach, ImpliedVarianceToClosePrefersAtmIvAndFallsBackToNearestStrike) {
+  analytics::UnderlyingMetrics metrics;
+  metrics.spot = 100;
+  metrics.as_of = md::new_york_to_utc({2026, 9, 23}, 10, 0);
+  const auto close = md::new_york_to_utc({2026, 9, 23}, 16, 0);
+  analytics::SliceMetrics slice;
+  slice.expiry_time = close;
+  slice.years = md::years_between(metrics.as_of, close);
+  slice.atm_iv = 0.3;
+  for (const auto& [price, iv] : {std::pair{110.0, 0.4}, std::pair{101.0, 0.2},
+                                std::pair{100.0, analytics::kNaN}}) {
+    analytics::StrikeMetrics strike;
+    strike.strike = price;
+    strike.iv = iv;
+    slice.strikes.push_back(strike);
+  }
+  auto later = slice;
+  later.expiry_time += md::kNanosPerDay;
+  later.years = md::years_between(metrics.as_of, later.expiry_time);
+  later.atm_iv = 0.5;
+  metrics.slices = {later, slice};
+  using openport::server::implied_variance_to_close;
+  ASSERT_TRUE(implied_variance_to_close(metrics));
+  EXPECT_NEAR(*implied_variance_to_close(metrics), 0.09 * slice.years, 1e-15);
+  for (const double missing : {analytics::kNaN, 0.0, -0.1, std::numeric_limits<double>::infinity()}) {
+    metrics.slices[1].atm_iv = missing;
+    ASSERT_TRUE(implied_variance_to_close(metrics));
+    EXPECT_NEAR(*implied_variance_to_close(metrics), 0.04 * slice.years, 1e-15);
+  }
+}
+
 // Probability horizons past today's close read the at-the-money term structure in
 // calendar time; before it they share today's variance in trading time.
 TEST(PaperProbability, ImpliedVarianceUntilADateInterpolatesTheTermStructure) {

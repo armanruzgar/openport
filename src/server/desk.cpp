@@ -223,6 +223,16 @@ md::Timestamp session_time(md::Timestamp from, md::Timestamp to) {
   }
   return total;
 }
+double slice_atm_iv(const analytics::SliceMetrics& slice, double spot) {
+  if (slice.atm_iv > 0 && std::isfinite(slice.atm_iv)) return slice.atm_iv;
+  double iv = analytics::kNaN, distance = std::numeric_limits<double>::max();
+  for (const auto& strike : slice.strikes) {
+    if (!(strike.iv > 0) || !std::isfinite(strike.iv)) continue;
+    const auto away = std::abs(strike.strike - spot);
+    if (away < distance) { iv = strike.iv; distance = away; }
+  }
+  return iv;
+}
 std::optional<double> close_variance(const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
   return metrics ? implied_variance_to_close(*metrics) : std::nullopt;
 }
@@ -235,16 +245,17 @@ std::optional<double> close_variance(const std::shared_ptr<const analytics::Unde
 std::optional<double> implied_variance_to_close(const analytics::UnderlyingMetrics& metrics) {
   if (!(metrics.spot > 0)) return {};
   const analytics::SliceMetrics* front = nullptr;
-  double iv = 0, distance = std::numeric_limits<double>::max();
+  double distance = std::numeric_limits<double>::max();
   for (const auto& slice : metrics.slices) {
     if (!(slice.years > 0) || slice.expiry_time <= metrics.as_of || (front && slice.years > front->years)) continue;
     for (const auto& strike : slice.strikes) {
       if (!(strike.iv > 0) || !std::isfinite(strike.iv)) continue;
       const auto away = std::abs(strike.strike - metrics.spot);
-      if (!front || slice.years < front->years || away < distance) { front = &slice; iv = strike.iv; distance = away; }
+      if (!front || slice.years < front->years || away < distance) { front = &slice; distance = away; }
     }
   }
   if (!front) return {};
+  const double iv = slice_atm_iv(*front, metrics.spot);
   const auto date = md::trading_date(metrics.as_of);
   const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
   const auto today = session_time(metrics.as_of, close);
@@ -277,15 +288,7 @@ std::optional<double> implied_variance_until(const analytics::UnderlyingMetrics&
   std::vector<std::pair<double, double>> term;  // years, total variance
   for (const auto& slice : metrics.slices) {
     if (!(slice.years > 0) || slice.expiry_time <= metrics.as_of) continue;
-    double iv = slice.atm_iv, distance = std::numeric_limits<double>::max();
-    if (!(iv > 0) || !std::isfinite(iv)) {
-      iv = analytics::kNaN;
-      for (const auto& strike : slice.strikes) {
-        if (!(strike.iv > 0) || !std::isfinite(strike.iv)) continue;
-        const auto away = std::abs(strike.strike - metrics.spot);
-        if (away < distance) { iv = strike.iv; distance = away; }
-      }
-    }
+    const double iv = slice_atm_iv(slice, metrics.spot);
     if (iv > 0 && std::isfinite(iv)) term.emplace_back(slice.years, iv * iv * slice.years);
   }
   if (term.empty()) return {};
