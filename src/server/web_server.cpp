@@ -414,8 +414,11 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool sandbox_account = !sandbox.empty() || (has("admin") && !request.authorization.empty() &&
       policy.sandboxes && policy.sandboxes->active(account, true));
   if (read) return {};
-  if (sandbox_account && (path == "/orders" || (path.starts_with("/orders/") && path != "/orders/cancel")) &&
-      request.method != "DELETE") {
+  const bool counted_order = (path == "/orders" || (path.starts_with("/orders/") && path != "/orders/cancel")) &&
+      request.method != "DELETE";
+  const bool counted_stock_trade = request.method == "POST" &&
+      (path == "/stocks/trade" || path == "/stocks/trade/preview");
+  if (sandbox_account && (counted_order || counted_stock_trade)) {
     if (auto rejected = policy.sandboxes->check_order(account)) return rejected;
   }
   if (request.method == "DELETE") {

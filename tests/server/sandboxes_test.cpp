@@ -405,6 +405,36 @@ TEST_F(Sandboxes, OrderRateIncludesPreviewsAndEditsButExitsStayAvailable) {
   EXPECT_EQ(refused->retry_after, 10);
   EXPECT_EQ(source->desk->market_time(), market_time);
 }
+TEST_F(Sandboxes, ShareTradesAndPreviewsShareOrderRateButShareClosesDoNot) {
+  for (const auto* stock_path : {"/api/stocks/trade", "/api/stocks/trade/preview"}) {
+    SCOPED_TRACE(stock_path);
+    limits.orders = 2;
+    now = {};
+    configure();
+    const auto own = create();
+    const auto check = [&](const std::string& path) {
+      return server::check_api_write(request("POST", path, token(own)), policy);
+    };
+    EXPECT_FALSE(check("/api/stocks/close"));
+    EXPECT_FALSE(check(stock_path));
+    now += 10s;
+    EXPECT_FALSE(check("/api/orders"));
+    now += 250ms;
+    for (const auto* path : {"/api/orders", "/api/stocks/trade", "/api/stocks/trade/preview"}) {
+      const auto refused = check(path);
+      ASSERT_TRUE(refused) << path;
+      EXPECT_EQ(refused->status, 429);
+      EXPECT_EQ(json::parse(refused->body)["error"]["code"], "SANDBOX_ORDER_RATE");
+      EXPECT_EQ(refused->retry_after, 50);
+    }
+    EXPECT_FALSE(check("/api/stocks/close"));
+    now = server::Sandboxes::Clock::time_point{} + limits.order_window;
+    EXPECT_FALSE(check(stock_path));
+    const auto refused = check(stock_path);
+    ASSERT_TRUE(refused);
+    EXPECT_EQ(refused->retry_after, 10);
+  }
+}
 TEST_F(Sandboxes, HttpRateLimitsEmitRetryAfterButCapacityDoesNot) {
   namespace asio = boost::asio;
   namespace beast = boost::beast;
