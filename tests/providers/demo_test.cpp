@@ -14,6 +14,7 @@
 #include "openport/md/recording.hpp"
 #include "openport/providers/demo.hpp"
 #include "openport/pricing/binomial.hpp"
+#include "openport/pricing/implied_vol.hpp"
 #include "openport/providers/scenario.hpp"
 #include "openport/trading/types.hpp"
 #include "support/sanitizer.hpp"
@@ -332,6 +333,122 @@ TEST(DemoMarket, RevisionFiveKeepsItsZeroVolumeOpening) {
   }
   EXPECT_GT(opening, 0U);
   remove_recording(path);
+}
+
+TEST(DemoMarket, AmericanAndOpeningVolumeRevisionsAreUnchanged) {
+  const auto scenario = providers::parse_scenario(R"({"id":"legacy-etfs","title":"Legacy ETFs","description":"Prices and volume before revision 7.",
+    "symbols":["SPY","QQQ"],"date":"2026-09-17","seed":8642,"generator":1,"volatility":0,"iv_shift":0,"spot_vol":0,
+    "session":"regular","drift":[[1,0]]})", "legacy-etfs.json");
+  // Full, unsampled fingerprints pin American prices, cash dividends, sizes,
+  // opening volume and snapshot boundaries independently of the current default.
+  const std::map<int, std::uint64_t> expected{{4, 18106293555510851014ULL},
+      {5, 18106293555510851014ULL}, {6, 11540777372096814243ULL}};
+  for (const auto& [revision, hash] : expected) {
+    const auto path = temporary("legacy-etfs");
+    providers::write_scenario_recording(path, scenario, scenario.date, scenario.seed, revision);
+    EXPECT_EQ(recording_hash(path, true), hash) << revision;
+    remove_recording(path);
+  }
+}
+
+TEST(DemoMarket, LiquidCallsPutsAndProtectiveWingsHaveTwoSidedQuotes) {
+  const test::SanitizerScenarioScale scale;
+  const auto& scenarios = providers::builtin_scenarios();
+  for (const auto* name : {"reversal", "trend", "morning-crush"}) {
+    const auto scenario = std::find_if(scenarios.begin(), scenarios.end(),
+        [&](const auto& s) { return s.id == name; });
+    ASSERT_NE(scenario, scenarios.end());
+    for (const std::uint64_t seed : {1ULL, 8642ULL}) {
+      SCOPED_TRACE(std::string(name) + " seed " + std::to_string(seed));
+      const auto path = temporary("liquid-wings");
+      providers::write_scenario_recording(path, *scenario, scenario->date, seed);
+      const auto dividends = providers::scenario_dividends(*scenario, scenario->date);
+      std::map<md::InstrumentId, md::OptionContract> contracts;
+      std::map<md::InstrumentId, md::OptionQuote> quotes;
+      std::map<std::string, double> spots;
+      std::map<std::pair<std::string, pricing::OptionType>, int> wings, five_delta;
+      md::RecordingReader reader(path);
+      while (const auto event = reader.next()) {
+        if (const auto* d = std::get_if<md::ContractDefinition>(&event->event)) contracts[d->id] = d->contract;
+        if (const auto* u = std::get_if<md::UnderlyingQuote>(&event->event)) spots[u->symbol] = u->last;
+        if (const auto* q = std::get_if<md::OptionQuote>(&event->event)) {
+          quotes[q->id] = *q;
+          if (q->ask == 0) continue;  // expired series are deliberately retired
+          ASSERT_TRUE(std::isfinite(q->bid) && std::isfinite(q->ask));
+          ASSERT_GE(q->bid, 0);
+          ASSERT_LT(q->bid, q->ask) << contracts.at(q->id).osi_symbol();
+          ASSERT_TRUE(on_tick(contracts.at(q->id).root, q->bid));
+          ASSERT_TRUE(on_tick(contracts.at(q->id).root, q->ask));
+          ASSERT_GT(q->ask_size, 0);
+          if (q->bid > 0) { ASSERT_GT(q->bid_size, 0); }
+        }
+        const auto* snapshot = std::get_if<md::SnapshotComplete>(&event->event);
+        if (!snapshot) continue;
+        const auto minute = md::new_york_time(snapshot->ts).seconds / 60;
+        if (minute != 585 && minute != 720 && minute != 945 && minute != 959) continue;
+        // Sample complete books, including quotes suppressed as unchanged. Solve
+        // from the raw midpoint even for zero bids: filtering on analytics delta
+        // would silently omit exactly the invalid books this test must detect.
+        if (md::new_york_time(snapshot->ts).seconds % 60 != 0) continue;
+        for (const auto type : {pricing::OptionType::Call, pricing::OptionType::Put}) {
+          const auto key = std::make_pair(snapshot->underlying, type);
+          const md::OptionContract* short_leg = nullptr;
+          double closest = 1;
+          for (const auto& [id, c] : contracts) {
+            if (c.underlying != snapshot->underlying || c.type != type) continue;
+            const auto& q = quotes.at(id);
+            if (q.ask == 0 || snapshot->ts >= c.last_trade_time()) continue;
+            const double years = md::years_between(snapshot->ts, c.expiry_time());
+            double forward = spots.at(c.underlying);
+            if (c.style == pricing::ExerciseStyle::American) {
+              for (const auto& d : dividends) {
+                const double t = md::years_between(snapshot->ts, md::new_york_to_utc(d.ex_date, 0, 0));
+                if (d.symbol == c.underlying && t > 0 && t < years) forward -= d.per_share.dollars() * std::exp(-0.04 * t);
+              }
+              forward *= std::exp(0.04 * years);
+            } else forward *= std::exp((0.04 - 0.013) * years);
+            if (type == pricing::OptionType::Call ? c.strike < forward : c.strike > forward) continue;
+            // A minimum-tick ask on a remote near-expiry tail can imply more
+            // than 1000% IV. Still classify it rather than hiding a failed solve.
+            pricing::IvOptions options;
+            options.max_vol = 100;
+            const auto iv = pricing::implied_vol_black((q.bid + q.ask) / 2, type, forward, c.strike, years, std::exp(-0.04 * years), options);
+            ASSERT_TRUE(iv.ok()) << c.osi_symbol();
+            const double delta = std::abs(pricing::black_greeks(type, forward, c.strike, years, iv.vol).delta);
+            if (delta >= 0.05) {
+              ASSERT_GT(q.bid, 0) << c.osi_symbol() << " delta " << delta;
+              ASSERT_GT(q.bid_size, 0) << c.osi_symbol();
+              if (delta < 0.10) ++five_delta[key];
+            }
+            if (c.expiry == scenario->date && std::abs(delta - 0.20) < closest) {
+              closest = std::abs(delta - 0.20);
+              short_leg = &c;
+            }
+          }
+          if (minute != 585) continue;
+          ASSERT_NE(short_leg, nullptr);
+          const double strike = short_leg->strike + (type == pricing::OptionType::Call ? 5 : -5);
+          const auto hedge = std::find_if(contracts.begin(), contracts.end(), [&](const auto& entry) {
+            const auto& c = entry.second;
+            return c.underlying == short_leg->underlying && c.expiry == short_leg->expiry && c.type == type && c.strike == strike;
+          });
+          ASSERT_NE(hedge, contracts.end());
+          const auto& q = quotes.at(hedge->first);
+          EXPECT_GT(q.bid, 0) << hedge->second.osi_symbol() << " protects " << short_leg->osi_symbol();
+          EXPECT_GT(q.bid_size, 0);
+          ++wings[key];
+        }
+      }
+      for (const auto* symbol : {"SPX", "SPY", "QQQ"}) {
+        for (const auto type : {pricing::OptionType::Call, pricing::OptionType::Put}) {
+          const auto key = std::make_pair(symbol, type);
+          EXPECT_EQ(wings[key], 1) << symbol;
+          EXPECT_GT(five_delta[key], 0) << symbol;
+        }
+      }
+      remove_recording(path);
+    }
+  }
 }
 
 TEST(DemoMarket, QuarterlyDividendsUseBusinessDatesCentsAndSessionOverrides) {

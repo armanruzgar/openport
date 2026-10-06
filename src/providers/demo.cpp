@@ -252,8 +252,9 @@ Ticks ticks_for(const std::string& root) {
   return {trading::tick_size(root, trading::Money{}).dollars(),
           trading::tick_size(root, trading::Money::from_micros(3'000'000)).dollars()};
 }
-/// Quotes around the model price on the product's ticks. Far OTM series have no bid.
-Quote quote(Ticks ticks, double mid) {
+/// Quotes around the model price on the product's ticks. Liquid wings keep a
+/// one-tick bid even when the model premium is sub-tick; remote tails have no bid.
+Quote quote(Ticks ticks, double mid, bool liquid_wing) {
   const auto tick = [ticks](double price) { return price < 3 ? ticks.below : ticks.above; };
   const double width = ticks.above == 0.01 ? std::max(0.01, 0.01 * mid + 0.01)
       : ticks.below == 0.01 ? std::max(0.01, 0.015 * mid + 0.01) : std::max(0.05, 0.02 * mid + 0.05);
@@ -261,6 +262,7 @@ Quote quote(Ticks ticks, double mid) {
   const double high = mid + width / 2;
   Quote q;
   q.bid = low > 0 ? std::floor(low / tick(low) + 1e-9) * tick(low) : 0;
+  if (liquid_wing) q.bid = std::max(q.bid, tick(0));
   q.ask = std::ceil(high / tick(high) - 1e-9) * tick(high);
   q.ask = std::max({q.ask, q.bid + tick(q.bid), tick(0)});
   // The ask's tick follows its own price: 2.95 + a nickel reaches 3.00, a dime tick.
@@ -765,7 +767,14 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
             const double intrinsic = c.type == pricing::OptionType::Call ? price - c.strike : c.strike - price;
             mid = std::max(mid, intrinsic);
           }
-          const auto q = quote(listed.ticks, mid);
+          // A morning delta spread's protective wing can have a sub-tick model
+          // premium. Use at least the ATM move for liquidity: the cheaper call
+          // smile must not squeeze out ordinary protective wings. Four moves
+          // also cover the 5-delta region; remote tails can still lose their bid.
+          // Gate only quote synthesis, preserving older revisions and stress books.
+          const bool liquid_wing = revision >= 7 &&
+              std::abs(std::log(c.strike / forward)) <= 4 * std::max(atm, vol) * std::sqrt(years);
+          const auto q = quote(listed.ticks, mid, liquid_wing);
           if (q.bid != listed.last.bid || q.ask != listed.last.ask || listed.ask_size == 0) {
             listed.last = q;
             const double scale = index ? 120 : 800;

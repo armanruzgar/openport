@@ -22688,7 +22688,8 @@
             "type": "integer"
           },
           "revision": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Scenario output revision. New runs use 7, which keeps positive two-sided quotes with sizes inside four model standard deviations of the forward, using the greater of ATM and strike IV, including 5-delta calls and puts and ordinary protective wings. Remote tails may have no bid; authored book stress events override normal quotes. Saved revisions 1–6 retain their original events; an omitted revision regenerates revision 1."
           },
           "seed": {
             "type": "string"

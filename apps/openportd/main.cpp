@@ -183,7 +183,7 @@ int usage(const char* error = nullptr) {
       "replay: --option file=PATH [--option speed=1|10|60|max] [--option loop=on|off]\n"
       "demo: simulated regular sessions, rotating forever; --option days=ID,ID,...\n"
       "      --option speed=1|2|5|10|30|60|120|300 (default 1); no network services\n"
-      "      --option revision=1|2|3|4|5|6 (default 6); older revisions keep prior symbols, calendar, timing and volume\n"
+      "      --option revision=1|2|3|4|5|6|7 (default 7); older revisions keep prior symbols, calendar, timing, volume and quotes\n"
       "      symbols default to the selected days; journal defaults to ~/.openport/demo/paper-journal.jsonl\n"
       "providers:");
   for (auto name : providers::provider_names()) {

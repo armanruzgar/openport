@@ -159,6 +159,23 @@ minimum guarantee. Revisions 1–5 retain their zero-volume opening and original
 events. Separate seeded draws leave prices and quoted sizes unchanged.
 Volume events are recorded alongside quotes for built-in and custom scenarios.
 
+Revision 7 keeps a minimum one-tick bid inside four model standard deviations
+of the forward (`abs(log(strike / forward)) <= 4 * max(ATM_IV, strike_IV) * sqrt(years)`).
+Using at least the ATM move keeps the cheaper call smile from squeezing out
+ordinary protective wings. The ask remains at least one tick higher, and both
+sides carry positive displayed sizes.
+This covers the 5-delta region on calls and puts and ordinary protective wings,
+including the $5 wing of a morning 20-delta SPY call credit spread. Previously a
+sub-tick model premium could round to a zero bid and zero bid size, causing the
+whole spread to fail the executable-quote check in replay and backtests.
+
+The floor represents simulated liquidity, not a change to the American or
+European pricing model or a promise about real markets. More distant tails can
+still have no bid, and the quoted range contracts as expiry approaches. Authored
+`book` stress events still override these quotes, including crossed, one-sided
+and zero-size books. Revisions 1–6 regenerate their original events and sizes;
+new demo feeds, scenario replays and backtests use revision 7.
+
 ## Several sessions
 
 A scenario can span several sessions and days, played as one run on one account:

@@ -152,7 +152,7 @@ Supported `openportd --option KEY=VALUE` keys:
 | tastytrade | `sandbox=false` only; `dxlink_time_unit=milliseconds` (default) or `unknown` |
 | Databento | `quotes=cbbo-1s` or `quotes=cmbp-1`, `trades=on` or `trades=off` |
 | Replay | `file=PATH` (required), `speed=1`, `10`, `60` or `max`, `loop=on` or `off` |
-| Demo | `days=ID,ID,...`, `speed=1`, `2`, `5`, `10`, `30`, `60`, `120` or `300` (default 1), `revision=1..6` (default 6) |
+| Demo | `days=ID,ID,...`, `speed=1`, `2`, `5`, `10`, `30`, `60`, `120` or `300` (default 1), `revision=1..7` (default 7) |
 
 Databento parent subscriptions stream the entire option chain upstream. Both
 CLIs reject nonzero `--expiries` or `--window` with that provider; those filters
@@ -590,7 +590,7 @@ assignment and dividends between them, and its state lists its `sessions`. All a
 historical reconstructions. Status keeps `provider.simulated`; the terminal shows
 the scenario and seed with the simulated label. Generated recordings are cached by
 scenario, date and seed, with four completed entries retained. Generation uses
-fixed version 1, at output revision 6 (see [scenarios](scenarios.md)); unsupported
+fixed version 1, at output revision 7 (see [scenarios](scenarios.md)); unsupported
 versions are rejected. Optional [stress fields](scenarios.md#events) author abnormal
 books, quote stalls, market-wide halt windows, previous-close references and wider
 strike ranges. `stress-rehearsal` is a built-in drill. At revision 5, regular event times and window

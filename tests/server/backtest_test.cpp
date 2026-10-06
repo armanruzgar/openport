@@ -1089,6 +1089,65 @@ TEST(Backtest, JointSelectorsValidateDistinctIdsAndPinLatest) {
   EXPECT_EQ(pinned.playbooks.at("definitions").size(), 1U);
   EXPECT_EQ(pinned.playbooks.at("definitions").at("alpha").at("versions").size(), 1U);
 }
+TEST(Backtest, TwentyDeltaSpyCallCreditSpreadTradesAloneAndJointly) {
+  const test::SanitizerScenarioScale scale;
+  test::RecordingFile storage;
+  auto definitions = joint_catalogue();
+  for (auto& [id, item] : definitions["definitions"].items()) {
+    auto& setup = item["versions"][0];
+    setup["underlyings"] = {"SPY"};
+    setup["structure"]["template"]["target"]["value"] = 20;
+    setup["structure"]["expiry"] = {{"min", 0}, {"max", 7}};
+    setup["sizing"]["units"] = 5;
+    setup["window"]["start"] = "09:45";
+    setup["window"]["end"] = "09:46";
+    setup["management"] = {{"close_by", "09:47"}, {"take_profit_percent", 50}, {"stop_credit_multiple", 2}};
+  }
+  const auto& builtins = providers::builtin_scenarios();
+  const auto reversal = std::find_if(builtins.begin(), builtins.end(), [](const auto& s) { return s.id == "reversal"; });
+  ASSERT_NE(reversal, builtins.end());
+  auto source = json::parse(reversal->source);
+  source["symbols"] = {"SPY"};
+  const auto file = storage.directory / "spy-reversal.json";
+  std::ofstream(file) << source.dump();
+  const auto scenario = providers::read_scenario(file);
+  const std::atomic_bool cancel{false};
+  for (const bool joint : {false, true}) {
+    SCOPED_TRACE(joint);
+    json body{{"plan", {{"initial_cash", "100000"}, {"rules", {{"profit_target", "10000"}, {"max_drawdown", "10000"}}}}},
+        {"days", {{{"scenario", scenario.id}, {"seed", "8642"}, {"date", "2026-09-16"}},
+        {{"scenario", scenario.id}, {"seed", "1"}, {"date", "2026-09-17"}}}}};
+    if (joint) body["playbooks"] = {"alpha", "zeta"};
+    else body["playbook"] = "zeta";
+    auto request = server::parse_backtest(body, definitions, {scenario}, {}, false);
+    request.workers = 1;
+    const auto directory = storage.directory / (joint ? "joint" : "single");
+    const auto report = server::run_backtest(request, directory, cancel);
+    ASSERT_EQ(report.at("status"), "completed") << report.dump();
+    for (const auto& day : report.at("days")) {
+      const auto& trades = day.at("trades");
+      const auto call = std::find_if(trades.begin(), trades.end(), [](const auto& trade) {
+        return trade.at("tag") == "playbook:zeta@v1";
+      });
+      ASSERT_NE(call, trades.end()) << day.dump();
+      EXPECT_FALSE(call->at("closed").is_null());
+      ASSERT_FALSE(day.at("fills").empty()) << day.dump();
+      EXPECT_EQ(day.at("fills")[0].at("time"), md::format_timestamp(*md::parse_datetime(
+          day.at("date").get<std::string>() + "T09:45:00", md::Zone::NewYork)));
+      if (joint) { EXPECT_GT(day.at("per_playbook").at("zeta").at("trades").get<int>(), 0); }
+    }
+    request.workers = 2;
+    const auto parallel = storage.directory / (joint ? "joint-parallel" : "single-parallel");
+    const auto repeated = server::run_backtest(request, parallel, cancel);
+    EXPECT_EQ(report, repeated);
+    for (const auto& name : report.at("journals")) {
+      const auto journal = name.get<std::string>();
+      EXPECT_EQ(bytes(directory / journal), bytes(parallel / journal));
+      const auto verified = server::verify_run(directory / journal);
+      EXPECT_TRUE(verified.matched) << verified.message;
+    }
+  }
+}
 TEST(Backtest, JointGeneratedAccountSharesCapAndIsIdenticalAtOneAndEightWorkers) {
   const test::SanitizerScenarioScale scale;
   test::RecordingFile storage;

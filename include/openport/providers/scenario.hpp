@@ -106,8 +106,9 @@ struct ScenarioWindow {
 /// dividends, also reflected in spot prices. Runs record the revision; one
 /// recorded without it regenerates revision 1. Revision 5 scales regular event
 /// times and window endpoints into early-close sessions. Revision 6 includes
-/// deterministic opening activity in session volume.
-inline constexpr int kScenarioRevision = 6;
+/// deterministic opening activity in session volume. Revision 7 keeps a two-sided
+/// minimum-tick market in liquid wings; authored stress books still override it.
+inline constexpr int kScenarioRevision = 7;
 /// Deterministic simulated quarterly ETF dividends, inclusive of both dates.
 [[nodiscard]] std::vector<trading::Dividend> demo_dividends(md::Date first, md::Date last);
 /// Known payments through the run's listed ETF expiries. Session entries replace
