@@ -3427,6 +3427,69 @@ TEST(ReplayRun, StopRefusesStartsQueuedBehindAStep) {
   EXPECT_EQ(replay_call(host, "POST", "/api/replay", {{"file", "session.oprec"}}).status, 503);
   EXPECT_EQ(json::parse(replay_call(host, "GET", "/api/replay").body)["replay"], nullptr);
 }
+TEST(ReplayRun, VerificationEstimateJournalFallbackAndSlowerWork) {
+  EXPECT_EQ(server::verification_cost(1)["estimated_seconds"], 1);
+  EXPECT_EQ(server::verification_cost(11ull * 1024 * 1024)["estimated_seconds"], 2);
+  EXPECT_EQ(server::verification_cost(1, 4001)["estimated_seconds"], 3);
+  server::VerificationInput input{1, 1, {}, 3};
+  EXPECT_EQ(server::verification_cost(1, 0, input)["estimated_seconds"], 4);
+  EXPECT_EQ(server::verification_cost(1, 100000, input)["estimated_seconds"], 50);
+}
+TEST(ReplayRun, VerificationEstimateSingleSessionAndWarningBoundary) {
+  const auto first = *md::parse_datetime("2026-09-18T13:30:00Z", md::Zone::Utc);
+  const auto last = first + 405 * 60 * md::kNanosPerSecond;
+  server::VerificationInput input{first, last, {{"regular", {2026, 9, 18}, first, last, last, 0}}, 3};
+  EXPECT_EQ(server::verification_cost(1, 249, input)["estimated_seconds"], 38);
+  input.last = first + 5 * 3600 * md::kNanosPerSecond;
+  EXPECT_EQ(server::verification_cost(1, 0, input)["estimated_seconds"], 29);
+  EXPECT_TRUE(server::verification_cost(1, 0, input)["warning"].is_null());
+  input.last += md::kNanosPerSecond;
+  EXPECT_EQ(server::verification_cost(1, 0, input)["estimated_seconds"], 30);
+  EXPECT_FALSE(server::verification_cost(1, 0, input)["warning"].is_null());
+  input.last = first + 30 * 60 * md::kNanosPerSecond;
+  input.underlyings = 7;
+  EXPECT_EQ(server::verification_cost(1, 0, input)["estimated_seconds"], 16);
+}
+TEST(ReplayRun, VerificationEstimateExcludesClosedNightsAndWeekend) {
+  const auto at = [](const char* time) { return *md::parse_datetime(time, md::Zone::Utc); };
+  server::VerificationInput input{at("2026-09-18T14:30:00Z"), at("2026-09-21T14:00:00Z"), {
+      {"regular", {2026, 9, 18}, at("2026-09-18T13:30:00Z"), 0, at("2026-09-18T20:15:00Z"), 0},
+      {"overnight", {2026, 9, 21}, at("2026-09-21T00:15:00Z"), 0, at("2026-09-21T13:25:00Z"), 0},
+      {"regular", {2026, 9, 21}, at("2026-09-21T13:30:00Z"), 0, at("2026-09-21T20:15:00Z"), 0}}, 3};
+  // 5h45 Friday + 13h10 overnight + 30m Monday, clipped at both ends.
+  EXPECT_EQ(server::verification_cost(1, 0, input)["estimated_seconds"], 102);
+  // Recordings use the entire played span, including any intervening gaps.
+  input.sessions.clear();
+  EXPECT_EQ(server::verification_cost(1, 0, input)["estimated_seconds"], 362);
+}
+TEST(ReplayRun, VerificationEstimateReadsJournalAndSidecarWithoutReplay) {
+  test::RecordingFile temporary;
+  const auto file = temporary.directory / "run.jsonl";
+  const auto& scenarios = providers::builtin_scenarios();
+  const auto found = std::find_if(scenarios.begin(), scenarios.end(), [](const auto& scenario) {
+    return scenario.id == "quiet-grind";
+  });
+  ASSERT_NE(found, scenarios.end());
+  const md::Date date{2026, 9, 18};
+  const auto first = providers::scenario_open(*found, date);
+  const auto last = first + 6 * 3600 * md::kNanosPerSecond;
+  const json start{{"kind", "start"}, {"input", json::parse(server::scenario_input(*found, date, 1))}};
+  {
+    std::ofstream out(file);
+    out << json{{"type", "initial"}, {"time", first}} << '\n';
+    out << json{{"type", "run_input"}, {"time", first}, {"payload", {
+        {"events", json::array({{{"type", "run_input"}, {"payload", start}}})}}}} << '\n';
+    out << json{{"type", "market"}, {"time", last}} << '\n';
+  }
+  EXPECT_EQ(server::verification_cost(file)["estimated_seconds"], 34);
+  {
+    std::ofstream out(temporary.directory / "run.json");
+    out << json{{"settled_through", md::format_timestamp(last + 30 * 60 * md::kNanosPerSecond)}};
+  }
+  EXPECT_EQ(server::verification_cost(file)["estimated_seconds"], 37);
+  { std::ofstream out(file); out << "{}\n"; }
+  EXPECT_EQ(server::verification_cost(file)["estimated_seconds"], 1);
+}
 TEST(ReplayRun, JournalAndVerificationWarningsHaveDocumentedThresholds) {
   EXPECT_TRUE(server::journal_warning(1, 1, false).empty());
   EXPECT_NE(server::journal_warning(server::kLargeJournalBytes, 1, false).find("--compact-journals"), std::string::npos);

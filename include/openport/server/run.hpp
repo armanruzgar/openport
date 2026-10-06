@@ -24,8 +24,18 @@ namespace openport::server {
 [[nodiscard]] std::shared_ptr<trading::Journal> resuming_journal(const trading::JournalRecovery& expected,
                                                                  std::shared_ptr<trading::Journal> file);
 
-/// Coarse estimate at 10 MiB/s or 2,000 reducer records/s, whichever is slower.
-[[nodiscard]] nlohmann::json verification_cost(std::uint64_t bytes, std::uint64_t records = 0);
+struct VerificationInput {
+  md::Timestamp first = 0, last = 0;
+  /// Empty for recordings (continuous played span); scenario sessions otherwise.
+  std::vector<providers::ScenarioWindow> sessions;
+  std::size_t underlyings = 3;
+};
+/// Slower of journal throughput and replay input work, rounded up to seconds.
+[[nodiscard]] nlohmann::json verification_cost(std::uint64_t bytes, std::uint64_t records = 0,
+    const std::optional<VerificationInput>& input = std::nullopt);
+/// Reads run metadata without generating input or verifying the journal.
+/// Missing/unusable input metadata falls back to journal throughput alone.
+[[nodiscard]] nlohmann::json verification_cost(const std::filesystem::path& journal);
 
 struct RunVerification {
   nlohmann::json run;  ///< Shareable identity and inputs; contains no absolute paths.

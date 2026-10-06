@@ -1,6 +1,7 @@
 #include "openport/server/run.hpp"
 
 #include <array>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <openssl/evp.h>
@@ -236,10 +237,93 @@ RunIdentity run_identity(std::string_view input, std::string id) {
   }
   return run;
 }
-nlohmann::json verification_cost(std::uint64_t bytes, std::uint64_t records) {
-  const auto seconds = std::max<std::uint64_t>(1, std::max(bytes ? 1 + (bytes - 1) / (10 * 1024 * 1024) : 0, records ? 1 + (records - 1) / 2000 : 0));
+nlohmann::json verification_cost(std::uint64_t bytes, std::uint64_t records,
+    const std::optional<VerificationInput>& input) {
+  auto seconds = std::max<std::uint64_t>(1, std::max(bytes ? 1 + (bytes - 1) / (10 * 1024 * 1024) : 0, records ? 1 + (records - 1) / 2000 : 0));
+  if (input && input->first > 0 && input->last >= input->first) {
+    double played = 0;
+    if (input->sessions.empty()) {
+      played = static_cast<double>(input->last - input->first);
+    } else {
+      for (const auto& session : input->sessions) {
+        const auto first = std::max(input->first, session.first);
+        const auto last = std::min(input->last, session.last);
+        if (last > first) played += static_cast<double>(last - first);
+      }
+    }
+    const auto hours = played / (3600.0 * md::kNanosPerSecond);
+    const auto scale = std::max(1.0, static_cast<double>(input->underlyings) / 3.0);
+    seconds = std::max(seconds, static_cast<std::uint64_t>(std::ceil((4 + 5 * hours) * scale)));
+  }
   return {{"estimated_seconds", seconds}, {"warning", seconds >= 30 ? nlohmann::json(
       "Long verification: roughly " + std::to_string(seconds) + " seconds or more; recording generation and hardware can take longer") : nlohmann::json(nullptr)}};
+}
+nlohmann::json verification_cost(const std::filesystem::path& journal) {
+  std::error_code error;
+  const auto size = std::filesystem::file_size(journal, error);
+  const auto bytes = error ? 0 : size;
+  std::uint64_t records = 0;
+  std::optional<VerificationInput> replay;
+  try {
+    // Stream lines for the count, but only decode the start and final record.
+    // This deliberately avoids journal recovery, hashing and market generation.
+    std::ifstream file(journal);
+    std::string line, last;
+    json start;
+    md::Timestamp first = 0;
+    while (std::getline(file, line)) {
+      if (line.empty()) continue;
+      ++records;
+      if (records <= 2) {
+        const auto record = json::parse(line, nullptr, false);
+        if (record.is_object() && record.value("type", "") == "run_input") {
+          for (const auto& event : record.at("payload").at("events")) {
+            if (event.at("type") == "run_input" && event.at("payload").at("kind") == "start") {
+              start = event.at("payload");
+              first = record.at("time").get<md::Timestamp>();
+            }
+          }
+        }
+      }
+      last = std::move(line);
+    }
+    if (!start.is_object()) return verification_cost(bytes, records);
+    const auto& identity = start.at("input");
+    // Older starts can have no account market time yet.
+    if (first <= 0) first = identity.at("started").get<md::Timestamp>();
+    VerificationInput input{first, json::parse(last).at("time").get<md::Timestamp>(), {}, 3};
+    std::ifstream metadata(std::filesystem::path(journal).replace_extension(".json"));
+    const auto saved = metadata ? json::parse(metadata, nullptr, false) : json();
+    if (saved.is_object() && saved.contains("settled_through") && saved.at("settled_through").is_string()) {
+      if (const auto settled = md::parse_datetime(saved.at("settled_through").get<std::string>(), md::Zone::Utc))
+        input.last = std::max(input.last, *settled);
+    }
+    if (identity.at("kind") == "scenario") {
+      providers::Scenario scenario;
+      if (identity.at("builtin").get<bool>()) {
+        const auto& scenarios = providers::builtin_scenarios();
+        const auto found = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& candidate) {
+          return candidate.id == identity.at("id").get<std::string>();
+        });
+        if (found == scenarios.end()) return verification_cost(bytes, records);
+        scenario = *found;
+      } else {
+        scenario = providers::read_scenario(identity.at("file").get<std::string>());
+      }
+      if (hash_text(scenario.source) != identity.at("sha256").get<std::string>())
+        return verification_cost(bytes, records);
+      const md::ScheduledDaysScope calendar(start.value("calendar", std::vector<md::ScheduledDay>{}));
+      input.sessions = providers::scenario_windows(scenario, identity.at("date").get<md::Date>());
+      if (input.sessions.empty()) return verification_cost(bytes, records);
+      input.underlyings = scenario.symbols.size();
+    } else if (identity.at("kind") != "recording") {
+      return verification_cost(bytes, records);
+    }
+    replay = std::move(input);
+  } catch (const std::exception&) {
+    // An estimate must not prevent verification from reporting the real error.
+  }
+  return verification_cost(bytes, records, replay);
 }
 RunVerification verify_run(const std::filesystem::path& journal,
     const std::function<bool()>& cancelled,

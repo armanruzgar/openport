@@ -402,7 +402,7 @@ class ArchivedReplay final : public MetricsSource {
     const auto bytes = std::filesystem::file_size(file);
     const auto warning = journal_warning(bytes, recovery.records.size(), true);
     integrity_["journal_size"] = {{"bytes", bytes}, {"records", recovery.records.size()}, {"warning", warning.empty() ? json(nullptr) : json(warning)}};
-    integrity_["verification_cost"] = verification_cost(bytes, recovery.records.size());
+    integrity_["verification_cost"] = verification_cost(file);
     if (diagnostic) *diagnostic = integrity_;
     if (!recovery.damage.empty() && !recovery.truncated_final_line)
       throw trading::TradingError(trading::Reason::JOURNAL_CORRUPT, recovery.damage);
@@ -647,9 +647,7 @@ class ReplayHost::History {
     return value;
   }
   json cost(const std::string& id) const {
-    const auto saved = metadata(id);
-    const auto checkpoint = saved.is_object() ? saved.value("journal", json::object()) : json::object();
-    return verification_cost(std::filesystem::file_size(journal(id)), checkpoint.value("transactions", std::uint64_t{0}));
+    return verification_cost(journal(id));
   }
   void begin_verification(const std::string& id, const json& fingerprint) {
     auto value = metadata(id);

@@ -883,9 +883,9 @@ int backtest_cli(int argc, char** argv) {
 int main(int argc, char** argv) {
   if (argc == 3 && std::string_view(argv[1]) == "--verify-run") {
     std::error_code ec;
-    const auto bytes = std::filesystem::file_size(argv[2], ec);
+    (void)std::filesystem::file_size(argv[2], ec);
     if (!ec) {
-      const auto estimate = openport::server::verification_cost(bytes);
+      const auto estimate = openport::server::verification_cost(std::filesystem::path(argv[2]));
       std::fprintf(stderr, "Verification estimate: %llu seconds or more (hardware and input dependent)\n",
           static_cast<unsigned long long>(estimate.at("estimated_seconds").get<std::uint64_t>()));
       if (!estimate.at("warning").is_null()) std::fprintf(stderr, "%s\n", estimate.at("warning").get<std::string>().c_str());

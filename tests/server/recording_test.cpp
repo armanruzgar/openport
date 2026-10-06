@@ -690,6 +690,9 @@ TEST(ReplayHost, HistoryDeletesDamagedRunsWithTheirSidecarsAndAnswersUnknownIds)
   for (const auto& entry : history) {
     EXPECT_GT(entry.at("journal_size").at("bytes").get<std::uint64_t>(), 0u);
     EXPECT_GT(entry.at("verification_cost").at("estimated_seconds").get<std::uint64_t>(), 0u);
+    const auto expected_cost = server::verification_cost(replays / (entry.at("id").get<std::string>() + ".jsonl"));
+    EXPECT_EQ(entry.at("verification_cost"), expected_cost);
+    EXPECT_EQ(entry.at("verification").at("cost"), expected_cost);
   }
   const json* torn_entry = nullptr;
   for (const auto& entry : history)
