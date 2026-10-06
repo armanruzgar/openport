@@ -1,8 +1,13 @@
 #include <gtest/gtest.h>
 #include <fstream>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
 #include <nlohmann/json.hpp>
 
 #include "openport/server/sandboxes.hpp"
+#include "openport/server/web_server.hpp"
 #include "openport/server/web_policy.hpp"
 #include "openport/server/plans.hpp"
 #include "support/recording.hpp"
@@ -181,32 +186,46 @@ TEST_F(Sandboxes, CapacityIncludesPendingCreations) {
   const auto refused = send(input);
   EXPECT_EQ(refused.status, 429);
   EXPECT_EQ(json::parse(refused.body)["error"]["code"], "SANDBOX_CAPACITY");
+  EXPECT_EQ(refused.retry_after, 0);
   source->hold = false;
   source->post_trading(std::move(source->queued), std::move(source->pending));
   ASSERT_TRUE(response);
   EXPECT_EQ(response->status, 201);
 }
-TEST_F(Sandboxes, PerClientLimitAndWindowReset) {
-  limits.per_client = 1;
-  configure();
-  create();
-  EXPECT_EQ(send(request("POST", "/api/sandboxes")).status, 429);
-  create("192.0.2.2");
-  now += limits.creation_window;
-  create();
-}
-TEST_F(Sandboxes, GlobalLimitAppliesAcrossClients) {
-  limits.global = 2;
-  configure();
-  create("192.0.2.1");
-  create("192.0.2.2");
-  auto input = request("POST", "/api/sandboxes");
-  input.client_ip = "192.0.2.3";
-  const auto response = send(input);
-  EXPECT_EQ(response.status, 429);
-  EXPECT_EQ(json::parse(response.body)["error"]["code"], "SANDBOX_GLOBAL_RATE");
-  now += limits.creation_window;
-  EXPECT_EQ(send(input).status, 201);
+TEST_F(Sandboxes, CreationRateRetryAfterUsesOldestRequestInEachBucket) {
+  for (const bool global : {false, true}) {
+    SCOPED_TRACE(global ? "global" : "client");
+    limits.global = global ? 2 : 30;
+    limits.per_client = global ? 3 : 2;
+    now = {};
+    configure();
+    if (!global) {
+      create("192.0.2.2");
+      now += 20s;
+    }
+    const auto start = now;
+    const auto market_time = source->desk->market_time();
+    create();
+    now += 10s;
+    create(global ? "192.0.2.2" : "192.0.2.1");
+    auto input = request("POST", "/api/sandboxes");
+    if (global) input.client_ip = "192.0.2.3";
+    for (const auto elapsed : {10250ms, 3599500ms}) {
+      now = start + elapsed;
+      const auto response = send(input);
+      EXPECT_EQ(response.status, 429);
+      EXPECT_EQ(json::parse(response.body)["error"]["code"],
+                global ? "SANDBOX_GLOBAL_RATE" : "SANDBOX_CLIENT_RATE");
+      EXPECT_EQ(response.retry_after, elapsed == 10250ms ? 3590 : 1);
+    }
+    now = start + limits.creation_window;
+    EXPECT_EQ(send(input).status, 201);
+    const auto response = send(input);
+    EXPECT_EQ(response.status, 429);
+    EXPECT_EQ(response.retry_after, 10);
+    if (!global) { create("192.0.2.2"); }
+    EXPECT_EQ(source->desk->market_time(), market_time);
+  }
 }
 TEST_F(Sandboxes, ClientHeaderOnlySeparatesVisitorsWhenConfigured) {
   limits.per_client = 1;
@@ -355,19 +374,81 @@ TEST_F(Sandboxes, OrderRateIncludesPreviewsAndEditsButExitsStayAvailable) {
   limits.orders = 2;
   configure();
   const auto own = create();
+  const auto market_time = source->desk->market_time();
   const auto input = [&](std::string path) { return request("POST", path + "?account=" + id(own), token(own)); };
   EXPECT_FALSE(server::check_api_write(input("/api/orders"), policy));
+  now += 10s;
   EXPECT_FALSE(server::check_api_write(input("/api/orders/preview"), policy));
-  const auto refused = server::check_api_write(input("/api/orders"), policy);
-  ASSERT_TRUE(refused);
-  EXPECT_EQ(refused->status, 429);
+  for (const auto elapsed : {10250ms, 59500ms}) {
+    now = server::Sandboxes::Clock::time_point{} + elapsed;
+    for (const auto& [method, path] : std::vector<std::pair<std::string, std::string>>{
+        {"POST", "/api/orders"}, {"POST", "/api/orders/preview"}, {"POST", "/api/orders/what-if"},
+        {"PUT", "/api/orders/1"}, {"POST", "/api/orders/1/preview"}}) {
+      const auto refused = server::check_api_write(request(method, path, token(own)), policy);
+      ASSERT_TRUE(refused) << path;
+      EXPECT_EQ(refused->status, 429);
+      EXPECT_EQ(json::parse(refused->body)["error"]["code"], "SANDBOX_ORDER_RATE");
+      EXPECT_EQ(refused->retry_after, elapsed == 10250ms ? 50 : 1);
+    }
+  }
   const auto admin_refused = server::check_api_write(request("POST", "/api/orders?account=" + id(own), "operator"), policy);
   ASSERT_TRUE(admin_refused);
   EXPECT_EQ(admin_refused->status, 429);
+  EXPECT_EQ(admin_refused->retry_after, 1);
   EXPECT_FALSE(server::check_api_write(input("/api/orders/cancel"), policy));
   EXPECT_FALSE(server::check_api_write(input("/api/positions/close"), policy));
-  now += limits.order_window;
+  EXPECT_FALSE(server::check_api_write(request("DELETE", "/api/orders/1", token(own)), policy));
+  now = server::Sandboxes::Clock::time_point{} + limits.order_window;
   EXPECT_FALSE(server::check_api_write(input("/api/orders"), policy));
+  const auto refused = server::check_api_write(input("/api/orders"), policy);
+  ASSERT_TRUE(refused);
+  EXPECT_EQ(refused->retry_after, 10);
+  EXPECT_EQ(source->desk->market_time(), market_time);
+}
+TEST_F(Sandboxes, HttpRateLimitsEmitRetryAfterButCapacityDoesNot) {
+  namespace asio = boost::asio;
+  namespace beast = boost::beast;
+  namespace http = beast::http;
+  for (const auto* code : {"SANDBOX_CLIENT_RATE", "SANDBOX_GLOBAL_RATE", "SANDBOX_ORDER_RATE", "SANDBOX_CAPACITY"}) {
+    SCOPED_TRACE(code);
+    const std::string reason = code;
+    limits.capacity = reason == "SANDBOX_CAPACITY" ? 1 : 10;
+    limits.per_client = reason == "SANDBOX_CLIENT_RATE" ? 1 : 3;
+    limits.global = reason == "SANDBOX_GLOBAL_RATE" ? 1 : 30;
+    limits.orders = 1;
+    now = {};
+    configure();
+    const auto own = create("127.0.0.1");
+    EXPECT_FALSE(manager->check_order(id(own)));
+    now += 10250ms;
+    server::WebServer web("127.0.0.1", 0, {},
+        [&](const server::ApiRequest& input, server::ApiCompletion complete) {
+          server::handle_api_async(input, *source, std::move(complete));
+        }, {}, "operator", {}, {}, false, manager);
+    web.start(1);
+    asio::io_context io;
+    beast::tcp_stream connection(io);
+    connection.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    http::request<http::string_body> input{http::verb::post,
+        reason == "SANDBOX_ORDER_RATE" ? "/api/orders" : "/api/sandboxes", 11};
+    input.set(http::field::host, "localhost");
+    input.set(http::field::content_type, "application/json");
+    if (reason == "SANDBOX_ORDER_RATE") input.set(http::field::authorization, "Bearer " + token(own));
+    input.body() = "{}";
+    input.prepare_payload();
+    http::write(connection, input);
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    http::read(connection, buffer, response);
+    EXPECT_EQ(response.result_int(), 429);
+    EXPECT_EQ(json::parse(response.body())["error"]["code"], reason);
+    if (reason == "SANDBOX_CAPACITY") {
+      EXPECT_EQ(response.count(http::field::retry_after), 0U);
+    } else {
+      EXPECT_EQ(response[http::field::retry_after], reason == "SANDBOX_ORDER_RATE" ? "50" : "3590");
+    }
+    web.stop();
+  }
 }
 TEST_F(Sandboxes, IdleExpiryDeletesAccountCredentialAndAllFilesWithoutUsingMarketTime) {
   limits.capacity = 1;

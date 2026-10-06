@@ -27,6 +27,9 @@ std::string digest(std::string_view secret) {
     throw std::runtime_error("Cannot authenticate sandbox credentials");
   return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
 }
+int retry_seconds(Sandboxes::Clock::duration remaining) {
+  return static_cast<int>(std::max(std::chrono::seconds{1}, std::chrono::ceil<std::chrono::seconds>(remaining)).count());
+}
 void prune(std::deque<Sandboxes::Clock::time_point>& times, Sandboxes::Clock::time_point cutoff) {
   while (!times.empty() && times.front() <= cutoff) times.pop_front();
 }
@@ -56,11 +59,13 @@ void Sandboxes::create(const ApiRequest& request, MetricsSource& source, ApiComp
     const auto client = clients_.find(request.client_ip);
     if (entries_.size() >= options_.capacity)
       rejection = api_error(429, "SANDBOX_CAPACITY", "All sandbox accounts are in use. Try again later.");
-    else if (creations_.size() >= options_.global)
+    else if (creations_.size() >= options_.global) {
       rejection = api_error(429, "SANDBOX_GLOBAL_RATE", "Sandbox creation is busy. Try again later.");
-    else if (client != clients_.end() && client->second.size() >= options_.per_client)
+      rejection->retry_after = retry_seconds(creations_.front() + options_.creation_window - now);
+    } else if (client != clients_.end() && client->second.size() >= options_.per_client) {
       rejection = api_error(429, "SANDBOX_CLIENT_RATE", "Too many sandbox accounts from this client. Try again later.");
-    else {
+      rejection->retry_after = retry_seconds(client->second.front() + options_.creation_window - now);
+    } else {
       do { id = "sbox-" + random_hex(); } while (entries_.contains(id));
       secret = "sandbox_" + random_hex();
       entries_.emplace(id, Entry{digest(secret), now, false, {}});
@@ -116,16 +121,20 @@ bool Sandboxes::active(const std::string& account, bool touch) {
   if (touch) found->second.used = now;
   return true;
 }
-bool Sandboxes::allow_order(const std::string& account) {
+std::optional<ApiResponse> Sandboxes::check_order(const std::string& account) {
   const std::lock_guard lock(mutex_);
   const auto found = entries_.find(account);
-  if (found == entries_.end() || !found->second.ready) return false;
+  auto rejected = api_error(429, "SANDBOX_ORDER_RATE", "Too many sandbox order requests. Try again later.");
+  if (found == entries_.end() || !found->second.ready) return rejected;
   auto& times = found->second.orders;
   const auto now = options_.clock();
   prune(times, now - options_.order_window);
-  if (times.size() >= options_.orders) return false;
+  if (times.size() >= options_.orders) {
+    rejected.retry_after = retry_seconds(times.front() + options_.order_window - now);
+    return rejected;
+  }
   times.push_back(now);
-  return true;
+  return {};
 }
 std::vector<std::string> Sandboxes::expired() {
   const std::lock_guard lock(mutex_);

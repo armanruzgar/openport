@@ -32,7 +32,8 @@ class Sandboxes {
   void create(const ApiRequest& request, MetricsSource& source, ApiCompletion complete);
   [[nodiscard]] std::optional<std::string> authenticate(std::string_view secret);
   [[nodiscard]] bool active(const std::string& account, bool touch = false);
-  [[nodiscard]] bool allow_order(const std::string& account);
+  /// Counts an order request or returns its rate-limit response.
+  [[nodiscard]] std::optional<ApiResponse> check_order(const std::string& account);
   /// Expired tokens stop working immediately; capacity returns after file removal.
   [[nodiscard]] std::vector<std::string> expired();
   void removed(const std::string& account);

@@ -415,8 +415,9 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       policy.sandboxes && policy.sandboxes->active(account, true));
   if (read) return {};
   if (sandbox_account && (path == "/orders" || (path.starts_with("/orders/") && path != "/orders/cancel")) &&
-      request.method != "DELETE" && !policy.sandboxes->allow_order(account))
-    return api_error(429, "SANDBOX_ORDER_RATE", "Too many sandbox order requests. Try again in a minute.");
+      request.method != "DELETE") {
+    if (auto rejected = policy.sandboxes->check_order(account)) return rejected;
+  }
   if (request.method == "DELETE") {
     if (!request.body.empty()) return api_error(400, "INVALID_REQUEST", "DELETE must have no body");
   } else {
