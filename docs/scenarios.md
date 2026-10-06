@@ -442,9 +442,9 @@ use `practice`). Names include the scenario or recording, date, seed or `recordi
 start time and a unique suffix. A JSON sidecar holds the replay metadata. Account
 records retain the existing hash chain and schema; repair and compaction commands
 include these journals. Runs from a prior process are treated as finished, including
-ones interrupted by a crash, until one is resumed (below). Recovery errors are shown in
-history. A run that has
-ended trades no more, so its archive shows every order it left working or armed (a
+ones interrupted by a crash or a clean server shutdown, until one is resumed (below).
+Recovery errors are shown in history. A run that has ended trades no more, so its
+archive shows every order it left working or armed (a
 resting GTC limit, an armed stop) cancelled with `RUN_ENDED`. Its journal keeps those
 orders as they were.
 
@@ -454,15 +454,18 @@ Missing marks are flagged. An open result means the evaluation is undecided, or
 the run was practice. It does not mean that playback is still running. Each entry
 carries the run's final playback state: stopping or replacing a run rewrites its
 sidecar, so `fast_forwarding` is false and `settled_through` is where it stopped. A
-run a crash interrupted reports `progress` 1, paused, and its last journaled time as
-`settled_through`, and `interrupted` true. Stopping a run does not liquidate
+run interrupted by a crash or a clean server shutdown reports `progress` 1, paused,
+and its last journaled time as `settled_through`, and `interrupted` true.
+Stopping a run does not liquidate
 positions; its final marked positions remain in the journal.
 
 ### Resuming an interrupted run
 
-`POST /api/replay {"resume": "ID"}` continues a run a crash interrupted (`interrupted`
-true; the terminal's Resume button). It plays the same recording, or regenerates the
-same scenario day, and re-executes the run's recorded inputs in order, unpaced, as
+`POST /api/replay {"resume": "ID"}` continues a run interrupted by a crash or active
+at a clean server shutdown (`interrupted` true; the terminal's Resume button).
+Shutdown flushes the journal and leaves an unfinished run resumable. Resuming plays
+the same recording, or regenerates the same scenario day, and re-executes the run's
+recorded inputs in order, unpaced, as
 `--verify-run` does: each batch's boundary is checked against the batch the recording
 delivers, and each transaction against the journal's through its hash. Nothing is
 written until the re-execution reaches the journal's end, so the run continues on the
@@ -471,7 +474,8 @@ reads as if the run had never stopped: it still verifies. The run continues from
 last market time it recorded, paused unless `"paused": false`; `speed` may be given
 too. Its equity history and playbook catalogue are rebuilt as it re-executes.
 
-A run that played to its end or was stopped has ended and returns 409
+A run that played to its end, was stopped with `DELETE /api/replay`, or was replaced
+by another start/restart has ended and returns 409
 `REPLAY_NOT_RESUMABLE`, as does one recorded by an older build's driver, one that
 changed its recording part way, or one whose recording, scenario, generator or the
 exchange calendar has changed since it started. When re-executing reaches a batch or
