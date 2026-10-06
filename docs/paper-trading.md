@@ -1013,12 +1013,13 @@ A flatten has a dry run, `POST /api/positions/close/preview`, with the same opti
 as a preview does: it writes no journal, allocates no IDs and takes no displayed size. It
 answers 200 with `decision` (`ok`, or the reason the flatten would be refused, with
 `reason`), the open orders it would cancel (`cancelled_orders`), its closing `orders`
-without IDs (symbol, underlying, side, quantity, filled quantity, average fill price,
+without IDs (symbol, underlying, side, legs, quantity, filled quantity, average fill price,
 status and reason: `working` for a close that waits for fill latency, `rejected` with the
 reason for a refused one), their `fills` now, the shares it would close (`stock_fills`) and
 keep (`kept_stocks`), what would still be held in scope (`remaining` contracts and
 `remaining_shares`), and the account before and after it (`current` and `after`, as in a
-[what-if](#what-if)). A close waiting for a later quote is shown working, so the account
+[what-if](#what-if)). A spread’s close lists its legs with a signed net average, as
+orders do; its symbol and side are null. A single-leg close has null legs. A close waiting for a later quote is shown working, so the account
 after it still holds that position. Flatten in the terminal shows the dry run before
 the flatten is confirmed.
 

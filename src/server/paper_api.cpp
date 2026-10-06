@@ -478,11 +478,20 @@ json flatten_preview_json(const FlattenPreview& f, const TradingView& view) {
   for (const auto id : f.cancelled) cancelled.push_back(std::to_string(id));
   // The closing orders, without the IDs a flatten would give them.
   json orders = json::array();
-  for (const auto& o : f.orders)
-    orders.push_back({{"symbol", o.request.symbol}, {"underlying", underlying(view, o.request.symbol)},
-                      {"side", side_name(o.request.side)}, {"quantity", o.request.quantity}, {"filled_quantity", o.filled_quantity},
+  for (const auto& o : f.orders) {
+    const bool multi = multi_leg(o.request);
+    json legs = nullptr;
+    if (multi) {
+      legs = json::array();
+      for (const auto& leg : o.request.legs)
+        legs.push_back({{"symbol", leg.symbol}, {"side", side_name(leg.side)}, {"ratio", leg.ratio}});
+    }
+    orders.push_back({{"symbol", multi ? json(nullptr) : json(o.request.symbol)},
+                      {"underlying", underlying(view, order_symbols(o.request).front())},
+                      {"side", multi ? json(nullptr) : json(side_name(o.request.side))}, {"legs", legs}, {"quantity", o.request.quantity}, {"filled_quantity", o.filled_quantity},
                       {"average_fill_price", o.filled_quantity > 0 ? json(o.filled_notional.prorate(1, o.filled_quantity).str()) : json(nullptr)},
                       {"status", statuses[static_cast<int>(o.status)]}, {"reason", decision_json(o.reason)}});
+  }
   json fills = json::array();
   for (const auto& fill : f.fills)
     fills.push_back({{"symbol", fill.symbol}, {"side", side_name(fill.side)}, {"quantity", fill.quantity},

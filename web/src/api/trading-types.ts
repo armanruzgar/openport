@@ -1290,7 +1290,7 @@ export interface FlattenPreview {
   reason: Decision | null
   cancelled_orders: string[]
   /** Its closing orders as the current quotes would leave them, without IDs. */
-  orders: { symbol: string; underlying: string; side: Side; quantity: number; filled_quantity: number; average_fill_price: Money | null
+  orders: { symbol: string | null; underlying: string; side: Side | null; legs: OrderLeg[] | null; quantity: number; filled_quantity: number; average_fill_price: Money | null
     status: Order["status"]; reason: Decision | null }[]
   fills: { symbol: string; side: Side; quantity: number; price: Money; fee: Money }[]
   stock_fills: { symbol: string; shares: number; price: Money }[]

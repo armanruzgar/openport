@@ -281,9 +281,9 @@ export function FlattenDryRun({ preview }: { preview: { data?: FlattenPreview; e
   return <section aria-label="Flatten dry run" className="space-y-1 rounded-md border border-border p-2 text-xs">
     <p className="font-medium">Simulated dry run at the current quotes</p>
     {filled.length > 0 && <ul className="space-y-0.5 tabular">{filled.map((o, index) => <li key={index}>
-      {o.side === "buy" ? "Buy" : "Sell"} {o.filled_quantity} {osiLabel(o.symbol, "")}{o.average_fill_price != null ? ` at ${formatMoney(o.average_fill_price)}` : ""}</li>)}</ul>}
+      {o.legs?.length ? "Close" : o.side === "buy" ? "Buy" : "Sell"} {o.filled_quantity} {orderLabel(o)}{o.average_fill_price != null ? ` at ${formatMoney(o.average_fill_price)}${o.legs?.length ? " net" : ""}` : ""}</li>)}</ul>}
     {waiting.length > 0 && <p className="text-muted">{waiting.length} {waiting.length === 1 ? "close waits" : "closes wait"} for a later quote.</p>}
-    {refused.map((o, index) => <p key={index} className="text-warn">{osiLabel(o.symbol, "")}: {o.reason?.message ?? o.status}</p>)}
+    {refused.map((o, index) => <p key={index} className="text-warn">{orderLabel(o)}: {o.reason?.message ?? o.status}</p>)}
     {p.current && p.after && <p>Equity after {formatMoney(p.after.equity)} ({moneyChange(p.after.equity, p.current.equity)}),
       buying power {formatMoney(p.after.buying_power)}</p>}
     {(p.remaining.length > 0 || p.remaining_shares.length > 0) && <p className="text-muted">Still held: {[

@@ -259,8 +259,8 @@ describe("flatten dry run", () => {
     breaches_floor: null, breaches_soft_floor: null, scenarios: { spot_percent: [], vol_points: [], pnl: [], complete: false },
     breach: { room: null, soft_room: null, complete: true, model: "reflection estimate", underlyings: [] } })
   const preview: FlattenPreview = { account_version: "17", decision: "ok", reason: null, cancelled_orders: ["3"],
-    orders: [{ symbol, underlying: "SPX", side: "sell", quantity: 2, filled_quantity: 2, average_fill_price: "4.00", status: "filled", reason: null },
-      { symbol: "SPX   261022P04900000", underlying: "SPX", side: "buy", quantity: 1, filled_quantity: 0, average_fill_price: null, status: "working", reason: null }],
+    orders: [{ symbol, underlying: "SPX", side: "sell", legs: null, quantity: 2, filled_quantity: 2, average_fill_price: "4.00", status: "filled", reason: null },
+      { symbol: "SPX   261022P04900000", underlying: "SPX", side: "buy", legs: null, quantity: 1, filled_quantity: 0, average_fill_price: null, status: "working", reason: null }],
     fills: [], stock_fills: [], kept_stocks: [], remaining: [{ symbol: "SPX   261022P04900000", underlying: "SPX", quantity: -1 }], remaining_shares: [],
     current: account("10000.00"), after: account("9978.70"), simulated: true }
   it("shows what fills now, what waits, what stays and the account after it", () => {
@@ -272,6 +272,17 @@ describe("flatten dry run", () => {
     expect(html).toContain("$9,978.70")
     expect(html).toContain("−$21.30")
     expect(html).toContain("Still held: -1 SPX")
+  })
+  it.each(["3.80", "-3.80"])("names a spread's legs and signed net average %s", (average) => {
+    const combo: FlattenPreview["orders"][number] = { ...preview.orders[0]!, symbol: null, side: null,
+      legs: [{ symbol: "SPXW  260917P06000000", side: "buy", ratio: 1 },
+        { symbol: "SPXW  260917P05990000", side: "sell", ratio: 1 }], average_fill_price: average }
+    const html = render(<FlattenDryRun preview={{ data: { ...preview, orders: [combo] }, error: null, isFetching: false }} />)
+    expect(html).toContain(`Close 2 SPX Sep 17 +6000P −5990P at ${average.startsWith("-") ? "−" : ""}$3.80 net`)
+    const refused = render(<FlattenDryRun preview={{ data: { ...preview, orders: [{ ...combo,
+      filled_quantity: 0, average_fill_price: null, status: "rejected",
+      reason: { code: "FEED_STALLED", message: "Feed stalled", actual: null, limit: null, scope: "SPX" } }] }, error: null, isFetching: false }} />)
+    expect(refused).toContain("SPX Sep 17 +6000P −5990P: Feed stalled")
   })
   it("names a refusal, and says when the dry run is unavailable", () => {
     const refused = render(<FlattenDryRun preview={{ data: { ...preview, decision: "FEED_STALLED", reason: { code: "FEED_STALLED", message: "Feed stalled", actual: null, limit: null, scope: "SPX" } },

@@ -857,6 +857,8 @@ TEST_F(PaperEngine, OrdersChangeInPlaceAndPositionsCloseOverHttp) {
   EXPECT_EQ(body["cancelled_orders"], json::array({"3"}));
   ASSERT_EQ(body["orders"].size(), 1);
   EXPECT_EQ(body["orders"][0]["side"], "sell");
+  EXPECT_TRUE(body["orders"][0].contains("legs"));
+  EXPECT_EQ(body["orders"][0]["legs"], nullptr);
   EXPECT_EQ(body["orders"][0]["status"], "filled");
   EXPECT_EQ(body["fills"].size(), 1);
   EXPECT_EQ(body["remaining"], json::array());
@@ -3658,6 +3660,21 @@ TEST_F(PaperEngine, MultiLegOrdersOverHttp) {
   EXPECT_EQ(body["fills"][1]["side"], "sell");
   EXPECT_EQ(body["fills"][1]["price"], "3.00");
   EXPECT_EQ(read(*engine, "/api/orders")["orders"][0]["legs"].size(), 2);
+  EXPECT_EQ(read(*engine, "/api/portfolio")["positions"].size(), 2);
+
+  // Preview the held vertical's close without changing the positions or allocating IDs.
+  const auto dry = write(*engine, "POST", "/api/positions/close/preview", json::object());
+  ASSERT_EQ(dry.status, 200) << dry.body;
+  const auto preview = json::parse(dry.body);
+  ASSERT_EQ(preview["orders"].size(), 1);
+  const auto& close = preview["orders"][0];
+  EXPECT_FALSE(close.contains("id"));
+  EXPECT_EQ(close["symbol"], nullptr);
+  EXPECT_EQ(close["side"], nullptr);
+  EXPECT_EQ(close["underlying"], "SPX");
+  EXPECT_EQ(close["quantity"], 2);
+  EXPECT_EQ(close["legs"], json::array({{{"symbol", upper.osi_symbol()}, {"side", "buy"}, {"ratio", 1}},
+                                        {{"symbol", market.symbol()}, {"side", "sell"}, {"ratio", 1}}}));
   EXPECT_EQ(read(*engine, "/api/portfolio")["positions"].size(), 2);
 
   // A credit is a negative net limit; strict shapes otherwise.

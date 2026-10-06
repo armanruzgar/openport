@@ -20720,13 +20720,27 @@
               "type": "object",
               "properties": {
                 "symbol": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "underlying": {
                   "type": "string"
                 },
                 "side": {
-                  "$ref": "#/components/schemas/Side"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Side"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "quantity": {
                   "type": "integer"
@@ -20763,6 +20777,19 @@
                       "type": "null"
                     }
                   ]
+                },
+                "legs": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/OrderLeg"
+                      }
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -20773,7 +20800,8 @@
                 "filled_quantity",
                 "average_fill_price",
                 "status",
-                "reason"
+                "reason",
+                "legs"
               ],
               "additionalProperties": false
             }
