@@ -30,7 +30,7 @@ export function useDemoOffer() {
      */
     start(blocked: () => void, day?: string, started?: () => void) {
       if (controls.blocked) blocked()
-      else void controls.start({ demo: day ?? true }, 10, () => { live.switchSource("replay"); started?.() })
+      else void controls.start({ demo: day ?? true }, 10, () => { live.switchSource("replay", "user"); started?.() })
     },
   }
 }

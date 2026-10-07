@@ -1,5 +1,6 @@
+import { useActionApi } from "../api/action-client"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useAccount, useRefreshTrading, usePlans, useRisk, useTradingSession } from "../api/trading"
 import type { FeeModel, FillModel, Plan, TradingStatus } from "../api/trading-types"
 import { FillModelPicker } from "./FillModelPicker"
@@ -53,6 +54,7 @@ const CUSTOM = "custom"
 
 /** Starting an attempt closes every position at its last mark; confirm with a plan choice. */
 export function ResetDialog({ trading, attempt, initial, onClose }: { trading: TradingStatus; attempt: number; initial?: string; onClose: () => void }) {
+  const api = useActionApi()
   const plans = usePlans()
   const account = useAccount().data
   const risk = useRisk()

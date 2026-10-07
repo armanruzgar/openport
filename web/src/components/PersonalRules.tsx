@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { PendingSettingsNotice } from "./PendingSettingsNotice"
 import { useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useAccount, useRefreshTrading, useTradingSession } from "../api/trading"
 import type { Guardrails, Risk } from "../api/trading-types"
@@ -24,7 +25,7 @@ function pendingValue(value: unknown): string {
     : String(value)
 }
 export function PersonalRules({ risk }: { risk: Risk }) {
-  const { trading, accountScope } = useLive()
+  const { trading } = useLive()
   const [editing, setEditing] = useState(false)
   const [limits, setLimits] = useState(false)
   const state = risk.guardrail_state
@@ -45,11 +46,12 @@ export function PersonalRules({ risk }: { risk: Risk }) {
       <dl className="grid gap-x-4 gap-y-1 sm:grid-cols-2">{Object.entries(risk.pending_limits).filter(([key, value]) => JSON.stringify(value) !== JSON.stringify(risk.limits[key as keyof typeof risk.limits])).map(([key, value]) =>
         <div key={key}><dt className="text-muted">{key.replaceAll("_", " ")}</dt><dd className="tabular">{pendingValue(value)}</dd></div>)}</dl>
     </div>}
-    {editing && trading && risk.guardrails && <GuardrailsEditor key={accountScope} risk={risk} onClose={() => setEditing(false)} />}
-    {limits && trading && <LimitsEditor key={accountScope} initial={risk} trading={trading} onClose={() => setLimits(false)} />}
+    {editing && trading && risk.guardrails && <GuardrailsEditor risk={risk} onClose={() => setEditing(false)} />}
+    {limits && trading && <LimitsEditor initial={risk} trading={trading} onClose={() => setLimits(false)} />}
   </section>
 }
 function GuardrailsEditor({ risk, onClose }: { risk: Risk; onClose: () => void }) {
+  const api = useActionApi()
   const { trading } = useLive()
   const account = useAccount().data
   const unusedPercent = account != null && Number(account.rules.max_drawdown ?? 0) === 0

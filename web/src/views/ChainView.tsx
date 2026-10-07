@@ -86,7 +86,7 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
   const expiries = summaryData?.expiries ?? []
   const now = marketTime(live, symbol, summaryData?.as_of)
   const selected = expiry && expiries.some((e) => e.id === expiry) ? expiry : defaultExpiry(expiries, now)
-  useEffect(() => { setTicket(null); setUntradable(null); setTemplatesOpen(false) }, [symbol, selected, live.accountScope])
+  useEffect(() => { setTicket(null); setUntradable(null); setTemplatesOpen(false); setSharesOpen(false); setStockStrategy(null) }, [symbol, selected, live.accountScope])
   // A strategy keeps its legs across expiries, for calendars and diagonals.
   useEffect(() => { setLegs([]); setTemplate(undefined); setReviewing(false) }, [symbol, live.accountScope])
 
@@ -218,9 +218,9 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
         )}
       </Panel>
       {live.trading && strategyOpen && data && (docked ? <div className="sticky top-16">
-        <StrategyTicket key={live.accountScope} smiles={smiles} template={template} legs={liveLegs} onLegs={editLegs} expiries={legExpiries} underlying={symbol} spot={data.spot}
+        <StrategyTicket smiles={smiles} template={template} legs={liveLegs} onLegs={editLegs} expiries={legExpiries} underlying={symbol} spot={data.spot}
           trading={live.trading} variant="panel" onClose={() => editLegs([])} />
-      </div> : reviewing ? <StrategyTicket key={live.accountScope} smiles={smiles} template={template} legs={liveLegs} onLegs={(next) => { editLegs(next); if (!next.length) setReviewing(false) }}
+      </div> : reviewing ? <StrategyTicket smiles={smiles} template={template} legs={liveLegs} onLegs={(next) => { editLegs(next); if (!next.length) setReviewing(false) }}
           expiries={legExpiries} underlying={symbol} spot={data.spot} trading={live.trading} variant="dialog" onClose={() => setReviewing(false)} />
       : <div role="region" aria-label="Strategy legs" className="fixed inset-x-3 bottom-3 z-20 flex items-center justify-between gap-3 rounded-lg border border-accent/50 bg-panel p-3 shadow-chart">
           <div className="min-w-0 text-sm">
@@ -234,14 +234,14 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
         </div>)}
       {live.trading && mode === "single" && ticket && ticket.underlying === symbol && ticket.expiry.id === selected && <div className={docked ? "sticky top-16" : ""}>
         <OrderTicket
-          key={`${live.accountScope}/${ticket.symbol}/${ticket.cell}`}
+          key={`${ticket.symbol}/${ticket.cell}`}
           selection={ticket} trading={live.trading} variant={docked ? "panel" : "dialog"} smile={data?.strikes}
           quote={data?.strikes.find((row) => row.strike === ticket.strike)?.[ticket.optionType] ?? null}
           onClose={() => setTicket(null)} />
       </div>}
       </div>
-      {live.trading && sharesOpen && <TradeSharesDialog key={`${live.accountScope}/${symbol}`} initial={symbol} trading={live.trading} onClose={() => setSharesOpen(false)} />}
-      {live.trading && stockStrategy && data && <CoveredStrategyDialog key={`${live.accountScope}/${symbol}/${selected}`} kind={stockStrategy} chain={data} trading={live.trading} onClose={() => setStockStrategy(null)} />}
+      {live.trading && sharesOpen && <TradeSharesDialog key={`${symbol}`} initial={symbol} trading={live.trading} onClose={() => setSharesOpen(false)} />}
+      {live.trading && stockStrategy && data && <CoveredStrategyDialog key={`${symbol}/${selected}`} kind={stockStrategy} chain={data} trading={live.trading} onClose={() => setStockStrategy(null)} />}
       {live.trading && templatesOpen && data && <StrategyTemplates key={`${symbol}/${selected}`} near={data} expiries={expiries}
         onStockStrategy={(kind) => { setTemplatesOpen(false); setStockStrategy(kind) }} onClose={() => setTemplatesOpen(false)} onApply={(setup) => { setLegs(setup.legs); setTemplate(setup); setTemplatesOpen(false); setReviewing(true) }} />}
       {live.trading && untradable && <Dialog title="Paper trading unavailable" onClose={() => setUntradable(null)}><p className="text-sm text-warn">{untradable}</p></Dialog>}

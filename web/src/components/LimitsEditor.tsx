@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { PendingSettingsNotice } from "./PendingSettingsNotice"
 import { useRef, useState } from "react"
-import { api, ApiError } from "../api/client"
+import { ApiError } from "../api/client"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
 import type { Limits, Risk, TradingStatus } from "../api/trading-types"
 import { validMoney } from "../lib/trading"
@@ -31,6 +32,7 @@ const fields: { key: keyof ReturnType<typeof draftOf>; label: string; money?: bo
   { key: "max_valuation_age_seconds", label: "Max valuation age (seconds)", integer: true },
 ]
 export function LimitsEditor({ initial, trading, onClose }: { initial: Risk; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const [revision, setRevision] = useState(initial.limits_revision)
   const [draft, setDraft] = useState(() => draftOf(initial.pending_limits ?? initial.limits))
   const [overrides, setOverrides] = useState(() => overridesOf(initial.pending_limits ?? initial.limits))

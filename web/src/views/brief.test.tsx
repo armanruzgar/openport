@@ -154,6 +154,9 @@ describe("morning brief", () => {
     await render(); await submit()
     expect(fetch).toHaveBeenCalledWith(`/api/days/${day}/note?account=second`, expect.objectContaining({ method: "PUT" }))
     dataSource.set("replay")
+    // A changed destination requires reopening the editor.
+    await act(async () => root.render(null))
+    await render()
     await submit()
     expect(fetch).toHaveBeenCalledWith(`/api/replay/days/${day}/note`, expect.objectContaining({ method: "PUT" }))
   })

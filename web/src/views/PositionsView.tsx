@@ -1,6 +1,8 @@
+import { ActionDestination, useActionDestination } from "../api/action-destination"
+import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
 import { useMemo, useState, type ReactNode } from "react"
-import { api } from "../api/client"
+
 import { marketNow, useLive } from "../api/live"
 import { useAccount, useAllOrders, useRefreshTrading, useTradingQueries } from "../api/trading"
 import type { ClosedAttribution, Lifetime, Order, Position, Risk, StockHolding, TradingStatus } from "../api/trading-types"
@@ -43,6 +45,8 @@ export function Table({ label, headers, children, left = 1 }: { label: string; h
 
 /** Fetches the position's chain so the closing ticket has a live quote. */
 export function CloseTicket({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+  const destination = useActionDestination()
+  const api = useActionApi()
   const { version } = useLive()
   const expiry = `${position.expiry}${position.settlement}`
   const chain = useQuery({
@@ -54,11 +58,11 @@ export function CloseTicket({ position, trading, onClose }: { position: Position
   const quote = row?.[position.type] ?? null
   if (!chain.data) return chain.isError ? <TradingError error={chain.error} /> : null
   const long = position.quantity > 0
-  return <OrderTicket trading={trading} quote={quote} onClose={onClose} smile={chain.data.strikes} selection={{
+  return <ActionDestination value={destination}><OrderTicket trading={trading} quote={quote} onClose={onClose} smile={chain.data.strikes} selection={{
     symbol: position.symbol, underlying: position.underlying, expiry: chain.data.expiry, strike: position.strike,
     optionType: position.type, cell: long ? "bid" : "ask", price: String((long ? quote?.bid : quote?.ask) ?? position.mark ?? ""),
     spot: chain.data.spot, closing: true, quantity: Math.abs(position.quantity),
-  }} />
+  }} /></ActionDestination>
 }
 
 /**
@@ -154,6 +158,7 @@ function Positions({ positions, onClose, onExits, onExercise, onSettle, onAbando
 
 /** Joins the picked positions' round trips into one whole trade, so legs entered one by one review as one. */
 export function GroupButton({ positions, trading, onDone }: { positions: Position[]; trading: TradingStatus; onDone: () => void }) {
+  const api = useActionApi()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const [error, setError] = useState<unknown>()

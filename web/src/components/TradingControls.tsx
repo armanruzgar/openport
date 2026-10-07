@@ -60,7 +60,7 @@ export function WatchOnlyNotice({ trading, sandboxes, onCreated }: {
     setError(undefined)
     try {
       const result = await api.createSandbox()
-      activeAccount.set(result.account)
+      activeAccount.set(result.account, "user")
       setStorageWarning(!writeToken.set(result.token, result.account))
       onCreated?.(result.account)
     } catch (failure) { setError(failure) }

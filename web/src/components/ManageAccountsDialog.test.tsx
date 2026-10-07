@@ -62,7 +62,7 @@ it("renames a fixed id, freezes and resumes accounts, and confirms deletion", as
   expect(api.updateAccount).toHaveBeenLastCalledWith("swing", { name: "Changed" }, trading.write)
   await click("Archive Swing")
   expect(api.updateAccount).toHaveBeenLastCalledWith("swing", { archived: true }, trading.write)
-  expect(switchAccount).toHaveBeenCalledWith("main")
+  expect(switchAccount).toHaveBeenCalledWith("main", "user")
   await click("Unarchive Old")
   expect(api.updateAccount).toHaveBeenLastCalledWith("old", { archived: false }, trading.write)
   await click("Delete Swing")

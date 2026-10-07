@@ -1,6 +1,8 @@
+import { captureDestination, withDestination } from "./destination"
+import { api } from "../test/action-api"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { api, ApiError, mapApiError } from "./client"
+import { api as rawApi, ApiError, mapApiError } from "./client"
 import { liveState } from "./live"
 import { sameAccountPlaceholder, tradingQueries } from "./trading"
 import { activeAccount } from "../lib/active-account"
@@ -177,4 +179,36 @@ it("collects equity pages without dropping samples at equal market times", async
   expect(result.error_recovered).toBe(true)
   expect(String(fetcher.mock.calls[0]![0])).toContain("limit=2000")
   expect(String(fetcher.mock.calls[1]![0])).toContain("cursor=123%3A1")
+})
+
+ it("refuses unbound writes so a new UI caller cannot silently use send-time routing", async () => {
+  const fetcher = vi.fn()
+  vi.stubGlobal("fetch", fetcher)
+  await expect(rawApi.cancelAllOrders(null, "open")).rejects.toThrow("no opening destination")
+  expect(fetcher).not.toHaveBeenCalled()
+})
+
+
+it("server and explicitly targeted writes ignore missing and stale destinations", async () => {
+  const send = vi.fn(async () => new Response("{}"))
+  vi.stubGlobal("fetch", send)
+  const destination = captureDestination()
+  dataSource.set("replay"); activeAccount.set("other")
+  for (const invoke of [
+    () => rawApi.controlReplay({ paused: false }, "open"),
+    () => rawApi.configureNotification("hook", { enabled: true, events: [], floor_distance: "0.00" }, "open"),
+    () => rawApi.testNotification("hook", "open"),
+    () => rawApi.reloadTokens("open"),
+    () => rawApi.updateAccount("named", { name: "Renamed" }, "open"),
+    () => rawApi.deleteAccount("named", "open"),
+    () => rawApi.stopReplay("open"),
+    () => rawApi.deleteReplay("saved", "open"),
+    () => rawApi.cancelBacktest("test", "open"),
+  ]) {
+    await invoke()
+    await withDestination<Promise<unknown>>(destination, invoke)
+  }
+  expect(send).toHaveBeenCalledTimes(18)
+  expect(send).toHaveBeenCalledWith("/api/notifications/channels/hook", expect.objectContaining({ method: "PUT" }))
+  expect(send).toHaveBeenCalledWith("/api/accounts/named", expect.objectContaining({ method: "PATCH" }))
 })

@@ -1,5 +1,6 @@
+import { useActionApi } from "../api/action-client"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useRefreshTrading, useTradingSession } from "../api/trading"
 import type { KillChange, KillState, TradingStatus } from "../api/trading-types"
 import { useWriteToken } from "../lib/write-token"
@@ -15,6 +16,7 @@ export function killChangeText(change: KillChange): string {
 }
 
 export function KillSwitch({ kill, trading }: { kill: KillState; trading: TradingStatus }) {
+  const api = useActionApi()
   const [reason, setReason] = useState("")
   const [action, setAction] = useState<"trip" | "reset" | null>(null)
   const [error, setError] = useState<unknown>()

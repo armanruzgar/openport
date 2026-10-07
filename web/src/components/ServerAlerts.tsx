@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useEffect, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { usePortfolio, useServerAlerts } from "../api/trading"
 import type { Alert, AlertRequest, AlertScope, OrderLeg } from "../api/trading-types"
@@ -34,6 +35,7 @@ const scopes: { value: AlertScope; label: string }[] = [
 /** The account's alerts, kept and checked by the server, and a form to add one. */
 export function ServerAlerts() {
   const { trading, underlyings, source, accountScope, status } = useLive()
+  const api = useActionApi(accountScope)
   const client = useQueryClient()
   const publication = useServerAlerts()
   const alerts = publication.data?.alerts ?? []

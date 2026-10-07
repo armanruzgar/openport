@@ -1,5 +1,7 @@
+import { ActionDestination, useActionDestination } from "../api/action-destination"
+import { useActionApi } from "../api/action-client"
 import { useState } from "react"
-import { api } from "../api/client"
+
 import { useOpenOrders } from "../api/trading"
 import type { Bracket, NewOrder, Order, Position, Side, TradingStatus } from "../api/trading-types"
 import { describeTrigger, stopDirection } from "../lib/ticket"
@@ -34,6 +36,8 @@ export function heldExitsOrder(position: Position, clientId: string, bracket: Br
 
 /** Set a held contract's stop-loss and take-profit, or change and cancel the ones it has. */
 export function PositionExitsDialog({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+  const destination = useActionDestination()
+  const api = useActionApi()
   const write = useWrite(trading)
   const orders = useOpenOrders()
   const active = positionExits(position, orders.data?.orders ?? [])
@@ -52,7 +56,7 @@ export function PositionExitsDialog({ position, trading, onClose }: { position: 
   const [limitOn, setLimitOn] = useState(false)
   const [limit, setLimit] = useState("")
   const stopTrail = useStopTrail(source)
-  if (editing) return <EditOrderDialog order={editing} trading={trading} onClose={() => setEditing(null)} onDone={() => setEditing(null)} />
+  if (editing) return <ActionDestination value={destination}><EditOrderDialog order={editing} trading={trading} onClose={() => setEditing(null)} onDone={() => setEditing(null)} /></ActionDestination>
   const trigger = { source, direction: stopDirection(source, opened, position.type), level, ...stopTrail.terms }
   const stopValid = positive(level) && (!limitOn || positive(limit)) && stopTrail.valid
   const valid = (targetOn || stopOn) && (!targetOn || positive(target)) && (!stopOn || stopValid)

@@ -1,5 +1,6 @@
+import { useActionApi } from "../api/action-client"
 import { useState } from "react"
-import { api } from "../api/client"
+
 import type { NewOrder, Position, TradingStatus, WhatIfAccount, WhatIfResponse } from "../api/trading-types"
 import { legsLabel, osiLabel } from "../lib/journal"
 import { formatMoney } from "../lib/trading"
@@ -88,6 +89,7 @@ function Results({ result }: { result: WhatIfResponse }) {
  * (Add to what-if) or from closing picked positions.
  */
 export function WhatIfPanel({ positions, picked = [], trading }: { positions: readonly Position[]; picked?: readonly Position[]; trading: TradingStatus }) {
+  const api = useActionApi()
   const scope = useWhatIfScope()
   const state = useWhatIf(scope)
   const write = useWrite(trading)

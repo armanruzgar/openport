@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
 import type { ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, Order, Position, StockHolding, TradingStatus } from "../api/trading-types"
@@ -64,6 +65,7 @@ function ScopePicker({ value, options, onChange, what }: { value: string | null;
 export function EditOrderDialog({ order, trading, onClose, onDone }: {
   order: Order; trading: TradingStatus; onClose: () => void; onDone: (order: Order) => void
 }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const [draft, setDraft] = useState(() => orderDraft(order))
   const fields = editableFields(order)
@@ -142,6 +144,7 @@ export function EditOrderDialog({ order, trading, onClose, onDone }: {
 export function CancelOrderDialog({ order, trading, onClose, onDone }: {
   order: Order; trading: TradingStatus; onClose: () => void; onDone: (message: string) => void
 }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   return <Dialog title={`Cancel order #${order.id}`} onClose={onClose}>
     <p className="text-sm">Cancel the remaining {order.remaining_quantity} {order.remaining_quantity === 1 ? "unit" : "units"} of {orderLabel(order)}?</p>
@@ -163,6 +166,7 @@ export function CancelOrderDialog({ order, trading, onClose, onDone }: {
 export function CancelAllDialog({ orders, trading, onClose, onDone }: {
   orders: readonly Order[]; trading: TradingStatus; onClose: () => void; onDone: (message: string) => void
 }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const [scope, setScope] = useState<string | null>(null)
   const cancelling = openOrdersIn(orders, scope)
@@ -256,6 +260,7 @@ export function FlattenOutcome({ done, closing = [] }: { done: ClosePositionsRes
  */
 /** A flatten's dry run for `scope`, refetched when the account changes. */
 export function useFlattenPreview(scope: string | null, trading: TradingStatus, enabled: boolean, pricing?: FlattenPricing) {
+  const api = useActionApi()
   const { accountScope } = useLive()
   const token = useWriteToken()
   return useQuery({
@@ -293,6 +298,7 @@ export function FlattenDryRun({ preview }: { preview: { data?: FlattenPreview; e
 export function FlattenDialog({ positions, stocks = [], orders, trading, initial = null, onClose }: {
   positions: readonly Position[]; stocks?: readonly StockHolding[]; orders: readonly Order[]; trading: TradingStatus; initial?: string | null; onClose: () => void
 }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const { underlyings } = useLive()
   const [scope, setScope] = useState<string | null>(initial)

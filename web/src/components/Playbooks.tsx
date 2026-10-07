@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useRefreshTrading } from "../api/trading"
 import { timestampET } from "../lib/freshness"
@@ -10,6 +11,7 @@ import { TradingError, writeBlocked } from "./TradingControls"
 import { Panel } from "./ui"
 
 export function usePlaybooks() {
+  const api = useActionApi()
   const live = useLive()
   return useQuery({ queryKey: ["playbooks", live.accountScope, live.trading?.account_version],
     queryFn: ({ signal }) => api.playbooks(signal), enabled: live.trading?.enabled === true, refetchInterval: 3000, retry: false })
@@ -26,6 +28,7 @@ export function StagedOrders() {
   return <Stages key={live.accountScope} />
 }
 function Stages() {
+  const api = useActionApi()
   const live = useLive()
   const query = usePlaybooks()
   const refresh = useRefreshTrading()
@@ -65,6 +68,7 @@ function Stages() {
   </Panel>
 }
 export function PassOddsCard({ playbook = "" }: { playbook?: string }) {
+  const api = useActionApi()
   const live = useLive()
   const [days, setDays] = useState(20)
   const query = useQuery({ queryKey: ["pass-odds", live.accountScope, live.trading?.account_version, playbook, days],

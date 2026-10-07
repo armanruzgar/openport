@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { DestinationConfirmation } from "../api/action-client"
+import { dataSource } from "../lib/data-source"
+import { activeAccount } from "../lib/active-account"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
@@ -10,7 +13,7 @@ import type { HeldStrategy, TradingStatus } from "../api/trading-types"
 import { account, order, portfolio, quote, selection, status, trading } from "../test/trading-fixtures"
 import { renderTimeout, waitForRender } from "../test/render"
 import { OrderTicket } from "./OrderTicket"
-import { EditOrderDialog, FlattenDialog } from "./OrderActions"
+import { CancelAllDialog, EditOrderDialog, FlattenDialog } from "./OrderActions"
 import { StrategyTicket } from "./StrategyTicket"
 import { CloseTicket } from "../views/PositionsView"
 import { CloseStrategyDialog } from "./StrategyActions"
@@ -775,4 +778,101 @@ describe.each(["single", "together"] as const)("%s close ticket quote refresh", 
       limit_price: kind === "single" ? "0.95" : "-0.95", quantity: 1,
     }), trading.write)
   })
+})
+
+describe("destination protection", () => {
+  beforeEach(() => { vi.spyOn(api, "summary").mockRejectedValue(new Error("summary unavailable")) })
+  afterEach(() => { dataSource.set("live"); activeAccount.set("main") })
+  it.each(["source", "account"])("blocks a ticket after a %s change and sends only after explicit confirmation", async change => {
+    dataSource.set(change === "source" ? "replay" : "live")
+    activeAccount.set("main")
+    vi.mocked(api.submitOrder).mockRestore()
+    vi.spyOn(api, "previewOrder").mockRejectedValue(new Error("preview unavailable"))
+    const send = vi.fn(async () => ({ ok: true, json: async () => ({ account_version: "18", order, fills: [] }) }))
+    vi.stubGlobal("fetch", send)
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <OrderTicket selection={selection} quote={quote} trading={trading} onClose={() => {}} /><DestinationConfirmation />
+    </QueryClientProvider>))
+    if (change === "source") dataSource.set("live")
+    else activeAccount.set("second")
+    vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), accountScope: 2 })
+    // Even a scope refresh must preserve an open ticket's destination.
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <OrderTicket variant="panel" selection={selection} quote={quote} trading={trading} onClose={() => {}} /><DestinationConfirmation />
+    </QueryClientProvider>))
+    await click("Submit order")
+    expect(send).not.toHaveBeenCalled()
+    expect(host.textContent).toContain("Destination changed from")
+    await click(change === "source" ? "Send to live account Practice" : "Send to live account second")
+    expect(send).toHaveBeenCalledWith(change === "source" ? "/api/orders" : "/api/orders?account=second", expect.objectContaining({ method: "POST" }))
+  })
+  it.each(["source", "account"])("cancelling a ticket destination confirmation after a %s change sends nothing", async change => {
+    dataSource.set(change === "source" ? "replay" : "live")
+    activeAccount.set("main")
+    vi.mocked(api.submitOrder).mockRestore()
+    vi.spyOn(api, "previewOrder").mockRejectedValue(new Error("preview unavailable"))
+    const send = vi.fn()
+    vi.stubGlobal("fetch", send)
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <OrderTicket selection={selection} quote={quote} trading={trading} onClose={() => {}} /><DestinationConfirmation />
+    </QueryClientProvider>))
+    if (change === "source") dataSource.set("live")
+    else activeAccount.set("second")
+    await click("Submit order")
+    await click("Cancel")
+    expect(send).not.toHaveBeenCalled()
+  })
+  it.each(["source", "account"])("guards cancel-all after a %s change", async change => {
+    dataSource.set(change === "source" ? "replay" : "live")
+    activeAccount.set("main")
+    const send = vi.fn(async () => ({ ok: true, json: async () => ({ cancelled_orders: [order.id] }) }))
+    vi.stubGlobal("fetch", send)
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <CancelAllDialog orders={[{ ...order, status: "working" }]} trading={trading} onClose={() => {}} onDone={() => {}} /><DestinationConfirmation />
+    </QueryClientProvider>))
+    if (change === "source") dataSource.set("live")
+    else activeAccount.set("second")
+    await click("Cancel 1 order")
+    expect(send).not.toHaveBeenCalled()
+    await click(change === "source" ? "Send to live account Practice" : "Send to live account second")
+    expect(send).toHaveBeenCalledWith(change === "source" ? "/api/orders/cancel" : "/api/orders/cancel?account=second", expect.objectContaining({ method: "POST" }))
+  })
+})
+
+it("does not send cancel-all if the destination changes again while confirming", async () => {
+  dataSource.set("replay"); activeAccount.set("main")
+  const send = vi.fn()
+  vi.stubGlobal("fetch", send)
+  await act(async () => root.render(<QueryClientProvider client={client}>
+    <CancelAllDialog orders={[{ ...order, status: "working" }]} trading={trading} onClose={() => {}} onDone={() => {}} /><DestinationConfirmation />
+  </QueryClientProvider>))
+  dataSource.set("live")
+  await click("Cancel 1 order")
+  activeAccount.set("third")
+  await click("Send to live account Practice")
+  expect(send).not.toHaveBeenCalled()
+  expect(host.textContent).toContain("live account third")
+  activeAccount.set("main")
+})
+
+
+it.each(["source", "account"])("keeps an open flatten bound after a silent %s fallback", async change => {
+  dataSource.set(change === "source" ? "replay" : "live")
+  activeAccount.set(change === "account" ? "second" : "main")
+  vi.spyOn(api, "previewFlatten").mockRejectedValue(new Error("preview unavailable"))
+  const send = vi.fn()
+  vi.stubGlobal("fetch", send)
+  try {
+    const draw = () => root.render(<QueryClientProvider client={client}><FlattenDialog positions={[portfolio.positions[0]!]} orders={[]} trading={trading} onClose={() => {}} /><DestinationConfirmation /></QueryClientProvider>)
+    await act(async () => draw())
+    await setField("Flatten order type", "limit")
+    dataSource.set("live"); activeAccount.set("main")
+    vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), accountScope: 2 })
+    await act(async () => draw())
+    await click("Close 1 position")
+    expect(send).not.toHaveBeenCalled()
+    expect(host.textContent).toContain("Confirm changed destination")
+    await click("Cancel")
+    expect(send).not.toHaveBeenCalled()
+  } finally { dataSource.set("live"); activeAccount.set("main") }
 })

@@ -1,6 +1,8 @@
+import { ActionDestination, useActionDestination } from "../api/action-destination"
+import { useActionApi } from "../api/action-client"
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useOpenOrders } from "../api/trading"
 import type { NewOrder, Order, TradingStatus } from "../api/trading-types"
@@ -21,6 +23,7 @@ import { Badge, toneOf, toneText } from "./ui"
 
 /** Every chain the legs trade in, all strikes, for their live quotes. */
 function useChains(underlying: string, ids: readonly string[]) {
+  const api = useActionApi()
   const { version } = useLive()
   // useQueries does not supply previous data to placeholder callbacks.
   const previous = useRef(new Map<string, Chain>())
@@ -42,16 +45,18 @@ const withQuotes = (legs: StrategyLeg[], chains: readonly Chain[]) => legs.map((
 export function CloseStrategyDialog({ plan, underlying, title = "Close together", trading, onClose }: {
   plan: { legs: StrategyLeg[]; units: number }; underlying: string; title?: string; trading: TradingStatus; onClose: () => void
 }) {
+  const destination = useActionDestination()
   const ids = [...new Set(plan.legs.map((l) => l.expiry))]
   const { chains, ready, error } = useChains(underlying, ids)
   const [edited, setEdited] = useState<StrategyLeg[] | null>(null)
   if (!ready) return error ? <Dialog title={title} onClose={onClose}><TradingError error={error} /></Dialog> : null
-  return <StrategyTicket title={title} closing legs={withQuotes(edited ?? plan.legs, chains)} onLegs={setEdited} expiries={chains.map((c) => c.expiry)}
-    underlying={underlying} spot={chains[0]?.spot} trading={trading} variant="dialog" units={plan.units} onClose={onClose} />
+  return <ActionDestination value={destination}><StrategyTicket title={title} closing legs={withQuotes(edited ?? plan.legs, chains)} onLegs={setEdited} expiries={chains.map((c) => c.expiry)}
+    underlying={underlying} spot={chains[0]?.spot} trading={trading} variant="dialog" units={plan.units} onClose={onClose} /></ActionDestination>
 }
 
 /** Close a strategy and open it again at a later expiry, as one order. */
 export function RollDialog({ group, trading, onClose }: { group: StrategyGroup; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const { version } = useLive()
   const summary = useQuery({
     queryKey: ["summary", group.underlying, version(group.underlying)],
@@ -166,6 +171,8 @@ export function Strategies({ groups, trading, now = Date.now() }: { groups: read
 
 /** Attach a pair to held legs, or change/cancel each existing exit in place. */
 export function SpreadExitsDialog({ group, trading, onClose }: { group: StrategyGroup; trading: TradingStatus; onClose: () => void }) {
+  const destination = useActionDestination()
+  const api = useActionApi()
   const write = useWrite(trading)
   const orders = useOpenOrders()
   const plan = closingPlan(group)
@@ -176,7 +183,7 @@ export function SpreadExitsDialog({ group, trading, onClose }: { group: Strategy
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [clientId] = useState(() => crypto.randomUUID())
   const exits = useSpreadExits(group.cost, comboTickCents(plan.legs.map((leg) => leg.symbol.slice(0, 6).trim())), true)
-  if (editing) return <EditOrderDialog order={editing} trading={trading} onClose={() => setEditing(null)} onDone={() => setEditing(null)} />
+  if (editing) return <ActionDestination value={destination}><EditOrderDialog order={editing} trading={trading} onClose={() => setEditing(null)} onDone={() => setEditing(null)} /></ActionDestination>
   async function submit() {
     const bracket = exits.bracket
     const primary = bracket?.take_profit ?? bracket?.stop_loss

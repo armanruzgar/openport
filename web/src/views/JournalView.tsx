@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { FeeAmount } from "../components/FeeAmount"
 import { Fragment, useMemo, useState } from "react"
-import { api, downloadCsv } from "../api/client"
+import { downloadCsv } from "../api/client"
 import { marketNow, useLive } from "../api/live"
 import { useAllOrders, useFills, useRefreshTrading, useSettlements, useTrades, useTradingSession } from "../api/trading"
 import type { Order, DayNote, Fill, RunIdentity, SettlementRecord, ShareTrade, Trade, TradingStatus, WholeTrade } from "../api/trading-types"
@@ -241,6 +242,7 @@ function Tags({ trade }: { trade: { note?: string; tags?: string[] } | undefined
 
 /** A trade's note and tags; a strategy's apply to each of its legs. */
 function NoteEditor({ trades, trading }: { trades: { id: string; note?: string; tags?: string[] }[]; trading: TradingStatus }) {
+  const api = useActionApi()
   const first = trades[0]!
   const token = useWriteToken()
   const refresh = useRefreshTrading()
@@ -337,6 +339,7 @@ export function StrategyRow({ group, expanded, onToggle }: { group: TradeGroup; 
 
 /** A whole trade's open round trips, each of which can leave it to be a trade of its own. */
 export function GroupControls({ group, trading }: { group: TradeGroup; trading: TradingStatus }) {
+  const api = useActionApi()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const [error, setError] = useState<unknown>()
@@ -555,6 +558,7 @@ export function TradeDetail({ trade, fills, trading, orders = [] }: { trade: Tra
 }
 
 export function CsvDownloads({ scope }: { scope: "current" | "all" }) {
+  const api = useActionApi()
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
   const [downloadError, setDownloadError] = useState<unknown>()
@@ -571,6 +575,7 @@ export function CsvDownloads({ scope }: { scope: "current" | "all" }) {
 }
 
 export function DayNoteEditor({ day, note, trading }: { day: string; note?: DayNote; trading: TradingStatus }) {
+  const api = useActionApi()
   const [plan, setPlan] = useState(note?.plan ?? "")
   const [review, setReview] = useState(note?.review ?? "")
   const [pending, setPending] = useState(false)

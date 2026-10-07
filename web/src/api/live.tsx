@@ -1,3 +1,7 @@
+import type { DestinationChangeReason } from "../lib/destination-change"
+import { watchReplay } from "./replay-watch"
+import { announceDestination, subscribeDestinationNotices, captureDestination, destinationLabel, rememberAccounts, rememberReplay } from "./destination"
+import { DestinationConfirmation } from "./action-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { api } from "./client"
@@ -16,11 +20,11 @@ interface Live {
   /** Every paper account, and the one the terminal acts on. */
   accounts: AccountBrief[]
   account: string
-  switchAccount: (id: string) => void
+  switchAccount: (id: string, reason: DestinationChangeReason) => void
   /** Whether the terminal shows the live feed or the replay running beside it, and that replay. */
   source: DataSource
   replay: ReplayState | null
-  switchSource: (source: DataSource) => void
+  switchSource: (source: DataSource, reason: DestinationChangeReason) => void
   status: Status | undefined
   tick: Tick | null
   connection: Connection
@@ -34,8 +38,8 @@ interface Live {
 const LiveContext = createContext<Live | null>(null)
 
 export function liveState(status: Status | undefined, tick: Tick | null, connection: Connection, accountScope = 0,
-  account = MAIN_ACCOUNT, switchAccount: (id: string) => void = () => {},
-  source: DataSource = "live", replay: ReplayState | null = null, switchSource: (source: DataSource) => void = () => {}): Live {
+  account = MAIN_ACCOUNT, switchAccount: (id: string, reason: DestinationChangeReason) => void = () => {},
+  source: DataSource = "live", replay: ReplayState | null = null, switchSource: (source: DataSource, reason: DestinationChangeReason) => void = () => {}): Live {
   const connectedTick = connection === "open" ? tick : null
   const accounts = connectedTick?.accounts ?? status?.accounts ?? []
   const main = connectedTick?.trading === undefined ? status?.trading : connectedTick.trading
@@ -75,7 +79,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const sandbox = isSandboxToken(token) ? writeToken.sandboxAccount() : ""
   const [tick, setTick] = useState<Tick | null>(null)
   const [replayTick, setReplayTick] = useState<Tick | null>(null)
-  const replaySeen = useRef(0)
+  const [reconnecting, setReconnecting] = useState(false)
+  const [returnReplay, setReturnReplay] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const replaySeen = useRef(Date.now())
   const replayRun = useRef<string | undefined>(undefined)
   const [connection, setConnection] = useState<Connection>("connecting")
   const [accountScope, setAccountScope] = useState(0)
@@ -90,10 +97,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       setConnection(next)
       setAccountScope((scope) => scope + 1)
     }, (next) => {
-      if (next) replaySeen.current = Date.now()
+      if (next) { replaySeen.current = Date.now(); setReconnecting(false); rememberReplay(next.replay?.id) }
       setReplayTick(next)
     })
   }, [queryClient, token])
+
+  useEffect(() => subscribeDestinationNotices(setNotice), [])
 
   useEffect(() => { void queryClient.invalidateQueries() }, [queryClient, token])
 
@@ -106,14 +115,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   })
 
   // A new account is a new scope: account-bound views remount and refetch.
-  const switchAccount = useCallback((id: string) => {
-    activeAccount.set(id)
+  const switchAccount = useCallback((id: string, reason: DestinationChangeReason) => {
+    activeAccount.set(id, reason)
     setAccountScope((scope) => scope + 1)
   }, [])
   // Everything cached came from the other source: drop it, and remount account views.
-  const switchSource = useCallback((next: DataSource) => {
+  const switchSource = useCallback((next: DataSource, reason: DestinationChangeReason) => {
     if (dataSource.get() === next) return
-    dataSource.set(next)
+    dataSource.set(next, reason)
     queryClient.removeQueries()
     setAccountScope((scope) => scope + 1)
   }, [queryClient])
@@ -131,29 +140,67 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   // A replay that stopped, here or in another window, returns the terminal to the live feed.
   useEffect(() => {
     if (source !== "replay") return
-    const timer = setInterval(() => { if (Date.now() - replaySeen.current > 5_000) switchSource("live") }, 1_000)
-    return () => clearInterval(timer)
-  }, [source, switchSource])
+    replaySeen.current = Date.now()
+    return watchReplay({ now: Date.now, seen: () => replaySeen.current, probe: async signal => {
+        const listing = await api.replay(signal)
+        setReturnReplay(!!listing.replay)
+        queryClient.setQueryData(["replay-listing"], listing)
+        return listing
+      },
+      reconnecting: setReconnecting, leave: reason => {
+        switchSource("live", "automatic")
+        setNotice(`${reason} Orders now go to ${destinationLabel(captureDestination())}.`)
+      } })
+  }, [source, switchSource, queryClient])
   // Fall back to the main account when the active one is gone (or the server keeps only one).
   const known = tick?.accounts ?? (source === "live" ? status.data?.accounts ?? (status.data ? [] : undefined) : undefined)
   useEffect(() => {
-    if (!isSandboxToken(token) && source === "live" && known && account !== MAIN_ACCOUNT && !known.some((a) => a.id === account)) switchAccount(MAIN_ACCOUNT)
+    if (!isSandboxToken(token) && source === "live" && known && account !== MAIN_ACCOUNT && !known.some((a) => a.id === account)) {
+      switchAccount(MAIN_ACCOUNT, "automatic")
+      announceDestination("The active account is no longer available.")
+    }
   }, [source, known, account, switchAccount, token])
   useEffect(() => {
     if (!sandbox) return
-    if (source !== "live") switchSource("live")
-    if (sandbox !== account) switchAccount(sandbox)
+    if (source !== "live") switchSource("live", "automatic")
+    if (sandbox !== account) switchAccount(sandbox, "automatic")
     if (source === "live" && status.data && !status.isFetching && !status.data.sandboxes?.enabled) {
-      activeAccount.set(MAIN_ACCOUNT)
+      activeAccount.set(MAIN_ACCOUNT, "automatic")
       writeToken.set("")
+      announceDestination("Sandbox access ended.")
     }
   }, [sandbox, status.data, status.isFetching, account, switchAccount, source, switchSource])
+  useEffect(() => {
+    rememberAccounts(known ?? [])
+    if (history.data) setReturnReplay(!!history.data.replay)
+  }, [known, history.data])
+  useEffect(() => {
+    let previous = captureDestination()
+    const changed = (reason: DestinationChangeReason) => {
+      const next = captureDestination()
+      if (next.source !== previous.source || next.account !== previous.account) {
+        if (reason === "automatic") setNotice(`Destination changed from ${destinationLabel(previous)}. Orders now go to ${destinationLabel(next)}.`)
+        previous = next
+      }
+    }
+    const accountSubscription = activeAccount.subscribe(changed)
+    const sourceSubscription = dataSource.subscribe(changed)
+    return () => { accountSubscription(); sourceSubscription() }
+  }, [])
   const value = useMemo<Live>(
     () => liveState(status.data, source === "replay" ? replayTick : source === "live" ? tick : null, connection, accountScope,
       source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource),
     [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived],
   )
-  return <LiveContext value={value}>{children}</LiveContext>
+  return <LiveContext value={value}>
+    {reconnecting && source === "replay" && <div role="status" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">Reconnecting to the replay…</div>}
+    {notice && <div role="alert" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">
+      {notice}
+      {source !== "replay" && (history.data ? !!history.data.replay : returnReplay) && <button className="trade-button ml-3" onClick={() => switchSource("replay", "user")}>Back to replay</button>}
+      <button className="trade-button ml-3" onClick={() => setNotice(null)}>OK</button>
+    </div>}
+    {children}<DestinationConfirmation />
+  </LiveContext>
 }
 
 /** Replay and simulated feeds use market time; live providers use the wall clock. */

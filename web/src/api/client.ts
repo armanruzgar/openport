@@ -1,3 +1,4 @@
+import { announceDestination, checkWriteDestination } from "./destination"
 import type { BacktestComparison, BacktestListing, BacktestState, BacktestStart } from "./backtest-types"
 import type { Playbook, PlaybooksResponse, PassOdds } from "./playbook-types"
 import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
@@ -52,9 +53,10 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     const token = writeToken.get()
     if (isSandboxToken(token) && sent === `Bearer ${token}` && response.status === 403 &&
         (error.code === "SANDBOX_EXPIRED" || error.code === "WRITE_TOKEN_REQUIRED")) {
-      activeAccount.set(MAIN_ACCOUNT)
-      dataSource.set("live")
+      activeAccount.set(MAIN_ACCOUNT, "automatic")
+      dataSource.set("live", "automatic")
       writeToken.set("")
+      announceDestination("The sandbox expired or its write access ended.")
     }
     throw error
   }
@@ -96,7 +98,19 @@ function write<T>(path: string, method: "POST" | "PUT" | "PATCH" | "DELETE", mod
     if (!token) return Promise.reject(new ApiError(403, "Enter a write token to continue.", "WRITE_TOKEN_REQUIRED"))
     headers.Authorization = `Bearer ${token}`
   }
-  return request<T>(routed(path), { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  return request<T>(path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+}
+
+/** Account mutations require the destination captured by the action's caller.
+ * Server operations and requests naming their target use write directly instead.
+ */
+function accountWrite<T>(path: string, method: "POST" | "PUT" | "PATCH" | "DELETE", mode: WriteMode, body?: unknown) {
+  try { checkWriteDestination() } catch (error) { return Promise.reject(error) }
+  return write<T>(routed(path), method, mode, body)
+}
+/** Account dry runs do not mutate state and never request destination confirmation. */
+function previewWrite<T>(path: string, method: "POST", mode: WriteMode, body?: unknown) {
+  return write<T>(routed(path), method, mode, body)
 }
 
 const underlying = (symbol: string) => `/api/underlyings/${encodeURIComponent(symbol)}`
@@ -139,10 +153,10 @@ export const api = {
   configureNotification: (channel: string, settings: Pick<NotificationChannel, "enabled" | "events" | "floor_distance">, mode: WriteMode) =>
     write<NotificationStatus>(`/api/notifications/channels/${encodeURIComponent(channel)}`, "PUT", mode, settings),
   playbooks: (signal?: AbortSignal) => get<PlaybooksResponse>(scoped("/api/playbooks"), signal),
-  savePlaybook: (definition: Playbook, mode: WriteMode) => write<PlaybooksResponse>(scoped(`/api/playbooks${definition.version ? `/${encodeURIComponent(definition.id)}` : ""}`), definition.version ? "PUT" : "POST", mode, definition),
-  deletePlaybook: (id: string, version: number, mode: WriteMode) => write<PlaybooksResponse>(scoped(`/api/playbooks/${encodeURIComponent(id)}?version=${version}`), "DELETE", mode),
-  playbookMode: (id: string, value: "off" | "stage" | "auto", mode: WriteMode) => write<PlaybooksResponse>(scoped(`/api/playbooks/${encodeURIComponent(id)}/mode`), "PUT", mode, { mode: value }),
-  stagedAction: (id: string, action: "send" | "dismiss", mode: WriteMode) => write<PlaybooksResponse>(scoped(`/api/playbooks/staged/${encodeURIComponent(id)}/${action}`), "POST", mode, {}),
+  savePlaybook: (definition: Playbook, mode: WriteMode) => accountWrite<PlaybooksResponse>(scoped(`/api/playbooks${definition.version ? `/${encodeURIComponent(definition.id)}` : ""}`), definition.version ? "PUT" : "POST", mode, definition),
+  deletePlaybook: (id: string, version: number, mode: WriteMode) => accountWrite<PlaybooksResponse>(scoped(`/api/playbooks/${encodeURIComponent(id)}?version=${version}`), "DELETE", mode),
+  playbookMode: (id: string, value: "off" | "stage" | "auto", mode: WriteMode) => accountWrite<PlaybooksResponse>(scoped(`/api/playbooks/${encodeURIComponent(id)}/mode`), "PUT", mode, { mode: value }),
+  stagedAction: (id: string, action: "send" | "dismiss", mode: WriteMode) => accountWrite<PlaybooksResponse>(scoped(`/api/playbooks/staged/${encodeURIComponent(id)}/${action}`), "POST", mode, {}),
   passOdds: (days: number, samples: number, playbook = "", signal?: AbortSignal) => get<PassOdds>(scoped(`/api/account/pass-odds?days=${days}&samples=${samples}${playbook ? `&playbook=${encodeURIComponent(playbook)}` : ""}`), signal),
   buildTemplate: (template: StrategyTemplate, near: Chain, signal?: AbortSignal) => {
     const strikes = near.strikes.map((row) => row.strike).filter(Number.isFinite)
@@ -150,13 +164,13 @@ export const api = {
     if (strikes.length) { query.set("min_strike", String(Math.min(...strikes))); query.set("max_strike", String(Math.max(...strikes))) }
     return get<TemplateResult>(`/api/strategy-template?${query}`, signal)
   },
-  previewOrder: (order: NewOrder, mode: WriteMode, floor_share = 0.5) => write<OrderPreview>(scoped("/api/orders/preview"), "POST", mode, { ...order, floor_share }),
+  previewOrder: (order: NewOrder, mode: WriteMode, floor_share = 0.5) => previewWrite<OrderPreview>(scoped("/api/orders/preview"), "POST", mode, { ...order, floor_share }),
   whatIf: (candidates: readonly { name: string; orders: readonly NewOrder[] }[], mode: WriteMode) =>
-    write<WhatIfResponse>(scoped("/api/orders/what-if"), "POST", mode, { candidates: candidates.map(({ name, orders }) => ({
+    previewWrite<WhatIfResponse>(scoped("/api/orders/what-if"), "POST", mode, { candidates: candidates.map(({ name, orders }) => ({
       name, orders: orders.map((order) => Object.fromEntries(Object.entries(order).filter(([key]) => key !== "client_order_id"))),
     })) }),
   previewChange: (id: string, change: OrderChange, mode: WriteMode, floor_share = 0.5) =>
-    write<OrderPreview>(scoped(`/api/orders/${encodeURIComponent(id)}/preview`), "POST", mode, { ...change, floor_share }),
+    previewWrite<OrderPreview>(scoped(`/api/orders/${encodeURIComponent(id)}/preview`), "POST", mode, { ...change, floor_share }),
   equity: async (signal?: AbortSignal): Promise<EquityHistory> => {
     const base = scoped("/api/account/equity")
     const path = `${base}${base.includes("?") ? "&" : "?"}limit=2000`
@@ -168,7 +182,7 @@ export const api = {
     }
     return { ...page, samples }
   },
-  updateGuardrails: (expected_revision: string, guardrails: Guardrails, mode: WriteMode) => write<Risk>(scoped("/api/risk/guardrails"), "PUT", mode, { expected_revision, guardrails }),
+  updateGuardrails: (expected_revision: string, guardrails: Guardrails, mode: WriteMode) => accountWrite<Risk>(scoped("/api/risk/guardrails"), "PUT", mode, { expected_revision, guardrails }),
   portfolio: (signal?: AbortSignal) => get<Portfolio>(scoped("/api/portfolio"), signal),
   orders: (status: "open" | "all" = "all", signal?: AbortSignal) => get<OrdersResponse>(scoped(`/api/orders?status=${status}`), signal),
   settlements: (signal?: AbortSignal) => get<SettlementsResponse>(scoped("/api/settlements"), signal),
@@ -176,14 +190,14 @@ export const api = {
   risk: (signal?: AbortSignal) => get<Risk>(scoped("/api/risk"), signal),
   riskProfile: (query: RiskProfileQuery, signal?: AbortSignal) => get<RiskProfile>(scoped(riskProfilePath(query)), signal),
   order: (id: string, signal?: AbortSignal) => get<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), signal),
-  submitOrder: (order: NewOrder, mode: WriteMode) => write<SubmitOrderResponse>(scoped("/api/orders"), "POST", mode, order),
-  cancelOrder: (id: string, mode: WriteMode) => write<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), "DELETE", mode),
-  modifyOrder: (id: string, change: OrderChange, mode: WriteMode) => write<SubmitOrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), "PUT", mode, change),
-  cancelAllOrders: (underlying: string | null, mode: WriteMode) => write<CancelAllResponse>(scoped("/api/orders/cancel"), "POST", mode, underlying ? { underlying } : {}),
-  previewFlatten: (underlying: string | null, mode: WriteMode, pricing?: FlattenPricing) => write<FlattenPreview>(scoped("/api/positions/close/preview"), "POST", mode, { ...(underlying ? { underlying } : {}), ...pricing }),
+  submitOrder: (order: NewOrder, mode: WriteMode) => accountWrite<SubmitOrderResponse>(scoped("/api/orders"), "POST", mode, order),
+  cancelOrder: (id: string, mode: WriteMode) => accountWrite<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), "DELETE", mode),
+  modifyOrder: (id: string, change: OrderChange, mode: WriteMode) => accountWrite<SubmitOrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), "PUT", mode, change),
+  cancelAllOrders: (underlying: string | null, mode: WriteMode) => accountWrite<CancelAllResponse>(scoped("/api/orders/cancel"), "POST", mode, underlying ? { underlying } : {}),
+  previewFlatten: (underlying: string | null, mode: WriteMode, pricing?: FlattenPricing) => previewWrite<FlattenPreview>(scoped("/api/positions/close/preview"), "POST", mode, { ...(underlying ? { underlying } : {}), ...pricing }),
   /** Cancel the listed orders in one transaction, such as both exits of a pair. */
-  cancelOrders: (ids: string[], mode: WriteMode) => write<CancelAllResponse>(scoped("/api/orders/cancel"), "POST", mode, { orders: ids } satisfies CancelRequest),
-  closePositions: (underlying: string | null, mode: WriteMode, pricing?: FlattenPricing) => write<ClosePositionsResponse>(scoped("/api/positions/close"), "POST", mode, { ...(underlying ? { underlying } : {}), ...pricing }),
+  cancelOrders: (ids: string[], mode: WriteMode) => accountWrite<CancelAllResponse>(scoped("/api/orders/cancel"), "POST", mode, { orders: ids } satisfies CancelRequest),
+  closePositions: (underlying: string | null, mode: WriteMode, pricing?: FlattenPricing) => accountWrite<ClosePositionsResponse>(scoped("/api/positions/close"), "POST", mode, { ...(underlying ? { underlying } : {}), ...pricing }),
   journalCsvUrl: (kind: "trades" | "fills", from = "", to = "", attempt: "current" | "all" = "all") => {
     const query = new URLSearchParams()
     if (from) query.set("from", from)
@@ -192,28 +206,28 @@ export const api = {
     return routed(scoped(`/api/${kind}.csv${query.size ? `?${query}` : ""}`))
   },
   alerts: (signal?: AbortSignal) => get<AlertsResponse>(scoped("/api/alerts"), signal),
-  createAlert: (alert: AlertRequest, mode: WriteMode) => write<AlertResponse>(scoped("/api/alerts"), "POST", mode, alert),
-  deleteAlert: (id: string, mode: WriteMode) => write<AlertDeleted>(scoped(`/api/alerts/${encodeURIComponent(id)}`), "DELETE", mode),
+  createAlert: (alert: AlertRequest, mode: WriteMode) => accountWrite<AlertResponse>(scoped("/api/alerts"), "POST", mode, alert),
+  deleteAlert: (id: string, mode: WriteMode) => accountWrite<AlertDeleted>(scoped(`/api/alerts/${encodeURIComponent(id)}`), "DELETE", mode),
   annotateDay: (day: string, note: Pick<DayNote, "plan" | "review">, mode: WriteMode) =>
-    write<{ account_version: string; day: string; note: DayNote }>(scoped(`/api/days/${encodeURIComponent(day)}/note`), "PUT", mode, note),
-  annotateTrade: (id: string, note: TradeNote, mode: WriteMode) => write<TradeNoteResponse>(scoped(`/api/trades/${encodeURIComponent(id)}/note`), "PUT", mode, note),
+    accountWrite<{ account_version: string; day: string; note: DayNote }>(scoped(`/api/days/${encodeURIComponent(day)}/note`), "PUT", mode, note),
+  annotateTrade: (id: string, note: TradeNote, mode: WriteMode) => accountWrite<TradeNoteResponse>(scoped(`/api/trades/${encodeURIComponent(id)}/note`), "PUT", mode, note),
   /** Joins the open round trips' trades into one whole trade, or takes each out of its trade. */
   groupTrades: (trades: string[], together: boolean, mode: WriteMode) =>
-    write<GroupResponse>(scoped(together ? "/api/trades/group" : "/api/trades/ungroup"), "POST", mode, { trades }),
-  exercise: (symbol: string, quantity: number, mode: WriteMode) => write<Portfolio>(scoped("/api/positions/exercise"), "POST", mode, { symbol, quantity }),
-  abandon: (symbol: string, mode: WriteMode) => write<Portfolio>(scoped("/api/positions/abandon"), "POST", mode, { symbol }),
+    accountWrite<GroupResponse>(scoped(together ? "/api/trades/group" : "/api/trades/ungroup"), "POST", mode, { trades }),
+  exercise: (symbol: string, quantity: number, mode: WriteMode) => accountWrite<Portfolio>(scoped("/api/positions/exercise"), "POST", mode, { symbol, quantity }),
+  abandon: (symbol: string, mode: WriteMode) => accountWrite<Portfolio>(scoped("/api/positions/abandon"), "POST", mode, { symbol }),
   exerciseInstruction: (symbol: string, doNotExercise: boolean, mode: WriteMode) =>
-    write<Portfolio>(scoped("/api/positions/instruction"), "POST", mode, { symbol, do_not_exercise: doNotExercise }),
+    accountWrite<Portfolio>(scoped("/api/positions/instruction"), "POST", mode, { symbol, do_not_exercise: doNotExercise }),
   tradeStock: (symbol: string, side: Side, shares: number, mode: WriteMode) =>
-    write<Portfolio>(scoped("/api/stocks/trade"), "POST", mode, { symbol, side, shares }),
+    accountWrite<Portfolio>(scoped("/api/stocks/trade"), "POST", mode, { symbol, side, shares }),
   previewStock: (symbol: string, side: Side, shares: number, mode: WriteMode) =>
-    write<StockPreview>(scoped("/api/stocks/trade/preview"), "POST", mode, { symbol, side, shares }),
+    previewWrite<StockPreview>(scoped("/api/stocks/trade/preview"), "POST", mode, { symbol, side, shares }),
   closeStock: (symbol: string, shares: number | null, mode: WriteMode) =>
-    write<Portfolio>(scoped("/api/stocks/close"), "POST", mode, shares == null ? { symbol } : { symbol, shares }),
+    accountWrite<Portfolio>(scoped("/api/stocks/close"), "POST", mode, shares == null ? { symbol } : { symbol, shares }),
   reloadTokens: (mode: WriteMode) => write<TokenReloadResponse>("/api/tokens/reload", "POST", mode, {}),
-  updateLimits: (expected_revision: string, limits: Limits, mode: WriteMode) => write<Risk>(scoped("/api/risk/limits"), "PUT", mode, { expected_revision, limits }),
-  setKill: (action: "trip" | "reset", reason: string, mode: WriteMode) => write<KillResponse>(scoped("/api/risk/kill"), "POST", mode, { action, reason }),
-  settle: (symbol: string, value: Money, mode: WriteMode) => write<SettlementResponse>(scoped("/api/settlements"), "POST", mode, { symbol, value }),
+  updateLimits: (expected_revision: string, limits: Limits, mode: WriteMode) => accountWrite<Risk>(scoped("/api/risk/limits"), "PUT", mode, { expected_revision, limits }),
+  setKill: (action: "trip" | "reset", reason: string, mode: WriteMode) => accountWrite<KillResponse>(scoped("/api/risk/kill"), "POST", mode, { action, reason }),
+  settle: (symbol: string, value: Money, mode: WriteMode) => accountWrite<SettlementResponse>(scoped("/api/settlements"), "POST", mode, { symbol, value }),
   account: (signal?: AbortSignal) => get<Account>(scoped("/api/account"), signal),
   trades: (status: "open" | "closed" | "all" = "all", attempt: "current" | "all" = "current", signal?: AbortSignal) =>
     get<TradesResponse>(scoped(`/api/trades?status=${status}&attempt=${attempt}`), signal),
@@ -223,8 +237,8 @@ export const api = {
   updateAccount: (id: string, request: UpdateAccountRequest, mode: WriteMode) => write<UpdateAccountResponse>(`/api/accounts/${encodeURIComponent(id)}`, "PATCH", mode, request),
   deleteAccount: (id: string, mode: WriteMode) => write<DeleteAccountResponse>(`/api/accounts/${encodeURIComponent(id)}`, "DELETE", mode),
   createAccount: (request: CreateAccountRequest, mode: WriteMode) => write<CreateAccountResponse>("/api/accounts", "POST", mode, request),
-  resetAccount: (request: ResetRequest, mode: WriteMode) => write<Account>(scoped("/api/account/reset"), "POST", mode, request),
-  requestPayout: (amount: Money, mode: WriteMode) => write<Account>(scoped("/api/account/payout"), "POST", mode, { amount }),
+  resetAccount: (request: ResetRequest, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/reset"), "POST", mode, request),
+  requestPayout: (amount: Money, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/payout"), "POST", mode, { amount }),
   status: (signal?: AbortSignal) => get<Status>("/api/status", signal),
   series: (symbol: string, signal?: AbortSignal) => get<VolatilitySeries>(`${underlying(symbol)}/series?interval=1d&fields=mfiv30,atm30,rr25,rv21,proxy_iv30`, signal),
   briefSeries: (symbol: string, now: number, signal?: AbortSignal) => get<VolatilitySeries>(`${underlying(symbol)}/series?interval=1d&fields=mfiv30,atm30,rr25&from=${Math.floor(now / 1000) - 21 * 86400}&to=${Math.floor(now / 1000)}`, signal),

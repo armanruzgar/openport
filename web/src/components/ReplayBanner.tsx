@@ -28,8 +28,8 @@ export function ReplayBanner() {
             onClick={() => void controls.skip()}>Skip gap</button>}
           {(replay.stepping || replay.pause_at) && !live.source.startsWith("history:") && <button type="button" className="trade-button !py-0.5" disabled={controls.interruptPending || controls.blocked} onClick={() => void controls.abort()}>Abort</button>}
           {replay.demo && replay.scenario && replay.seed && !live.source.startsWith("history:") && <button type="button" className="trade-button !py-0.5" disabled={controls.pending || controls.blocked}
-            onClick={() => void controls.start({ demo: replay.scenario! }, replay.speed, () => live.switchSource("replay"), { seed: replay.seed!, plan: replay.plan, start_at: replay.start_at || undefined, date: replay.date })}>Replay this seed</button>}
-          <button type="button" className="trade-button !py-0.5" onClick={() => live.switchSource("live")}>Back to live</button>
+            onClick={() => void controls.start({ demo: replay.scenario! }, replay.speed, () => live.switchSource("replay", "user"), { seed: replay.seed!, plan: replay.plan, start_at: replay.start_at || undefined, date: replay.date })}>Replay this seed</button>}
+          <button type="button" className="trade-button !py-0.5" onClick={() => live.switchSource("live", "user")}>Back to live</button>
         </span>
       </div>
       <TradingError error={controls.error} />

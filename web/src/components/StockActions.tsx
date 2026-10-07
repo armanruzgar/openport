@@ -1,9 +1,10 @@
+import { useActionApi } from "../api/action-client"
 import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useWriteToken } from "../lib/write-token"
 import { flatRuleNotice, planEntryNotice, planMarketTime } from "../lib/plan-rules"
 import { useAccount, usePortfolio } from "../api/trading"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import type { Position, Side, StockHolding, TradingStatus } from "../api/trading-types"
 import { describeAttribution } from "../lib/attribution"
@@ -20,6 +21,7 @@ const dollars = (value: number) => formatMoney(value.toFixed(2))
 /** An expired position's settlement value entered by hand: an AM series' opening
  * quotation, or a PM series' official close when no closing print arrived. */
 export function SettleDialog({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const [value, setValue] = useState("")
   const reference = Number(value)
@@ -89,6 +91,7 @@ export function shareEffect(held: number, side: Side, shares: number): "opens" |
  * checks; reducing works under the kill switch.
  */
 export function TradeSharesDialog({ initial, trading, onClose }: { initial?: string; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const { underlyings, accountScope, source, replay } = useLive()
   const token = useWriteToken()
@@ -157,6 +160,7 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
 
 /** Close some or all shares at the underlying's price. */
 export function CloseSharesDialog({ stock, trading, onClose }: { stock: StockHolding; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const held = Math.abs(stock.shares)
   const [shares, setShares] = useState(String(held))
@@ -181,6 +185,7 @@ export function CloseSharesDialog({ stock, trading, onClose }: { stock: StockHol
  * it leaves the account at zero, without a fee.
  */
 export function AbandonDialog({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const { underlyings } = useLive()
   const spot = underlyings.find((u) => u.symbol === position.underlying)?.spot
@@ -206,6 +211,7 @@ export function AbandonDialog({ position, trading, onClose }: { position: Positi
  * withdraw that instruction: it then expires worthless without shares or cash proceeds.
  */
 export function ExerciseInstructionDialog({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const instructed = position.do_not_exercise === true
   const shares = position.quantity * 100
@@ -225,6 +231,7 @@ export function ExerciseInstructionDialog({ position, trading, onClose }: { posi
 
 /** Exercise long equity or ETF options into shares at the underlying's price. */
 export function ExerciseDialog({ position, trading, onClose }: { position: Position; trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const write = useWrite(trading)
   const { underlyings } = useLive()
   const spot = underlyings.find((u) => u.symbol === position.underlying)?.spot

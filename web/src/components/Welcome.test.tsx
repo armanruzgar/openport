@@ -102,7 +102,7 @@ describe("the welcome", () => {
     fetcher.mockImplementation(async () => new Response(JSON.stringify({ replay: null }), { status: 201 }))
     await act(async () => tryIt().click())
     expect(fetcher).toHaveBeenLastCalledWith("/api/replay", expect.objectContaining({ method: "POST", body: JSON.stringify({ demo: true, speed: 10 }) }))
-    expect(switchSource).toHaveBeenCalledWith("replay")
+    expect(switchSource).toHaveBeenCalledWith("replay", "user")
     expect(welcome.get()).toBe(false)
   })
 })

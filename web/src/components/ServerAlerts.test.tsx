@@ -3,6 +3,9 @@ import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { ActionBoundary } from "../api/action-destination"
+import { DestinationConfirmation } from "../api/action-client"
+import { activeAccount } from "../lib/active-account"
 import { api } from "../api/client"
 import { liveState, useLive } from "../api/live"
 import type { Alert } from "../api/trading-types"
@@ -147,4 +150,22 @@ describe("account alert helpers", () => {
     expect(heldLegs([{ symbol: "A", underlying: "SPX", quantity: 2 }, { symbol: "B", underlying: "SPX", quantity: -4 }, { symbol: "C", underlying: "QQQ", quantity: 1 }], "SPX"))
       .toEqual([{ symbol: "A", side: "buy", ratio: 1 }, { symbol: "B", side: "sell", ratio: 2 }])
   })
+})
+
+
+it("sends an alert after a deliberate account switch without destination confirmation", async () => {
+  activeAccount.set("main")
+  vi.mocked(api.deleteAlert).mockRestore()
+  const send = vi.fn(async () => new Response(JSON.stringify({ account_version: "3", deleted: "1" })))
+  vi.stubGlobal("fetch", send)
+  try {
+    await render(<ActionBoundary><ServerAlerts /><DestinationConfirmation /></ActionBoundary>)
+    activeAccount.set("second")
+    const state = vi.mocked(useLive)()
+    vi.mocked(useLive).mockReturnValue({ ...state, account: "second", accountScope: state.accountScope + 1 })
+    await render(<ActionBoundary><ServerAlerts /><DestinationConfirmation /></ActionBoundary>)
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label^="Delete alert"]')!.click())
+    expect(send).toHaveBeenCalledWith("/api/alerts/1?account=second", expect.objectContaining({ method: "DELETE" }))
+    expect(host.textContent).not.toContain("Confirm changed destination")
+  } finally { activeAccount.set("main") }
 })

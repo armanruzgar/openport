@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { DestinationConfirmation } from "../api/action-client"
 import { api } from "../api/client"
 import { liveState, useLive } from "../api/live"
 import * as connection from "../api/connection"
@@ -72,7 +73,7 @@ it("submits plan, exact typed uint64 seed, drill time and paused state", async (
   expect(api.startReplay).toHaveBeenCalledWith({ demo: "selloff" }, 10, "open", {
     plan: "intraday-25k", start_at: "15:00", seed: "18446744073709551615", paused: true,
   })
-  expect(switchSource).toHaveBeenCalledWith("replay")
+  expect(switchSource).toHaveBeenCalledWith("replay", "user")
 })
 
 it("omits fresh seeds, requests the scenario seed, and rejects out of range typed seeds", async () => {
@@ -92,7 +93,7 @@ it("shows history result and P&L, opens both views read-only, and confirms delet
   expect(host.textContent).toContain("simulated · seed 18446744073709551615")
   expect(host.textContent).toContain("2026-09-16 · 15:00 · Intraday 25K")
   await click("Open journal")
-  expect(switchSource).toHaveBeenCalledWith("history:saved-run")
+  expect(switchSource).toHaveBeenCalledWith("history:saved-run", "user")
   expect(navigate).toHaveBeenCalledWith("journal")
   await click("Open dashboard")
   expect(navigate).toHaveBeenCalledWith("dashboard")
@@ -104,7 +105,7 @@ it("shows history result and P&L, opens both views read-only, and confirms delet
   expect(api.deleteReplay).not.toHaveBeenCalled()
   await click("Delete"); await click("Delete run")
   expect(api.deleteReplay).toHaveBeenCalledWith("saved-run", "open")
-  expect(switchSource).toHaveBeenLastCalledWith("live")
+  expect(switchSource).toHaveBeenLastCalledWith("live", "user")
 })
 
 it("resumes only an interrupted run, at the starting speed, and switches to it", async () => {
@@ -119,7 +120,7 @@ it("resumes only an interrupted run, at the starting speed, and switches to it",
   expect(host.textContent).toContain("interrupted")
   await click("Resume")
   expect(resume).toHaveBeenCalledWith("saved-run", 10, "open")
-  expect(switchSource).toHaveBeenCalledWith("replay")
+  expect(switchSource).toHaveBeenCalledWith("replay", "user")
 })
 
 it("shows fast-forward progress and repeats the displayed seed", async () => {
@@ -401,5 +402,32 @@ it("restarts a saved run at its start or an active run at a time with seconds", 
   await change("Restart at", "2026-09-16T15:00:15")
   await click("Restart run")
   expect(restart).toHaveBeenLastCalledWith("run-1", "2026-09-16T15:00:15", "open")
-  expect(switchSource).toHaveBeenLastCalledWith("replay")
+  expect(switchSource).toHaveBeenLastCalledWith("replay", "user")
+})
+
+
+it("resumes and pauses from the persistent banner after Trade this replay without confirmation", async () => {
+  const active = { ...listing, replay }
+  client.setQueryData(["replay-listing"], active)
+  vi.mocked(api.replay).mockResolvedValue(active)
+  const send = vi.fn(async () => new Response(JSON.stringify({ replay })))
+  vi.stubGlobal("fetch", send)
+  const draw = () => root.render(<QueryClientProvider client={client}><ReplayView onNavigate={navigate} /><ReplayBanner /><DestinationConfirmation /></QueryClientProvider>)
+  await act(async () => draw())
+  await click("Trade this replay")
+  expect(switchSource).toHaveBeenCalledWith("replay", "user")
+  dataSource.set("replay")
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open", 1, "main", () => {}, "replay", replay, switchSource))
+  await act(async () => draw())
+  const bannerClick = async (label: string) => {
+    const button = [...host.querySelectorAll('[aria-label="Replay"] button')].find(b => b.textContent === label) as HTMLButtonElement
+    await act(async () => button.click())
+  }
+  await bannerClick("Resume")
+  expect(send).toHaveBeenLastCalledWith("/api/replay", expect.objectContaining({ method: "PUT", body: JSON.stringify({ paused: false }) }))
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open", 1, "main", () => {}, "replay", { ...replay, paused: false }, switchSource))
+  await act(async () => draw())
+  await bannerClick("Pause")
+  expect(send).toHaveBeenLastCalledWith("/api/replay", expect.objectContaining({ method: "PUT", body: JSON.stringify({ paused: true }) }))
+  expect(host.textContent).not.toContain("Confirm changed destination")
 })

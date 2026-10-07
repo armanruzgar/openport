@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useAccount } from "../api/trading"
 import type { NewOrder, Order, TradingStatus } from "../api/trading-types"
@@ -17,6 +18,7 @@ import { TradingError, WriteAccess } from "./TradingControls"
 export function CoveredStrategyDialog({ kind, chain, trading, onClose }: {
   kind: "covered-call" | "collar"; chain: Chain; trading: TradingStatus; onClose: () => void
 }) {
+  const api = useActionApi()
   const { accountScope } = useLive()
   const token = useWriteToken()
   const write = useWrite(trading)

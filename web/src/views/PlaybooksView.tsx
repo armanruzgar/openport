@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import type { ForwardTest, Playbook, PlaybookStats } from "../api/playbook-types"
 import { PassOddsCard, StagedOrders, usePlaybooks } from "../components/Playbooks"
@@ -58,6 +59,7 @@ export function PlaybooksView() {
   return <Playbooks key={live.accountScope} />
 }
 function Playbooks() {
+  const api = useActionApi()
   const live = useLive()
   const query = usePlaybooks()
   const backtests = useQuery({ queryKey: ["forward-backtests"], queryFn: ({ signal }) => api.backtests(signal),

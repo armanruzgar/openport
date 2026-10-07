@@ -110,8 +110,8 @@ export function App() {
         <AccountStorageBanner damaged={storage?.damaged} journal={storage?.journal_size} reason={live.trading?.reason} />
         <UpdateNotice />
         <WatchOnlyNotice trading={live.trading} sandboxes={live.status?.sandboxes} onCreated={(id) => {
-          live.switchSource("live")
-          live.switchAccount(id)
+          live.switchSource("live", "user")
+          live.switchAccount(id, "user")
           void queryClient.invalidateQueries()
         }} />
         <main className="min-w-0 flex-1 p-3 lg:p-5">{content}</main>

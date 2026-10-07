@@ -1,3 +1,4 @@
+import { ActionBoundary } from "../api/action-destination"
 import { useEffect, useId, useRef, type ReactNode } from "react"
 
 /** Native modal supplies focus trapping and makes the rest of the app inert. */
@@ -23,7 +24,7 @@ export function Dialog({ title, onClose, children }: { title: string; onClose: (
         <h2 id={titleId} className="font-medium">{title}</h2>
         <button type="button" className="trade-button" onClick={onClose} aria-label={`Close ${title}`}>Close</button>
       </header>
-      <div className="space-y-4 p-4">{children}</div>
+      <div className="space-y-4 p-4"><ActionBoundary>{children}</ActionBoundary></div>
     </dialog>
   )
 }

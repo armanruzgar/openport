@@ -1,7 +1,8 @@
+import { useActionApi } from "../api/action-client"
 import { FeeAmount } from "./FeeAmount"
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import type { NewOrder, OrderChange, OrderPreview, PreviewExecution, PreviewFill, TradingStatus } from "../api/trading-types"
 import { osiLabel } from "../lib/journal"
@@ -29,10 +30,12 @@ function usePreview<T>(kind: string, body: T | null, trading: TradingStatus, fet
     loading: body != null && (signature !== ready || query.isFetching) }
 }
 export function useOrderPreview(order: NewOrder | null, trading: TradingStatus) {
+  const api = useActionApi()
   return usePreview("preview", order, trading, (body) => api.previewOrder(body, trading.write))
 }
 /** The preview of a change to resting order `id`, as saving it would make it; null previews nothing. */
 export function useChangePreview(id: string, change: OrderChange | null, trading: TradingStatus) {
+  const api = useActionApi()
   return usePreview(`preview-change-${id}`, change, trading, (body) => api.previewChange(id, body, trading.write))
 }
 // exposure_change is the order's change to the book's Greeks, not the book after it.

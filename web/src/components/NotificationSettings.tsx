@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import type { NotificationChannel, NotificationEvent } from "../api/types"
 import type { WriteMode } from "../api/trading-types"
@@ -15,6 +16,7 @@ const events: { id: NotificationEvent; label: string }[] = [
 ]
 
 function Channel({ channel, mode }: { channel: NotificationChannel; mode: WriteMode }) {
+  const api = useActionApi()
   const client = useQueryClient()
   const [enabled, setEnabled] = useState(channel.enabled)
   const [selected, setSelected] = useState(channel.events)

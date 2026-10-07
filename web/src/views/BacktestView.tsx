@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import type { BacktestComparison, BacktestDayInput, BacktestIdentity, BacktestPlaybookBreakdown, BacktestReport, BacktestResult, BacktestStart } from "../api/backtest-types"
 import { useLive } from "../api/live"
 import { Dialog } from "../components/Dialog"
@@ -135,6 +136,7 @@ export function BacktestCompareView({ comparison }: { comparison: BacktestCompar
   </Panel>
 }
 export function BacktestView() {
+  const api = useActionApi()
   const live = useLive(), token = useWriteToken()
   const definitions = useQuery({ queryKey: ["backtest-playbooks", live.accountScope], queryFn: ({ signal }) => api.backtestPlaybooks(signal) })
   const plans = useQuery({ queryKey: ["backtest-plans"], queryFn: ({ signal }) => api.backtestPlans(signal), staleTime: Infinity })

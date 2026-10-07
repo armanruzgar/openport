@@ -397,3 +397,23 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   sessions, SPAN-style margin, settlement into futures and data sources. OpenPort
   simulates equity, ETF and index options and shares.
   [Supported instruments](paper-trading.md#instruments-and-prices).
+
+### Replay recovery and order destinations
+
+Quiet replay ticks no longer send the terminal back to live by themselves. After
+five seconds without ticks, the terminal shows “Reconnecting to the replay…” and
+checks `GET /api/replay`. An existing unfinished run stays selected, including
+while paused. A later tick clears the notice. A stopped or finished run returns
+the terminal to live; server failures must persist for two minutes before that
+fallback. Individual checks time out after ten seconds.
+
+Source and account changes show a persistent banner naming where orders now go.
+It includes **OK** to dismiss and **Back to replay** when the server still reports
+a run. Sandbox expiry and a disappeared account also explain the change.
+
+Tickets and other write controls retain the source, account, and replay run from
+when they opened. If the destination changes before submission, no write is sent.
+A confirmation names the new destination (for example, **Send to live account
+Practice**); cancelling sends nothing. Closing and reopening the action also
+selects the current destination. This applies to order changes, cancellations,
+flattening, exits, stock/strategy actions, and settings writes as well as tickets.

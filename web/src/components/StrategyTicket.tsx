@@ -1,10 +1,12 @@
+import { ActionDestination, useActionDestination } from "../api/action-destination"
+import { useActionApi } from "../api/action-client"
 import { useWalk } from "./WalkFields"
 import { FeeAmount } from "./FeeAmount"
 import { useJoinTrade } from "./JoinTradeField"
 import { useQuery } from "@tanstack/react-query"
 import { useMemo, useRef, useState } from "react"
 import { LiquidityWarning } from "./LiquidityWarning"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useSmileSurface } from "../api/smiles"
 import { useAccount, usePortfolio, useRefreshTrading, useTradingSession } from "../api/trading"
@@ -58,7 +60,8 @@ export function StrategyTicket({ legs, onLegs, expiries, underlying, spot, tradi
   surface?: Surface
   template?: Pick<TemplateSetup, "tag" | "widths">
 }) {
-  const body = <StrategyBody legs={legs} onLegs={onLegs} expiries={expiries} underlying={underlying} spot={spot} trading={trading} initialUnits={units} closing={closing} roll={roll} smiles={smiles} surface={surface} template={template} tags={tags} note={note} />
+  const destination = useActionDestination()
+  const body = <ActionDestination value={destination}><StrategyBody legs={legs} onLegs={onLegs} expiries={expiries} underlying={underlying} spot={spot} trading={trading} initialUnits={units} closing={closing} roll={roll} smiles={smiles} surface={surface} template={template} tags={tags} note={note} /></ActionDestination>
   if (variant === "bare") return body
   if (variant === "dialog") return <Dialog title={title} onClose={onClose}>{body}</Dialog>
   return (
@@ -80,6 +83,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
   surface?: Surface
   template?: Pick<TemplateSetup, "tag" | "widths">
 }) {
+  const api = useActionApi()
   const { accountScope, underlyings, source, replay, status: feedStatus } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()

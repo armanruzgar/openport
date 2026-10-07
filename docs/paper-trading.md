@@ -4022,3 +4022,19 @@ Demo, scenario replays and scenario backtests carry deterministic intraday volum
 with simulated opening activity at revision 6. Near-money contracts can trade under
 a volume cap from the opening snapshot; thin contracts can still have zero volume.
 Revisions 1–5 retain their original volume events, including a zero-volume opening.
+
+### Terminal destination changes
+
+**Back to live** selects the live feed and its selected paper account. Replay
+silence alone does not trigger this change: the terminal verifies the run with
+`GET /api/replay`, keeps unfinished runs selected, and shows “Reconnecting to the
+replay…”. It returns to live if the run stopped or finished, or after two minutes
+of failed server checks. A persistent banner names the resulting order destination;
+**Back to replay** is available only while a run exists, and **OK** dismisses it.
+Sandbox expiry and automatic account fallback are also announced.
+
+An open ticket or write dialog keeps its original destination. A source, account,
+or replay-run change blocks submission until the user explicitly confirms the
+named new destination, or closes and reopens the action. Cancellation sends no
+request. If the destination changes again during confirmation, the write remains
+blocked. Account-scoped views that close during a switch must be reopened.

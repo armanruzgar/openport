@@ -1,7 +1,9 @@
+import { userReplayChange } from "../api/destination"
+import { useActionApi } from "../api/action-client"
 import { CopySettingsPicker } from "../components/CopySettingsPicker"
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import { api, type ReplaySource, type ReplayStart } from "../api/client"
+import { type ReplaySource, type ReplayStart } from "../api/client"
 import { usePlans } from "../api/trading"
 import { Dialog } from "../components/Dialog"
 import { formatMoney } from "../lib/trading"
@@ -50,6 +52,7 @@ const size = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` 
 
 /** Speed, pause, skip and stop for the running replay, from the page or the banner. */
 export function useReplayControls() {
+  const api = useActionApi()
   const { status } = useLive()
   const writeStatus = useQuery({ queryKey: ["replay-listing"], queryFn: ({ signal }) => api.replay(signal), staleTime: 5_000 })
   const trading = status?.trading
@@ -89,9 +92,9 @@ export function useReplayControls() {
     playTo: (play_until: string, speed: number) => run(() => api.controlReplay({ play_until, speed }, mode)),
     abort: () => interrupt(() => api.controlReplay({ abort: true }, mode)),
     stop: () => interrupt(() => api.stopReplay(mode)),
-    start: (source: ReplaySource, speed: number, then: () => void, options?: ReplayStart) => run(async () => { await api.startReplay(source, speed, mode, options); then() }),
-    resume: (id: string, speed: number, then: () => void) => run(async () => { await api.resumeReplay(id, speed, mode); then() }),
-    restart: (id: string, at: string | undefined, then: () => void) => run(async () => { await api.restartReplay(id, at, mode); then() }),
+    start: (source: ReplaySource, speed: number, then: () => void, options?: ReplayStart) => run(async () => { await userReplayChange(() => api.startReplay(source, speed, mode, options)); then() }),
+    resume: (id: string, speed: number, then: () => void) => run(async () => { await userReplayChange(() => api.resumeReplay(id, speed, mode)); then() }),
+    restart: (id: string, at: string | undefined, then: () => void) => run(async () => { await userReplayChange(() => api.restartReplay(id, at, mode)); then() }),
     verify: (id: string, then: () => void) => run(async () => { await api.verifyReplay(id, mode); then() }),
     receipt: (id: string) => run(() => api.downloadVerificationReceipt(id), true),
     remove: (id: string, then: () => void) => run(async () => { await api.deleteReplay(id, mode); then() }),
@@ -158,6 +161,7 @@ export function replayTitle(replay: ReplayState) {
  * trade it from every page as if it were that day.
  */
 export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }) {
+  const api = useActionApi()
   const live = useLive()
   const listing = useQuery({ queryKey: ["replay-listing"], queryFn: ({ signal }) => api.replay(signal), refetchInterval: (query) => query.state.data?.history?.some((run) => run.verification?.status === "running") ? 1_000 : 5_000 })
   const controls = useReplayControls()
@@ -179,7 +183,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
   const verifying = listing.data?.history?.some((run) => run.verification?.status === "running") ?? false
   const recordings = listing.data?.recordings ?? []
   const demos = listing.data?.demos?.length ? listing.data.demos : listing.data?.demo ? [listing.data.demo] : []
-  const started = () => { live.switchSource("replay"); void listing.refetch() }
+  const started = () => { live.switchSource("replay", "user"); void listing.refetch() }
   return <div className="min-w-0 space-y-4">
     <PageHeader title="Replay" subtitle="Trade a recorded day with its own paper account, at the pace you choose">
       {(demos.length > 0 || recordings.length > 0) && <Segmented label="Starting speed" value={speed} onChange={setSpeed}
@@ -208,8 +212,8 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
     </Panel>
     {replay ? (
       <Panel title="Now replaying" actions={live.source === "replay"
-        ? <button type="button" className="trade-button" onClick={() => live.switchSource("live")}>Back to live</button>
-        : <button type="button" className="trade-button border-accent" onClick={() => live.switchSource("replay")}>Trade this replay</button>}>
+        ? <button type="button" className="trade-button" onClick={() => live.switchSource("live", "user")}>Back to live</button>
+        : <button type="button" className="trade-button border-accent" onClick={() => live.switchSource("replay", "user")}>Trade this replay</button>}>
         <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <span className="text-lg font-medium tabular">{replayClock(replay.time)}</span>
           <span className="text-sm text-muted">{replayTitle(replay)}</span>
@@ -312,7 +316,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
               <button type="button" className="trade-button" disabled={controls.pending} onClick={() => void controls.receipt(run.id)}>Download receipt</button>}
             {run.interrupted && <button type="button" className="trade-button" disabled={controls.blocked || controls.pending || run.verification?.status === "running"}
             title="Replay its recorded orders and continue, paused where it stopped" onClick={() => void controls.resume(run.id, speed, started)}>Resume</button>}{(["journal", "dashboard"] as const).map((view) => <button key={view} type="button" className="trade-button" disabled={!!run.error}
-            onClick={() => { live.switchSource(`history:${run.id}`); onNavigate?.(view) }}>Open {view}</button>)}
+            onClick={() => { live.switchSource(`history:${run.id}`, "user"); onNavigate?.(view) }}>Open {view}</button>)}
             <button type="button" className="trade-button" disabled={controls.blocked || controls.pending || run.verification?.status === "running"} onClick={() => setDeleting(run.id)}>Delete</button></span>
         </div>)}
       </div>}
@@ -328,7 +332,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
     {deleting && <Dialog title="Delete replay run?" onClose={() => setDeleting(undefined)}>
       <p className="text-sm">This permanently deletes the run’s journal and trades. This cannot be undone.</p>
       <TradingError error={controls.error} />
-      <button type="button" className="trade-button" disabled={controls.pending || controls.blocked} onClick={() => void controls.remove(deleting, () => { if (live.source === `history:${deleting}`) live.switchSource("live"); setDeleting(undefined); void listing.refetch() })}>Delete run</button>
+      <button type="button" className="trade-button" disabled={controls.pending || controls.blocked} onClick={() => void controls.remove(deleting, () => { if (live.source === `history:${deleting}`) live.switchSource("live", "user"); setDeleting(undefined); void listing.refetch() })}>Delete run</button>
       <button type="button" className="trade-button" onClick={() => setDeleting(undefined)}>Cancel</button>
     </Dialog>}
     <p className="text-[11px] text-muted">

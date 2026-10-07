@@ -1,8 +1,9 @@
+import { useActionApi } from "../api/action-client"
 import { PendingSettingsNotice } from "../components/PendingSettingsNotice"
 import { useQueryClient } from "@tanstack/react-query"
 import { useState, type ReactNode } from "react"
 import { useBriefMarket } from "../api/brief"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useAccount, useOpenOrders, usePortfolio, useRefreshTrading, useRisk, useTrades, useTradingSession } from "../api/trading"
 import type { Account, DayNote, Guardrails, Limits, Risk, TradesResponse, TradingStatus } from "../api/trading-types"
@@ -156,6 +157,7 @@ export function BriefAccountPanel({ account, risk }: { account?: Account; risk?:
 }
 
 export function BriefNote({ day, phase, note, trading }: { day: string; phase: "plan" | "review"; note?: DayNote; trading: TradingStatus }) {
+  const api = useActionApi()
   const [draft, setDraft] = useState<Partial<Pick<DayNote, "plan" | "review">>>({})
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)

@@ -1,8 +1,9 @@
+import { useActionApi } from "../api/action-client"
 import { CopySettingsPicker } from "./CopySettingsPicker"
 import { ManageAccountsDialog } from "./ManageAccountsDialog"
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useAccount, usePlans } from "../api/trading"
 import type { FeeModel, FillModel, TradingStatus } from "../api/trading-types"
@@ -21,6 +22,7 @@ import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
  * journal, rules, orders and positions. The switcher picks the one the terminal acts on.
  */
 export function AccountSwitcher() {
+  const api = useActionApi()
   const { accounts, account, switchAccount, trading, source, switchSource } = useLive()
   const sandbox = isSandboxToken(useWriteToken())
   const idle = accounts.find((item) => item.id === account)?.sandbox_idle_seconds
@@ -35,8 +37,8 @@ export function AccountSwitcher() {
         onChange={(event) => {
           const id = event.target.value
           if (id === "+new") setCreating(true)
-          else if (id.startsWith("history:")) switchSource(id as `history:${string}`)
-          else { if (source.startsWith("history:")) switchSource("live"); switchAccount(id) }
+          else if (id.startsWith("history:")) switchSource(id as `history:${string}`, "user")
+          else { if (source.startsWith("history:")) switchSource("live", "user"); switchAccount(id, "user") }
         }}>
         {accounts.map((a) => (
           <option key={a.id} value={a.id}>{source.startsWith("history:") ? "Live main account" : a.name}{source.startsWith("history:") ? "" : a.trading.plan ? ` · ${a.trading.plan}${a.trading.plan_id ? ` · ${a.trading.plan_id}` : ""}` : ""}{a.trading.enabled ? "" : " (unavailable)"}</option>
@@ -48,7 +50,7 @@ export function AccountSwitcher() {
       {!!idle && <p className="text-[11px] text-muted">Sandbox · removed after {idle % 3600 === 0 ? `${idle / 3600} h` : `${idle} s`} unused</p>}
       {source !== "live" && <Badge tone="neutral">replay{source.startsWith("history:") ? " · read-only" : ""}</Badge>}
       {creating && <NewAccountDialog trading={trading} onClose={() => setCreating(false)}
-        onCreated={(id) => { setCreating(false); switchAccount(id) }} />}
+        onCreated={(id) => { setCreating(false); switchAccount(id, "user") }} />}
       {managing && <ManageAccountsDialog trading={trading} onClose={() => setManaging(false)} />}
     </div>
   )
@@ -56,6 +58,7 @@ export function AccountSwitcher() {
 
 /** Name an account and pick its plan; funded plans unlock from a passed evaluation in an existing account. */
 export function NewAccountDialog({ trading, onClose, onCreated }: { trading: TradingStatus; onClose: () => void; onCreated: (id: string) => void }) {
+  const api = useActionApi()
   const { accounts } = useLive()
   const plans = usePlans()
   const account = useAccount().data

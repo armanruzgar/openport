@@ -1,6 +1,7 @@
+import { useActionApi } from "../api/action-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import type { AccountListItem, TradingStatus } from "../api/trading-types"
 import { useWriteToken } from "../lib/write-token"
@@ -8,6 +9,7 @@ import { Dialog } from "./Dialog"
 import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
 
 export function ManageAccountsDialog({ trading, onClose }: { trading: TradingStatus; onClose: () => void }) {
+  const api = useActionApi()
   const { account, switchAccount } = useLive()
   const client = useQueryClient()
   const token = useWriteToken()
@@ -24,7 +26,7 @@ export function ManageAccountsDialog({ trading, onClose }: { trading: TradingSta
     busy.current = true; setPending(true); setError(undefined)
     try {
       await change()
-      if (removeFromSwitcher && account === id) switchAccount("main")
+      if (removeFromSwitcher && account === id) switchAccount("main", "user")
       setEditing(undefined); setDeleting(undefined)
       await client.invalidateQueries({ queryKey: ["live-accounts"] })
     } catch (failure) { setError(failure) }

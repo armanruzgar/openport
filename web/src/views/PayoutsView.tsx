@@ -1,5 +1,6 @@
+import { useActionApi } from "../api/action-client"
 import { useId, useRef, useState } from "react"
-import { api } from "../api/client"
+
 import { useLive } from "../api/live"
 import { useAccount, usePlans, useRefreshTrading, useTradingSession } from "../api/trading"
 import type { Account, SizeScalingStatus, Payout, PayoutStatus, Plan, TradingStatus } from "../api/trading-types"
@@ -123,6 +124,7 @@ function Funded({ trading, account, status }: { trading: TradingStatus; account:
 }
 
 function RequestForm({ trading, status }: { trading: TradingStatus; status: PayoutStatus }) {
+  const api = useActionApi()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()

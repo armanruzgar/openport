@@ -1,10 +1,12 @@
+import { ActionDestination, useActionDestination } from "../api/action-destination"
+import { useActionApi } from "../api/action-client"
 import { useWalk } from "./WalkFields"
 import { FeeAmount } from "./FeeAmount"
 import { useJoinTrade } from "./JoinTradeField"
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { LiquidityWarning } from "./LiquidityWarning"
-import { api, ApiError } from "../api/client"
+import { ApiError } from "../api/client"
 import { useLive } from "../api/live"
 import { useSmileSurface } from "../api/smiles"
 import { useAccount, usePortfolio, useRefreshTrading, useTradingSession } from "../api/trading"
@@ -80,7 +82,8 @@ export function OrderTicket({ selection, quote, trading, onClose, variant = "dia
   surface?: Surface
 }) {
   const title = "Paper order"
-  const body = <TicketBody selection={selection} quote={quote} trading={trading} onClose={onClose} variant={variant} smile={smile} surface={surface} tags={tags} note={note} />
+  const destination = useActionDestination()
+  const body = <ActionDestination value={destination}><TicketBody selection={selection} quote={quote} trading={trading} onClose={onClose} variant={variant} smile={smile} surface={surface} tags={tags} note={note} /></ActionDestination>
   if (variant === "dialog") return <Dialog title={title} onClose={onClose}>{body}</Dialog>
   return (
     <aside aria-label="Order ticket" className="flex max-h-[calc(100dvh-7rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-panel shadow-chart">
@@ -99,6 +102,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   smile?: readonly { strike: number; iv: number | null }[]
   surface?: Surface
 }) {
+  const api = useActionApi()
   const { accountScope, underlyings, source, replay, status: feedStatus } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
