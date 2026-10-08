@@ -70,11 +70,25 @@ async function cleanup() {
   await writeFile(join(temp, 'server.log'), log);
 }
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => { await cleanup(); process.exit(1); });
-async function api(path, body) {
-  const response = await fetch(origin + path, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(180000) });
+async function api(path, body, signal = AbortSignal.timeout(180000)) {
+  const response = await fetch(origin + path, { method: body ? 'POST' : 'GET', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal });
   const value = await response.json();
   if (!response.ok) throw new Error(`${path}: ${JSON.stringify(value)}`);
   return value;
+}
+async function waitForReplayReady() {
+  const signal = AbortSignal.timeout(120000);
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const { replay } = await api('/api/replay', undefined, signal);
+      if (replay?.fast_forwarding === false) return replay;
+      await pause(500);
+    }
+  } catch (error) {
+    if (signal.aborted) throw new Error('Timed out after 120 s waiting for GET /api/replay to report fast_forwarding=false', { cause: error });
+    throw error;
+  }
 }
 async function settle(page) {
   await page.evaluate(() => document.fonts.ready);
@@ -95,14 +109,19 @@ try {
   browser = await chromium.launch({ headless: true, env: { ...process.env, HOME: homedir() } });
   for (const [name, width, height] of [['desktop', 1160, 840], ['mobile', 540, 800]]) {
     await api('/api/replay', { scenario: 'trend', date: '2026-09-15', seed: '20260915', plan: 'locking-50k', start_at: '10:00', paused: true });
-    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'America/New_York', recordVideo: { dir: join(temp, 'videos'), size: { width, height } } });
-    await context.addInitScript(() => localStorage.setItem('openport.welcome', 'seen'));
+    const replay = await waitForReplayReady();
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, locale: 'en-US', timezoneId: 'America/New_York', colorScheme: 'dark', recordVideo: { dir: join(temp, 'videos'), size: { width, height } } });
+    await context.addInitScript(() => {
+      localStorage.setItem('openport.welcome', 'seen');
+      localStorage.setItem('openport-theme', 'dark');
+    });
     const start = performance.now();
     const page = await context.newPage();
     page.setDefaultTimeout(20000);
     const clips = [];
     async function scene(label, seconds) {
       await settle(page);
+      assert.equal(await page.evaluate(() => document.documentElement.classList.contains('dark')), true, `${name}: ${label} must use the dark theme`);
       await page.screenshot({ path: join(temp, `${name}-${clips.length}-${label}.png`) });
       const from = (performance.now() - start) / 1000;
       await page.waitForTimeout(seconds * 1000 + 350);
@@ -117,6 +136,8 @@ try {
       await navigate(page, 'dashboard');
       await page.getByText('Consistency', { exact: true }).waitFor();
       await focus(page.getByRole('heading', { name: 'Objectives to pass', exact: true }));
+      assert.equal(replay.start_at, '10:00', `${name}: replay must start at 10:00`);
+      assert.match(await page.getByRole('banner').innerText(), /\b10:00\b/, `${name}: header must show replay start_at ${replay.start_at} before the first scene`);
       await scene('objectives', name === 'desktop' ? 2 : 3.5);
       await focus(page.getByText('Daily loss limit', { exact: true }));
       await scene('plan', name === 'desktop' ? 2 : 3.5);
