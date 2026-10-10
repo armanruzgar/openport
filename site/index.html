@@ -20,152 +20,177 @@
   <meta name="twitter:image" content="https://openport.markets/social-preview.png">
   <meta name="twitter:image:alt" content="OpenPort options analytics and simulated trading terminal">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230a0a0a'/%3E%3Cpath d='M22 17H16V47H22M42 17H48V47H42' fill='none' stroke='%232cc76f' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%232cc76f'/%3E%3C/svg%3E">
+  <script>try { const t = localStorage.getItem('op-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}</script>
   <link rel="stylesheet" href="style.css">
+  <script src="tape-data.js" defer></script>
   <script src="site.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header wrap">
-    <a class="wordmark" href="#" aria-label="OpenPort home"><span aria-hidden="true">[o]</span> OpenPort</a>
-    <nav aria-label="Main navigation">
-      <a href="#quick-start">Quick start</a>
-      <a href="https://github.com/38st/openport/blob/main/docs/architecture.md">Docs</a>
-      <a href="https://github.com/38st/openport">GitHub <span aria-hidden="true">↗</span></a>
+  <header class="bar">
+    <a class="crumb" href="#" aria-label="OpenPort home"><b aria-hidden="true">[o]</b><span aria-hidden="true">/ Simulator</span></a>
+    <nav class="keys" aria-label="Main navigation">
+      <button class="key" type="button" data-cmd="help" data-js hidden><kbd>[?]</kbd><span>Help</span></button>
+      <button class="key" type="button" data-cmd="theme" data-js hidden aria-label="Switch between light and dark themes"><kbd>[^M]</kbd><span id="theme-label">Light mode</span></button>
+      <a class="key" href="#quick-start"><kbd aria-hidden="true">[↓]</kbd><span>Install</span></a>
+      <a class="key" href="https://github.com/38st/openport/blob/main/docs/architecture.md"><kbd aria-hidden="true">[↗]</kbd><span>Docs</span></a>
+      <a class="key" href="https://github.com/38st/openport"><kbd aria-hidden="true">[↗]</kbd><span>GitHub</span></a>
     </nav>
   </header>
 
-  <main id="main" class="wrap">
-    <section class="hero" aria-labelledby="headline">
-      <p class="eyebrow"><span>Open source</span> · <span>Runs locally</span> · <span>Simulated trading</span></p>
-      <h1 id="headline">The open-source options trading simulator</h1>
-      <p class="lede">Practise prop-style evaluations on real option chains, from Cboe’s free delayed data or your own provider, with analytics you can check.</p>
-      <div class="actions">
-        <a class="button primary" href="#quick-start">Install OpenPort <span aria-hidden="true">↓</span></a>
-        <a class="button" href="#demo">Watch demo <span aria-hidden="true">▷</span></a>
+  <main id="main">
+    <section class="hero col" aria-labelledby="headline">
+      <h1 id="headline" class="title"><span>OpenPort</span> <span>The open-source options simulator.</span></h1>
+      <div id="tape" class="tape" aria-hidden="true" hidden>
+        <div id="tape-stat" class="tape-stat"></div>
+        <div id="tape-head" class="tape-head"></div>
+        <div class="tape-win"><div id="tape-rows"></div></div>
       </div>
-      <p class="hero-note">Your data and trades stay on your machine unless you enable external notifications.</p>
+      <p id="tape-note" class="note" hidden># simulated prints at Cboe’s delayed closing quotes. Hover to pause.</p>
+      <noscript><p class="note">Practise prop-style evaluations on real option chains. <a href="#quick-start">Install it with one command.</a></p></noscript>
+      <div id="out" class="out" aria-live="polite"></div>
+      <form id="prompt" class="prompt" autocomplete="off" data-js hidden>
+        <label for="cmd"><span aria-hidden="true">~ $</span><span class="sr-only">Command</span></label>
+        <input id="cmd" type="text" spellcheck="false" autocapitalize="off" aria-describedby="hints">
+      </form>
+      <p id="hints" class="hints" data-js hidden>try <button type="button" data-cmd="install">install</button><button type="button" data-cmd="demo">demo</button><button type="button" data-cmd="help">help</button><button type="button" data-cmd="tape" id="hint-tape" hidden>tape</button></p>
     </section>
 
-    <figure id="demo" class="demo" tabindex="-1" aria-labelledby="demo-title" aria-describedby="demo-caption">
-      <div class="demo-frame">
-        <div class="demo-heading"><span id="demo-title">From evaluation plan to protected spread <span class="badge">Simulated prices</span></span><span class="demo-meta">Desktop 15 s · Mobile 14 s · No audio</span></div>
-        <video class="demo-desktop" controls playsinline preload="none" width="1160" height="840" poster="media/trading-desktop.jpg" aria-label="Desktop demo: evaluation objectives, SPX vertical spread with bracket exits and simulated preview, held strategy and margin breakdown" aria-describedby="demo-caption">
-          <source src="media/trading-desktop.mp4" type="video/mp4">
-          <a href="media/trading-desktop.mp4">Watch the desktop demo</a>
-        </video>
-        <video class="demo-mobile" controls playsinline preload="none" width="540" height="800" poster="media/trading-mobile.jpg" aria-label="Mobile demo: evaluation plan status, SPX vertical-spread ticket and simulated order preview" aria-describedby="demo-caption">
-          <source src="media/trading-mobile.mp4" type="video/mp4">
-          <a href="media/trading-mobile.mp4">Watch the mobile demo</a>
-        </video>
+    <section id="demo" class="seg col" tabindex="-1" aria-labelledby="demo-title">
+      <p class="addr">00000100<b>Demo</b><span class="demo-meta">Desktop 15 s · Mobile 14 s · No audio</span></p>
+      <div class="body">
+        <h2><span id="demo-title">From evaluation plan to protected spread <span class="badge">Simulated prices</span></span></h2>
+        <figure>
+          <div class="frame">
+            <video class="demo-desktop" controls playsinline muted preload="none" width="1160" height="840" poster="media/trading-desktop.jpg" aria-label="Desktop demo: evaluation objectives, SPX vertical spread with bracket exits and simulated preview, held strategy and margin breakdown" aria-describedby="demo-caption">
+              <source src="media/trading-desktop.mp4" type="video/mp4">
+              <a href="media/trading-desktop.mp4">Watch the desktop demo</a>
+            </video>
+            <video class="demo-mobile" controls playsinline muted preload="none" width="540" height="800" poster="media/trading-mobile.jpg" aria-label="Mobile demo: evaluation plan status, SPX vertical-spread ticket and simulated order preview" aria-describedby="demo-caption">
+              <source src="media/trading-mobile.mp4" type="video/mp4">
+              <a href="media/trading-mobile.mp4">Watch the mobile demo</a>
+            </video>
+          </div>
+          <figcaption id="demo-caption">Review a Locking 50K evaluation, build an SPX vertical with take-profit and stop-loss exits, and inspect its simulated preview. The desktop demo also shows the filled strategy and margin; mobile shows plan status and the ticket. Prices, volume and fills are simulated in a fixed-seed generated session. Use fullscreen for a closer look.</figcaption>
+        </figure>
       </div>
-      <figcaption id="demo-caption">Review a Locking 50K evaluation, build an SPX vertical with take-profit and stop-loss exits, and inspect its simulated preview. The desktop demo also shows the filled strategy and margin; mobile shows plan status and the ticket. Prices, volume and fills are simulated in a fixed-seed generated session. Use fullscreen for a closer look.</figcaption>
-    </figure>
+    </section>
 
-    <section id="quick-start" class="quick-start" aria-labelledby="quick-start-title">
-      <div>
-        <p class="eyebrow">Start here</p>
+    <section id="quick-start" class="seg col" aria-labelledby="quick-start-title">
+      <p class="addr">00000200<b>Install</b></p>
+      <div class="body">
         <h2 id="quick-start-title">Try it in one command</h2>
-        <p>With Docker installed, start Cboe’s free 15-minute delayed feed for SPX, SPY, QQQ, IWM and DIA. No key needed.</p>
-      </div>
-      <div class="command">
-        <div class="command-bar"><span>Docker quick start</span><button class="button copy-command" type="button" aria-controls="install-command" hidden>Copy command</button></div>
-        <pre id="install-command" aria-label="Docker quick start" tabindex="0"><code>docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport</code></pre>
+        <div class="term">
+          <pre id="install-command" tabindex="0" aria-label="Docker quick start"><code>docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport</code></pre>
+          <button class="key" type="button" data-copy data-js hidden><kbd aria-hidden="true">[c]</kbd><span>Copy</span></button>
+        </div>
         <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
-        <p>Open the link it prints, <code>http://localhost:8080/#token=…</code>. The volume keeps your accounts and chart history between runs. When nothing is trading, choose the demo market’s simulated prices.</p>
-        <a href="https://github.com/38st/openport/blob/main/docs/install.md">Use your provider, a release archive or a source build <span aria-hidden="true">↗</span></a>
+        <p>With Docker installed, this starts Cboe’s free 15-minute delayed feed for SPX, SPY, QQQ, IWM and DIA. No key needed. Open the link it prints, <code>http://localhost:8080/#token=…</code>. The volume keeps your accounts and chart history between runs. When nothing is trading, choose the demo market’s simulated prices.</p>
+        <a class="more" href="https://github.com/38st/openport/blob/main/docs/install.md">Your provider, a release archive or a source build ↗</a>
       </div>
     </section>
 
-    <section class="feature" aria-labelledby="evaluation-title">
-      <div class="feature-heading">
-        <p class="eyebrow">The simulator</p>
+    <section class="seg col" aria-labelledby="evaluation-title">
+      <p class="addr">00000300<b>Simulator</b></p>
+      <div class="body">
         <h2 id="evaluation-title">Trade like an evaluation</h2>
-      </div>
-      <div class="feature-body">
-        <p>Practise with daily loss limits, static or trailing floors, consistency rules and minimum days and trades. Custom plans add flat times, news and holding restrictions, instrument and opening-hour limits. Two-step evaluations track challenge and verification; simulated funded rules cover payouts and scaling, with evaluation, reset and activation costs recorded separately.</p>
-        <p>Trade single legs and strategies with trailing stops, stop-limits, OCO/OTO chains and brackets that protect partial remainders. Flatten works until flat: spreads close as one order and exits stay until the last contract is closed, with limit flatten overnight and in curb. Use all-session protection, timed expiry or conditions on another symbol, a study or the time of day. Choose fill models, itemized fees and cash, IRA or margin account rules.</p>
-        <p>Orders fill against displayed quotes. On the default delayed feed, a pass is practice, not proof: a real-time chart shows where the market went next. Funded plans stay hidden in the terminal unless already funded or explicitly enabled; OpenPort funds no one.</p>
-        <a href="https://github.com/38st/openport/blob/main/docs/paper-trading.md">Rules, fills and simulation limits <span aria-hidden="true">↗</span></a>
-      </div>
-    </section>
-
-    <section class="feature" aria-labelledby="analytics-title">
-      <div class="feature-heading">
-        <p class="eyebrow">The analytics</p>
-        <h2 id="analytics-title">Analytics you can audit</h2>
-      </div>
-      <div class="feature-body">
-        <p>OpenPort computes its own implied volatility and Greeks, fits SVI surfaces, and shows gamma and vanna exposure. The forward and discount factor come from put-call parity; the provider’s IV stays alongside for comparison.</p>
-        <dl class="metrics">
-          <div><dt>IV solve</dt><dd>About 0.4 µs <span>5.4 Newton iterations per option.</span></dd></div>
-          <div><dt>SPX analytics pass</dt><dd>About 40 ms <span>30,182 options, 63 expiries.</span></dd></div>
+        <p>Practise prop-style evaluations on real option chains. Orders fill against displayed quotes.</p>
+        <dl class="kv">
+          <div><dt>rules</dt><dd>daily loss · static or trailing floor · consistency · minimum days and trades</dd></div>
+          <div><dt>custom plans</dt><dd>flat times · news · holding · instruments · opening hours</dd></div>
+          <div><dt>evaluations</dt><dd>one or two steps · simulated funded payouts and scaling · costs recorded separately</dd></div>
+          <div><dt>orders</dt><dd>trailing stop · stop-limit · OCO/OTO · brackets on partial remainders · conditions on another symbol, a study or the time</dd></div>
+          <div><dt>flatten</dt><dd>spreads close as one order · limit flatten overnight and in curb</dd></div>
+          <div><dt>accounts</dt><dd>cash · IRA · margin · fill models · itemized fees</dd></div>
         </dl>
-        <p class="measurement-note">Timings are medians on an Apple M2 Max on 2026-09-24: the IV solve from <code>openport_bench</code>, and the SPX pass over 23 passes on live data during the session. SVI fits run separately, on demand in the API.</p>
-        <p>Against Cboe’s published IVs on 2026-09-24 during the session, median differences were <strong>0.012 vol points for SPX, 0.030 for QQQ and 0.028 for SPY</strong>, across every expiry on out-of-the-money options within 10% of the forward.</p>
+        <p>On the default delayed feed, a pass is practice, not proof: a real-time chart shows where the market went next. Funded plans stay hidden in the terminal unless already funded or explicitly enabled; OpenPort funds no one.</p>
+        <a class="more" href="https://github.com/38st/openport/blob/main/docs/paper-trading.md">Rules, fills and simulation limits ↗</a>
+      </div>
+    </section>
+
+    <section class="seg col" aria-labelledby="analytics-title">
+      <p class="addr">00000400<b>Analytics</b></p>
+      <div class="body">
+        <h2 id="analytics-title">Analytics you can audit</h2>
+        <p>OpenPort computes its own implied volatility and Greeks, fits SVI surfaces, and shows gamma and vanna exposure. The forward and discount factor come from put-call parity; the provider’s IV stays alongside for comparison.</p>
+        <dl class="kv num">
+          <div><dt>iv solve</dt><dd>about 0.4 µs · 5.4 Newton iterations per option</dd></div>
+          <div><dt>spx pass</dt><dd>about 40 ms · 30,182 options, 63 expiries</dd></div>
+          <div><dt>Δ vs Cboe, SPX</dt><dd>0.012 vol points</dd></div>
+          <div><dt>Δ vs Cboe, QQQ</dt><dd>0.030 vol points</dd></div>
+          <div><dt>Δ vs Cboe, SPY</dt><dd>0.028 vol points</dd></div>
+        </dl>
+        <p>Medians on an Apple M2 Max on 2026-09-24: the IV solve from <code>openport_bench</code>, the SPX pass over 23 passes on live data. Differences are against Cboe’s published IVs during the session, on out-of-the-money options within 10% of the forward. SVI fits run separately, on demand in the API.</p>
         <p>Exposure assumes dealers are long calls and short puts: a modelling convention, not knowledge of anyone’s positions.</p>
-        <a href="https://github.com/38st/openport/blob/main/docs/methods.md">Methods, assumptions and measurements <span aria-hidden="true">↗</span></a>
+        <a class="more" href="https://github.com/38st/openport/blob/main/docs/methods.md">Methods, assumptions and measurements ↗</a>
       </div>
     </section>
 
-    <section class="feature" aria-labelledby="practice-title">
-      <div class="feature-heading">
-        <p class="eyebrow">Replay and review</p>
+    <section class="seg col" aria-labelledby="practice-title">
+      <p class="addr">00000500<b>Replay</b></p>
+      <div class="body">
         <h2 id="practice-title">Practise, replay and compare</h2>
-      </div>
-      <div class="feature-body">
-        <p>Replay recorded or simulated sessions across several days. Pause, step and verify saved runs, or rehearse quote stalls, gaps and halts in stress scenarios. Backtest several playbooks on one account, then compare their live paper forward tests with saved backtests.</p>
-        <p>Check held-book warnings, compare what-if adjustments and plot risk by date and volatility, with beta weighting and probability cones. Review whole trades across rolls and export their attempt and run identity. These are simulated results and model estimates, not predictions.</p>
-        <a href="https://github.com/38st/openport/blob/main/docs/features.md">Features and limits <span aria-hidden="true">↗</span></a>
+        <p>Replay recorded or simulated sessions across several days, then compare playbooks on one account.</p>
+        <dl class="kv">
+          <div><dt>replay</dt><dd>pause · step · verify saved runs</dd></div>
+          <div><dt>stress</dt><dd>quote stalls · gaps · halts</dd></div>
+          <div><dt>playbooks</dt><dd>backtests on one account · compared with live paper forward tests</dd></div>
+          <div><dt>risk</dt><dd>held-book warnings · what-if adjustments · risk by date and volatility · beta weighting · probability cones</dd></div>
+          <div><dt>review</dt><dd>whole trades across rolls · export attempt and run identity</dd></div>
+        </dl>
+        <p>These are simulated results and model estimates, not predictions.</p>
+        <a class="more" href="https://github.com/38st/openport/blob/main/docs/features.md">Features and limits ↗</a>
       </div>
     </section>
 
-    <section class="feature" aria-labelledby="ownership-title">
-      <div class="feature-heading">
-        <p class="eyebrow">On your machine</p>
+    <section class="seg col" aria-labelledby="ownership-title">
+      <p class="addr">00000600<b>Your machine</b></p>
+      <div class="body">
         <h2 id="ownership-title">Your data stays yours</h2>
-      </div>
-      <div class="feature-body">
-        <p>One C++20 binary runs the feed, analytics, simulator and web terminal. Self-host it with your own keys. Start with Cboe’s free delayed quotes, or connect Databento, Massive, ThetaData, or your Tradier or tastytrade account’s market data.</p>
-        <p>These adapters follow their documented APIs and are tested against sample responses, but have not yet been run live with a key or account. The broker adapters read market data only; they never send orders.</p>
-        <a href="https://github.com/38st/openport/blob/main/docs/providers.md">Write a provider adapter <span aria-hidden="true">↗</span></a>
+        <p>One C++20 binary runs the feed, analytics, simulator and web terminal. Self-host it with your own keys. Your data and trades stay on your machine unless you enable external notifications.</p>
+        <dl class="kv">
+          <div><dt>free</dt><dd>Cboe, 15-minute delayed</dd></div>
+          <div><dt>adapters</dt><dd>Databento · Massive · ThetaData · Tradier or tastytrade market data</dd></div>
+        </dl>
+        <p>The adapters follow their documented APIs and are tested against sample responses, but have not yet been run live with a key or account. The broker adapters read market data only; they never send orders.</p>
+        <a class="more" href="https://github.com/38st/openport/blob/main/docs/providers.md">Write a provider adapter ↗</a>
       </div>
     </section>
 
-    <section class="screenshots" aria-labelledby="screenshots-title">
-      <div class="section-heading">
-        <p class="eyebrow">Inside the terminal</p>
+    <section class="seg col" aria-labelledby="screenshots-title">
+      <p class="addr">00000700<b>Terminal</b></p>
+      <div class="body">
         <h2 id="screenshots-title">From the chain to the whole book</h2>
         <p>Recorded views of the terminal, not a live feed. All trading and P&amp;L are simulated.</p>
-      </div>
-      <div class="screenshot-grid">
-        <figure class="wide">
-          <a href="screenshots/trade-dark.png"><img src="screenshots/trade-dark.png" width="1440" height="900" loading="lazy" alt="Trade view in dark theme: SPX five-minute candles, option chain and simulated order ticket on Cboe’s delayed data."></a>
-          <figcaption><strong>Trade.</strong> The underlying’s chart, option chain and order ticket together. Cboe delayed data; simulated trading.</figcaption>
-        </figure>
-        <figure>
-          <a href="screenshots/volatility-light.png"><img src="screenshots/volatility-light.png" width="1440" height="900" loading="lazy" alt="Volatility view in light theme with SPX smiles, term structure and parity forwards."></a>
-          <figcaption><strong>Volatility.</strong> SPX smiles, term structure and forwards, in the light theme.</figcaption>
-        </figure>
-        <figure>
-          <a href="screenshots/exposure-dark.png"><img src="screenshots/exposure-dark.png" width="1440" height="900" loading="lazy" alt="Exposure view in dark theme with SPX gamma exposure by strike and expiry."></a>
-          <figcaption><strong>Exposure.</strong> Gamma by strike and expiry, using the open-interest convention described above.</figcaption>
-        </figure>
+        <div class="shots">
+          <figure class="wide">
+            <a href="screenshots/trade-dark.png"><img src="screenshots/trade-dark.png" width="1440" height="900" loading="lazy" alt="Trade view in dark theme: SPX five-minute candles, option chain and simulated order ticket on Cboe’s delayed data."></a>
+            <figcaption><b>Trade.</b> The underlying’s chart, option chain and order ticket together. Cboe delayed data; simulated trading.</figcaption>
+          </figure>
+          <figure>
+            <a href="screenshots/volatility-light.png"><img src="screenshots/volatility-light.png" width="1440" height="900" loading="lazy" alt="Volatility view in light theme with SPX smiles, term structure and parity forwards."></a>
+            <figcaption><b>Volatility.</b> SPX smiles, term structure and forwards, in the light theme.</figcaption>
+          </figure>
+          <figure>
+            <a href="screenshots/exposure-dark.png"><img src="screenshots/exposure-dark.png" width="1440" height="900" loading="lazy" alt="Exposure view in dark theme with SPX gamma exposure by strike and expiry."></a>
+            <figcaption><b>Exposure.</b> Gamma by strike and expiry, using the open-interest convention above.</figcaption>
+          </figure>
+        </div>
       </div>
     </section>
-
-    <div class="resources">
-      <nav aria-label="Project resources">
-        <a href="https://github.com/38st/openport">GitHub</a>
-        <a href="https://github.com/38st/openport/releases">Releases</a>
-        <a href="https://github.com/38st/openport/blob/main/docs/architecture.md">Architecture</a>
-        <a href="https://github.com/38st/openport/blob/main/docs/runtime.md">Runtime guide</a>
-        <a href="https://github.com/38st/openport/blob/main/docs/providers.md">Provider guide</a>
-        <a href="https://github.com/38st/openport/blob/main/SECURITY.md">Security policy</a>
-        <a href="https://github.com/38st/openport/blob/main/LICENSE">MIT licence</a>
-      </nav>
-    </div>
   </main>
 
-  <footer class="site-footer wrap"><span>OpenPort</span><p>Not investment advice. Simulated trading only.</p></footer>
+  <footer class="foot col">
+    <nav aria-label="Project resources">
+      <a href="https://github.com/38st/openport">GitHub</a>
+      <a href="https://github.com/38st/openport/releases">Releases</a>
+      <a href="https://github.com/38st/openport/blob/main/docs/architecture.md">Architecture</a>
+      <a href="https://github.com/38st/openport/blob/main/docs/runtime.md">Runtime guide</a>
+      <a href="https://github.com/38st/openport/blob/main/docs/providers.md">Provider guide</a>
+      <a href="https://github.com/38st/openport/blob/main/SECURITY.md">Security policy</a>
+      <a href="https://github.com/38st/openport/blob/main/LICENSE">MIT licence</a>
+    </nav>
+    <p>Not investment advice. Simulated trading only.</p>
+  </footer>
 </body>
 </html>
