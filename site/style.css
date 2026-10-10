@@ -76,11 +76,7 @@ code { font-family: var(--mono); font-size: 0.9em; overflow-wrap: anywhere; }
 
 /* Time and sales: the newest print on top, rows sliding down as orders hit. */
 .tape { line-height: 1.23; color: var(--tape); --up-bg: color-mix(in srgb, var(--up) 24%, transparent); --down-bg: color-mix(in srgb, var(--down) 24%, transparent); }
-.tape-stat { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 2ch; color: var(--dim); }
-.tape-stat b { color: var(--fg); font-weight: 500; }
-.tape-stat .up { color: var(--up); }
-.tape-stat .down { color: var(--down); }
-.tape-head { white-space: pre; color: var(--dim); margin-top: 0.5em; padding-bottom: 0.2em; border-bottom: 1px solid var(--line); }
+.tape-head { white-space: pre; color: var(--dim); padding-bottom: 0.2em; border-bottom: 1px solid var(--line); }
 .tape-win { height: calc(18 * 1.23em); overflow: hidden; padding-top: 0.2em; -webkit-mask-image: linear-gradient(#000 62%, transparent); mask-image: linear-gradient(#000 62%, transparent); }
 .tape .row { white-space: pre; }
 .tape .buy .d { color: var(--up); }

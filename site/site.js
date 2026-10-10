@@ -1,7 +1,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const root = document.documentElement;
-  const tape = $('tape'), tapeStat = $('tape-stat'), tapeHead = $('tape-head'), tapeRows = $('tape-rows'), note = $('tape-note');
+  const tape = $('tape'), tapeHead = $('tape-head'), tapeRows = $('tape-rows'), note = $('tape-note');
   const out = $('out'), form = $('prompt'), input = $('cmd'), hintTape = $('hint-tape'), copyStatus = $('copy-status');
   const themeLabel = $('theme-label'), hero = document.querySelector('.hero');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -24,21 +24,20 @@
   /* Tape: simulated prints at a fixed snapshot of real quotes (tape-data.js).
      Each contract starts from Cboe's delayed closing bid and ask and moves with
      its delta and gamma as spot drifts. A buy lifts the ask; a sell hits the bid. */
-  let pinned = false, hover = false, stats = () => {};
+  let pinned = false, hover = false;
   const paused = () => hover || pinned;
   const CH = window.CHAINS;
   if (CH) {
     const ROWS = 18;
     const SYMBOLS = [
-      { root: 'SPXW', name: 'SPX', weight: 0.45, beta: 1, lot: [1, 20], block: [50, 300] },
-      { root: 'SPY', name: 'SPY', weight: 0.35, beta: 1, lot: [1, 60], block: [150, 2000] },
-      { root: 'QQQ', name: 'QQQ', weight: 0.2, beta: 1.25, lot: [1, 50], block: [100, 1500] },
+      { root: 'SPXW', weight: 0.45, beta: 1, lot: [1, 20], block: [50, 300] },
+      { root: 'SPY', weight: 0.35, beta: 1, lot: [1, 60], block: [150, 2000] },
+      { root: 'QQQ', weight: 0.2, beta: 1.25, lot: [1, 50], block: [100, 1500] },
     ];
     const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     for (const s of SYMBOLS) {
       const c = CH[s.root];
       s.spot0 = c.spot;
-      s.prev = c.prev;
       s.x = 0;
       s.quotes = c.quotes.map(([exp, K, cp, bid, ask, iv, delta, gamma, vol]) => ({
         s, exp: exp.slice(4) + MONTHS[+exp.slice(2, 4) - 1], K, put: cp === 'P',
@@ -53,7 +52,7 @@
 
     // The clock runs through the last minutes of that session; options on all three trade until 16:15 ET.
     const OPEN = (15 * 3600 + 52 * 60) * 1000, END = (16 * 3600 + 14 * 60 + 59) * 1000;
-    let r = 0, sim = OPEN, last = performance.now(), prints = 18442, queue = [];
+    let r = 0, sim = OPEN, last = performance.now(), queue = [];
     const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
     const pad = (s, n) => String(s).padStart(n);
     const spot = s => s.spot0 * (1 + r * s.beta + s.x);
@@ -136,20 +135,12 @@
       ['d', '  SIDE'], ['v', '  ' + pad('IV', 6)], ['m', '  ' + pad('PREM', 7)], ['c', '  COND'],
     ], 'row').childNodes);
 
-    stats = () => {
-      const ticker = s => {
-        const p = spot(s), c = (p / s.prev - 1) * 100;
-        return `<span><b>${s.name} ${p.toFixed(2)}</b> <span class="${c >= 0 ? 'up' : 'down'}">${c >= 0 ? '+' : ''}${c.toFixed(2)}%</span></span>`;
-      };
-      tapeStat.innerHTML = SYMBOLS.map(ticker).join('') + (paused() ? '<span>PAUSED</span>' : `<span>PRINTS <b>${prints.toLocaleString('en-US')}</b></span>`);
-    };
     let trimTimer = 0;
     function push(group, fresh) {
       const t = Math.floor(sim);
       for (const p of group) {
         p.t = t;
         tapeRows.prepend(rowFor(p, fresh));
-        prints += 1;
       }
       if (fresh && !reduce) {
         const h = tapeRows.firstElementChild.getBoundingClientRect().height;
@@ -162,7 +153,6 @@
       while (tapeRows.children.length > ROWS + 8) tapeRows.lastElementChild.remove();
       clearTimeout(trimTimer);
       trimTimer = setTimeout(() => { while (tapeRows.children.length > ROWS) tapeRows.lastElementChild.remove(); }, 220);
-      stats();
     }
     function loop() {
       const now = performance.now();
@@ -181,8 +171,8 @@
       for (const g of order()) { sim += 40 + Math.random() * 600; push(g, false); }
     }
     tape.hidden = note.hidden = false;
-    tape.addEventListener('mouseenter', () => { hover = true; stats(); });
-    tape.addEventListener('mouseleave', () => { hover = false; stats(); });
+    tape.addEventListener('mouseenter', () => { hover = true; });
+    tape.addEventListener('mouseleave', () => { hover = false; });
     if (!reduce) loop();
   }
 
@@ -218,12 +208,10 @@
       tape.hidden = note.hidden = false;
       hintTape.hidden = true;
       pinned = false;
-      stats();
       res.textContent = 'Simulated prints at Cboe’s delayed closing quotes for SPXW, SPY and QQQ. Sides and sizes are random.';
     },
     pause(res) {
       pinned = !pinned;
-      stats();
       res.textContent = pinned ? 'Tape paused. Run pause again to resume.' : 'Tape resumed.';
     },
     bench(res) {

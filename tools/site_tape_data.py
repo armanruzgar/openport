@@ -45,7 +45,6 @@ def snapshot(doc: dict, root: str, band: float, expiries: list[str] | None) -> d
         raise SystemExit(f'{root}: no usable quotes for expiries {chosen}')
     return {
         'spot': close,
-        'prev': round(data['current_price'] - data['price_change'], 2),
         'asof': doc['timestamp'],
         'last': data['last_trade_time'],
         'quotes': quotes,
