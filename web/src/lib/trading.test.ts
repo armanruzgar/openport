@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { quote } from "../test/trading-fixtures"
 import { formatMoney, limitPriceText, limitPriceTick, multiplyMoney, scenarioColour, scenarioScale, sideFromCell, stepLimitPrice, ticketEstimate, validMoney } from "./trading"
-import { adoptLinkedToken, createTokenStore } from "./write-token"
+import { adoptLinkedToken, createTokenStore, watchLinkedToken } from "./write-token"
 
 describe("decimal money", () => {
   it("formats null, zero, signed cents and large values exactly", () => {
@@ -109,6 +109,26 @@ describe("write-token storage", () => {
     expect(adoptLinkedToken({ hash: "#/SPX/chain", pathname: "/", search: "" }, history, store)).toBe(false)
     expect(adoptLinkedToken({ hash: "#token=%E0%A4%A", pathname: "/", search: "?x=1" }, history, store)).toBe(false)
     expect(replaced).toEqual(["/", "/?x=1"])
+    expect(store.get()).toBe("0a1b2c")
+  })
+
+  it("adopts a token link opened in a tab that already shows the terminal", () => {
+    const values = new Map<string, string>()
+    const store = createTokenStore(() => ({ getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) }, removeItem: (key: string) => { values.delete(key) } }))
+    const location = { hash: "#/SPX/replay", pathname: "/", search: "" }
+    const history = { replaceState: (_: unknown, __: string, url?: string | URL | null) => { location.hash = new URL(String(url), "http://x").hash } }
+    const listeners: Array<() => void> = []
+    const target = { location, history, addEventListener: (type: string, listener: () => void) => { if (type === "hashchange") listeners.push(listener) } }
+    watchLinkedToken(target as unknown as Window, store)
+    expect(store.get()).toBe("")
+    // Pasting the printed link changes only the hash: no reload, just a hashchange.
+    location.hash = "#token=0a1b2c"
+    listeners.forEach((listener) => listener())
+    expect(store.get()).toBe("0a1b2c")
+    expect(location.hash).toBe("")
+    // Ordinary navigation leaves the token alone.
+    location.hash = "#/SPX/chain"
+    listeners.forEach((listener) => listener())
     expect(store.get()).toBe("0a1b2c")
   })
 

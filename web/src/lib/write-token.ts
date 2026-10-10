@@ -56,6 +56,14 @@ export function adoptLinkedToken(location: Pick<Location, "hash" | "pathname" | 
   store.set(token)
   return true
 }
+/** Adopts a linked token now and on every later hash change: opening the link in a tab
+ * already showing the terminal changes only the hash, without a reload. Register this
+ * before the router subscribes, so the router sees the cleared address, not the token. */
+export function watchLinkedToken(target: Pick<Window, "location" | "history" | "addEventListener">,
+                                 store: TokenStore = writeToken) {
+  adoptLinkedToken(target.location, target.history, store)
+  target.addEventListener("hashchange", () => { adoptLinkedToken(target.location, target.history, store) })
+}
 export function useWriteToken() {
   return useSyncExternalStore(writeToken.subscribe, writeToken.get, () => "")
 }

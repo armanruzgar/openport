@@ -16,9 +16,9 @@ docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/open
 With Homebrew on an Apple Silicon Mac, follow the [quick start](../README.md#quick-start)
 and find the link in `$(brew --prefix)/var/log/openport.log`.
 
-Open the `http://localhost:8080/#token=…` link it prints **in a new browser tab**. The
-link saves the write token for that tab. Without it the terminal is watch-only and
-shows **Enter write token**.
+Open the `http://localhost:8080/#token=…` link it prints. The link saves the write
+token for that browser tab. Without it the terminal is watch-only and shows
+**Enter write token**.
 
 On a first visit, **Welcome to openport** opens. Choose **Practice library**, or close
 it and pick **Replay** under System in the sidebar.
