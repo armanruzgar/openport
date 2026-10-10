@@ -118,6 +118,9 @@ cmake --build build -j
 ./build/apps/openportd --symbols SPX,SPY,QQQ,IWM,DIA --web-root web/dist
 ```
 
+New to it? [Your first ten minutes](docs/first-ten-minutes.md) starts a simulated day,
+passes an evaluation with one trade and reads it in the journal.
+
 [Installation](docs/install.md) covers your own provider, Compose, release archives,
 recording and hosting a public demo.
 
@@ -141,6 +144,7 @@ saying how it went is welcome. The broker adapters read market data only.
 
 ## Documentation
 
+- [Your first ten minutes](docs/first-ten-minutes.md): a simulated day, one evaluation, one trade
 - [Features](docs/features.md): everything the terminal and simulator do
 - [Installation](docs/install.md): Homebrew, Docker, Compose, source and public demos
 - [Configuration](docs/configuration.md): providers, flags, update checks and security
