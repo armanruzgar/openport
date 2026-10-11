@@ -166,7 +166,7 @@ figcaption b { font-weight: 500; }
   a.key kbd { display: none; }
   a.key span { padding: 6px 8px; }
   .col { width: 43ch; }
-  .tape .ms, .tape .d, .tape .v, .tape .m, .tape .c { display: none; }
+  .tape .ms, .tape .d, .tape .v, .tape .m { display: none; }
   .tape .buy .p { color: var(--up); }
   .tape .sell .p { color: var(--down); }
   .title { flex-direction: column; font-size: 38px; }

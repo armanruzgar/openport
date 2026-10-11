@@ -74,7 +74,7 @@
       const u = Math.random(), v = Math.random(), [a, b] = s.lot, [c, d] = s.block;
       return u < 0.6 ? a + (v * (b - a) * 0.3 | 0) : u < 0.95 ? a + (v * (b - a) | 0) : c + (v * (d - c) | 0);
     }
-    const print = (q, side, qty, price, cond) => ({ q, side, qty, price, cond });
+    const print = (q, side, qty, price) => ({ q, side, qty, price });
     // One order is a list of groups; a group prints at one timestamp.
     function order() {
       r += gauss() * 0.00003 - r * 0.02;
@@ -86,20 +86,20 @@
         const far = s.quotes.find(o => o.exp === q.exp && o.put === q.put && o.K === q.K + (q.put ? -width : width));
         if (far) {
           const n = 1 + (Math.random() * 30 | 0);
-          return [[print(q, 'BUY', n, qt.ask, 'MLET'), print(far, 'SELL', n, quote(far).bid, 'MLET')]];
+          return [[print(q, 'BUY', n, qt.ask), print(far, 'SELL', n, quote(far).bid)]];
         }
       }
       if (s.root !== 'SPXW' && u < 0.08) {
         const venues = 2 + (Math.random() * 3 | 0), group = [];
-        for (let i = 0; i < venues; i++) group.push(print(q, side, 20 + (Math.random() * 180 | 0), px, 'ISOI'));
+        for (let i = 0; i < venues; i++) group.push(print(q, side, 20 + (Math.random() * 180 | 0), px));
         return [group];
       }
       if (u < 0.18) {
         const levels = 2 + (Math.random() * 2 | 0), steps = [];
-        for (let i = 0; i < levels; i++) steps.push([print(q, side, size(s), Math.max(qt.t, px + (buy ? i : -i) * qt.t), 'AUTO')]);
+        for (let i = 0; i < levels; i++) steps.push([print(q, side, size(s), Math.max(qt.t, px + (buy ? i : -i) * qt.t))]);
         return steps;
       }
-      return [[print(q, side, size(s), px, 'AUTO')]];
+      return [[print(q, side, size(s), px)]];
     }
 
     const two = n => String(n).padStart(2, '0');
@@ -125,14 +125,13 @@
         ['s', '  ' + pad(p.qty, 6)],
         ['p', ' @ ' + pad(p.price.toFixed(2), 6)],
         ['d', '  ' + p.side.padEnd(4)],
-        ['v', '  ' + pad((q.iv * 100).toFixed(1) + '%', 6)],
-        ['m', '  ' + pad(money(prem), 7)],
-        ['c', '  ' + p.cond],
+        ['v', '  ' + pad((q.iv * 100).toFixed(1) + '%', 9)],
+        ['m', '  ' + pad(money(prem), 10)],
       ], cls);
     }
     tapeHead.append(...line([
       ['t', 'TIME    '], ['ms', '    '], ['k', '  CONTRACT'.padEnd(18)], ['s', '  ' + pad('SIZE', 6)], ['p', '   ' + pad('PRICE', 6)],
-      ['d', '  SIDE'], ['v', '  ' + pad('IV', 6)], ['m', '  ' + pad('PREM', 7)], ['c', '  COND'],
+      ['d', '  SIDE'], ['v', '  ' + pad('IV', 9)], ['m', '  ' + pad('PREM', 10)],
     ], 'row').childNodes);
 
     let trimTimer = 0;
