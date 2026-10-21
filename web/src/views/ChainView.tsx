@@ -89,6 +89,8 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
   useEffect(() => { setTicket(null); setUntradable(null); setTemplatesOpen(false); setSharesOpen(false); setStockStrategy(null) }, [symbol, selected, live.accountScope])
   // A strategy keeps its legs across expiries, for calendars and diagonals.
   useEffect(() => { setLegs([]); setTemplate(undefined); setReviewing(false) }, [symbol, live.accountScope])
+  // The saved mode can also change from another tab or a restored workspace, so clear here, not in the toggle.
+  useEffect(() => { setTicket(null); setLegs([]); setTemplate(undefined); setTemplatesOpen(false); setReviewing(false) }, [mode])
 
   const chain = useQuery({
     queryKey: ["chain", symbol, selected, window, version],
@@ -179,7 +181,7 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
 
       <PriceChart key={symbol} symbol={symbol} spot={data?.spot ?? summaryData.spot} expiry={e ?? null} />
 
-      <div onKeyDown={(event) => { if (event.key === "Escape" && shortcutAllowed(event.nativeEvent)) { setTicket(null); setReviewing(false); editLegs([]) } }} className={docked && (ticket || strategyOpen) ? "grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_24rem]" : ""}>
+      <div onKeyDown={(event) => { if (event.key === "Escape" && shortcutAllowed(event.nativeEvent)) { setTicket(null); setReviewing(false) } }} className={docked && (ticket || strategyOpen) ? "grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_24rem]" : ""}>
       <Panel
         title={<>{e ? `${symbol} ${e.expiry} ${e.settlement}` : symbol}{(live.status?.provider.simulated || (live.source === "replay" && live.replay?.demo)) && <span className="text-warn"> · simulated prices and volume</span>}</>}
         actions={
@@ -187,7 +189,7 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
             <CoverageBadge coverage={coverage} />
             <button type="button" className="trade-button" aria-pressed={prefs.stacked} onClick={() => updatePrefs({ stacked: !prefs.stacked })}>Stack expiries</button>
             {live.trading && deliversShares(symbol) && <button type="button" className="trade-button" onClick={() => setSharesOpen(true)}>Trade shares</button>}
-            {live.trading && <Segmented label="Ticket mode" value={mode} onChange={(next) => { updatePrefs({ mode: next }); setTicket(null); editLegs([]); setTemplatesOpen(false); setReviewing(false) }}
+            {live.trading && <Segmented label="Ticket mode" value={mode} onChange={(next) => updatePrefs({ mode: next })}
               options={[{ value: "single", label: "Single" }, { value: "strategy", label: "Strategy" }]} />}
             {live.trading && mode === "strategy" && <button type="button" className="trade-button" disabled={!data} onClick={() => setTemplatesOpen(true)}>Templates</button>}
             <Segmented label="Strike window" value={window} options={windows} onChange={setWindow} />
