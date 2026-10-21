@@ -21,9 +21,9 @@ namespace {
 
 using simdjson::ondemand::value;
 
-double as_double(value v) {
+double as_double(value v, double fallback = 0.0) {
   double out = 0.0;
-  if (v.get_double().get(out) != simdjson::SUCCESS || !std::isfinite(out)) return 0.0;
+  if (v.get_double().get(out) != simdjson::SUCCESS || !std::isfinite(out)) return fallback;
   return out;
 }
 
@@ -101,7 +101,13 @@ std::vector<ThetaRow> parse_theta_rows(std::string_view ndjson) {
       } else if (key == "open_interest") {
         row.open_interest = as_double(v);
       } else if (key == "implied_vol") {
-        row.implied_vol = as_double(v);
+        row.implied_vol = as_double(v, std::numeric_limits<double>::quiet_NaN());
+      } else if (key == "delta") {
+        row.delta = as_double(v, std::numeric_limits<double>::quiet_NaN());
+      } else if (key == "vega") {
+        row.vega = as_double(v, std::numeric_limits<double>::quiet_NaN()) / 100.0;
+      } else if (key == "rho") {
+        row.rho = as_double(v, std::numeric_limits<double>::quiet_NaN()) / 100.0;
       } else if (key == "underlying_price") {
         row.underlying_price = as_double(v);
       } else if (key == "underlying_timestamp") {
@@ -159,14 +165,17 @@ std::string ThetaDataProvider::poll(net::HttpClient& http, const std::string& un
                        std::vector<ThetaRow>& rows) {
     try {
       for (ThetaRow& row : fetch(http, endpoint, root)) rows.push_back(std::move(row));
+      return true;
     } catch (const std::exception& error) {
       check_cancelled();
       degraded += "; degraded " + root + " " + std::string(endpoint) + ": " + error.what();
+      return false;
     }
   };
   for (const std::string& root : md::option_roots(underlying)) {
     for (ThetaRow& row : fetch(http, "quote", root)) quotes.push_back(std::move(row));
-    auxiliary("greeks/implied_volatility", root, implied_vols);
+    if (!auxiliary("greeks/first_order", root, implied_vols))
+      auxiliary("greeks/implied_volatility", root, implied_vols);
     if (refresh_open_interest) {
       auxiliary("open_interest", root, open_interest);
     }
@@ -245,17 +254,17 @@ void ThetaDataProvider::publish_chain(const std::string& underlying,
   for (const ThetaRow& row : implied_vols) {
     const auto it = ids.find(key_of(row));
     if (it == ids.end()) continue;
-    // Only the implied volatility is published: ThetaData does not document the
-    // units of its Greeks, so they are left out rather than guessed.
-    publisher_.greeks(md::VendorGreeks{it->second, row.ts, row.implied_vol, kUnpublished,
-                                       kUnpublished, kUnpublished, kUnpublished, kUnpublished},
+    // ThetaData documents vega/rho / 100. Its theta time basis is unspecified;
+    // first_order does not supply gamma. Preserve those fields as unknown.
+    publisher_.greeks(md::VendorGreeks{it->second, row.ts, row.implied_vol, row.delta,
+                                       kUnpublished, row.vega, kUnpublished, row.rho},
                       sink);
   }
   for (const ThetaRow& row : open_interest) {
     const auto it = ids.find(key_of(row));
     if (it != ids.end()) publisher_.open_interest(it->second, row.ts, row.open_interest, sink);
   }
-  publisher_.finish(underlying, seen, snapshot_time > 0 ? snapshot_time : md::now(), sink);
+  publisher_.finish(underlying, seen, snapshot_time, sink);
 }
 
 }  // namespace openport::providers

@@ -79,12 +79,18 @@ std::vector<TradierOption> parse_tradier_chain(std::string_view json) {
     if ((option.bid > 0 && bid_ts == 0) || (option.ask > 0 && ask_ts == 0))
       throw std::runtime_error("Tradier: quote timestamp missing or units unconfirmed");
     option.open_interest = number(field(item, "open_interest"), -1);
+    option.volume = number(field(item, "volume"), -1);
+    option.volume_ts = milliseconds(field(item, "trade_date"));
+    if (option.volume != std::floor(option.volume)) option.volume = -1;
     const auto& greeks = field(item, "greeks");
     if (greeks.is_object()) {
-      // Delta and gamma are price derivatives. IV/vega/theta/rho scaling and the
-      // zone of updated_at are unconfirmed; do not infer them from example values.
-      option.greeks = md::VendorGreeks{0, 0, missing, number(field(greeks, "delta")),
-                                      number(field(greeks, "gamma")), missing, missing, missing};
+      // ORATS: decimal IV, vega/rho per percentage point, theta per day.
+      // An unzoned updated_at still has no known market timestamp.
+      const double iv = number(field(greeks, "mid_iv"));
+      option.greeks = md::VendorGreeks{0, 0, iv > 0 ? iv : missing,
+                                      number(field(greeks, "delta")), number(field(greeks, "gamma")),
+                                      number(field(greeks, "vega")), number(field(greeks, "theta")),
+                                      number(field(greeks, "rho"))};
     }
     result.push_back(std::move(option));
   }
@@ -258,6 +264,7 @@ std::string TradierProvider::poll(net::HttpClient& http, const std::string& unde
     // publishes. option_size_unit overrides the default of contracts.
     publisher_.quote(id, option.ts, option.bid, option.ask, option.bid_size * options_.size_multiplier,
                      option.ask_size * options_.size_multiplier, sink);
+    publisher_.volume(id, option.volume_ts, option.volume, sink);
     if (option.open_interest >= 0) publisher_.open_interest(id, 0, option.open_interest, sink);
     if (option.greeks) {
       auto greeks = *option.greeks;

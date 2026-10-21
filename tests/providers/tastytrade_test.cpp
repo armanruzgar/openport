@@ -154,30 +154,30 @@ TEST(Tastytrade, FiltersWaitForActualSpotAndRetainPreviouslyDefinedOptions) {
   providers::TastytradeMapper mapper({{"SPX"}, 1, .01}, sink);
   mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
   EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
-  EXPECT_EQ(mapper.subscriptions().size(), 3u);
+  EXPECT_EQ(mapper.subscriptions().size(), 2u);
   auto spot = quote("$SPX");
   spot["bidPrice"] = 7399;
   spot["askPrice"] = 7401;
   mapper.event(spot);
   EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 4u);
-  EXPECT_EQ(mapper.subscriptions().size(), 19u);
+  EXPECT_EQ(mapper.subscriptions().size(), 18u);
   sink.events.clear();
   spot["bidPrice"] = 8999;
   spot["askPrice"] = 9001;
   mapper.event(spot);
   EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 1u);
-  EXPECT_EQ(mapper.subscriptions().size(), 23u);
+  EXPECT_EQ(mapper.subscriptions().size(), 22u);
   mapper.event(quote(".SPX261016C7400"));
   EXPECT_EQ(sink.all<md::OptionQuote>().size(), 1u);
 }
 
-TEST(Tastytrade, UnknownClockAndGreekUnitsStayUnknownWithoutSnapshotComplete) {
+TEST(Tastytrade, MapsDocumentedGreeksWithoutInventingClocksOrSnapshots) {
   test::BrokerSink sink;
   providers::TastytradeMapper mapper({{"SPX"}}, sink);
   mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
   mapper.event(quote(".SPXW261016C7400"));
   mapper.event({{"eventType", "Greeks"}, {"eventSymbol", ".SPXW261016C7400"}, {"delta", .5}, {"gamma", .01},
-                {"volatility", .2}, {"theta", -1}, {"vega", 2}, {"time", 1790263800000LL}});
+                {"volatility", .2}, {"theta", -1}, {"vega", 2}, {"rho", .1}, {"time", 1790263800000LL}});
   mapper.event({{"eventType", "Summary"}, {"eventSymbol", ".SPXW261016C7400"}, {"openInterest", 42}});
   mapper.event({{"eventType", "Summary"}, {"eventSymbol", ".SPXW261016C7400"}, {"openInterest", "NaN"}});
   EXPECT_EQ(sink.all<md::OptionQuote>()[0].ts, 0);
@@ -186,10 +186,11 @@ TEST(Tastytrade, UnknownClockAndGreekUnitsStayUnknownWithoutSnapshotComplete) {
   EXPECT_EQ(sink.all<md::OpenInterest>()[0].contracts, 42);
   const auto greeks = sink.all<md::VendorGreeks>()[0];
   EXPECT_DOUBLE_EQ(greeks.delta, .5);
-  EXPECT_TRUE(std::isnan(greeks.iv));
-  EXPECT_TRUE(std::isnan(greeks.theta));
-  EXPECT_TRUE(std::isnan(greeks.vega));
-  EXPECT_TRUE(std::isnan(greeks.rho));
+  EXPECT_DOUBLE_EQ(greeks.iv, .2);
+  EXPECT_DOUBLE_EQ(greeks.theta, -1);
+  EXPECT_DOUBLE_EQ(greeks.vega, 2);
+  EXPECT_DOUBLE_EQ(greeks.rho, .1);
+  EXPECT_EQ(greeks.ts, 0);
   EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
 }
 
@@ -210,7 +211,7 @@ TEST(Tastytrade, CompleteChainRefreshUnsubscribesRemovedAndExpiredOptions) {
   EXPECT_EQ(sink.all<md::OptionQuote>()[0].ts, 0);
   sink.events.clear();
   mapper.chain("SPX", "SPX", chain, {2026, 10, 17});
-  EXPECT_EQ(mapper.subscriptions().size(), 7u);  // only the later expiry and underlying
+  EXPECT_EQ(mapper.subscriptions().size(), 6u);  // only the later expiry and underlying
   EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
 }
 
@@ -250,6 +251,54 @@ TEST(Tastytrade, TradeSnapshotsOnlySupplyUnderlyingLastWithItsOwnClock) {
   EXPECT_EQ(sink.all<md::UnderlyingQuote>()[0].ts, kNow - 100 * md::kNanosPerSecond);
   EXPECT_EQ(sink.all<md::UnderlyingQuote>()[0].last, 7400);
   EXPECT_TRUE(sink.all<md::OptionTrade>().empty());
+}
+
+TEST(Tastytrade, MissingGreeksAndUnconfirmedSummaryClocksStayUnknown) {
+  test::BrokerSink sink;
+  providers::TastytradeMapper mapper({{"SPX"}}, sink);
+  mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  mapper.event({{"eventType", "Greeks"}, {"eventSymbol", ".SPX261016C7400"}, {"volatility", 0},
+                {"vega", "NaN"}, {"theta", nullptr}, {"rho", "Infinity"}});
+  const auto greek = sink.all<md::VendorGreeks>()[0];
+  for (const double value : {greek.iv, greek.vega, greek.theta, greek.rho}) EXPECT_TRUE(std::isnan(value));
+  mapper.event({{"eventType", "Summary"}, {"eventSymbol", ".SPX261016C7400"}, {"openInterest", 42},
+                {"eventTime", 1790263800000LL}, {"dayVolume", 321}});
+  EXPECT_EQ(sink.all<md::OpenInterest>()[0].ts, 0);
+  EXPECT_TRUE(sink.all<md::OptionVolume>().empty());
+}
+
+TEST(Tastytrade, MapsSummaryClockAndSessionVolumeWithoutInventingTrades) {
+  test::BrokerSink sink;
+  providers::TastytradeMapper mapper({{"SPX"}}, sink, true);
+  mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  EXPECT_FALSE(mapper.subscriptions().contains({"Profile", "$SPX"}));
+  mapper.event({{"eventType", "Summary"}, {"eventSymbol", ".SPX261016C7400"},
+                {"openInterest", 42}, {"eventTime", 1790263800000LL}});
+  ASSERT_EQ(sink.all<md::OpenInterest>().size(), 1u);
+  EXPECT_EQ(sink.all<md::OpenInterest>()[0].ts, kNow);
+  for (const auto* type : {"Trade", "Summary"}) {
+    for (const Json& volume : {Json(0), Json(321), Json(-1), Json(1.5), Json(), Json("NaN")}) {
+      sink.events.clear();
+      Json event{{"eventType", type}, {"eventSymbol", ".SPX261016C7400"}, {"dayVolume", volume},
+                 {"time", 1790263800000LL}, {"eventTime", 1790263800000LL}};
+      mapper.event(event);
+      const auto values = sink.all<md::OptionVolume>();
+      if (volume == 0 || volume == 321) {
+        ASSERT_EQ(values.size(), 1u);
+        EXPECT_EQ(values[0].contracts, volume.get<double>());
+        EXPECT_EQ(values[0].ts, kNow);
+      } else EXPECT_TRUE(values.empty());
+      EXPECT_TRUE(sink.all<md::OptionTrade>().empty());
+    }
+  }
+  sink.events.clear();
+  mapper.event({{"eventType", "Trade"}, {"eventSymbol", ".SPX261016C7400"}, {"dayVolume", 600}});
+  mapper.event({{"eventType", "Trade"}, {"eventSymbol", ".SPX261016C7400"}, {"dayVolume", 600},
+                {"time", 1790263800000LL}, {"dayId", 1}});
+  EXPECT_TRUE(sink.all<md::OptionVolume>().empty());
+  mapper.event({{"eventType", "Trade"}, {"eventSymbol", ".SPX261016C7400"}, {"dayVolume", 321},
+                {"time", 1790350200000LL}});
+  ASSERT_EQ(sink.all<md::OptionVolume>().size(), 1u);  // same count, new trading day
 }
 
 TEST(Tastytrade, SandboxRefusalAndCredentialValidationDoNotStartNetwork) {

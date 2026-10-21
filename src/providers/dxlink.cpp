@@ -11,9 +11,8 @@ using broker::Json;
 Json DxlinkProtocol::event_fields() {
   return {{"Quote", {"eventType", "eventSymbol", "bidPrice", "askPrice", "bidSize", "askSize", "bidTime", "askTime"}},
           {"Greeks", {"eventType", "eventSymbol", "volatility", "delta", "gamma", "theta", "rho", "vega", "time"}},
-          {"Summary", {"eventType", "eventSymbol", "openInterest"}},
-          {"Trade", {"eventType", "eventSymbol", "price", "dayVolume", "size", "time"}},
-          {"Profile", {"eventType", "eventSymbol", "tradingStatus", "description"}}};
+          {"Summary", {"eventType", "eventSymbol", "openInterest", "eventTime"}},
+          {"Trade", {"eventType", "eventSymbol", "price", "dayVolume", "size", "time", "dayId"}}};
 }
 
 std::chrono::seconds DxlinkProtocol::backoff(unsigned attempt) {

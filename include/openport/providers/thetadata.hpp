@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -26,8 +27,11 @@ struct ThetaRow {
   double ask_size = 0.0;
   std::optional<double> volume;  ///< only when the response supplies day volume
   double open_interest = 0.0;     // open_interest
-  double implied_vol = 0.0;       // greeks_implied_volatility
-  double underlying_price = 0.0;  // greeks_implied_volatility
+  double delta = std::numeric_limits<double>::quiet_NaN();
+  double vega = std::numeric_limits<double>::quiet_NaN();  // normalised per vol point
+  double rho = std::numeric_limits<double>::quiet_NaN();  // normalised per rate percentage point
+  double implied_vol = std::numeric_limits<double>::quiet_NaN();
+  double underlying_price = 0.0;  // greeks/first_order or greeks/implied_volatility
   md::Timestamp underlying_ts = 0;  ///< spot's clock, independent of the option quote
 };
 
@@ -38,7 +42,7 @@ struct ThetaRow {
 
 /// ThetaData, through the Theta Terminal running on your machine. The terminal holds
 /// your ThetaData credentials (THETADATA_API_KEY), so OpenPort itself needs no key;
-/// it polls the terminal's local REST API for NBBO quotes, implied volatility and
+/// it polls the terminal's local REST API for NBBO quotes, vendor Greeks and
 /// open interest.
 class ThetaDataProvider final : public PollingProvider {
  public:

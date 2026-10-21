@@ -19,7 +19,7 @@ constexpr md::Timestamp kNow = 1790263800000LL * 1'000'000;
 constexpr std::string_view kChain = R"({"options":{"option":{
   "symbol":"SPXW261005P07405000","underlying":"SPX","bid":4.4,"ask":4.6,
   "bid_date":1790263800000,"ask_date":1790263801000,"bidsize":239,"asksize":611,
-  "open_interest":10,"contract_size":100,"greeks":{"delta":-0.2,"gamma":0.001,
+  "open_interest":10,"volume":321,"trade_date":1790263800000,"contract_size":100,"greeks":{"delta":-0.2,"gamma":0.001,
   "mid_iv":0.3577,"theta":-0.33,"vega":1.2,"rho":0.1,"updated_at":"2026-09-24 13:59:03"}
 }}})";
 
@@ -66,9 +66,10 @@ TEST(Tradier, MapsCanonicalOsiMarketClockAndOnlyKnownGreekUnits) {
   EXPECT_DOUBLE_EQ(option.open_interest, 10);
   ASSERT_TRUE(option.greeks);
   EXPECT_DOUBLE_EQ(option.greeks->delta, -0.2);
-  EXPECT_TRUE(std::isnan(option.greeks->iv));
-  EXPECT_TRUE(std::isnan(option.greeks->vega));
-  EXPECT_TRUE(std::isnan(option.greeks->theta));
+  EXPECT_DOUBLE_EQ(option.greeks->iv, .3577);
+  EXPECT_DOUBLE_EQ(option.greeks->vega, 1.2);
+  EXPECT_DOUBLE_EQ(option.greeks->theta, -.33);
+  EXPECT_DOUBLE_EQ(option.greeks->rho, .1);
   EXPECT_EQ(option.greeks->ts, 0);
 }
 
@@ -96,6 +97,42 @@ TEST(Tradier, UnderlyingLastKeepsItsOwnOlderTimestamp) {
   EXPECT_EQ(quote.last, 7405);
   EXPECT_EQ(quote.bid, 0);
   EXPECT_EQ(providers::parse_tradier_quote(R"({"quotes":null})", "SPX").ts, 0);
+}
+
+TEST(Tradier, VolumeNeedsAValidCountAndItsOwnTradeClock) {
+  for (const Json& volume : {Json(0), Json(12), Json(-1), Json(1.5), Json(), Json("NaN")}) {
+    for (const Json& time : {Json(1790263800000LL), Json(), Json(1790263800)}) {
+      providers::TradierProvider provider({.access_token = "test", .clock = [] { return kNow; }});
+      test::HttpStub http;
+      http.respond = [&](auto url) {
+        auto reply = fixture(url);
+        if (url.find("/chains?symbol=SPXW") != std::string_view::npos) {
+          auto doc = Json::parse(reply.body);
+          doc["options"]["option"]["volume"] = volume;
+          doc["options"]["option"]["trade_date"] = time;
+          reply.body = doc.dump();
+        }
+        return reply;
+      };
+      test::BrokerSink sink;
+      provider.poll_once(http, "SPX", {{"SPX"}, 1}, sink);
+      const auto values = sink.all<md::OptionVolume>();
+      if ((volume == 0 || volume == 12) && time == 1790263800000LL) {
+        ASSERT_EQ(values.size(), 1u);
+        EXPECT_EQ(values[0].contracts, volume.get<double>());
+        EXPECT_EQ(values[0].ts, kNow);
+      } else EXPECT_TRUE(values.empty());
+      EXPECT_TRUE(sink.all<md::OptionTrade>().empty());
+    }
+  }
+}
+
+TEST(Tradier, MissingGreekFieldsStayNan) {
+  auto doc = Json::parse(kChain);
+  doc["options"]["option"]["greeks"] = {{"delta", .5}, {"mid_iv", 0}, {"vega", "NaN"}};
+  const auto greek = *providers::parse_tradier_chain(doc.dump())[0].greeks;
+  EXPECT_EQ(greek.delta, .5);
+  for (double value : {greek.iv, greek.vega, greek.theta, greek.rho}) EXPECT_TRUE(std::isnan(value));
 }
 
 TEST(TradierBudget, BudgetsWholeCyclesAndRollingRequests) {
@@ -173,6 +210,9 @@ TEST(Tradier, FullPollUsesOnlyMarketPathsAndPublishesDefinitionBeforeData) {
   EXPECT_EQ(sink.all<md::SnapshotComplete>()[0].ts, kNow + md::kNanosPerSecond);
   EXPECT_EQ(sink.all<md::ProviderStatus>()[0].state, md::FeedState::Stale);
   EXPECT_NE(sink.all<md::ProviderStatus>()[0].message.find("unconfirmed"), std::string::npos);
+  ASSERT_EQ(sink.all<md::OptionVolume>().size(), 1u);
+  EXPECT_EQ(sink.all<md::OptionVolume>()[0].contracts, 321);
+  EXPECT_EQ(sink.all<md::OptionVolume>()[0].ts, kNow);
   EXPECT_EQ(provider.capabilities().poll_interval, 2s);
   sink.events.clear();
   provider.poll_once(http, "SPX", {{"SPX"}, 1, .1}, sink);
