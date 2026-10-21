@@ -1,0 +1,23 @@
+{
+  "status": "OK",
+  "results": [
+    {
+      "ticker": "O:SPY260925C00600000",
+      "underlying_ticker": "SPY",
+      "expiration_date": "2026-09-25",
+      "strike_price": 600,
+      "shares_per_contract": 100,
+      "exercise_style": "american",
+      "contract_type": "call"
+    },
+    {
+      "ticker": "O:SPY260925P00600000",
+      "underlying_ticker": "SPY",
+      "expiration_date": "2026-09-25",
+      "strike_price": 600,
+      "shares_per_contract": 100,
+      "exercise_style": "american",
+      "contract_type": "put"
+    }
+  ]
+}

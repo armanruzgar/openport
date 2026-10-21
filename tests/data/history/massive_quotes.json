@@ -1,0 +1,21 @@
+{
+  "status": "OK",
+  "results": [
+    {
+      "sip_timestamp": 1790083800000000123,
+      "bid_price": 5,
+      "ask_price": 5.2,
+      "bid_size": 10,
+      "ask_size": 12,
+      "sequence_number": 1
+    },
+    {
+      "sip_timestamp": 1790083815000000123,
+      "bid_price": 5.1,
+      "ask_price": 5.3,
+      "bid_size": 9,
+      "ask_size": 11,
+      "sequence_number": 2
+    }
+  ]
+}

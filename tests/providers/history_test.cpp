@@ -424,3 +424,192 @@ TEST(HistoryImport, MissingTradePricesAreNotInvented) {
 }
 
 }  // namespace
+
+namespace {
+void massive_responses(test::HttpStub& http) {
+  http.respond = [](std::string_view url) -> net::HttpResponse {
+    if (url.find("/reference/options/contracts?") != std::string_view::npos) return {200, sample("massive_contracts.json")};
+    if (url.find("/quotes/") != std::string_view::npos) return {200, sample("massive_quotes.json")};
+    if (url.find("/trades/") != std::string_view::npos) return {200, sample("massive_trades.json")};
+    throw std::runtime_error("unexpected Massive route");
+  };
+}
+TEST(HistoryImport, MassiveSavedQuotesAndTradesKeepSipAndExchangeClocks) {
+  test::RecordingFile file;
+  test::HttpStub http;
+  massive_responses(http);
+  auto input = request(file.directory, "massive");
+  input.subscription.strike_window = 0;
+  auto source = providers::massive_history(http, "test-key", [](auto) {});
+  const auto path = providers::import_day(input, *source, kToday);
+  const auto records = read(path);
+  const md::RecordingReader reader(path);
+  EXPECT_EQ(reader.header().provider, "massive");
+  EXPECT_TRUE(reader.header().imported);
+  EXPECT_FALSE(reader.header().capabilities.open_interest);
+  EXPECT_EQ(events_of<md::ContractDefinition>(records).size(), 2U);
+  EXPECT_EQ(events_of<md::OptionQuote>(records).size(), 4U);
+  EXPECT_TRUE(events_of<md::UnderlyingQuote>(records).empty());
+  EXPECT_TRUE(events_of<md::OpenInterest>(records).empty());
+  const auto open = md::new_york_to_utc(input.date, 9, 30);
+  for (const auto& record : records) if (const auto* trade = std::get_if<md::OptionTrade>(&record.event)) {
+    EXPECT_EQ(trade->ts, open + 14 * md::kNanosPerSecond + 456);
+    EXPECT_EQ(record.received, open + 16 * md::kNanosPerSecond + 789);
+  }
+  const auto volume = events_of<md::OptionVolume>(records);
+  ASSERT_EQ(volume.size(), 2U);
+  EXPECT_EQ(volume[0].contracts, 3);
+  EXPECT_EQ(http.urls.size(), 5U) << "retain page lookahead rather than fetching every empty window";
+  EXPECT_NE(http.urls[0].find("as_of=2026-09-22"), std::string::npos);
+  for (const auto& headers : http.sent_headers) EXPECT_EQ(headers, (net::Headers{{"Authorization", "Bearer test-key"}}));
+}
+TEST(HistoryImport, MassivePaginationRetryAndFailuresAreBoundedAndPrivate) {
+  for (const std::string mode : {"pages", "foreign", "cycle", "missing-time", "correction", "denied"}) {
+    SCOPED_TRACE(mode);
+    test::RecordingFile file;
+    test::HttpStub http;
+    int attempts = 0;
+    http.respond = [&](std::string_view url) -> net::HttpResponse {
+      if (url.find("/reference/") != std::string_view::npos) {
+        if (attempts++ == 0) return {429, "secret", 0, {}, "", {{"Retry-After", "2"}}};
+        return {200, sample("massive_contracts.json")};
+      }
+      if (mode == "denied") return {403, "test-key must not leak"};
+      auto body = json::parse(sample(url.find("/quotes/") != std::string_view::npos ? "massive_quotes.json" : "massive_trades.json"));
+      if (mode == "foreign") body["next_url"] = "https://example.com/v3/quotes/O:SPY260925C00600000?cursor=secret";
+      if (mode == "cycle") body["next_url"] = url;
+      if (mode == "missing-time") body["results"][0].erase("sip_timestamp");
+      if (mode == "correction" && url.find("/trades/") != std::string_view::npos) body["results"][0]["correction"] = 1;
+      if (mode == "pages" && url.find("/quotes/") != std::string_view::npos) {
+        if (url.find("cursor=next") == std::string_view::npos) {
+          body["results"].erase(1);
+          body["next_url"] = std::string(url.substr(0, url.find('?'))) + "?cursor=next";
+        } else body["results"].erase(0);
+      }
+      return {200, body.dump()};
+    };
+    std::vector<std::chrono::milliseconds> waits;
+    auto source = providers::massive_history(http, "test-key", [&](auto wait) { waits.push_back(wait); });
+    auto input = request(file.directory, "massive");
+    input.subscription.strike_window = 0;
+    if (mode == "pages") {
+      const auto path = providers::import_day(input, *source, kToday);
+      EXPECT_EQ(events_of<md::OptionQuote>(read(path)).size(), 4U);
+    } else {
+      try { (void)providers::import_day(input, *source, kToday); FAIL() << "expected failure"; }
+      catch (const std::exception& error) { EXPECT_EQ(std::string(error.what()).find("test-key"), std::string::npos); }
+      EXPECT_TRUE(std::filesystem::is_empty(file.directory));
+    }
+    EXPECT_NE(std::find(waits.begin(), waits.end(), std::chrono::seconds(2)), waits.end());
+  }
+}
+
+class DailyHistory final : public providers::HistorySource {
+ public:
+  void prepare(const providers::ImportDay& input, providers::HistoryWindow day, md::EventSink& sink) override {
+    first_ = day.begin;
+    sink.publish(md::ContractDefinition{0, *md::parse_osi(input.subscription.underlyings[0] + "261218C00600000")});
+  }
+  void read(providers::HistoryWindow window, md::EventSink& sink) override {
+    if (window.begin == first_) sink.publish(md::OptionQuote{0, first_, 5, 6, 10, 10});
+  }
+ private:
+  md::Timestamp first_ = 0;
+};
+TEST(HistoryImport, DateRangesDeduplicateSkipClosuresAndResumeMatchingCompletedDays) {
+  const auto dates = providers::import_dates({"2026-09-04..2026-09-08", "2026-09-08", "2026-09-04"});
+  ASSERT_EQ(dates.size(), 5U);
+  EXPECT_THROW((void)providers::import_dates({"2026-09-08..2026-09-04"}), std::invalid_argument);
+  EXPECT_THROW((void)providers::import_dates({"2026-09-31"}), std::invalid_argument);
+  EXPECT_THROW((void)providers::import_dates({"2022-01-01..2040-01-01"}), std::invalid_argument);
+  for (const auto& provider : {"massive", "thetadata", "databento"}) {
+    test::RecordingFile file;
+    auto input = request(file.directory, provider);
+    input.subscription.strike_window = 0;
+    int sources = 0;
+    const auto factory = [&]() { ++sources; return std::make_unique<DailyHistory>(); };
+    std::vector<std::string> states;
+    const auto progress = [&](const providers::ImportDayProgress& update) {
+      EXPECT_LE(update.day, update.days);
+      if (update.state != "importing") states.push_back(update.state);
+    };
+    providers::import_days(input, dates, kToday, factory, progress);
+    EXPECT_EQ(sources, 2);
+    EXPECT_EQ(states, (std::vector<std::string>{"imported", "closed", "closed", "closed", "imported"}));
+    states.clear();
+    providers::import_days(input, dates, kToday, factory, progress);
+    EXPECT_EQ(sources, 2);
+    EXPECT_EQ(states.front(), "existing");
+    EXPECT_EQ(states.back(), "existing");
+    input.subscription.max_expiries = 2;
+    EXPECT_THROW(providers::import_days(input, dates, kToday, factory), std::runtime_error);
+    EXPECT_EQ(sources, 2);
+  }
+}
+TEST(HistoryImport, RangeValidatesBeforeTransportAndRejectsTornExistingDays) {
+  test::RecordingFile file;
+  auto input = request(file.directory);
+  input.subscription.strike_window = 0;
+  int sources = 0;
+  const auto factory = [&]() { ++sources; return std::make_unique<DailyHistory>(); };
+  EXPECT_THROW(providers::import_days(input, {{2026, 9, 22}, kToday}, kToday, factory), std::invalid_argument);
+  EXPECT_EQ(sources, 0);
+  providers::import_days(input, {{2026, 9, 22}}, kToday, factory);
+  const auto path = file.directory / "thetadata-2026-09-22-imported.oprec";
+  std::filesystem::resize_file(path, std::filesystem::file_size(path) - 1);
+  EXPECT_THROW(providers::import_days(input, {{2026, 9, 22}}, kToday, factory), std::runtime_error);
+  EXPECT_EQ(sources, 1);
+}
+}  // namespace
+
+namespace {
+TEST(HistoryImport, MassiveIndexReferenceUsesRootAndPreservesAmPmConventions) {
+  test::HttpStub http;
+  http.respond = [](std::string_view url) -> net::HttpResponse {
+    EXPECT_NE(url.find("underlying_ticker=SPX&"), std::string_view::npos);
+    auto body = json::parse(sample("massive_contracts.json"));
+    for (auto& row : body["results"]) {
+      row["ticker"] = row["contract_type"] == "call" ? "O:SPX261218C05000000" : "O:SPXW261218P05000000";
+      row["underlying_ticker"] = "SPX";
+      row["exercise_style"] = "european";
+      row["expiration_date"] = "2026-12-18";
+      row["strike_price"] = 5000;
+    }
+    auto adjusted = body["results"][0];
+    adjusted["ticker"] = "O:SPX1260923C05000000";
+    adjusted["expiration_date"] = "2026-09-23";
+    body["results"].push_back(adjusted);
+    return {200, body.dump()};
+  };
+  auto source = providers::massive_history(http, "test", [](auto) {});
+  auto input = request("unused", "massive");
+  input.subscription.underlyings = {"SPX"};
+  test::EventCollector sink;
+  const auto windows = providers::history_windows(input, kToday);
+  source->prepare(input, {windows.front().begin, windows.back().end}, sink);
+  const auto definitions = sink.snapshot();
+  ASSERT_EQ(definitions.size(), 2U);
+  EXPECT_EQ(std::get<md::ContractDefinition>(definitions[0]).contract.settlement, md::Settlement::AM);
+  EXPECT_EQ(std::get<md::ContractDefinition>(definitions[1]).contract.settlement, md::Settlement::PM);
+}
+}  // namespace
+
+namespace {
+TEST(HistoryImport, FailedRangeKeepsEarlierDaysAndRetryCreatesOnlyMissingDays) {
+  test::RecordingFile file;
+  auto input = request(file.directory);
+  input.subscription.strike_window = 0;
+  const auto dates = providers::import_dates({"2026-09-21..2026-09-23"});
+  int sources = 0;
+  const auto fail_second = [&]() -> std::unique_ptr<providers::HistorySource> {
+    if (++sources == 2) throw std::runtime_error("fixture unavailable");
+    return std::make_unique<DailyHistory>();
+  };
+  EXPECT_THROW(providers::import_days(input, dates, kToday, fail_second), std::runtime_error);
+  EXPECT_TRUE(std::filesystem::exists(file.directory / "thetadata-2026-09-21-imported.oprec"));
+  EXPECT_FALSE(std::filesystem::exists(file.directory / "thetadata-2026-09-22-imported.oprec"));
+  sources = 0;
+  providers::import_days(input, dates, kToday, [&]() { ++sources; return std::make_unique<DailyHistory>(); });
+  EXPECT_EQ(sources, 2);
+}
+}  // namespace

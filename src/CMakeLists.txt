@@ -112,6 +112,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/thetadata.cpp
     providers/history.cpp
     providers/theta_history.cpp
+    providers/massive_history.cpp
     providers/tradier.cpp
     providers/tastytrade.cpp
     providers/dxlink.cpp

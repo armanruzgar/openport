@@ -49,7 +49,9 @@ TEST(Cli, ImportValidatesDatesSymbolsCredentialsAndFlagsWithoutStartingTheDaemon
   rejects("openportd", "--import-day thetadata --date 2026-09-22", "select 1..32 symbols");
   rejects("openportd", "--import-day thetadata --date 2026-02-30 --symbols SPX", "invalid --date");
   rejects("openportd", "--import-day thetadata --date 2099-01-02 --symbols SPX", "future");
-  rejects("openportd", "--import-day thetadata --date 2026-07-03 --symbols SPX", "holiday");
+  rejects("openportd", "--import-day massive --date 2026-09-22 --symbols SPY", "MASSIVE_API_KEY", "MASSIVE_API_KEY='' ");
+  rejects("openportd", "--import-day massive --import-days 2026-09-22..2026-09-21 --symbols SPY", "ascending");
+  rejects("openportd", "--import-day massive --date 2026-09-22 --date 2099-01-02 --symbols SPY", "future");
   rejects("openportd", "--import-day cboe --date 2026-09-22 --symbols SPX", "provider must be");
   rejects("openportd", "--import-day databento --date 2026-09-22 --symbols SPX --api-key fake", "unknown import option");
   rejects("openportd", "--import-day databento --date 2026-09-22 --symbols SPX --option key=fake", "unknown import option");
@@ -508,4 +510,19 @@ TEST(Cli, RepairDryRunAndSingleFileModePreserveOtherJournals) {
   EXPECT_EQ(std::filesystem::file_size(second), size);
   EXPECT_EQ(run_daemon("--repair-journals --file '" + (directory.directory / "missing").string() + "'").status, 1);
   rejects("openportd", "--dry-run", "require --repair-journals");
+}
+
+TEST(Cli, ClosedDateRangesExitSuccessfullyWithoutCredentialsOrDaemonStartup) {
+  const std::string command = "MASSIVE_API_KEY='' " + isolated_home() + "\"" + OPENPORT_APPS_DIR +
+      "/openportd\" --import-day massive --import-days 2026-09-05..2026-09-07 --date 2026-09-05 --symbols SPY 2>&1";
+  FILE* pipe = popen(command.c_str(), "r");
+  ASSERT_NE(pipe, nullptr);
+  std::string output;
+  char buffer[512];
+  while (fgets(buffer, sizeof buffer, pipe)) output += buffer;
+  const auto status = pclose(pipe);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0) << output;
+  EXPECT_NE(output.find("day 3/3 2026-09-07 closed"), std::string::npos) << output;
+  EXPECT_EQ(output.find("OpenPort on http"), std::string::npos);
 }

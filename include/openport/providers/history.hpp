@@ -30,6 +30,15 @@ struct HistoryWindow {
 /// completed business dates are accepted. `today` is injected for offline tests.
 [[nodiscard]] std::vector<HistoryWindow> history_windows(const ImportDay& request, md::Date today);
 [[nodiscard]] md::Date import_date(std::string_view text);
+/// Inclusive dates/ranges, sorted and deduplicated; at most 3660 calendar days.
+[[nodiscard]] std::vector<md::Date> import_dates(const std::vector<std::string>& selections);
+struct ImportDayProgress {
+  md::Date date;
+  std::size_t day = 0, days = 0;
+  std::string state;  ///< importing, imported, existing, closed
+  std::size_t windows = 0, total_windows = 0;
+  std::uint64_t events = 0;
+};
 
 /// One import per instance, with sequential, bounded delivery. Definitions may
 /// arrive in prepare or read, but must precede dependent events. No connection or
@@ -48,7 +57,12 @@ using ImportProgress = std::function<void(std::size_t completed, std::size_t tot
 /// Creates a private temporary file, publishes it exclusively only on success.
 [[nodiscard]] std::filesystem::path import_day(const ImportDay& request, HistorySource& source,
                                               md::Date today, ImportProgress progress = {});
-/// Reads DATABENTO_API_KEY; Theta Terminal owns its login, as for the live feed.
+using HistoryFactory = std::function<std::unique_ptr<HistorySource>()>;
+/// Validate all dates before transport; resume only matching, complete imports.
+/// A failed day leaves earlier completed days available for the next invocation.
+void import_days(const ImportDay& request, const std::vector<md::Date>& dates, md::Date today,
+                 HistoryFactory factory, std::function<void(const ImportDayProgress&)> progress = {});
+/// Reads DATABENTO_API_KEY or MASSIVE_API_KEY; Theta Terminal owns its login.
 [[nodiscard]] std::unique_ptr<HistorySource> make_history_source(const std::string& provider);
 
 /// Injectable transport and wait for saved-response tests. Production serializes
@@ -56,5 +70,8 @@ using ImportProgress = std::function<void(std::size_t completed, std::size_t tot
 using HistoryWait = std::function<void(std::chrono::milliseconds)>;
 [[nodiscard]] std::unique_ptr<HistorySource> theta_history(net::HttpClient& http,
                                                          HistoryWait wait);
+
+[[nodiscard]] std::unique_ptr<HistorySource> massive_history(net::HttpClient& http, std::string key,
+                                                           HistoryWait wait);
 
 }  // namespace openport::providers
