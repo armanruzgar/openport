@@ -5,13 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { beforeEach, afterEach, expect, it, vi } from "vitest"
-import { LiveProvider } from "./live"
+import { LiveProvider, useLive } from "./live"
 import { AccountSwitcher } from "../components/AccountSwitcher"
 import { ReplayView } from "../views/ReplayView"
 import { ReplayBanner } from "../components/ReplayBanner"
 import type { ReactNode } from "react"
 import { api } from "./client"
-import { connectLive } from "./connection"
+import { connectLive, type Connection } from "./connection"
 import { dataSource } from "../lib/data-source"
 import { activeAccount } from "../lib/active-account"
 import { status } from "../test/trading-fixtures"
@@ -19,13 +19,14 @@ import type { ReplayState, Tick } from "./types"
 vi.mock("./connection", () => ({ connectLive: vi.fn() }))
 let root: Root, host: HTMLDivElement, client: QueryClient
 let onReplay: (tick: Tick | null) => void
+let onConnection: (connection: Connection) => void
 const replay: ReplayState = { id: "run", file: "demo", provider: "demo", symbols: [], started: null, delay_seconds: 0, speed: 1, paused: true, finished: false, time: null }
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(0)
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
   dataSource.set("replay"); activeAccount.set("main"); rememberReplay(undefined)
   vi.mocked(connectLive).mockImplementation((_url, _client, _tick, connection, callback) => {
-    connection("open"); onReplay = callback!; return () => {}
+    connection("open"); onConnection = connection; onReplay = callback!; return () => {}
   })
   vi.spyOn(api, "status").mockResolvedValue(status)
   vi.spyOn(api, "replay").mockResolvedValue({ directory: "", recordings: [], replay })
@@ -149,4 +150,25 @@ it("announces the two-minute unreachable fallback", async () => {
   await render(); await advance(126_000)
   expect(dataSource.get()).toBe("live")
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("unreachable for two minutes")
+})
+
+it("keeps the account scope across a socket blip, so an order sent before it still shows its result", async () => {
+  function Scope() { return <output>{useLive().accountScope}</output> }
+  await render(<Scope />)
+  const before = host.querySelector("output")!.textContent
+  await act(async () => onConnection("closed"))
+  await act(async () => onConnection("open"))
+  await act(async () => onConnection("closed"))
+  expect(host.querySelector("output")!.textContent).toBe(before)
+})
+it("drops the previous replay run's market data when another run starts", async () => {
+  const tick = (id: string) => ({ type: "replay_tick", replay: { ...replay, id }, underlyings: [], engine: { events_per_second: 0, analytics_ms: 0, contracts: 0 }, feed: { state: "live", message: "" } }) as unknown as Tick
+  await render()
+  await act(async () => onReplay(tick("run")))
+  client.setQueryData(["summary", "SPX", 3], { symbol: "SPX", spot: 7000 })
+  client.setQueryData(["chain", "SPX", "2026-10-16", 0.05, 3], { symbol: "SPX", spot: 7000 })
+  await act(async () => onReplay(tick("run-2")))
+  expect(client.getQueryData(["summary", "SPX", 3])).toBeUndefined()
+  expect(client.getQueryData(["chain", "SPX", "2026-10-16", 0.05, 3])).toBeUndefined()
+  expect(client.getQueryData(["replay-listing"])).toBeDefined()
 })

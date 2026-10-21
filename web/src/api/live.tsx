@@ -93,10 +93,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     const scheme = window.location.protocol === "https:" ? "wss" : "ws"
     setTick(null)
     setReplayTick(null)
-    return connectLive(`${scheme}://${window.location.host}/ws`, queryClient, setTick, (next) => {
-      setConnection(next)
-      setAccountScope((scope) => scope + 1)
-    }, (next) => {
+    // A reconnect keeps the account scope: the destination is unchanged, so an order sent
+    // before a blip still shows its result. Opening the socket refetches every query instead.
+    return connectLive(`${scheme}://${window.location.host}/ws`, queryClient, setTick, setConnection, (next) => {
       if (next) { replaySeen.current = Date.now(); setReconnecting(false); rememberReplay(next.replay?.id) }
       setReplayTick(next)
     })
@@ -127,11 +126,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     setAccountScope((scope) => scope + 1)
   }, [queryClient])
   // A new run reuses /api/replay but has a different account, including when
-  // another browser started it. Do not reuse the previous run's cached trades.
+  // another browser started it. Do not reuse the previous run's cached trades, nor
+  // its market data: the new engine's versions restart, so version-keyed entries match.
   useEffect(() => {
     const id = replayTick?.replay?.id
     if (id && replayRun.current && id !== replayRun.current && source === "replay") {
       queryClient.removeQueries({ queryKey: ["trading"] })
+      void queryClient.resetQueries({ predicate: ({ queryKey }) => !["status", "replay-listing"].includes(String(queryKey[0])) })
       void queryClient.invalidateQueries({ queryKey: ["status", "replay"] })
       setAccountScope((scope) => scope + 1)
     }

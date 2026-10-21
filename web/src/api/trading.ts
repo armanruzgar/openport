@@ -51,7 +51,7 @@ export function useRefreshTrading() {
     client.invalidateQueries({ queryKey: ["status"] }),
   ])
 }
-/** Prevent a late mutation response from being rendered in another connection. */
+/** Prevent a late mutation response from being rendered for another account, source or replay run. */
 export function useTradingSession() {
   const { accountScope } = useLive()
   const current = useRef<number | null>(accountScope)
