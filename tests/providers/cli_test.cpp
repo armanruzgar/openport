@@ -508,4 +508,27 @@ TEST(Cli, RepairDryRunAndSingleFileModePreserveOtherJournals) {
   EXPECT_EQ(std::filesystem::file_size(second), size);
   EXPECT_EQ(run_daemon("--repair-journals --file '" + (directory.directory / "missing").string() + "'").status, 1);
   rejects("openportd", "--dry-run", "require --repair-journals");
+  // Compaction rewrites every journal and has no dry run: nothing is touched.
+  const auto journal = "--paper-journal '" + first.string() + "'";
+  const auto files = [&] { return std::distance(std::filesystem::directory_iterator(directory.directory), std::filesystem::directory_iterator{}); };
+  const auto before = files();
+  const auto repaired_size = std::filesystem::file_size(first);
+  rejects("openportd", "--compact-journals --dry-run " + journal, "require --repair-journals");
+  rejects("openportd", "--compact-journals --file '" + second.string() + "' " + journal, "require --repair-journals");
+  rejects("openportd", "--compact-journals --repair-journals --dry-run " + journal, "separate runs");
+  EXPECT_EQ(files(), before);
+  EXPECT_EQ(std::filesystem::file_size(first), repaired_size);
+}
+
+TEST(Cli, AnEmptyWriteTokenFileIsReplacedWithANewToken) {
+  openport::test::RecordingFile directory;
+  const auto token = directory.directory / "write-token";
+  { std::ofstream empty(token); empty << "  \n"; }
+  rejects("openportd", "--write-token-file '" + token.string() + "' --provider missing", "unknown provider");
+  std::ifstream in(token);
+  std::string line;
+  std::getline(in, line);
+  EXPECT_EQ(line.size(), 32U) << line;
+  // No temporary file is left beside it.
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory.directory), std::filesystem::directory_iterator{}), 1);
 }
