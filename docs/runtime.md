@@ -80,7 +80,9 @@ under Homebrew's `var/openport`. It keeps its write token at `var/openport/write
 and stdout/stderr at `var/log/openport.log` and `var/log/openport.error.log`.
 Open the printed `http://localhost:8080/#token=…` link to save the write token in that
 browser tab. If stdout is buffered, append the token file's contents to
-`http://localhost:8080/#token=` yourself. Protect both logs and token files.
+`http://localhost:8080/#token=` yourself, percent-encoded as JavaScript's
+`encodeURIComponent` does when the token has characters other than letters, digits
+and `-_.!~*'()` (a generated token is hex and needs none). Protect both logs and token files.
 The service does not record the feed by default; the usual recording flags apply
 when running the daemon yourself.
 

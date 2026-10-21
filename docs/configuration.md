@@ -12,7 +12,7 @@ Providers, command-line flags, terminal settings and who may write.
 | ThetaData | `thetadata` | Snapshots from your local Theta Terminal (v3), polled every 2 s | Theta Terminal login |
 | Tradier | `tradier` | Option chain snapshots and underlying prices; production options are real-time, index timing is unconfirmed. Sandbox is 15-minute delayed. Polling follows the request budget. Not yet run live with an account; reports welcome | `TRADIER_ACCESS_TOKEN` |
 | tastytrade | `tastytrade` | Production DXLink option quotes, open interest, delta/gamma and underlying prices. Not yet run live with an account; reports welcome | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`; optional `TASTYTRADE_CLIENT_ID` |
-| Demo | `demo` | Simulated SPX, SPY and QQQ regular sessions, rotating on successive trading dates; `--option days=trend,chop --option speed=60` | none |
+| Demo | `demo` | Simulated SPX, SPY, QQQ, XSP, NDX, RUT and VIX regular sessions, rotating on successive trading dates; `--option days=trend,chop --option speed=60` | none |
 | Replay | `replay` | A recording played back as the whole feed, at 1×, 10×, 60× or full speed (`--option file=PATH --option speed=10`) | none |
 
 Databento, Massive and ThetaData follow their documented APIs and are tested against
@@ -102,8 +102,11 @@ the kill switch, playbook definitions and history deletion. Writes always check 
 without `--require-token`, reads ignore one that matches nothing, except expired
 sandbox credentials when sandboxes are offered. The server prints
 only the link for a token it keeps in a file, as the Docker image does, and never
-prints named tokens. The token file is read at startup; protect it with owner-only
-permissions and restart to rotate tokens. Send Bearer credentials over
+prints named tokens. The token file must hold a valid token at startup; after that the
+server reloads it whenever its modification time or size changes, on `SIGHUP`, or on an
+admin `POST /api/tokens/reload`, so edits rotate or revoke tokens at once, without a
+restart. A malformed replacement keeps the last good set; an empty one revokes every
+named token ([API](api.md)). Protect the file with owner-only permissions. Send Bearer credentials over
 HTTPS behind a reverse proxy for remote access. Static
 files are confined to the web root, and WebSocket upgrades must come from the same
 origin; behind a proxy that rewrites the Host header, list your public origin with

@@ -3692,7 +3692,7 @@ require `Authorization: Bearer TOKEN`, checked with a constant-time digest compa
 missing/incorrect credentials return 403 `WRITE_TOKEN_REQUIRED`. Without either,
 `--write-token-file PATH` uses the token kept in PATH, creating a random one with
 owner-only permissions when it is missing, and prints a link carrying it,
-`http://localhost:PORT/#token=TOKEN`, which the terminal saves in that browser tab and
+percent-encoded, `http://localhost:PORT/#token=TOKEN`, which the terminal saves in that browser tab and
 drops from the address bar, also when opened in a tab already showing the terminal;
 the Docker image keeps its token in its volume this way.
 The terminal's "Enter write token" button saves a token by hand.
