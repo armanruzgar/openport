@@ -136,7 +136,7 @@ std::vector<ScenarioEvent> events_of(const json& value, const std::string& paren
     else if (event.type == "pin") keys(e, {"type", "at", "strike"}, field);
     else if (event.type == "book") keys(e, {"type", "at", "minutes", "state", "symbols", "expiry"}, field);
     else if (event.type == "stall") keys(e, {"type", "at", "minutes", "symbols"}, field);
-    else if (event.type == "halt") keys(e, {"type", "at", "minutes"}, field);
+    else if (event.type == "halt") keys(e, {"type", "at", "minutes", "symbols"}, field);
     else require(false, field + ".type", "expected gap, crush, spike, pin, book, stall or halt");
     if (event.type != "gap") {
       require(e.contains("at"), field + ".at", "required field is missing");

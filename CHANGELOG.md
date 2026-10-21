@@ -89,6 +89,13 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Risk: historical VaR/ES at 99% needs 100 observations (95% still needs 20); below that `var99`/`es99` are null and `tail99_reason` says why.
 - Risk: a tagged order that reduces an untagged book over its scope cap is no longer refused; the scope is valued over the same positions with and without the order.
 - Risk: scenario grids for grid-loss caps and alerts are remembered by their exact inputs, so order checks stop repricing every open order's grid.
+- Opt-in seeded expiry pin risk models contrary exercise near the strike and warns before expiry; existing plans remain unchanged.
+- Practice cash transfers, rollover credit/debit interest and stock-borrow fees are journaled and visible in Dashboard. Financing counts in equity and daily loss without adjusting its opening base.
+- Single-name scenario/replay halts pause one underlying; the replay API and Dashboard support halt drills with recorded, verifiable commands.
+- What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
+- Financing rates and pin risk are program rules: changing them drops the preset's `plan_id`, and financing overrides on evaluation, verification and funded plans are refused with `PLAN_LOCKED`.
+- What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
+- Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
 
 ## 0.4.0 (2026-10-06)
 

@@ -172,12 +172,21 @@ Money mid(const QuoteObservation& q) {
 }
 /// A markable quote's mark: its mid, or halfway to the ask when nobody bids.
 Money mark_of(const QuoteObservation& q) { return q.bid ? mid(q) : q.ask->prorate(1, 2); }
+Timestamp halt_end(const State& s, const std::string& underlying) {
+  Timestamp end = 0;
+  for (const auto& symbol : {underlying, std::string("*")})
+    if (const auto it = s.market_halts.find(symbol); it != s.market_halts.end()) end = std::max(end, it->second);
+  return end;
+}
 Decision quote_check(const State& s, const std::string& symbol) {
+  const auto contract = s.contracts.find(symbol);
+  const auto end = contract == s.contracts.end() ? 0 : halt_end(s, contract->second.underlying);
+  if (s.time < end) return failure(Reason::MARKET_HALTED, "Underlying trading is halted");
   const auto it = s.books.find(symbol);
   if (it == s.books.end() || !valid_quote(it->second.quote))
     return failure(Reason::INVALID_QUOTE, "A noncrossed positive two-sided quote with both sizes is required");
   const auto time = it->second.quote.time;
-  if (time > s.time || observation_time(s.contracts.at(symbol), s.time) - time > s.config.limits.max_quote_age)
+  if (time < end || time > s.time || observation_time(s.contracts.at(symbol), s.time) - time > s.config.limits.max_quote_age)
     return failure(Reason::STALE_QUOTE, "Quote is outside the configured market-time freshness window");
   return {};
 }
@@ -207,6 +216,11 @@ bool marked_now(const State& s, const std::string& symbol) {
 bool kept_within(const Order& o) { return o.role != OrderRole::Normal || o.reduce_only; }
 /// A fresh quote that shows only an ask, as a far option nobody bids for does.
 bool asks_only(const State& s, const std::string& symbol) {
+  if (const auto it = s.contracts.find(symbol); it != s.contracts.end()) {
+    const auto end = halt_end(s, it->second.underlying);
+    const auto book = s.books.find(symbol);
+    if (s.time < end || (book != s.books.end() && book->second.quote.time < end)) return false;
+  }
   const auto it = s.books.find(symbol);
   return it != s.books.end() && !valid_quote(it->second.quote) && marked_now(s, symbol);
 }
@@ -370,8 +384,10 @@ Quantity shares_held(const State& s, const std::string& symbol) {
 /// stock market is open, or of its last close while it is not (the 16:00 close
 /// stays current while the options trade on to 16:15, and overnight).
 std::optional<Money> stock_price(const State& s, const std::string& symbol, Timestamp at) {
+  const auto end = halt_end(s, symbol);
+  if (at < end) return std::nullopt;
   const auto it = s.stock_marks.find(symbol);
-  if (it == s.stock_marks.end() || it->second.time > at) return std::nullopt;
+  if (it == s.stock_marks.end() || it->second.time < end || it->second.time > at) return std::nullopt;
   const auto session = md::stock_session(at);
   const auto observed = session.open || session.market_time == md::kInvalidTimestamp ? at : std::min(at, session.market_time);
   if (observed - it->second.time > s.config.limits.max_quote_age) return std::nullopt;
@@ -379,6 +395,17 @@ std::optional<Money> stock_price(const State& s, const std::string& symbol, Time
 }
 /// The underlying's price if fresh at the market time.
 std::optional<Money> stock_price(const State& s, const std::string& symbol) { return stock_price(s, symbol, s.time); }
+/// Whether a held stock's mark is its last print before a simulated halt still in
+/// force at the regular close the account is valued at, printed in that session.
+/// Prints during the halt are not taken, so the mark is the pre-halt print.
+bool halted_at_close(const State& s, const std::string& symbol) {
+  const auto it = s.stock_marks.find(symbol);
+  const auto session = md::stock_session(s.time);
+  if (it == s.stock_marks.end() || session.open || session.market_time == md::kInvalidTimestamp) return false;
+  const auto close = session.market_time;
+  const auto printed = md::stock_session(it->second.time);
+  return halt_end(s, symbol) >= close && it->second.time < close && printed.open && printed.end == close;
+}
 /// Shares' stretches are all delta: the price's move times the shares.
 Attribution explain_stock(const detail::Reference& r, Money value) {
   Attribution a;
@@ -1201,6 +1228,7 @@ Measures measure(const State& s) {
       m.market_value = it->second.price * stock.shares;
       m.unrealised = *m.market_value - stock.basis;
       m.fresh = stock_price(s, symbol).has_value();
+      m.halted = !m.fresh && halted_at_close(s, symbol);
       out.equity = out.equity + *m.market_value;
       out.unrealised = out.unrealised + *m.unrealised;
     }
@@ -1281,6 +1309,7 @@ TradingSnapshot snapshot_of(const State& s) {
   out.payouts_received = s.payouts_received;
   out.stock_fills = s.stock_fills;
   out.dividends = s.dividends;
+  out.cash_flows = s.cash_flows;
   out.closing_prints = s.closing_prints;
   out.annotations = s.annotations;
   out.day_notes = s.day_notes;
@@ -2375,7 +2404,7 @@ void count_execution(State& s, const Order& order) {
 /// Stale marks, an invalid quote or a missing valuation hold a fill back until a
 /// later batch brings the data; they say nothing about the order itself.
 bool data_gap(Reason code) {
-  return code == Reason::STALE_QUOTE || code == Reason::INVALID_QUOTE || code == Reason::MISSING_VALUATION;
+  return code == Reason::STALE_QUOTE || code == Reason::INVALID_QUOTE || code == Reason::MISSING_VALUATION || code == Reason::MARKET_HALTED;
 }
 void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> incoming) {
   // Read here; every write goes through mut() below, after which `o` is not read.
@@ -3067,6 +3096,7 @@ void flatten(State& s, const std::string& symbol, std::string_view why, Events& 
 /// the underlying's fresh price.
 Decision share_close_check(const State& s, const std::string& symbol) {
   if (!md::market_session(s.time).open) return failure(Reason::SESSION_CLOSED, "Stock trades in the regular session");
+  if (s.time < halt_end(s, symbol)) return failure(Reason::MARKET_HALTED, "Trading is halted for " + symbol);
   if (!stock_price(s, symbol)) return failure(Reason::STALE_QUOTE, "Needs a fresh price for " + symbol);
   return {};
 }
@@ -3393,6 +3423,9 @@ std::optional<OrderWait> waiting_for(const State& s, const Order& o, bool data_c
   const auto& r = o.request;
   const auto symbols = order_symbols(r);
   for (const auto& symbol : symbols) if (!s.contracts.contains(symbol)) return std::nullopt;
+  for (const auto& symbol : symbols)
+    if (s.time < halt_end(s, s.contracts.at(symbol).underlying))
+      return wait("MARKET_HALTED", "Underlying trading is halted; waits for reopening quotes");
   if (o.status == OrderStatus::Armed) {
     if (extended(r) && !trades_now(o, s.contracts.at(symbols.front()), s.time))
       return wait("SESSION_CLOSED", "Waits for the next trading session");
@@ -3645,6 +3678,12 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
       continue;
     }
     const Money strike = Money::from_double(c.strike);
+    if (rules.pin_risk && position.quantity < 0 && *price >= strike - Money::parse("0.10") && *price <= strike + Money::parse("0.10"))
+      add("PIN_RISK", true, c.underlying, symbol,
+          "Simulated pin risk: short " + contract_name(c) + " expires today within $0.10 of the strike. "
+          "Each contract has a seeded 25% chance of contrary exercise, modelling after-hours uncertainty before the 17:30 ET cutoff. "
+          "Out-of-money shorts can deliver shares; in-money shorts may not. No after-hours price is observed or invented.",
+          (*price - strike).dollars(), 0.10);
     const Money intrinsic = std::max(Money{}, c.type == pricing::OptionType::Call ? *price - strike : strike - *price);
     if (intrinsic >= Money::from_micros(10'000)) expiring.push_back({symbol, *price, intrinsic});
   }
@@ -4692,6 +4731,10 @@ Json state_change(const State& before, const State& after) {
   // Indicators are written once there is one, and never emptied again.
   if (before.indicators.empty() && !after.indicators.empty()) changes["indicators"] = Json{{"v", after.indicators}};
   else if (auto change = field_change(before.indicators, after.indicators)) changes["indicators"] = std::move(*change);
+  if (before.cash_flows.empty() && !after.cash_flows.empty()) changes["cash_flows"] = Json{{"v", after.cash_flows}};
+  else if (auto change = field_change(before.cash_flows, after.cash_flows)) changes["cash_flows"] = std::move(*change);
+  if (before.market_halts.empty() && !after.market_halts.empty()) changes["market_halts"] = Json{{"v", after.market_halts}};
+  else if (auto change = field_change(before.market_halts, after.market_halts)) changes["market_halts"] = std::move(*change);
   // Alerts likewise, once the account has created one.
   if (before.alerts.created == 0 && after.alerts.created > 0) changes["alerts"] = Json{{"v", after.alerts}};
   else if (auto change = field_change(before.alerts, after.alerts)) changes["alerts"] = std::move(*change);
@@ -4968,12 +5011,14 @@ struct TradingSession::Impl {
 
   CommandResult transact(Timestamp time, std::string_view type,
                          const std::function<CommandResult(State&, Events&)>& action,
-                         const std::optional<SettlementSource>& source = {}) {
+                         const std::optional<SettlementSource>& source = {},
+                         const std::function<void(State&)>& prepare = {}) {
     if (stopped) throw TradingError(Reason::JOURNAL_IO, "Trading stopped after journal failure; recover first");
     State next = state;
     next.opening_rule_inputs = opening_rule_inputs;
     next.compact_opening_rule_inputs = compact_opening_rule_inputs;
     Events events;
+    if (prepare) prepare(next);
     advance(next, time, events);
     // Quote batches install their new book before monitor_rules closes positions.
     // Other commands must close against the current book before matching orders.
@@ -5393,9 +5438,38 @@ WhatIf TradingSession::what_if(const std::vector<std::vector<OrderRequest>>& can
     WhatIfCandidate candidate;
     State state = before;
     bool projected = true;
+    const bool chained = std::any_of(candidates[c].begin(), candidates[c].end(), [](const auto& order) {
+      return !order.then.empty() || !order.oco.empty();
+    });
     for (std::size_t i = 0; i < candidates[c].size(); ++i) {
       const auto rejection = c < rejections.size() && i < rejections[c].size() ? rejections[c][i] : Decision{};
       const auto id = static_cast<OrderId>(state.orders.size() + 1);
+      if (chained) {
+        // Chains depend on actual fills: limits, partial fills and OCO cancellation
+        // decide which children exist. Run the same reducer on a journal-free copy.
+        auto copy = std::make_unique<Impl>();
+        copy->state = state;
+        copy->opening_rule_inputs = impl_->opening_rule_inputs;
+        copy->compact_opening_rule_inputs = impl_->compact_opening_rule_inputs;
+        copy->actor = impl_->actor;
+        copy->stopped = impl_->stopped;
+        copy->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(state));
+        TradingSession trial(std::move(copy));
+        Decision decision;
+        try {
+          decision = trial.submit(candidates[c][i], time, rejection).decision;
+          for (auto j = static_cast<std::size_t>(id - 1); j < trial.impl_->state.orders.size(); ++j) {
+            const auto& order = trial.impl_->state.orders[j];
+            if (decision.ok() && order.status == OrderStatus::Rejected) decision = order.reason;
+          }
+        } catch (const TradingError& error) {
+          decision = failure(error.code(), error.what());
+        }
+        if (!decision.ok() && candidate.decision.ok()) candidate.decision = decision;
+        candidate.orders.push_back(decision);
+        state = std::move(trial.impl_->state);
+        continue;
+      }
       PreviewProjection projection{{}, state};
       try {
         projection = project_order(state, candidates[c][i], rejection);
@@ -5726,6 +5800,8 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (!seen.insert(price.symbol).second) throw TradingError(Reason::INVALID_QUOTE, "One price per underlying per batch is required");
       const auto prior = s.stock_marks.find(price.symbol);
       if (prior != s.stock_marks.end() && price.time < prior->second.time) continue;
+      // A simulated halt prints nothing: the mark stays the last pre-halt print.
+      if (price.time < halt_end(s, price.symbol)) continue;
       s.stock_marks[price.symbol] = {price.price, price.time};
     }
     seen.clear();
@@ -5853,6 +5929,20 @@ CommandResult TradingSession::reset_kill(std::string reason, Timestamp time) {
     return CommandResult{};
   });
 }
+namespace {
+std::uint64_t mix(std::uint64_t x);
+Quantity pin_assignments(const State& s, const md::OptionContract& contract, Quantity contracts, bool in_money) {
+  auto seed = mix(static_cast<std::uint64_t>(s.evaluation.started) ^
+                  mix(static_cast<std::uint64_t>(s.config.rules.pin_risk_seed)));
+  for (const unsigned char c : "pin " + contract.osi_symbol() + " " + md::format_date(contract.expiry)) seed = mix(seed ^ c);
+  Quantity assigned = 0;
+  for (Quantity i = 0; i < contracts; ++i) {
+    const bool contrary = ((seed = mix(seed)) >> 62) == 0;
+    assigned += static_cast<Quantity>(in_money != contrary);
+  }
+  return assigned;
+}
+}  // namespace
 CommandResult TradingSession::settle(const std::string& symbol, Money settlement, Timestamp time,
                                      std::optional<SettlementSource> source) {
   return impl_->transact(time, "settlement", [&](State& s, Events& events) {
@@ -5865,8 +5955,13 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     const auto quantity = held(s, symbol);
     // A long instructed not to be exercised expires worthless.
     const bool unexercised = quantity > 0 && s.do_not_exercise.contains(symbol);
-    const Money intrinsic = unexercised ? Money{}
-        : std::max(Money{}, it->second.type == pricing::OptionType::Call ? settlement - strike : strike - settlement);
+    const Money exercise_value = it->second.type == pricing::OptionType::Call ? settlement - strike : strike - settlement;
+    const bool pin = s.config.rules.pin_risk && quantity < 0 && physical(it->second) &&
+        exercise_value >= Money::parse("-0.10") && exercise_value <= Money::parse("0.10");
+    const auto assigned = pin ? -pin_assignments(s, it->second, -quantity, exercise_value >= Money::from_micros(10'000)) : quantity;
+    // Pin assignments close the option at zero and deliver at the strike. This
+    // also accounts correctly for contrary exercise of an out-of-money option.
+    const Money intrinsic = unexercised || pin ? Money{} : std::max(Money{}, exercise_value);
     // The last stretch ends at intrinsic value, at expiry with the settlement
     // as the underlying's price and the volatility unchanged.
     std::optional<Valuation> at_expiry;
@@ -5876,8 +5971,8 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
       at_expiry->years = 0;
     }
     end_stretch(s, symbol, intrinsic, at_expiry ? &*at_expiry : nullptr);
-    const bool delivers = physical(it->second) && intrinsic >= Money::from_micros(10'000);
-    const Money fee = delivers ? exercise_fee(s, quantity) : Money{};
+    const bool delivers = pin ? assigned != 0 : physical(it->second) && intrinsic >= Money::from_micros(10'000);
+    const Money fee = delivers ? exercise_fee(s, assigned) : Money{};
     s.settlements.push_back(settlement_record(s.ledger.positions().at(symbol), settlement, intrinsic, fee, time, source));
     s.ledger.settle(symbol, intrinsic, fee);
     if (fee > Money{}) s.explained[symbol].costs -= fee.dollars();
@@ -5889,19 +5984,26 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     sync_exits(s, symbol, events);
     Json settled{{"symbol", symbol}, {"reference", settlement}, {"intrinsic", intrinsic}};
     if (unexercised) settled["do_not_exercise"] = true;
+    if (pin) {
+      settled["pin_risk"] = true;
+      settled["assigned_contracts"] = -assigned;
+      settled["simulated"] = true;
+      settled["seed"] = s.config.rules.pin_risk_seed;
+    }
     event(events, "settlement", std::move(settled));
     // American equity and ETF options a cent or more in the money are exercised
     // or assigned: settled at intrinsic value, they deliver shares at the
     // settlement price, which together cost the strike.
     if (delivers) {
       const auto underlying = it->second.underlying;
-      const auto shares = delivered(it->second, quantity);
+      const auto shares = delivered(it->second, assigned);
+      const auto delivery_price = pin ? strike : settlement;
       if (const auto mark = s.stock_marks.find(underlying); mark == s.stock_marks.end() || mark->second.time <= time)
         s.stock_marks[underlying] = {settlement, time};
-      trade_shares(s, underlying, shares, settlement, StockSource::Delivery, symbol);
+      trade_shares(s, underlying, shares, delivery_price, StockSource::Delivery, symbol);
       if (s.config.rules.buying_power)
         s.stock_fills.mut(s.stock_fills.size() - 1).buying_power_after = buying_power(s).total.available;
-      event(events, "delivery", Json{{"symbol", symbol}, {"underlying", underlying}, {"shares", shares}, {"price", settlement}});
+      event(events, "delivery", Json{{"symbol", symbol}, {"underlying", underlying}, {"shares", shares}, {"price", delivery_price}});
     }
     return CommandResult{};
   }, source);
@@ -5979,6 +6081,32 @@ Money nearest_cent(Money amount) {
   if (2 * (rest < 0 ? -rest : rest) >= cent) rounded += micros < 0 ? -cent : cent;
   return Money::from_micros(rounded);
 }
+/// Actual/365 simple accrual on the last closing balance and marks, including
+/// skipped calendar days. Each posting rounds once to cents; no fabricated prices.
+void accrue_financing(State& s, const State& closing, std::int64_t days, Events& events) {
+  const auto& rules = s.config.rules;
+  const auto cash = closing.ledger.account().cash;
+  const auto post = [&](std::string kind, std::string symbol, Money basis, std::int64_t rate, bool charge) {
+    if (rate == 0 || basis == Money{}) return;
+    auto amount = nearest_cent(basis.prorate(rate * days, 365 * 10000));
+    if (charge) amount = -amount;
+    if (amount == Money{}) return;
+    s.ledger.accrue(amount);
+    Attribution part; part.other = amount.dollars();
+    explain_part(s, symbol.empty() ? "cash" : symbol, part);
+    s.cash_flows.push_back({s.cash_flows.size() + 1, s.evaluation.attempt, s.time, s.day, std::move(kind),
+                            std::move(symbol), amount, basis, rate, days, {}});
+    event(events, "cash_flow", s.cash_flows.back());
+  };
+  if (cash > Money{}) post("credit_interest", {}, cash, rules.cash_credit_rate_bps, false);
+  else if (cash < Money{} && rules.margin == MarginMode::Portfolio && rules.account_type == AccountType::Margin)
+    post("debit_interest", {}, -cash, rules.margin_debit_rate_bps, true);
+  for (const auto& [symbol, stock] : closing.ledger.stocks()) {
+    if (stock.shares >= 0) continue;
+    const auto mark = closing.stock_marks.find(symbol);
+    if (mark != closing.stock_marks.end()) post("borrow_fee", symbol, mark->second.price * -stock.shares, rules.stock_borrow_rate_bps, true);
+  }
+}
 /// On an ex-date the shares held into it are paid the dividend, and short shares
 /// pay it, in whole cents: once per symbol and date, into the new day's P&L as other.
 void pay_dividends(State& s, const std::vector<Dividend>& dividends, Events& events) {
@@ -6027,13 +6155,18 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
   const auto closing_time = impl_->state.time;
   return impl_->transact(time, "day_rollover", [&](State& s, Events& events) {
     const auto day = plan_trading_date(s.config.rules, time);
+    const auto days = md::days_since_epoch(day) - md::days_since_epoch(s.day);
     if (day <= s.day) return CommandResult{failure(Reason::INVALID_TIME, "Rollover requires a later trading date"), {}, 0};
     // advance already checked the actual date change. Do not classify positions
     // opened on the new date before this bookkeeping rollover as overnight holds.
     check_rollover_positions(s, events, false);
     monitor_loss(s, events);
     const auto& snapshot = *closing;
-    if (!snapshot.valuation_complete) return CommandResult{failure(Reason::STALE_QUOTE, "Rollover requires complete marked equity"), {}, 0};
+    // Shares halted through the close close on their last pre-halt print.
+    const bool marked = snapshot.valuation_complete ||
+        (std::all_of(snapshot.positions.begin(), snapshot.positions.end(), [](const auto& p) { return p.fresh; }) &&
+         std::all_of(snapshot.stocks.begin(), snapshot.stocks.end(), [](const auto& m) { return m.fresh || m.halted; }));
+    if (!marked) return CommandResult{failure(Reason::STALE_QUOTE, "Rollover requires complete marked equity"), {}, 0};
     // Close the finished day. An end-of-day floor ratchets only here, from the
     // last fully marked equity observed on that date; breaches are still checked
     // on every transaction by monitor_rules.
@@ -6109,8 +6242,59 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     event(events, "day_rollover", Json{{"day", day}, {"equity", s.start_equity}});
     // Assignments arrive overnight, so the new day takes them, and then the
     // ex-date's dividends pay the shares held into it.
+    // Financing is new-day P&L. Its opening daily-loss base stays unchanged;
+    // charges can consume loss room and interest changes marked equity.
+    accrue_financing(s, impl_->state, days, events);
     assign_early(s, dividends, closing_time, events);
     pay_dividends(s, dividends, events);
+    return CommandResult{};
+  });
+}
+CommandResult TradingSession::halt_underlying(const std::string& symbol, Timestamp end, Timestamp time) {
+  const auto& s = impl_->state;
+  if (const auto it = s.market_halts.find(symbol); it != s.market_halts.end() && it->second >= end)
+    return {{}, {}, s.version};
+  if (symbol.empty() || time <= 0 || end <= time || end - time > md::kNanosPerDay)
+    throw TradingError(Reason::INVALID_TIME, "A market halt needs an underlying and an end within the next day");
+  return impl_->transact(time, "market_halt", [&](State&, Events& events) {
+    event(events, "market_halt", Json{{"underlying", symbol}, {"end", end}, {"simulated", true}});
+    return CommandResult{};
+  }, {}, [&](State& next) {
+    // Install the pause before advancing the clock can trigger a protective close.
+    next.market_halts[symbol] = end;
+  });
+}
+CommandResult TradingSession::transfer_cash(std::string client_id, Money amount, Timestamp time) {
+  if (client_id.empty() || client_id.size() > 64 ||
+      std::any_of(client_id.begin(), client_id.end(), [](unsigned char c) { return c < 32 || c == 127; }) ||
+      amount == Money{} || amount.micros() % 10000 != 0)
+    throw TradingError(Reason::INVALID_MONEY, "A transfer needs a client_id of 1-64 printable bytes and a nonzero amount in whole cents");
+  const auto& current = impl_->state;
+  for (const auto& flow : current.cash_flows) {
+    if (flow.attempt != current.evaluation.attempt || flow.client_id != client_id) continue;
+    return {flow.amount == amount ? Decision{} : failure(Reason::DUPLICATE_CLIENT_ID, "Transfer ID already used with another amount"),
+            {}, current.version};
+  }
+  return impl_->transact(time, "cash_transfer", [&](State& s, Events& events) {
+    const auto& rules = s.config.rules;
+    if (!rules.practice())
+      return CommandResult{failure(Reason::PLAN_LOCKED, "Cash transfers are available only on practice accounts; evaluation and funded plans use their plan capital and payouts"), {}, 0};
+    const auto snapshot = snapshot_of(s);
+    if (amount < Money{} && (!snapshot.valuation_complete || -amount > s.ledger.account().cash ||
+        -amount > snapshot.buying_power.available || snapshot.equity + amount <= Money{}))
+      return CommandResult{failure(Reason::BUYING_POWER, "Withdrawal requires complete marks, positive remaining equity and sufficient cash and unreserved buying power"), {}, 0};
+    if (amount > Money{}) s.ledger.add_capital(amount); else s.ledger.withdraw(-amount);
+    s.start_equity = s.start_equity + amount;
+    auto& e = s.evaluation;
+    e.starting_balance = e.starting_balance + amount;
+    e.day_open_equity = e.day_open_equity + amount;
+    e.day_close_equity = e.day_close_equity + amount;
+    e.peak = e.peak + amount;
+    if (e.day_low_equity) e.day_low_equity = *e.day_low_equity + amount;
+    if (e.day_high_equity) e.day_high_equity = *e.day_high_equity + amount;
+    s.cash_flows.push_back({s.cash_flows.size() + 1, e.attempt, time, s.day,
+                            amount > Money{} ? "deposit" : "withdrawal", {}, amount, {}, 0, 0, client_id});
+    event(events, "cash_flow", s.cash_flows.back());
     return CommandResult{};
   });
 }

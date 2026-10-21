@@ -24,6 +24,7 @@ struct MarketHalt {
   md::Timestamp end = 0;   ///< when trading resumes
   double reference = 0.0;  ///< the previous close the fall is measured from
   double price = 0.0;      ///< the print that tripped it
+  std::string underlying = {}; ///< Authored single-name halt; empty is market-wide.
 };
 
 /// Published with engine status, independently of the selected paper account.
@@ -202,7 +203,7 @@ struct TradingCommand {
   enum class Kind { Submit, Cancel, Limits, Trip, Reset, Settle, ResetAccount, Payout, Modify, CancelAll, ClosePositions, CreateAccount, Annotate,
                     Exercise, CloseStock, DayNote, Preview, Guardrails, Playbook, CreateSandbox, PreviewChange, WhatIf, PreviewClose,
                     Abandon, ExerciseInstruction, Group, Ungroup, TradeStock, PreviewStock, CreateAlert, DeleteAlert,
-                    UpdateAccount, DeleteAccount };
+                    UpdateAccount, DeleteAccount, CashTransfer, Halt };
   Kind kind = Kind::Submit;
   std::string actor = "unknown";
   trading::OrderRequest order;

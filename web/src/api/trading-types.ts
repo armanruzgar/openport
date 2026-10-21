@@ -143,6 +143,11 @@ export interface AccountRules {
   house_margin_percent?: number
   /** Portfolio margin's implied-volatility shock, in points up and down. */
   pm_vol_shock?: number
+  pin_risk?: boolean
+  pin_risk_seed?: number
+  cash_credit_rate_bps?: number
+  margin_debit_rate_bps?: number
+  stock_borrow_rate_bps?: number
   /** Held options plus working opening contracts, excluding shares; 0 disables. */
   /** Acceptance checks full size; each fill checks its proposed contracts against current volume. */
   max_volume_percent?: number
@@ -201,7 +206,7 @@ export interface Attribution {
 /** Every round trip in a holding this attempt, the open one included. */
 export interface Lifetime { round_trips: number; realised: Money; fees: Money; net: Money }
 /** A contract or shares traded today and no longer held, with the day's P&L by Greek. */
-export interface ClosedAttribution { symbol: string; kind: "option" | "shares"; underlying: string; attribution: Attribution }
+export interface ClosedAttribution { symbol: string; kind: "option" | "shares" | "cash"; underlying: string; attribution: Attribution }
 export interface EvaluationDay {
   low_equity?: Money | null
   high_equity?: Money | null
@@ -401,7 +406,23 @@ export interface JournalSize {
   records: number
   warning: string | null
 }
+export interface CashFlow {
+  id: string
+  attempt: number
+  time: string
+  day: string
+  kind: "deposit" | "withdrawal" | "credit_interest" | "debit_interest" | "borrow_fee"
+  symbol: string | null
+  amount: Money
+  basis: Money
+  rate_bps: number
+  days: number
+  client_id: string | null
+}
+
 export interface Account {
+  cash_flows?: CashFlow[]
+  cash_transfers_allowed?: boolean
   damaged?: AccountDamage | null
   journal_size?: JournalSize
   verification_cost?: import("./types").VerificationCost
@@ -672,6 +693,11 @@ export interface MarginModel {
   account_type?: AccountType
   house_margin_percent?: number
   pm_vol_shock?: number
+  pin_risk?: boolean
+  pin_risk_seed?: number
+  cash_credit_rate_bps?: number
+  margin_debit_rate_bps?: number
+  stock_borrow_rate_bps?: number
 }
 export type ResetRequest = { reason: string; fill_model?: FillModel; fee_model?: FeeModel } & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
 export type Side = "buy" | "sell"
@@ -784,7 +810,7 @@ export interface PendingOrder {
 }
 /** What keeps an open order from filling now. */
 export interface OrderWait {
-  code: "SESSION_CLOSED" | "TRIGGER" | "REGULAR_SESSION" | "INVALID_QUOTE" | "STALE_QUOTE" | "FILL_LATENCY" | "NEWER_QUOTE" | "LIMIT" | "DISPLAYED_SIZE" | "STALE_DATA"
+  code: "MARKET_HALTED" | "SESSION_CLOSED" | "TRIGGER" | "REGULAR_SESSION" | "INVALID_QUOTE" | "STALE_QUOTE" | "FILL_LATENCY" | "NEWER_QUOTE" | "LIMIT" | "DISPLAYED_SIZE" | "STALE_DATA"
   message: string
 }
 /** A change asked of a resting order: the terms requested (null where kept), those before it, and its outcome. */
@@ -950,6 +976,8 @@ export interface StockHolding {
   realised: Money
   fees: Money
   fresh: boolean
+  /** Not fresh only because a simulated halt ran through the close: marked at the last pre-halt print. Absent from older servers. */
+  halted?: boolean
   attribution: Attribution | null
   trade?: string | null
   lifetime?: Lifetime | null

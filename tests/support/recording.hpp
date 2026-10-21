@@ -108,6 +108,7 @@ inline void exact_event(const md::Event& expected, const md::Event& actual) {
             EXPECT_EQ(e.underlying, a.underlying);
           } else if constexpr (std::is_same_v<T, md::TradingHalt>) {
             EXPECT_EQ(e.end, a.end);
+            EXPECT_EQ(e.underlying, a.underlying);
           } else {
             EXPECT_EQ(e.id, a.id);
             if constexpr (std::is_same_v<T, md::OptionQuote>) {

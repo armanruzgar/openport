@@ -104,6 +104,17 @@ TEST_P(DeskPhases, VolumeShareGateChecksKnownUnknownStaleVolumeAndOpeningContrac
   ASSERT_EQ(projection.what_if->candidates.size(), 2U);
   EXPECT_TRUE(projection.what_if->candidates[0].decision.ok());
   EXPECT_EQ(projection.what_if->candidates[1].decision.code, trading::Reason::MAX_VOLUME_SHARE);
+  // A chained candidate takes submission's gate on the parent and every child.
+  for (const bool oco : {false, true}) {
+    auto chained = market.market("chain");
+    (oco ? chained.oco : chained.then).push_back(market.market("child", 2));
+    what_if.candidates = {{chained}};
+    const auto chain = command(desk, what_if, market.time, market.time);
+    ASSERT_TRUE(chain.what_if);
+    EXPECT_EQ(chain.what_if->candidates[0].decision.code, trading::Reason::MAX_VOLUME_SHARE);
+    server::TradingCommand submit; submit.order = chained;
+    EXPECT_EQ(command(desk, submit, market.time, market.time).decision.code, trading::Reason::MAX_VOLUME_SHARE);
+  }
   const auto resting = command(desk, entry, market.time, market.time);
   ASSERT_TRUE(resting.decision.ok()) << resting.decision.message;
   server::TradingCommand change;
@@ -1319,6 +1330,16 @@ TEST(DeskEquity, OnlyAPassOfThePresetItselfUnlocksItsFundedPlan) {
   auto looser = evaluation->rules;
   looser.max_drawdown = Money::parse("5000");
   EXPECT_FALSE(server::follows_plan(*evaluation, evaluation->initial_cash, looser));
+  // Financing and pin risk move P&L without a trade, so they are program rules.
+  for (const auto& change : std::vector<std::function<void(trading::AccountRules&)>>{
+           [](auto& r) { r.cash_credit_rate_bps = 100000; }, [](auto& r) { r.margin_debit_rate_bps = 1; },
+           [](auto& r) { r.stock_borrow_rate_bps = 1; }, [](auto& r) { r.pin_risk = true; },
+           [](auto& r) { r.pin_risk_seed = 7; }}) {
+    auto financed = evaluation->rules;
+    change(financed);
+    EXPECT_FALSE(server::follows_plan(*evaluation, evaluation->initial_cash, financed));
+    EXPECT_TRUE(server::preset_id(evaluation->initial_cash, financed).empty());
+  }
 }
 
 void write_stream(const std::filesystem::path& file, bool snapshots, md::Timestamp delay = 0) {

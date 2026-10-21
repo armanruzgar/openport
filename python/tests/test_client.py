@@ -224,6 +224,8 @@ def test_base_url_rejects_ambiguous_credentials(url):
     ("ungroup_trades", (["3"],), "POST", "/api/trades/ungroup", "TradeGroupResponse"),
     ("create_account", ("Practice",), "POST", "/api/accounts", "CreateAccountResponse"),
     ("reset_account", ("new attempt",), "POST", "/api/account/reset", "Account"),
+    ("transfer_cash", ("cash-1", "-100.00"), "POST", "/api/account/cash-flows", "Account"),
+    ("halt_underlying", ("SPY", 5), "POST", "/api/market/halt", "Account"),
     ("payout", ("100.00",), "POST", "/api/account/payout", "Account"),
     ("limits", ("1", {}), "PUT", "/api/risk/limits", "Risk"),
     ("guardrails", ("1", {}), "PUT", "/api/risk/guardrails", "Risk"),

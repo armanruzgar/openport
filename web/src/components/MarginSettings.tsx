@@ -6,10 +6,18 @@ export interface MarginChoice {
   margin: "strategy" | "portfolio"
   house_margin_percent: number
   pm_vol_shock: number
+  pin_risk: boolean
+  pin_risk_seed: number
+  cash_credit_rate_bps: number
+  margin_debit_rate_bps: number
+  stock_borrow_rate_bps: number
 }
-export function planMargin(rules?: Pick<AccountRules, "account_type" | "margin" | "house_margin_percent" | "pm_vol_shock">): MarginChoice {
+export function planMargin(rules?: Partial<AccountRules>): MarginChoice {
   return { account_type: rules?.account_type ?? "margin", margin: rules?.margin ?? "strategy",
-    house_margin_percent: rules?.house_margin_percent ?? 0, pm_vol_shock: rules?.pm_vol_shock ?? 0 }
+    house_margin_percent: rules?.house_margin_percent ?? 0, pm_vol_shock: rules?.pm_vol_shock ?? 0,
+    pin_risk: rules?.pin_risk ?? false, pin_risk_seed: rules?.pin_risk_seed ?? 0,
+    cash_credit_rate_bps: rules?.cash_credit_rate_bps ?? 0,
+    margin_debit_rate_bps: rules?.margin_debit_rate_bps ?? 0, stock_borrow_rate_bps: rules?.stock_borrow_rate_bps ?? 0 }
 }
 /** Only the settings that differ from the plan's, so a plain start sends nothing new. */
 export function marginRequest(choice: MarginChoice, plan: MarginChoice): MarginModel {
@@ -21,6 +29,8 @@ export function marginRequest(choice: MarginChoice, plan: MarginChoice): MarginM
     ...(margin !== plan.margin ? { margin } : {}),
     ...(choice.house_margin_percent !== plan.house_margin_percent ? { house_margin_percent: choice.house_margin_percent } : {}),
     ...(shock !== plan.pm_vol_shock ? { pm_vol_shock: shock } : {}),
+    ...Object.fromEntries((["pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps"] as const)
+      .filter(key => choice[key] !== plan[key]).map(key => [key, choice[key]])),
   }
 }
 export function marginFacts(r: Pick<AccountRules, "account_type" | "margin" | "house_margin_percent" | "pm_vol_shock">): string[] {
@@ -75,5 +85,21 @@ export function MarginSettings({ value, onChange, disabled }: { value: MarginCho
           ? "Portfolio margin: each underlying holds its largest loss over the price scan, at implied volatility moved up and down by the shock; long options count as collateral."
           : "Strategy margin: spreads net to their width, covered calls hold nothing, and naked shorts hold Reg T's 20% of spot."}
       {value.house_margin_percent ? ` House margin adds ${value.house_margin_percent}% to ${portfolio ? "the scan" : "naked and short-sale requirements"}.` : ""}</p>
+    <div className="grid grid-cols-2 gap-2">
+      {([ ["cash_credit_rate_bps", "Cash credit rate (bps/year)"], ["margin_debit_rate_bps", "Margin debit rate (bps/year)"],
+          ["stock_borrow_rate_bps", "Stock borrow rate (bps/year)"] ] as const).map(([key, label]) =>
+        <label key={key} className="block space-y-1 text-sm"><span>{label}</span>
+          <input className="trade-input w-full" type="number" min={0} max={100000} step={1} value={value[key]}
+            onChange={event => onChange({ ...value, [key]: whole(event.target.value, 100000) })} />
+        </label>)}
+    </div>
+    <p className="text-xs text-muted">100 basis points = 1% annually. Daily actual/365 accrual includes weekends. Debit interest applies to negative portfolio-margin cash. Financing counts in equity and daily loss; the daily-loss base stays unchanged.</p>
+    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value.pin_risk}
+      onChange={event => onChange({ ...value, pin_risk: event.target.checked })} />Simulated expiry pin risk</label>
+    {value.pin_risk && <label className="block space-y-1 text-sm"><span>Pin-risk seed</span>
+      <input className="trade-input w-full" type="number" min={0} max={2147483647} step={1} value={value.pin_risk_seed}
+        onChange={event => onChange({ ...value, pin_risk_seed: whole(event.target.value, 2147483647) })} />
+      <span className="text-xs text-muted">Shorts within $0.10 of the strike have a seeded 25% chance of contrary exercise. This models after-hours uncertainty; it does not observe after-hours prices.</span>
+    </label>}
   </fieldset>
 }

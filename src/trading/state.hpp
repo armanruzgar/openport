@@ -424,8 +424,17 @@ inline void to_json(Json& j, const AccountRules& r) {
   if (r.max_resets != 0) j["max_resets"] = r.max_resets;
   if (r.fees) j["fees"] = *r.fees;
   if (r.inside_fill_percent != 0) j["inside_fill_percent"] = r.inside_fill_percent;
+  if (r.cash_credit_rate_bps != 0) j["cash_credit_rate_bps"] = r.cash_credit_rate_bps;
+  if (r.margin_debit_rate_bps != 0) j["margin_debit_rate_bps"] = r.margin_debit_rate_bps;
+  if (r.stock_borrow_rate_bps != 0) j["stock_borrow_rate_bps"] = r.stock_borrow_rate_bps;
+  if (r.pin_risk) j["pin_risk"] = true;
+  if (r.pin_risk_seed != 0) j["pin_risk_seed"] = r.pin_risk_seed;
 }
 inline void from_json(const Json& j, AccountRules& r) {
+  added_field(j, "stock_borrow_rate_bps", r.stock_borrow_rate_bps);
+  added_field(j, "margin_debit_rate_bps", r.margin_debit_rate_bps);
+  added_field(j, "cash_credit_rate_bps", r.cash_credit_rate_bps);
+  added_field(j, "pin_risk", r.pin_risk); added_field(j, "pin_risk_seed", r.pin_risk_seed);
   j.at("plan").get_to(r.plan); j.at("profit_target").get_to(r.profit_target); j.at("max_drawdown").get_to(r.max_drawdown);
   j.at("drawdown_mode").get_to(r.drawdown_mode); j.at("buy_only").get_to(r.buy_only); j.at("buying_power").get_to(r.buying_power);
   j.at("expiry_cutoff").get_to(r.expiry_cutoff);
@@ -677,6 +686,7 @@ inline void from_json(const Json& j, MarkedPosition& p) {
   added_field(j, "no_bid", p.no_bid); added_field(j, "do_not_exercise", p.do_not_exercise);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MarkedStock, position, mark, mark_time, market_value, unrealised, fresh)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CashFlow, id, attempt, time, day, kind, symbol, amount, basis, rate_bps, days, client_id)
 inline void to_json(Json& j, const TradingSnapshot& s) {
   j = Json{
       {"account_version", s.account_version}, {"time", s.time}, {"account", s.account},
@@ -693,6 +703,7 @@ inline void to_json(Json& j, const TradingSnapshot& s) {
       {"soft_floor", s.soft_floor}, {"trip_attributions", s.trip_attributions}, {"groups", s.groups},
       {"group_reviews", s.group_reviews}};
   if (!s.alerts.empty()) j["alerts"] = s.alerts;
+  if (!s.cash_flows.empty()) j["cash_flows"] = s.cash_flows;
   if (s.fee_charged.amount != Money{}) j["fee_charged"] = s.fee_charged;
 }
 inline void from_json(const Json& j, TradingSnapshot& s) {
@@ -708,6 +719,7 @@ inline void from_json(const Json& j, TradingSnapshot& s) {
   added_field(j, "annotations", s.annotations);
   added_field(j, "attribution", s.attribution); added_field(j, "attributions", s.attributions);
   added_field(j, "stocks", s.stocks); added_field(j, "stock_fills", s.stock_fills);
+  added_field(j, "cash_flows", s.cash_flows);
   added_field(j, "dividends", s.dividends); added_field(j, "closing_prints", s.closing_prints);
   added_field(j, "day_notes", s.day_notes); added_field(j, "trade_reviews", s.trade_reviews);
   added_field(j, "strategy_reviews", s.strategy_reviews);
@@ -826,6 +838,8 @@ struct State {
   /// Journaled once the account has created an alert, so other journals keep their bytes.
   AlertBook alerts;
   SharedVector<StockFill> stock_fills;
+  SharedMap<std::string, Timestamp> market_halts;
+  SharedVector<CashFlow> cash_flows;
   SharedVector<DividendPayment> dividends;
   SharedMap<std::string, ClosingPrint> closing_prints;
   /// Derived, never journaled: the IDs of the orders open when the orders were
@@ -879,10 +893,13 @@ inline void to_json(Json& j, const State& s) {
   // Absent until a conditional trigger first reads one, so other journals keep their bytes.
   if (!s.indicators.empty()) j["indicators"] = s.indicators;
   if (s.alerts.created > 0) j["alerts"] = s.alerts;
+  if (!s.market_halts.empty()) j["market_halts"] = s.market_halts;
+  if (!s.cash_flows.empty()) j["cash_flows"] = s.cash_flows;
   if (s.fee_charged.amount != Money{}) j["fee_charged"] = s.fee_charged;
 }
 inline void from_json(const Json& j, State& s) {
   s.trade_objectives.reset();
+  added_field(j, "market_halts", s.market_halts);
   j.at("config").get_to(s.config); j.at("time").get_to(s.time); j.at("version").get_to(s.version);
   j.at("limits_revision").get_to(s.limits_revision); j.at("ledger").get_to(s.ledger);
   j.at("start_equity").get_to(s.start_equity); j.at("day").get_to(s.day); j.at("contracts").get_to(s.contracts);
@@ -894,6 +911,7 @@ inline void from_json(const Json& j, State& s) {
   added_field(j, "closures", s.closures); added_field(j, "annotations", s.annotations);
   added_field(j, "references", s.references); added_field(j, "explained", s.explained);
   added_field(j, "stock_marks", s.stock_marks); added_field(j, "stock_fills", s.stock_fills);
+  added_field(j, "cash_flows", s.cash_flows);
   added_field(j, "dividends", s.dividends); added_field(j, "closing_prints", s.closing_prints);
   added_field(j, "day_notes", s.day_notes); added_field(j, "trade_reviews", s.trade_reviews);
   added_field(j, "strategy_reviews", s.strategy_reviews);

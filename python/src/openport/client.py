@@ -331,6 +331,14 @@ class Client:
     def reset_account(self, reason: str, **settings) -> Account:
         return self._request("POST", "/account/reset", {"reason": reason, **settings}, scoped=True)
 
+    def transfer_cash(self, client_id: str, amount: str) -> Account:
+        """Practice cash only: positive deposit or negative withdrawal; reuse client_id on retry."""
+        return self._request("POST", "/account/cash-flows", {"client_id": client_id, "amount": amount}, scoped=True)
+
+    def halt_underlying(self, symbol: str, minutes: int) -> Account:
+        """Replay only: simulate a stock/ETF pause at replay time, capped at the regular close."""
+        return self._request("POST", "/market/halt", {"symbol": symbol, "minutes": minutes}, scoped=True)
+
     def payout(self, amount: str) -> Account:
         return self._request("POST", "/account/payout", {"amount": amount}, scoped=True)
 

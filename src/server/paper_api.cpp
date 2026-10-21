@@ -110,6 +110,11 @@ json rules_json(const AccountRules& r, Money initial_cash, const std::optional<S
   if (r.fill_latency_ms != 0) result["fill_latency_ms"] = r.fill_latency_ms;
   if (r.impact_ticks != 0) result["impact_ticks"] = r.impact_ticks;
   if (r.inside_fill_percent != 0) result["inside_fill_percent"] = r.inside_fill_percent;
+  if (r.cash_credit_rate_bps != 0) result["cash_credit_rate_bps"] = r.cash_credit_rate_bps;
+  if (r.margin_debit_rate_bps != 0) result["margin_debit_rate_bps"] = r.margin_debit_rate_bps;
+  if (r.stock_borrow_rate_bps != 0) result["stock_borrow_rate_bps"] = r.stock_borrow_rate_bps;
+  if (r.pin_risk) result["pin_risk"] = true;
+  if (r.pin_risk_seed != 0) result["pin_risk_seed"] = r.pin_risk_seed;
   if (r.fees) result["fees"] = fee_schedule_json(*r.fees);
   result["events"] = calendar_events_json(r.events);
   result["news_before_minutes"] = r.news_before_minutes; result["news_after_minutes"] = r.news_after_minutes;
@@ -721,7 +726,7 @@ json portfolio_json(const TradingView& view) {
         {"average_price", (p.shares < 0 ? -p.basis : p.basis).prorate(1, magnitude).str()}, {"basis", p.basis.str()},
         {"mark", money(held.mark)}, {"mark_time", held.mark ? json(md::format_timestamp(held.mark_time)) : json(nullptr)},
         {"market_value", money(held.market_value)}, {"unrealised", money(held.unrealised)},
-        {"realised", p.realised.str()}, {"fees", p.fees.str()}, {"fresh", held.fresh},
+        {"realised", p.realised.str()}, {"fees", p.fees.str()}, {"fresh", held.fresh}, {"halted", held.halted},
         {"attribution", s.attributions.contains(p.symbol) ? attribution_json(s.attributions.at(p.symbol)) : json(nullptr)},
         {"trade", trade_of(p.symbol)}, {"lifetime", lifetime_of(p.symbol)}});
   }
@@ -761,7 +766,7 @@ json portfolio_json(const TradingView& view) {
   for (const auto& [symbol, attribution] : s.attributions) {
     if (held.contains(symbol)) continue;
     const auto contract = view.contracts.find(symbol);
-    closed.push_back({{"symbol", symbol}, {"kind", contract == view.contracts.end() ? "shares" : "option"},
+    closed.push_back({{"symbol", symbol}, {"kind", symbol == "cash" ? "cash" : contract == view.contracts.end() ? "shares" : "option"},
         {"underlying", contract == view.contracts.end() ? symbol : contract->second.underlying},
         {"attribution", attribution_json(attribution)}});
   }
@@ -850,6 +855,11 @@ json account_json(const TradingView& view) {
         {"next_size", (e.starting_balance + size_scaling_increase(e, rule)).str()}, {"history", history}};
   }
   const bool liquidated = decided && in.flat;
+  json cash_flows = json::array();
+  for (const auto& f : s.cash_flows)
+    cash_flows.push_back({{"id", std::to_string(f.id)}, {"attempt", f.attempt}, {"time", md::format_timestamp(f.time)},
+        {"day", md::format_date(f.day)}, {"kind", f.kind}, {"symbol", nullable(f.symbol)}, {"amount", f.amount.str()},
+        {"basis", f.basis.str()}, {"rate_bps", f.rate_bps}, {"days", f.days}, {"client_id", nullable(f.client_id)}});
   json payouts = json::array();
   for (const auto& p : e.payouts)
     payouts.push_back({{"number", p.number}, {"time", md::format_timestamp(p.time)}, {"day", md::format_date(p.day)}, {"amount", p.amount.str()},
@@ -937,6 +947,7 @@ json account_json(const TradingView& view) {
                      {"resets_left", r.max_resets == 0 ? json(nullptr) : json(std::max<std::int64_t>(0, r.max_resets - costs.resets_used))},
                      {"payouts_received", costs.payouts_received.str()}, {"net", (costs.payouts_received - costs.total()).str()},
                      {"fee_charged", s.fee_charged.amount.str()}, {"fee_kind", nullable(s.fee_charged.kind)}}},
+          {"cash_transfers_allowed", r.practice()}, {"cash_flows", cash_flows},
           {"attempts", attempts}};
 }
 /// How a change in shares came about.
@@ -1396,6 +1407,8 @@ ApiResponse command_response(const TradingCommand& command, const TradingReply& 
       break;
     case TradingCommand::Kind::Settle: body["position_closed"] = true; break;
     case TradingCommand::Kind::ResetAccount:
+    case TradingCommand::Kind::Halt:
+    case TradingCommand::Kind::CashTransfer:
     case TradingCommand::Kind::Payout: body = account_json(view); break;
     case TradingCommand::Kind::Exercise:
     case TradingCommand::Kind::CloseStock:
@@ -1690,6 +1703,11 @@ FeeSchedule parse_fee_schedule(const json& j) {
 /// The margin settings present in `j`, in rules or beside a plan: the margin
 /// mode, account type, house margin and portfolio margin's vol shock.
 void margin_fields(const json& j, AccountRules& rules) try {
+  if (j.contains("stock_borrow_rate_bps")) rules.stock_borrow_rate_bps = integer_field(j, "stock_borrow_rate_bps");
+  if (j.contains("margin_debit_rate_bps")) rules.margin_debit_rate_bps = integer_field(j, "margin_debit_rate_bps");
+  if (j.contains("cash_credit_rate_bps")) rules.cash_credit_rate_bps = integer_field(j, "cash_credit_rate_bps");
+  if (j.contains("pin_risk_seed")) rules.pin_risk_seed = integer_field(j, "pin_risk_seed");
+  if (j.contains("pin_risk")) rules.pin_risk = boolean_field(j, "pin_risk");
   if (j.contains("margin")) {
     const auto margin = string_field(j, "margin");
     if (margin != "strategy" && margin != "portfolio") throw std::invalid_argument("margin must be strategy or portfolio");
@@ -1757,7 +1775,7 @@ AccountRules parse_rules(const json& j) {
          {"plan", "plan_id", "phase", "lock_balance", "payouts", "defined_risk", "slippage_ticks", "margin", "fill_latency_ms", "impact_ticks",
           "lock_at_start", "profit_basis", "daily_loss_limit", "daily_loss_basis", "daily_loss_action", "consistency_percent",
           "consistency_basis", "min_trading_days", "min_profitable_days", "profitable_day_profit", "day_end", "fees",
-          "account_type", "house_margin_percent", "pm_vol_shock", "inside_fill_percent",
+          "account_type", "house_margin_percent", "pm_vol_shock", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "inside_fill_percent", "pin_risk", "pin_risk_seed",
           "min_hold_seconds", "microscalp_seconds", "microscalp_percent", "min_trades", "trade_consistency_percent", "max_volume_percent", "max_contracts_held", "no_hedging", "no_counter_positions", "require_stop_loss", "max_trade_risk", "max_trade_risk_percent",
           "time_limit_days", "inactivity_days", "underlyings", "trading_start", "trading_end", "flat_time", "no_overnight", "scaling", "size_scaling",
           "events", "news_before_minutes", "news_after_minutes", "news_action", "hold_restrictions", "hold_cutoff",
@@ -1848,8 +1866,16 @@ void check_plan_name(Money initial_cash, const AccountRules& rules) {
 }
 /// The account's margin, as a broker sets it, can stand beside a plan or custom
 /// rules, as the fill model does; the evaluation rules stay intact.
+/// Financing posts to realised P&L, so only a practice account may change the
+/// plan's rates; pin risk stays a simulation choice on any plan.
 void margin_model(const json& body, AccountRules& rules) {
+  const auto plan = rules;
   margin_fields(body, rules);
+  if (!plan.practice() && (rules.cash_credit_rate_bps != plan.cash_credit_rate_bps ||
+                           rules.margin_debit_rate_bps != plan.margin_debit_rate_bps ||
+                           rules.stock_borrow_rate_bps != plan.stock_borrow_rate_bps))
+    throw TradingError(Reason::PLAN_LOCKED, "Financing rates can be overridden only on practice accounts; "
+                       "evaluation, verification and funded plans use their own rates");
   validate_rules(rules);
 }
 /// Presets override only execution settings; all evaluation rules stay intact.
@@ -2090,8 +2116,6 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
         single.method = "POST";
         single.body = order.dump();
         try {
-          if (order.contains("then") || order.contains("oco"))
-            throw std::invalid_argument("What-if does not model order chains; then and oco are not supported");
           requests.push_back(parse_command(single, "/api/orders").order);
         } catch (const std::invalid_argument& error) {
           throw std::invalid_argument(where + ".orders[" + std::to_string(i) + "]: " + error.what());
@@ -2293,7 +2317,7 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   if (path == "/api/accounts") {
     // A name, and either a preset plan or a starting balance and complete rules.
     fields(body, {"name"}, {"plan", "initial_cash", "rules", "fill_model", "fee_model", "margin", "account_type",
-                            "house_margin_percent", "pm_vol_shock", "copy_settings_from", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
+                            "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "copy_settings_from", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
     command.kind = TradingCommand::Kind::CreateAccount;
     command.name = string_field(body, "name");
     if (body.contains("copy_settings_from")) {
@@ -2361,7 +2385,7 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   } else if (path == "/api/account/reset") {
     // Either a preset ID, or a custom starting balance and complete rules.
     fields(body, {"reason"}, {"plan", "initial_cash", "rules", "fill_model", "fee_model", "margin", "account_type",
-                              "house_margin_percent", "pm_vol_shock", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
+                              "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
     command.kind = TradingCommand::Kind::ResetAccount;
     command.program_costs = true;
     command.restore_scaled_rules = true;
@@ -2394,6 +2418,18 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     fill_model(body, command.rules);
     fee_model(body, command.rules);
     margin_model(body, command.rules);
+  } else if (path == "/api/market/halt") {
+    fields(body, {"symbol", "minutes"});
+    command.kind = TradingCommand::Kind::Halt;
+    command.symbol = string_field(body, "symbol");
+    command.quantity = integer_field(body, "minutes");
+    if (command.symbol.empty() || command.quantity < 1 || command.quantity > 390)
+      throw std::invalid_argument("A halt needs a symbol and 1-390 minutes");
+  } else if (path == "/api/account/cash-flows") {
+    fields(body, {"client_id", "amount"});
+    command.kind = TradingCommand::Kind::CashTransfer;
+    command.name = string_field(body, "client_id");
+    command.amount = decimal_field(body, "amount");
   } else if (path == "/api/account/payout") {
     fields(body, {"amount"});
     command.kind = TradingCommand::Kind::Payout;
@@ -3069,7 +3105,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
       path == "/api/positions/exercise" || path == "/api/stocks/close" || path == "/api/stocks/trade" || path == "/api/stocks/trade/preview" ||
       path == "/api/positions/abandon" || path == "/api/positions/instruction" ||
       path == "/api/risk/kill" || path == "/api/settlements" ||
-      path == "/api/account/reset" || path == "/api/account/payout" ||
+      path == "/api/account/reset" || path == "/api/account/payout" || path == "/api/account/cash-flows" || path == "/api/market/halt" ||
       path == "/api/trades/group" || path == "/api/trades/ungroup" || path == "/api/alerts")) ||
       (request.method == "PUT" && (path == "/api/risk/limits" || path == "/api/risk/guardrails" || path.starts_with("/api/orders/") ||
                                    ((path.starts_with("/api/trades/") || path.starts_with("/api/days/")) && path.ends_with("/note")))) ||

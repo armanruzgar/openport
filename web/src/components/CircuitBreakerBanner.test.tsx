@@ -82,3 +82,10 @@ describe("the circuit breaker banner", () => {
       .toContain("Trading resumes at 10:30 ET.")
   })
 })
+
+it("names scoped halts without claiming a market-wide closure", () => {
+  const html = render({ ...breaker, level: 0, halts: [{ ...breaker.halts[0]!, level: 0, underlying: "SPY", simulated: true }] })
+  expect(html).toContain("Simulated single-name halt: SPY")
+  expect(html).toContain("Other underlyings are not halted")
+  expect(html).not.toContain("halted market-wide")
+})

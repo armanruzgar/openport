@@ -79,7 +79,7 @@ function Results({ result }: { result: WhatIfResponse }) {
         </tr>)}</tbody>
       </table>
     </div>}
-    <p className="text-faint">Each candidate's orders are checked as submission checks them and filled in full at the preview's prices (slipped far sides, or the limit), one after another, on a private copy of the account. Max loss is the worst cell of the account's spot × volatility grid from today's equity, so a candidate's cost to trade counts. Simulated estimates, not execution promises.</p>
+    <p className="text-faint">Candidates without chains assume full fills at preview prices. OTO/OCO candidates run actual submission rules at current quotes and available size, including resting children and cancellations. Each runs on a private account copy. Max loss is the worst cell of the account's spot × volatility grid from today's equity, so a candidate's cost to trade counts. Simulated estimates, not execution promises.</p>
   </div>
 }
 

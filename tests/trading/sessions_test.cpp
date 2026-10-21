@@ -24,6 +24,70 @@ void tick(TradingSession& s, ScriptedMarket& f, Timestamp time, std::string_view
 }
 const Order& order(const TradingSession& s, OrderId id) { return s.snapshot()->recent_orders.at(static_cast<std::size_t>(id - 1)); }
 
+TEST(TradingSessions, SingleNamePausesBlockCachedBooksAndWaitForReopeningQuotes) {
+  ScriptedMarket f, other;
+  other.contract = *md::parse_osi("SPY261022C00500000");
+  TradingSession s(roomy(), f.time); f.seed(s); other.seed(s);
+  ASSERT_TRUE(s.submit(f.limit("rest", 1, "3.90"), f.time).decision.ok());
+  const auto end = f.time + 5 * md::kNanosPerSecond;
+  ASSERT_TRUE(s.halt_underlying("SPX", end, f.time).decision.ok());
+  EXPECT_EQ(s.submit(f.market("cached"), f.time).decision.code, Reason::MARKET_HALTED);
+  auto parent = other.market("parent"); parent.then = {f.market("")};
+  ASSERT_TRUE(s.submit(parent, f.time).decision.ok());
+  EXPECT_EQ(s.snapshot()->recent_orders.back().reason.code, Reason::MARKET_HALTED);
+  tick(s, f, f.time + md::kNanosPerSecond, "3.70", "3.80");
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Working);
+  EXPECT_EQ(s.snapshot()->waiting.at(1).code, "MARKET_HALTED");
+  s.on_quotes({}, {}, end);
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Working);
+  EXPECT_EQ(s.submit(f.market("old"), end).decision.code, Reason::STALE_QUOTE);
+  tick(s, f, end, "3.70", "3.80");
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Filled);
+}
+
+TEST(TradingSessions, ANewPausePrecedesScheduledProtectiveCloses) {
+  ScriptedMarket f;
+  f.time = at(kTuesday, 14, 59) + 59 * md::kNanosPerSecond;
+  AccountRules rules; rules.flat_time = 15 * 60;
+  TradingSession s(roomy(rules), f.time); f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
+  const auto start = at(kTuesday, 15, 0), end = start + 5 * md::kNanosPerSecond;
+  ASSERT_TRUE(s.halt_underlying("SPX", end, start).decision.ok());
+  ASSERT_EQ(s.snapshot()->positions.size(), 1);
+  EXPECT_EQ(s.snapshot()->recent_fills.size(), 1);
+  tick(s, f, end);
+  EXPECT_TRUE(s.snapshot()->positions.empty());
+}
+
+TEST(TradingSessions, ASingleNameHaltThroughTheCloseRollsOnItsLastPreHaltPrint) {
+  const auto bought = at(kTuesday, 15, 54), start = at(kTuesday, 15, 55);
+  for (const auto end : {at(kTuesday, 16, 0), at(kTuesday, 16, 5), at(kWednesday, 9, 35)}) {
+    TradingSession s(roomy(), bought);
+    ASSERT_TRUE(s.trade_stock("SPY", 100, bought, StockPrice{"SPY", bought, m("500")}).decision.ok());
+    ASSERT_TRUE(s.halt_underlying("SPY", end, start).decision.ok());
+    // The replay still prints through the simulated halt; those prints are not marks.
+    s.on_quotes({}, {}, at(kTuesday, 15, 59), {StockPrice{"SPY", at(kTuesday, 15, 59), m("450")}});
+    s.on_quotes({}, {}, at(kTuesday, 16, 30));
+    const auto closing = s.snapshot();
+    ASSERT_EQ(closing->stocks.size(), 1U);
+    EXPECT_FALSE(closing->stocks[0].fresh);
+    EXPECT_TRUE(closing->stocks[0].halted);
+    EXPECT_EQ(closing->stocks[0].mark, m("500"));
+    EXPECT_EQ(closing->stocks[0].mark_time, bought);
+    EXPECT_FALSE(closing->valuation_complete);
+    const auto equity = closing->equity;
+    ASSERT_TRUE(s.roll_day(at(kWednesday, 9, 0)).decision.ok());
+    EXPECT_EQ(s.snapshot()->start_of_day_equity, equity);
+  }
+  // A halt that ended before the close needs a print after it.
+  TradingSession s(roomy(), bought);
+  ASSERT_TRUE(s.trade_stock("SPY", 100, bought, StockPrice{"SPY", bought, m("500")}).decision.ok());
+  ASSERT_TRUE(s.halt_underlying("SPY", at(kTuesday, 15, 58), start).decision.ok());
+  s.on_quotes({}, {}, at(kTuesday, 16, 30));
+  EXPECT_FALSE(s.snapshot()->stocks[0].halted);
+  EXPECT_EQ(s.roll_day(at(kWednesday, 9, 0)).decision.code, Reason::STALE_QUOTE);
+}
+
 TEST(TradingSessions, ExpiringEtfOptionsTradeAQuarterHourAfterTheClose) {
   constexpr md::Date expiry{2026, 10, 22};
   ScriptedMarket f;

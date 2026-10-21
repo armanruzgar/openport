@@ -246,6 +246,8 @@ bool same_program_rules(AccountRules left, const AccountRules& right) {
   execution.fill_latency_ms = right.fill_latency_ms;
   execution.impact_ticks = right.impact_ticks;
   execution.inside_fill_percent = right.inside_fill_percent;
+  // Financing and pin risk change P&L without a trade, so they are program
+  // rules: an account that overrides them no longer follows the preset.
   execution.fees = right.fees;
   // The account's margin is the trader's broker's, not the plan's.
   execution.margin = right.margin;
@@ -259,6 +261,12 @@ bool same_program_rules(AccountRules left, const AccountRules& right) {
   return execution == right;
 }
 void validate_rules(const AccountRules& r) {
+  if (r.pin_risk_seed < 0 || r.pin_risk_seed > 2147483647)
+    throw TradingError(Reason::INVALID_RULES, "pin_risk_seed must be 0-2147483647");
+  if (r.cash_credit_rate_bps < 0 || r.cash_credit_rate_bps > 100000 ||
+      r.margin_debit_rate_bps < 0 || r.margin_debit_rate_bps > 100000 ||
+      r.stock_borrow_rate_bps < 0 || r.stock_borrow_rate_bps > 100000)
+    throw TradingError(Reason::INVALID_RULES, "Annual financing rates must be 0-100000 basis points");
   if (r.size_scaling) {
     const auto& v = *r.size_scaling;
     if (r.phase != Phase::Funded || v.profit_percent < 1 || v.profit_percent > 100 ||

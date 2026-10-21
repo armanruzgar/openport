@@ -25,6 +25,20 @@ struct SettlementRecord {
   std::optional<SettlementSource> source;
 };
 
+struct CashFlow {
+  std::uint64_t id = 0;
+  std::uint64_t attempt = 0;
+  Timestamp time = 0;
+  md::Date day;
+  std::string kind;  ///< deposit, withdrawal, credit_interest, debit_interest or borrow_fee.
+  std::string symbol; ///< Borrow only; empty for cash.
+  Money amount;      ///< Signed cash change, whole cents.
+  Money basis;       ///< Cash magnitude or short-stock notional used for accrual.
+  std::int64_t rate_bps = 0;
+  std::int64_t days = 0;
+  std::string client_id; ///< Transfers only: retry identity within the attempt.
+};
+
 struct MarkedPosition {
   Position position;
   std::optional<Money> mark;  ///< Never substituted with zero when missing.
@@ -47,6 +61,9 @@ struct MarkedStock {
   std::optional<Money> market_value;
   std::optional<Money> unrealised;
   bool fresh = false;
+  /// Not fresh only because a simulated halt was still in force at the regular
+  /// close: the mark is the last print before the halt, and rollover closes on it.
+  bool halted = false;
 };
 /// What keeps an open order from filling now, read from the account's books,
 /// sessions and clocks as matching would read them. Derived for each snapshot,
@@ -55,7 +72,8 @@ struct MarkedStock {
 /// (no usable quote on a leg), FILL_LATENCY (held for a quote stamped after the
 /// account's delay), NEWER_QUOTE (resting orders take quotes newer than their
 /// acceptance), LIMIT (the far side is worse than the limit), DISPLAYED_SIZE (the
-/// quote's displayed size is used up until a new one) or STALE_DATA (held
+/// quote's displayed size is used up until a new one), MARKET_HALTED (a simulated
+/// underlying pause) or STALE_DATA (held
 /// positions need fresh marks and valuations first).
 struct OrderWait {
   std::string code;
@@ -102,6 +120,7 @@ struct TradingSnapshot {
   std::optional<Money> payouts_received; ///< Derived from payout events across all attempts; never serialized.
   std::vector<AttemptSummary> attempts;  ///< Earlier attempts, oldest first.
   SharedVector<StockFill> stock_fills;    ///< Every change in shares held, oldest first.
+  SharedVector<CashFlow> cash_flows;
   SharedVector<DividendPayment> dividends;  ///< Dividends paid on held shares, oldest first.
   /// Notes and tags by trade, named by its opening fill's ID.
   SharedMap<std::string, Annotation> annotations;
@@ -424,12 +443,12 @@ class TradingSession {
   /// the units it could still work (its filled ones aside); exits have none.
   [[nodiscard]] OrderPreview preview_change(OrderId id, const OrderChange& change, Timestamp time, double floor_share = 0.5,
       Decision rejection = {}, const std::map<std::string, double>& close_variances = {}, const PreviewMarket& market = {}) const;
-  /// Candidate adjustments side by side, each a list of orders checked as
-  /// submission checks them and filled in full at the preview's projected prices
-  /// (slipped far sides for market orders, the limit for limit orders), each after
-  /// the ones before it, on a private copy of the account; beside it the account as
-  /// it is. Allocates no IDs and writes nothing. `rejections` holds the
-  /// integration's gate for each candidate's orders, as for submit.
+  /// Candidate adjustments on private copies, beside the unchanged account.
+  /// Unchained candidates assume full fills at preview prices (slipped far sides
+  /// for markets, the limit for limits). Chains run submit at current quotes and
+  /// available size, including children, cancellations and working reservations.
+  /// Allocates no live IDs and writes nothing. `rejections` holds the integration's
+  /// gate for each candidate's orders, as for submit.
   [[nodiscard]] WhatIf what_if(const std::vector<std::vector<OrderRequest>>& candidates, Timestamp time,
       const std::vector<std::vector<Decision>>& rejections = {}, const std::map<std::string, double>& close_variances = {},
       const PreviewMarket& market = {}) const;
@@ -536,6 +555,13 @@ class TradingSession {
   /// `dividends` are those going ex on the new trading date (and any skipped while
   /// the server was down): each pays the shares held into it, once.
   CommandResult roll_day(Timestamp time, const std::vector<Dividend>& dividends = {});
+  /// Practice only: positive deposits, negative withdrawals, whole cents. Retries
+  /// of the same client ID and amount do nothing; transfers never count as P&L.
+  CommandResult transfer_cash(std::string client_id, Money amount, Timestamp time);
+  /// Integration-authored pause, until end (exclusive); "*" covers the market.
+  /// Working orders wait, including chained and protective orders. After resume,
+  /// execution requires quotes stamped at or after the pause ended.
+  CommandResult halt_underlying(const std::string& symbol, Timestamp end, Timestamp time);
   /// Start a new attempt: cancel working orders, close positions at their last
   /// mark as Reset closures (no fills, no fees), restore cash, clear the kill
   /// latch and apply the given rules. Order and fill history is kept.

@@ -412,6 +412,54 @@ TEST_F(PaperEngine, AChangePreviewAnswersLikeTheChangeWithoutMakingIt) {
   expect_error(write(*engine, "POST", "/api/orders/" + id + "/preview", {{"limit_price", "4.20"}, {"floor_share", 2}}), 400, "INVALID_REQUEST");
 }
 
+TEST_F(PaperEngine, CashTransfersArePracticeOnlyAndIdempotentOverHttp) {
+  seed();
+  const auto before = read(*engine, "/api/account");
+  const auto response = write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "deposit"}, {"amount", "500.00"}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto result = json::parse(response.body);
+  ASSERT_EQ(result["cash_flows"].size(), 1U);
+  EXPECT_EQ(result["cash_flows"][0]["kind"], "deposit");
+  EXPECT_EQ(result["cash_flows"][0]["amount"], "500.00");
+  EXPECT_EQ(result["evaluation"]["profit"], before["evaluation"]["profit"]);
+  EXPECT_EQ(json::parse(write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "deposit"}, {"amount", "500.00"}}).body), result);
+  expect_error(write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "deposit"}, {"amount", "501.00"}}), 409, "DUPLICATE_CLIENT_ID");
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"plan", "intraday-100k"}, {"reason", "evaluation"}}).status, 200);
+  expect_error(write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "no"}, {"amount", "500.00"}}), 422, "PLAN_LOCKED");
+}
+
+TEST_F(PaperEngine, SimulationSettingsRoundTripAndLiveHaltDrillsAreRefused) {
+  seed();
+  const auto response = write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", "financing drill"},
+      {"pin_risk", true}, {"pin_risk_seed", 42}, {"cash_credit_rate_bps", 365}, {"margin_debit_rate_bps", 1200}, {"stock_borrow_rate_bps", 500}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto rules = json::parse(response.body)["rules"];
+  EXPECT_EQ(rules["pin_risk"], true); EXPECT_EQ(rules["pin_risk_seed"], 42);
+  EXPECT_EQ(rules["cash_credit_rate_bps"], 365); EXPECT_EQ(rules["margin_debit_rate_bps"], 1200);
+  EXPECT_EQ(rules["stock_borrow_rate_bps"], 500);
+  expect_error(write(*engine, "POST", "/api/market/halt", {{"symbol", "SPY"}, {"minutes", 5}}), 422, "PLAN_LOCKED");
+}
+
+TEST_F(PaperEngine, FinancingOverridesArePracticeOnlyAndLeaveThePreset) {
+  seed();
+  // A credit rate would pay an evaluation's target without a trade.
+  for (const auto* plan : {"intraday-100k", "eod-25k"})
+    for (const auto* key : {"cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps"}) {
+      expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", plan}, {"reason", "financing"}, {key, 100000}}),
+                   422, "PLAN_LOCKED");
+      expect_error(write(*engine, "POST", "/api/accounts", {{"name", "Financed"}, {"plan", plan}, {key, 100000}}),
+                   422, "PLAN_LOCKED");
+    }
+  // Restating the plan's own rate is not an override.
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"plan", "intraday-100k"}, {"reason", "same"},
+      {"cash_credit_rate_bps", 0}}).status, 200);
+  EXPECT_EQ(read(*engine, "/api/account")["rules"]["plan_id"], "intraday-100k");
+  // Pin risk is still allowed, but the account no longer follows the preset.
+  const auto pinned = write(*engine, "POST", "/api/account/reset", {{"plan", "intraday-100k"}, {"reason", "pin"}, {"pin_risk", true}});
+  ASSERT_EQ(pinned.status, 200) << pinned.body;
+  EXPECT_TRUE(json::parse(pinned.body)["rules"]["plan_id"].is_null());
+}
+
 TEST_F(PaperEngine, WhatIfComparesCandidatesWithoutTrading) {
   seed();
   const auto before = read(*engine, "/api/account");
@@ -446,23 +494,26 @@ TEST_F(PaperEngine, WhatIfComparesCandidatesWithoutTrading) {
   EXPECT_NE(json::parse(refused.body)["error"]["message"].get<std::string>().find("candidates[0].orders[1]"), std::string::npos) << refused.body;
 }
 
-TEST_F(PaperEngine, WhatIfRefusesOrderChainsWithoutTrading) {
+TEST_F(PaperEngine, WhatIfModelsOrderChainsWithoutTrading) {
   seed();
   auto buy = order(market, "candidate", "4.20");
   auto next = order(market, "", "3.90");
   next.erase("client_order_id");
+  next["side"] = "sell";
   const auto before = read(*engine, "/api/account");
   for (const auto* key : {"then", "oco"}) {
-    for (const auto& terms : {next, json(nullptr)}) {
-      auto chained = buy;
-      chained[key] = terms;
-      const auto response = write(*engine, "POST", "/api/orders/what-if",
-          {{"candidates", json::array({{{"orders", json::array({buy, chained})}}})}});
-      expect_error(response, 400, "INVALID_REQUEST");
-      const auto message = json::parse(response.body)["error"]["message"].get<std::string>();
-      EXPECT_NE(message.find("candidates[0].orders[1]"), std::string::npos);
-      EXPECT_NE(message.find("What-if does not model order chains"), std::string::npos);
-    }
+    auto chained = buy;
+    chained[key] = next;
+    const auto response = write(*engine, "POST", "/api/orders/what-if",
+        {{"candidates", json::array({{{"orders", json::array({chained})}}})}});
+    ASSERT_EQ(response.status, 200) << response.body;
+    const auto candidate = json::parse(response.body)["candidates"][0];
+    EXPECT_EQ(candidate["decision"], "ok");
+    EXPECT_FALSE(candidate["after"].is_null());
+    if (std::string_view(key) == "then") EXPECT_EQ(candidate["after"]["exposure"]["dollar_delta"], 0);
+    chained[key] = nullptr;
+    expect_error(write(*engine, "POST", "/api/orders/what-if",
+        {{"candidates", json::array({{{"orders", json::array({chained})}}})}}), 400, "INVALID_REQUEST");
   }
   EXPECT_EQ(read(*engine, "/api/account"), before);
   EXPECT_TRUE(read(*engine, "/api/orders")["orders"].empty());

@@ -50,6 +50,7 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
       md::SnapshotComplete{std::string("SP\0Y", 4), hi},
       md::SnapshotHeartbeat{"SPX", hi},
       md::TradingHalt{100, 200},
+      md::TradingHalt{100, 200, "SPY"},
   };
   for (auto state : {md::FeedState::Connecting, md::FeedState::Live, md::FeedState::Delayed,
                      md::FeedState::Stale, md::FeedState::Error, md::FeedState::Stopped})

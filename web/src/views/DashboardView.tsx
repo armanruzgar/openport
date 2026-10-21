@@ -4,6 +4,8 @@ import { useAccount, usePlans, usePortfolio, useTrades } from "../api/trading"
 import type { Account, Attribution, Trade, TradingStatus } from "../api/trading-types"
 import { HBarChart } from "../charts/HBarChart"
 import { LineChart, type Reference, type Series } from "../charts/LineChart"
+import { CashFlows } from "../components/CashFlows"
+import { HaltDrill } from "../components/HaltDrill"
 import { IntradayEquity } from "../components/IntradayEquity"
 import { BreachPanel } from "../components/BreachPanel"
 import { RiskWarnings } from "../components/RiskWarnings"
@@ -127,6 +129,8 @@ function Dashboard({ trading }: { trading: TradingStatus }) {
         </div>
       )}
       <DecisionPositionsNotice account={data} portfolio={portfolio.data} />
+      <CashFlows account={data} trading={trading} />
+      <HaltDrill trading={trading} />
       {timeRuleNotices(e, r, data.time).map((notice) => <p key={notice} role="status" className="rounded-lg border border-warn/50 bg-warn/5 p-4 text-sm">{notice}</p>)}
       {locked && (
         <div role="status" className="rounded-lg border border-warn/50 bg-warn/5 p-4">

@@ -355,6 +355,11 @@ class AccountRules(TypedDict, total=False):
     account_type: str
     house_margin_percent: int
     pm_vol_shock: int
+    pin_risk: bool
+    pin_risk_seed: int
+    cash_credit_rate_bps: int
+    margin_debit_rate_bps: int
+    stock_borrow_rate_bps: int
     buying_power: bool
     expiry_cutoff_seconds: int
     payouts: PayoutRules | None
@@ -460,7 +465,26 @@ class ProgramCosts(TypedDict):
     fee_kind: str | None
 
 
-class Account(AccountStorage):
+class CashFlow(TypedDict):
+    id: str
+    attempt: int
+    time: str
+    day: str
+    kind: Literal["deposit", "withdrawal", "credit_interest", "debit_interest", "borrow_fee"]
+    symbol: str | None
+    amount: str
+    basis: str
+    rate_bps: int
+    days: int
+    client_id: str | None
+
+
+class CashFlowHistory(TypedDict, total=False):
+    cash_flows: list[CashFlow]
+    cash_transfers_allowed: bool
+
+
+class Account(AccountStorage, CashFlowHistory):
     account_version: str
     time: str
     rules: AccountRules

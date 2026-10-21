@@ -394,12 +394,16 @@ trading::Decision paper_acceptance(std::string_view underlying, md::Timestamp ma
   bool authored = false;
   md::Timestamp resume = 0;
   for (const auto& halt : halts) {
-    if (shown < halt.start || shown >= halt.end) continue;
+    if ((!halt.underlying.empty() && halt.underlying != underlying) || shown < halt.start || shown >= halt.end) continue;
     authored = authored || halt.level == 0;
     resume = std::max(resume, halt.end);
   }
   if (authored) {
-    std::string message = "Trading is halted market-wide by the scenario";
+    const bool wide = std::any_of(halts.begin(), halts.end(), [&](const auto& h) {
+      return h.underlying.empty() && h.level == 0 && h.start <= shown && shown < h.end;
+    });
+    std::string message = wide ? "Trading is halted market-wide by the scenario"
+        : std::string(underlying) + " is halted by a simulated single-name trading pause";
     const auto date = md::new_york_time(shown).date;
     const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
     if (resume >= close) message += " for the rest of the day";
@@ -409,7 +413,7 @@ trading::Decision paper_acceptance(std::string_view underlying, md::Timestamp ma
       std::snprintf(text, sizeof text, "; it resumes at %02d:%02d ET", minutes / 60, minutes % 60);
       message += text;
     }
-    return {Reason::MARKET_HALTED, std::move(message), {}, {}, {}};
+    return {Reason::MARKET_HALTED, std::move(message), {}, {}, wide ? std::string{} : std::string(underlying)};
   }
   if (market_time <= 0)
     return {Reason::INVALID_QUOTE, std::string(underlying) + " is waiting for market data", {}, {}, {}};
@@ -1088,11 +1092,14 @@ void Desk::load_circuit_breaker() {
     for (const auto& value : data.at("halts")) {
       MarketHalt halt{value.at("level").get<int>(), value.at("start").get<md::Timestamp>(),
                       value.at("end").get<md::Timestamp>(), value.at("reference").get<double>(),
-                      value.at("price").get<double>()};
+                      value.at("price").get<double>(), value.value("underlying", std::string{})};
       if (halt.level == 0) {
         if (!value.at("level").is_number_integer() || !value.at("start").is_number_integer() ||
             !value.at("end").is_number_integer() || halt.start <= 0 || halt.start > recovered.market_time ||
-            halt.end <= halt.start || halt.end - halt.start > md::kNanosPerDay || halt.reference != 0 || halt.price != 0)
+            halt.end <= halt.start || halt.end - halt.start > md::kNanosPerDay || halt.reference != 0 || halt.price != 0 ||
+            halt.underlying.size() > 12 || !std::all_of(halt.underlying.begin(), halt.underlying.end(), [](unsigned char c) {
+              return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.';
+            }))
           throw std::runtime_error("invalid authored halt");
         recovered.halts.push_back(halt);
         continue;
@@ -1129,7 +1136,7 @@ void Desk::save_circuit_breaker() {
     json halts = json::array();
     for (const auto& halt : breaker_.halts)
       halts.push_back({{"level", halt.level}, {"start", halt.start}, {"end", halt.end},
-                       {"reference", halt.reference}, {"price", halt.price}});
+                       {"reference", halt.reference}, {"price", halt.price}, {"underlying", halt.underlying}});
     const auto& close = breaker_.previous_close;
     const json data{{"schema", 1}, {"symbol", breaker_.symbol}, {"day", md::format_date(breaker_.day)},
                      {"level", breaker_.level}, {"market_time", breaker_.market_time}, {"halts", halts},
@@ -1182,7 +1189,7 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
       if (halt->ts > 0 && halt->end > halt->ts && halt->end - halt->ts <= md::kNanosPerDay) {
         advance_circuit_breaker(halt->ts);
         if (!breaker_.halts.empty() && new_york_date(breaker_.halts.back().start) != breaker_.day) breaker_.halts.clear();
-        breaker_.halts.push_back({0, halt->ts, halt->end, 0, 0});
+        breaker_.halts.push_back({0, halt->ts, halt->end, 0, 0, halt->underlying});
         breaker_dirty_ = true;
       }
       continue;
@@ -1232,6 +1239,9 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
     // last session of the one before (curb) does, or at the plan's own boundary.
     const auto day = session.trading_date(market_time_);
     try {
+      for (const auto& halt : breaker_.halts)
+        if (!halt.underlying.empty() && halt.start <= market_time_ && market_time_ < halt.end)
+          session.halt_underlying(halt.underlying, halt.end, market_time_);
       session.set_opening_rule_inputs(opening_rule_inputs(account, market_time_), options_.compact_opening_rule_inputs);
       const auto roll = [&] {
         if (!batch.empty() && day > session.trading_day() &&
@@ -1688,6 +1698,9 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
       return {};
     };
     try {
+      if (!dry_run(c.kind)) for (const auto& halt : breaker_.halts)
+        if (!halt.underlying.empty() && halt.start <= market_time_ && market_time_ < halt.end)
+          session.halt_underlying(halt.underlying, halt.end, market_time_);
       session.set_opening_rule_inputs(opening_rule_inputs(*account, market_time_), options_.compact_opening_rule_inputs);
       CommandResult result;
       switch (c.kind) {
@@ -1722,13 +1735,14 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
             for (const auto& order : orders) {
               auto gate = submission_gate(order);
               std::map<std::string, double> ignored;
-              const auto names = order_symbols(order);
+              const auto names = chain_symbols(order);
               const auto inputs = preview_market({names.begin(), names.end()}, ignored);
+              // Chained candidates too: submission gates the parent and every child.
               if (gate.ok()) gate = opening_gate(*account, order, market_time_, inputs, preceding);
               if (gate.ok() && (session.config().rules.no_counter_positions || session.config().rules.max_volume_percent != 0))
                 gate = project_contracts(order, preceding);
               gates.push_back(std::move(gate));
-              for (const auto& symbol : order_symbols(order)) symbols.insert(symbol);
+              for (const auto& symbol : chain_symbols(order)) symbols.insert(symbol);
             }
           }
           std::map<std::string, double> vols;
@@ -1845,6 +1859,31 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
           }
           break;
         }
+        case TradingCommand::Kind::Halt: {
+          if (!options_.replay) {
+            result.decision = {Reason::PLAN_LOCKED, "Authored halts are available only in replay drills", {}, {}, {}};
+          } else if (c.quantity < 1 || c.quantity > 390 || !snapshots_.contains(c.symbol) ||
+                     md::is_index_underlying(c.symbol)) {
+            result.decision = {Reason::INVALID_ORDER, "Choose a subscribed stock or ETF and 1-390 minutes", {}, {}, {}};
+          } else {
+            const auto day = md::new_york_time(market_time_).date;
+            const auto close = md::new_york_to_utc(day, md::regular_close_hour(day), 0);
+            const auto open = md::new_york_to_utc(day, 9, 30);
+            if (!md::market_session(market_time_).open || market_time_ < open || market_time_ >= close) {
+              result.decision = {Reason::SESSION_CLOSED, "Single-name drills require the stock regular session", {}, {}, {}};
+            } else {
+              advance_circuit_breaker(market_time_);
+              breaker_.halts.push_back({0, market_time_, std::min(close, market_time_ + c.quantity * md::kNanosPerMinute), 0, 0, c.symbol});
+              breaker_dirty_ = true;
+              for (auto& affected : accounts_)
+                if (affected.session && !affected.archived && affected.failure.empty())
+                  affected.session->halt_underlying(c.symbol, breaker_.halts.back().end, market_time_);
+              publish_circuit_breaker();
+            }
+          }
+          break;
+        }
+        case TradingCommand::Kind::CashTransfer: result = session.transfer_cash(c.name, c.amount, market_time_); break;
         case TradingCommand::Kind::Payout: result = session.request_payout(c.amount, market_time_); break;
         case TradingCommand::Kind::DayNote:
           result = session.annotate_day(c.day, c.plan, c.review, market_time_);

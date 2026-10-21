@@ -85,6 +85,29 @@ struct Replay {
   }
 };
 
+TEST(StressReplay, SingleNameScenarioAndCommandHaltsKeepOtherNamesTradingAndVerify) {
+  auto data = script(); data["symbols"] = {"SPX", "SPY"};
+  data["events"] = json::array({{{"type", "halt"}, {"at", "09:32"}, {"minutes", 2}, {"symbols", {"SPY"}}}});
+  for (const bool recorded : {false, true}) {
+    Replay replay(data, recorded);
+    replay.until(9, 32);
+    EXPECT_TRUE(replay.order("index").decision.ok());
+    EXPECT_EQ(replay.order("etf", "SPY260918C00600000").decision.code, trading::Reason::MARKET_HALTED);
+    const auto view = replay.desk->trading_view();
+    ASSERT_FALSE(view->halts.empty()); EXPECT_EQ(view->halts.back().underlying, "SPY");
+    replay.until(9, 34);
+    EXPECT_NE(replay.order("resumed", "SPY260918C00600000").decision.code, trading::Reason::MARKET_HALTED);
+    server::TradingCommand halt; halt.kind = server::TradingCommand::Kind::Halt; halt.symbol = "SPY"; halt.quantity = 2;
+    replay.desk->command(halt, [](const auto& reply) { EXPECT_TRUE(reply.decision.ok()) << reply.decision.message; },
+                         replay.desk->market_time(), replay.desk->market_time());
+    EXPECT_EQ(replay.order("drill", "SPY260918C00600000").decision.code, trading::Reason::MARKET_HALTED);
+    EXPECT_TRUE(replay.order("index2").decision.ok());
+    replay.until(9, 36);
+    EXPECT_NE(replay.order("after", "SPY260918C00600000").decision.code, trading::Reason::MARKET_HALTED);
+    replay.verify();
+  }
+}
+
 TEST(StressReplay, AbnormalBooksStallAndHaltRecoverAndVerify) {
   auto data = script();
   data["symbols"] = {"SPX", "XSP"};

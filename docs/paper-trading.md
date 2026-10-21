@@ -84,7 +84,7 @@ exercise on a European index root is `AMERICAN_UNSUPPORTED`, a European contract
 other root is `ROOT_UNSUPPORTED`. Adjusted deliverables are rejected.
 
 American equity and ETF options deliver shares; OEX, like the European index roots,
-settles in cash. Held into expiry, an equity or ETF option a cent or more in the money
+settles in cash. By default, held into expiry, an equity or ETF option a cent or more in the money
 at the settlement reference is exercised or assigned: it settles at intrinsic value,
 and 100 shares a contract change hands at the settlement reference, bought by long
 calls and short puts, sold by long puts and short calls. Together that costs the
@@ -93,6 +93,34 @@ their own move from there. `exercise(symbol, contracts, time)` exercises long, i
 money contracts early in the same way against the underlying's fresh price, so any
 time value left is a cost; it takes the account's checks and, with the
 `buying_power` rule, must fit within it.
+
+### Simulated expiry pin risk
+
+`pin_risk` defaults to false on every existing plan. Enable it when creating or
+resetting an account (also in the terminal's margin settings); like the financing
+rates, it is a program rule, so an account that changes it no longer reports the
+preset's `plan_id`. For a physical short
+option whose actual settlement reference is within $0.10 of its strike, each
+contract has a 25% chance of the contrary exercise decision: an otherwise exercised
+short may lapse, and an otherwise lapsed short may be assigned. Calls and puts use
+the same rule. Longs, cash-settled indices and shorts outside the band keep their
+normal exercise rules.
+
+This is a deliberately simple simulation of after-hours uncertainty before the
+OCC 17:30 ET exercise cutoff, not observed after-hours trading or an estimated
+market probability. Settlement still posts at its ordinary simulated settlement
+moment. No later market timestamp or price is invented. The splitmix64 draw mixes
+`pin_risk_seed` (0–2147483647, default 0), attempt start, padded OSI and expiry date;
+recovery and replay retain the same outcomes. A `PIN_RISK` warning appears on expiry
+day before expiry when a held short is within the band, even if out of the money.
+
+Pin-model settlements close the option at zero and deliver only the assigned
+contracts' shares at the strike, marked using the actual settlement reference.
+This records the exact strike cash flow, including out-of-money assignments.
+Exercise fees apply only to assigned contracts. Settlement events record
+`pin_risk`, `simulated`, `assigned_contracts` and `seed`; ordinary settlement sources
+keep their original provenance. The warning's ordinary delivery estimate remains
+the default exercise outcome; pin risk can change the actual number delivered.
 
 A long held into expiry can take a **do-not-exercise instruction**:
 `instruct_exercise(symbol, true, time)` on a long option makes
@@ -1511,13 +1539,95 @@ model estimates, not observed market outcomes. Dashboard, Risk and both ticket
 previews label them accordingly. Tickets debounce previews, offer **Size to floor**,
 and show an explicit failure without guessing when the endpoint is unavailable.
 
+### Cash transfers and financing
+
+Practice accounts support `POST /api/account/cash-flows` with a `client_id` and a
+signed decimal-string `amount`: positive deposits, negative withdrawals, nonzero
+whole cents. The terminal's Dashboard offers the same controls. Repeating an ID
+and amount within the attempt is a no-op; changing the amount returns 409
+`DUPLICATE_CLIENT_ID`. Keep the same ID when retrying a failed network request.
+Withdrawals must fit cash and unreserved buying power, leave positive equity and
+have complete marked equity. Evaluation, verification and funded accounts refuse
+transfers with `PLAN_LOCKED`; funded withdrawals continue to use the payout rules.
+Custom practice means no evaluation objectives or program fees and evaluation
+phase, not simply an account named Practice.
+
+Transfers move capital, the daily equity bases and daily extremes by the same
+amount. They do not change realised profit, Greek P&L or day P&L and cannot clear
+a latched risk limit. Existing closed-day history is retained.
+
+Three optional annual rates are in basis points (100 bps = 1%, integer 0–100000):
+`cash_credit_rate_bps`, `margin_debit_rate_bps`, `stock_borrow_rate_bps`. All default
+to zero, preserving existing plans. Set them in custom rules or as create/reset
+broker overrides, or in the terminal's margin settings. Rates are program rules:
+an account whose rates differ from its preset's no longer reports that preset's
+`plan_id`, and create/reset overrides that change a plan's rates are refused with
+422 `PLAN_LOCKED` unless the plan is practice (no objectives, fees or evaluation
+counts), since credit interest would otherwise pay an evaluation's target. Credit interest uses
+positive closing cash. Debit interest applies to negative cash only under portfolio
+margin on margin accounts. Borrow fees use each short stock's last closing marked
+notional. No rate, borrow availability or price is inferred from a live broker.
+
+`roll_day` posts simple actual/365 accrual for elapsed calendar days (weekends and
+skipped days included), before the new day's assignments and dividends. Each
+posting is rounded to whole cents, ties away from zero. A skipped interval uses
+the last available balance and marks for all its days, without intra-interval
+compounding; repeated rollover cannot post twice. Zero-cent accrual is omitted.
+Complete marked equity is required, as for dividend rollover. Cash and realised
+P&L change, and the amount appears in the account's Greek P&L **other** bucket;
+borrow charges also appear under the stock's attribution. Financing counts toward
+equity and daily loss, including evaluations; it does **not** move the opening
+daily-loss base. Normal peak-based loss rules can still ratchet on higher equity.
+
+`GET /api/account` includes `cash_transfers_allowed` and `cash_flows`: transfer and
+financing history across attempts with ID, attempt, posting time/date, signed
+amount, kind, symbol, calculation basis, rate, calendar days and transfer client ID.
+The Dashboard shows the current attempt's latest ten postings. Journals retain
+all postings and recover them without reaccruing.
+
+### Single-name halt drills
+
+Scenario `halt` events can select `symbols`, e.g.
+`{"type":"halt","at":"11:30","minutes":5,"symbols":["SPY"]}`. Omit `symbols`
+for a market-wide halt. Selected underlyings' quotes freeze while heartbeats keep
+replay time moving. Other symbols continue trading.
+
+During a replay's stock regular session, `POST /api/replay/market/halt` with
+`{"symbol":"SPY","minutes":5}` authors a single-name pause at the current replay
+time. The Dashboard's **Single-name halt drill** offers the same action. It accepts
+subscribed stocks/ETFs and 1–390 minutes, capped at that day's regular close. It
+requires replay or admin scope; the live endpoint refuses drills. Commands are
+journaled and included in replay verification. An API-authored pause blocks
+execution while the underlying replay feed may continue supplying prices.
+
+New orders and stock trades on that underlying receive `MARKET_HALTED`; resting
+orders keep their usual deadlines and wait for usable quotes after the pause.
+Other underlyings are not halted; account risk checks and overlapping market-wide
+halts still apply.
+
+Stock prints stamped inside a halt are not taken as marks. When a halt is still in
+force at the regular close (a scenario halt that runs past 16:00, or one capped at
+it), held shares keep the last print before the halt, in that session, as their
+mark. They stay not `fresh`, so opening trades still wait, but the holding reports
+`halted: true` and day rollover closes on that pre-halt print (equity, borrow fees
+and the next day's base) instead of refusing for incomplete marks. A halt that
+ended before the close still needs a print after it.
+Status/ticks publish single-name pauses beside circuit breakers, with `underlying`
+and `simulated: true`. The terminal banner names the affected symbols. This is a
+LULD-style rehearsal, not an exchange price-band calculation or a prediction of a
+real regulatory halt. It does not simulate an auction at reopening.
+
 ### What-if
 
 `POST /api/orders/what-if` compares candidate adjustments against the held book before
 any is sent. It takes `candidates`, one to six, each with an optional `name` (at most 64
 UTF-8 bytes) and `orders`: one to four orders as `POST /api/orders` takes them, a client ID
-optional; `then` and `oco` are refused with 400 because chains are not modelled.
-A candidate's orders are checked in turn as submission checks them, each after the
+optional. Candidates containing `then` or `oco` run the real submission reducer on
+the private copy at current quotes and available size. Parent fills activate children;
+OCO fills cancel siblings. Resting limits, triggers and partial fills remain as they
+would after submission, with their buying-power reservations. Child rejections
+appear in the candidate and parent check. No future prices or trigger hits are assumed.
+Without chains, a candidate's orders are checked in turn as submission checks them, each after the
 ones before it have filled, and filled in full at the preview's projected prices:
 slipped far sides through the impact blocks for market orders, the limit for limit
 orders, fees included. Closing the tested side and opening a new spread is one candidate
@@ -1526,10 +1636,11 @@ journal, allocates no IDs, takes no displayed size, and the normal write protect
 
 The response has `current`, the account as it is, and `candidates`, each with its
 `name`, its `decision` (`ok`, or the first order's refusal, with `reason`), each order's
-`decision` and `reason` in `orders`, and `after`, the account once every order has
-filled, which is null when an order cannot be projected (an unknown contract, or no
-quote). A refused candidate is still projected, so its risk shows beside the reason it
-would be refused. Each account has `equity`, available `buying_power`, the book's
+`decision` and `reason` in `orders`, and `after`. For chains, `after` is the account
+following actual current-quote submission, including rejected or still-working
+orders. For candidates without chains it assumes every order fills; it is null
+when an order cannot be projected (an unknown contract, or no quote). A refused
+unchained candidate is still projected, so its risk shows beside its refusal. Each account has `equity`, available `buying_power`, the book's
 `exposure` (dollar delta, dollar gamma per 1%, vega and theta; null while risk is
 incomplete), `max_loss` (the worst cell of the configured spot × volatility grid, from
 today's equity, so a candidate's cost to trade counts), `equity_at_max_loss`,
@@ -3700,7 +3811,7 @@ focus at the top of the ticket.
 | `GET /api/orders?status=all` | All orders, newest first; `status=open` restricts to working, partially filled and armed orders |
 | `POST /api/orders` | `client_order_id`, canonical `symbol`, `side` (`buy`/`sell`), `type` (`limit`/`market`), integer `quantity`, decimal-string `limit_price` for limits, `time_in_force` (`day`/`gtc`/`ioc`/`exto`/`gtc_exto`/`gtd`), `good_till` timestamp required only for GTD, optional `tags`, `note` and `walk` (see [walking limits](#walking-limits-f46)), optional `trigger` following the OpenAPI `Trigger` schema and the [conditional-orders](#conditional-and-bracket-orders) rules: `source` is `option`, `combo`, `underlying`, `study` or `time`; non-time triggers take `direction` and `level`; underlying and study triggers may name another underlying with `symbol`; study triggers add `study` (`iv30`, `iv7` or `term_ratio`); time triggers take `at` as `HH:MM` New York time; option and combo triggers may set `reference` (`bid_ask`, `mid` or `mark`); option, combo and own-underlying triggers may set `trail` (`amount`, `percent`, or `ticks` for option/combo only). `bracket` is `{stop_loss?, take_profit?}` and each exit takes a `trigger`, a `limit_price`, or both for a stop-limit. A multi-leg order replaces `symbol` and `side` with `legs` (two to four `{symbol, side, ratio?}`, ratio default 1, or up to eight for a roll), allows an entry bracket or a reducing trigger (combo or underlying), counts units in `quantity` and sets a signed net `limit_price` (negative for a credit); `exits_only: true` attaches a bracket to a held contract (with `symbol` and the closing `side`) or to held closing legs as described above; optional `group` joins what the order opens to a [whole trade](#whole-trades); optional `then` and `oco` chain further orders (see [order chains](#order-chains-one-cancels-other-and-one-triggers-other)); 201 returns version, order and its fills. Orders report `legs` (null for single-leg), with null `symbol` and `side` for multi-leg orders. Retrying with a `client_order_id` already used and the same terms is safe: it returns the first answer (200 with the order as it now stands, also after `PUT /api/orders/{id}` changed it, or the original rejection) and records nothing, while other terms under that ID, the changed ones included, are refused with 409 `DUPLICATE_CLIENT_ID` and record nothing. Client IDs are scoped to an attempt: after an account reset, earlier attempts' IDs name new orders |
 | `POST /api/orders/preview` | The order body plus optional `floor_share` (default 0.5); 200 returns the dry-run decision, buying power, exposure change, labelled maximum loss, floor warnings, `max_units` with its buying-power and floor parts (null when unavailable), projected `breach`, and `execution`: what submitting now would fill at once and the full size's fill schedule, each leg's quote `liquidity`, and `warnings` about stops, targets and triggers already reached, a stop given only a limit price, or slippage that pushes a market order outside the band |
-| `POST /api/orders/what-if` | `candidates`: one to six, each an optional `name` and one to four `orders` as submission takes them (client ID optional; `then`/`oco` refused with 400 because chains are not modelled); 200 returns the account `current` and each candidate's `decision`, `reason`, per-order `orders` checks and the account `after` its orders fill in full (null when one cannot be projected): equity, buying power, exposure, grid max loss, floor flags, scenarios and breach ([what-if](#what-if)) |
+| `POST /api/orders/what-if` | `candidates`: one to six, each an optional `name` and one to four `orders` as submission takes them (client ID optional; `then`/`oco` use current-quote submission and contingent-child rules); 200 returns the account `current` and each candidate's `decision`, `reason`, per-order `orders` checks and the account `after` its orders fill in full (null when one cannot be projected): equity, buying power, exposure, grid max loss, floor flags, scenarios and breach ([what-if](#what-if)) |
 | `GET /api/account/equity?from=&to=` | Persisted equity samples with optional inclusive UTC ISO bounds, plus any storage error |
 | `DELETE /api/orders/{id}` | No body; 200 returns version and resulting order |
 | `PUT /api/orders/{id}` | Any of integer `quantity`, decimal-string `limit_price` and `trigger_level`, DAY/GTC `time_in_force`, and optional `walk` (null removes it); 200 returns version, the changed order and its fills (see [changing orders](#changing-cancelling-and-flattening)) |
@@ -3725,6 +3836,8 @@ focus at the top of the ticket.
 | `PUT /api/trades/{id}/note` | Optional `note` string and `tags` array replace the trade's (see [trade notes](#trade-notes-and-tags)); an empty note with no tags clears them. The `id` is a trade's, or a share trade's (`s` and its opening stock fill). Returns version, `trade`, `note` and `tags`; `UNKNOWN_TRADE` (404) if no trade opens with that fill, `INVALID_NOTE` (422) for text past the limits |
 | `GET /api/plans` | Presets: `practice` (buying power only), `intraday-25k/50k/100k` (buy-only, 10% target, 5% intraday trailing), `eod-25k/50k/100k` (any side, 12% target, 6% end-of-day trailing), their `funded-*` accounts (`unlocked_by` names the evaluation), `static-25k/50k/100k` and `locking-25k/50k/100k` (see [plan presets with objectives](#plan-presets-with-objectives)); `two-step-*`, `two-step-verify-*` and `two-step-funded-*` at the same sizes (see [two-step programs](#two-step-programs-f27)). Each includes `phase`, `unlocked_by` and `unlocks`. Evaluation, verification and funded presets auto-close five minutes before the last trade (15:55 ET for SPXW, 16:10 for SPY) |
 | `POST /api/account/reset` | Nonblank `reason` plus either a preset `plan` ID, or `initial_cash` and complete `rules` (optional `phase`, `lock_balance`, and `payouts` required exactly when funded); returns the new account view. Locked steps need a current passed matching prerequisite (`PLAN_LOCKED`); same-plan restarts charge `reset_fee` and obey `max_resets` (`RESET_LIMIT`, 409) |
+| `POST /api/account/cash-flows` | `client_id`, signed whole-cent decimal `amount`; practice only; returns Account with `cash_flows` history. Same ID/amount is idempotent |
+| `POST /api/replay/market/halt` | `symbol`, integer `minutes` (1–390); simulated stock/ETF halt at current replay time, capped at regular close; replay/admin scope |
 | `POST /api/account/payout` | Decimal-string `amount` in whole cents; returns the account view with the recorded payout |
 | `GET /api/accounts` | `accounts`: each account's `id`, `name`, `trading` status and `equity`, the main one first |
 | `PATCH /api/accounts/{id}`, `DELETE /api/accounts/{id}` | Admin: rename/archive/unarchive or delete a named account; see [accounts](#accounts) |

@@ -128,10 +128,11 @@ struct SnapshotHeartbeat {
   Timestamp ts = 0;
 };
 
-/// An authored market-wide halt, active on [ts, end). Quotes remain frozen.
+/// An authored halt, active on [ts, end). Empty underlying means market-wide.
 struct TradingHalt {
   Timestamp ts = 0;
   Timestamp end = 0;
+  std::string underlying = {};
 };
 
 using Event = std::variant<ContractDefinition, OptionQuote, OptionTrade, OpenInterest,

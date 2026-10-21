@@ -78,6 +78,8 @@ export interface MarketSession {
 export interface AccountBrief { damaged?: import("./trading-types").AccountDamage | null; journal_size?: import("./trading-types").JournalSize; id: string; name: string; trading: TradingStatus; sandbox_idle_seconds?: number }
 
 export interface MarketHalt {
+  underlying?: string
+  simulated?: boolean
   level: number
   start: string
   end: string

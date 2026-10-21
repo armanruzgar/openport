@@ -48,11 +48,11 @@ def test_guardrail_input_rejects_100_but_stored_settings_remain_readable():
             validator("GuardrailsInput").validate({**guardrails, "soft_floor_percent": percent})
 
 
-def test_what_if_orders_match_submissions_without_chains():
+def test_what_if_orders_match_submissions_including_chains():
     schemas = SPEC["components"]["schemas"]
     new = schemas["NewOrder"]
     what = schemas["WhatIfOrder"]
-    assert what["properties"] == {key: value for key, value in new["properties"].items() if key not in ("then", "oco")}
+    assert what["properties"] == new["properties"]
     assert what["required"] == [key for key in new["required"] if key != "client_order_id"]
     assert what["oneOf"] == new["oneOf"]
     assert what["allOf"] == new["allOf"]
@@ -68,6 +68,10 @@ def test_what_if_orders_match_submissions_without_chains():
         if tif == "gtd":
             extended["good_till"] = "2026-09-23T19:30:00Z"
         validator.validate(extended)
+    child = {"symbol": order["symbol"], "side": "buy", "type": "market", "quantity": 1, "time_in_force": "ioc"}
+    for key in ("then", "oco"):
+        parent = {key: value for key, value in order.items() if key not in ("exits_only", "bracket")}
+        validator.validate({**parent, key: child})
     for key in ("then", "oco", "typo"):
         with pytest.raises(jsonschema.ValidationError):
             validator.validate({**order, key: None})
