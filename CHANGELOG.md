@@ -1,5 +1,14 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- Risk: cited historical stress scenarios and 1-day historical VaR/expected shortfall, with an observed ATM-IV-change variant when available.
+- Risk: gamma, theta, reachable grid-loss and gross short-vega caps, with tag and playbook scopes and evaluation rollover discipline.
+- Risk: account alerts for utilisation, grid loss, gamma and modelled floor-touch odds through existing notification channels.
+- Terminal: persist contemporaneous portfolio Greeks beside equity; chart risk intraday and across days without reconstructing old values.
+- API: read-only historical risk and scenario endpoints, with Python and MCP methods.
+- Risk: beta-aware spot × volatility × time scenario explorer, with optional term scaling; existing rule grids retain their defaults.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

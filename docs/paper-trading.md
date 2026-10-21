@@ -2860,6 +2860,153 @@ bounded to 101 values each, spot > -100% and <= +1000%, absolute vol shock <= 10
 points. Missing/expired/nonfinite pricing inputs flag the whole grid incomplete;
 its numeric placeholders are zero and must not be displayed as measured P&L.
 
+## Scenario explorer
+
+`GET /api/risk/scenarios` returns day-major `slices` of the held book's derived
+P&L. Default `mode=parallel`, `days=0` and `vols=-5,0,5,10` use the configured
+spot axis. `mode=beta` reuses the profile's beta selection (benchmark SPY or SPX,
+optional `betas=SYMBOL:BETA`). Missing betas make the entire grid unavailable.
+A beta-weighted spot decline is capped at 99.99% to keep prices positive.
+`days=0,1,7` adds up to eight calendar-day slices, including intrinsic value
+past expiry. `term_scaled=true` multiplies each volatility shock by
+`sqrt(30 / max(1, remaining_days))`, relative to 30 days, after time advances.
+Tenors below one day use a one-day cap; this is a model assumption, not observed
+volatility. `range` and `steps` select the spot axis as in the profile.
+
+The terminal's Scenario explorer offers mode, time and term scaling controls.
+These are read-only analyses: order previews, What-if max loss, grid-loss rules
+and portfolio margin retain their existing configured parallel, zero-day grid.
+
+## Historical stress and simulation risk
+
+`GET /api/risk/history` (also under `/api/replay` and saved replay histories)
+returns `stress`, `sticky_strike` and `atm_vol_change`. The terminal shows these
+in Risk; Python and MCP expose `risk_history`. All amounts are derived analytics,
+not booked cash, forecasts, or a reconstruction of historical holdings.
+
+The checked-in [stress definitions](../data/risk-stress.json) contain four
+one-session shocks: February 5, 2018 Volmageddon; March 16, 2020 COVID;
+August 5, 2024 yen unwind; and April 4, 2025 tariff shock. Each identifies its
+close dates, public sources, per-underlying moves and 7/30/90-day volatility
+changes, with the label **derived from public closes**. S&P spot declines are
+rounded outward to a tenth of a percent. VIX close changes proxy 30-day ATM
+changes; other tenors use a stated square-root extrapolation. SPY/XSP follow
+the S&P move. Nasdaq and Russell families use explicitly labelled 1.5-times
+S&P/VIX proxies, not those indexes' observed returns. Other held underlyings
+are reported in `missing_underlyings`, and make that entire stress unavailable.
+
+Each stress reprices every held option at its sticky-strike smile with the
+interpolated tenor shock (flat outside the tenor endpoints), and every share at
+the shocked spot. It reports analytical dollar P&L, whether equity would reach
+the nearer plan/personal floor, and the resulting held-book margin under the
+account's strategy or portfolio model and house settings. No floor means a null
+breach result. Margin excludes open-order reservations. The shock is instantaneous:
+no floor ratchet, path, bid/ask widening, assignment or liquidation is simulated.
+A missing, stale, invalid or unsettled valuation makes the whole result null.
+
+Historical simulation uses at most 252 stored completed daily closes **per held
+underlying**, without substituting betas or other indexes. It aligns both dates
+of each return, rejects missing trading sessions, excludes today's partial bar
+and future rows, and requires at least 20 aligned returns (at most 251). Each
+joint spot move is applied to today's held book, using the same Black-76 repricer
+with one calendar day of decay and shrinking carry. Sticky strike holds IV
+constant. The ATM variant additionally requires observed 30-day ATM IV at both
+endpoints for every factor, and applies each factor's change uniformly to its
+contracts' smile IVs. It has its own observation count and date range; absent
+IV history leaves it null. Stored sampled closes retain their limitations;
+no additional prices or market timestamps are fabricated.
+
+`var95` and `var99` are the empirical inverse-CDF loss quantiles. `es95` and
+`es99` average the upper 5%/1% probability mass, weighting the boundary observation
+fractionally. Values are nonnegative dollar losses. A thin 99% tail may contain
+only a few observations; the UI always shows the count. These are historical
+estimates, not guaranteed loss bounds. The model omits liquidity, intraday paths,
+dividends paid during the horizon and physical settlement; beyond expiry it uses
+intrinsic value at the shocked price.
+
+## Portfolio risk history
+
+`GET /api/account/equity` now includes optional nullable `risk` on each sample:
+`dollar_delta`, `dollar_gamma_1pct`, `vega`, `theta`, `delta_utilisation` and
+`vega_utilisation`, plus nullable gamma, theta, grid-loss and short-vega utilisation
+when those caps are enabled. Greeks use the held book; utilisation includes pending-order
+reservations and the limits in effect at that market-time mark. Only complete
+contemporaneous valuations are stored. Older eight/nine-column equity CSV rows
+and intermediate fill marks have no risk observations; they are never backfilled
+from current Greeks. The extended CSV round-trips doubles at full precision.
+The existing minute cadence and 90-day/100,000-row history retention apply.
+
+Intraday equity offers a risk metric selector and an Across days view. Missing
+values, missing minutes and attempt changes break the line. This history is a
+record of paper-account analytics, not a historical market data feed.
+
+## Additional exposure limits
+
+`aggregate`, `per_underlying` and `underlying_overrides` accept four optional
+nullable caps in addition to dollar delta and vega:
+
+| Cap | Meaning |
+| --- | --- |
+| `dollar_gamma_1pct` | Worst reachable absolute dollar gamma for a 1% underlying move |
+| `theta` | Worst reachable absolute dollar theta per calendar day |
+| `worst_grid_loss` | Worst loss in the configured parallel, zero-day trading-rule grid, including independent pending-order reservations |
+| `short_vega` | Gross reachable short vega per vol point, summed by contract; long wings in other contracts do not offset it |
+
+Null or omitted disables a new cap; zero forbids any exposure on that measure.
+Gamma/theta reservations sum each order's signed exposure, keeping atomic combo
+legs together. At each grid cell, the book's loss plus each pending order's
+positive loss reserves every independent fill subset. The greatest cell loss
+is the cap's value. A pending buy to close a short lowers no worst reachable
+reservation (it might never fill), but does not increase it and can still pass.
+The gross short-vega bound similarly accounts for current signed vega in each
+contract and the orders that could make it more negative. Scoped and underlying
+caps complement the aggregate cap.
+
+`tag_overrides` and `playbook_overrides` map scope names to exposure caps.
+Tags match exactly (order tags are normalized to lowercase); playbook IDs match
+`playbook:ID@vVERSION` across versions. Filled positions inherit their lifecycle's
+order tags and current trade/group annotations. Delivered shares retain their
+originating option's tags. A fungible position shared by several tags counts in
+each scope, rather than inventing lot ownership. Retagging cannot erase entry
+order tags. A tagged order joining an existing fungible position reserves the
+whole position in its new scope before acceptance. Untagged closing orders
+still count against the held position's scopes. Manually traded untagged shares
+are covered by the aggregate/underlying caps, and by a scope if their trade is
+annotated with it.
+
+The risk response publishes `scopes` keyed by `tag:NAME` or `playbook:ID`,
+expanded reachable Greek ranges, gross short vega and nullable cap utilisation.
+Grid exposure is calculated when its cap is enabled. The editor supports all
+caps and scopes. Breach reasons are `GAMMA_LIMIT`, `THETA_LIMIT`,
+`GRID_LOSS_LIMIT` and `SHORT_VEGA_LIMIT`. As with delta/vega, an already excessive
+bucket permits an order that does not increase its worst reachable exposure.
+Tightening applies immediately; evaluation-account loosening waits for rollover,
+including removing a scope. Old journals omit new defaults and recover unchanged.
+
+## Risk-metric alerts
+
+Server account alerts additionally accept `dollar_gamma_1pct`,
+`delta_utilisation`, `vega_utilisation`, `grid_loss` and
+`floor_touch_probability`, alongside the existing dollar delta, vega, theta and
+`floor_room`. All use inclusive `at_or_above`/`at_or_below` comparisons and the
+existing one-shot/repeat lifecycle. Utilisation and odds are ratios: 0.8 means
+80%. Grid loss is the held-book configured rule grid, excluding pending orders;
+the limit's reachable grid loss separately includes them.
+
+Floor-touch odds are the **maximum individual underlying/barrier** driftless
+reflection probability to today's regular close, considering both plan and soft
+floors. This is not a joint portfolio probability or the probability of either
+barrier. It uses the same implied close variance as the breach panel, passed at
+its observed market time. Missing or stale valuations, variance or a missing
+floor leave this metric unavailable and do not fire an alert. Greek levels and
+utilisation likewise require complete risk valuations. Unavailable data does
+not rearm repeating alerts.
+
+These are ordinary server alerts, persisted and checked with the browser closed.
+Firings use the existing browser sound/notification watcher and configured
+external notification channels; demo/replay forwarding still follows
+`include_simulated`. No new delivery configuration is needed.
+
 ## Risk profile and probabilities
 
 `GET /api/risk/profile` draws the held book's P&L across moves of a reference price
@@ -2874,6 +3021,7 @@ running replay at `/api/replay/risk/profile` and for saved replay runs at
 | Parameter | Meaning |
 | --- | --- |
 | `days` | Up to eight comma-separated curve dates, in calendar days after the account's market time (0 to 366, fractions allowed), or `expiry` for the first unexpired held expiry in scope; default `0,1` |
+| `term_scaled` | Optional `true`: scale the IV offset by sqrt(30 / max(1, remaining calendar days)); default false |
 | `iv` | Vol points added to every contract's smile IV, -100 to 100; default 0 |
 | `range`, `steps` | The moves run evenly from -`range`% to +`range`% (at most 99) in an odd number of `steps` (3 to 201); default 10 and 41 |
 | `betas` | `SYMBOL:BETA` overrides, comma-separated, each within 10 of zero |
