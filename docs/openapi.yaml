@@ -5118,6 +5118,87 @@
         "x-scope": "read"
       }
     },
+    "/api/replay/packs": {
+      "get": {
+        "summary": "List and export scenario packs",
+        "description": "Built-ins and imported packs, including scenario JSON, objectives, seed and plan.",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioPacks"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Import a scenario pack",
+        "description": "Requires replay or admin scope, demo mode and writable replay storage. At most 64 KiB. Same-ID different scenario content is refused; use a new ID. Saved beside journals under scenario-packs, available without restart.",
+        "x-scope": "replay",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioPack"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioPack"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/packs/{id}": {
+      "get": {
+        "summary": "Download one scenario pack without changing numeric precision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON attachment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioPack"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/ws/events": {
       "get": {
         "summary": "Subscribe to versioned account events",
@@ -8020,6 +8101,21 @@
               "at"
             ],
             "description": "Optional provenance of a restart; at is its inclusive market-time target."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioMark"
+            }
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DrillObjective"
+            }
+          },
+          "challenge": {
+            "$ref": "#/components/schemas/ScenarioPack"
           }
         },
         "required": [
@@ -8183,6 +8279,18 @@
           "end": {
             "type": "string",
             "description": "The last session's last snapshot."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioMark"
+            }
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DrillObjective"
+            }
           }
         },
         "required": [
@@ -8433,6 +8541,37 @@
               "at"
             ],
             "description": "Optional provenance of a restart; at is its inclusive market-time target."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioMark"
+            }
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DrillObjective"
+            }
+          },
+          "challenge": {
+            "$ref": "#/components/schemas/ScenarioPack"
+          },
+          "drill": {
+            "$ref": "#/components/schemas/DrillGrade"
+          },
+          "personal_best": {
+            "type": "number",
+            "description": "Best complete drill score for this scenario among retained history, read from editable playback sidecars."
+          },
+          "personal_best_verified": {
+            "type": "boolean",
+            "description": "True only when a passed verification of the best run, against its current journal, recomputed the same score."
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Actual completion wall time, distinct from simulated market time."
           }
         },
         "required": [
@@ -12750,6 +12889,28 @@
                 "type": "null"
               }
             ]
+          },
+          "mistakes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "chased",
+                "oversized",
+                "moved stop",
+                "revenge",
+                "broke plan",
+                "early exit",
+                "A+ setup"
+              ]
+            },
+            "description": "Fixed review picks, independent of free-text tags. Omitted on note replacement clears them."
+          },
+          "entry_order": {
+            "type": "string",
+            "description": "The first opening fill’s order ID, including single-leg trades; used to join playbook adherence."
           }
         },
         "required": [
@@ -12794,6 +12955,24 @@
             "items": {
               "type": "string"
             }
+          },
+          "mistakes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "chased",
+                "oversized",
+                "moved stop",
+                "revenge",
+                "broke plan",
+                "early exit",
+                "A+ setup"
+              ]
+            },
+            "description": "Fixed review picks, independent of free-text tags. Omitted on note replacement clears them."
           }
         },
         "required": [
@@ -12818,6 +12997,24 @@
           },
           "trade": {
             "type": "string"
+          },
+          "mistakes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "chased",
+                "oversized",
+                "moved stop",
+                "revenge",
+                "broke plan",
+                "early exit",
+                "A+ setup"
+              ]
+            },
+            "description": "Fixed review picks, independent of free-text tags. Omitted on note replacement clears them."
           }
         },
         "required": [
@@ -13058,6 +13255,24 @@
             "items": {
               "type": "string"
             }
+          },
+          "mistakes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "chased",
+                "oversized",
+                "moved stop",
+                "revenge",
+                "broke plan",
+                "early exit",
+                "A+ setup"
+              ]
+            },
+            "description": "Fixed review picks, independent of free-text tags. Omitted on note replacement clears them."
           }
         },
         "required": [
@@ -18320,6 +18535,18 @@
           "at": {
             "type": "string",
             "description": "Restart market time: HH:MM[:SS] or a dated time in New York unless zoned. Omit for the source run start. Must not exceed the source run end."
+          },
+          "replay_from": {
+            "type": "string",
+            "description": "Source run ID for a fresh isolated paused account five minutes before trade entry, clamped to the session open. Takes only trade beside it. Preserves original input, seed, date and full plan configuration; does not copy orders. Missing/changed source is 409 REPLAY_NOT_RESTARTABLE, unknown run 404."
+          },
+          "trade": {
+            "type": "string",
+            "description": "Option or share round-trip ID from the source run; requires replay_from."
+          },
+          "pack": {
+            "type": "string",
+            "description": "Built-in or imported scenario pack ID. Fixes scenario, seed, date and plan. Only speed and paused may accompany it."
           }
         },
         "required": []
@@ -24232,6 +24459,13 @@
           },
           "seed": {
             "type": "string"
+          },
+          "challenge": {
+            "$ref": "#/components/schemas/ScenarioPack"
+          },
+          "scenario_source": {
+            "type": "string",
+            "description": "Exact scenario JSON source embedded in a challenge input. Its SHA-256 must match sha256; verification needs no original source path."
           }
         },
         "required": [
@@ -24262,6 +24496,9 @@
           },
           "recorded_journal": {
             "$ref": "#/components/schemas/RunJournal"
+          },
+          "drill": {
+            "$ref": "#/components/schemas/DrillGrade"
           }
         },
         "required": [
@@ -25664,6 +25901,334 @@
           "marked_pnl",
           "entry_reasons",
           "rule_trips"
+        ]
+      },
+      "ScenarioMark": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "time",
+          "symbols"
+        ]
+      },
+      "DrillObjective": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "max_net_vega",
+              "min_floor_room",
+              "flat_by",
+              "max_loss"
+            ]
+          },
+          "limit": {
+            "type": "number"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "limit"
+        ]
+      },
+      "ScenarioObjective": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "max_net_vega",
+              "min_floor_room",
+              "flat_by",
+              "max_loss"
+            ]
+          },
+          "limit": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000000000.0
+          },
+          "at": {
+            "type": "string",
+            "pattern": "^[0-2][0-9]:[0-5][0-9]$"
+          },
+          "session": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 24
+          }
+        },
+        "required": [
+          "id",
+          "type"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "max_net_vega",
+                    "flat_by"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "at"
+              ]
+            },
+            "else": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "at"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "session"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "flat_by"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "limit"
+                ]
+              }
+            },
+            "else": {
+              "required": [
+                "limit"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "min_floor_room"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "limit": {
+                  "maximum": 100
+                }
+              }
+            }
+          }
+        ]
+      },
+      "DrillGrade": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "passed": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "complete_run": {
+            "type": "boolean"
+          },
+          "basis": {
+            "type": "string"
+          },
+          "objectives": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "passed": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observed": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "passed",
+                "observed"
+              ]
+            }
+          }
+        },
+        "required": [
+          "score",
+          "passed",
+          "total",
+          "complete_run",
+          "basis",
+          "objectives"
+        ]
+      },
+      "ScenarioPack": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "const": 1
+          },
+          "scenario": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "maxLength": 40
+              },
+              "title": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "objectives": {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "$ref": "#/components/schemas/ScenarioObjective"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "date"
+            ],
+            "description": "A complete strict scenario JSON document; the scenario parser validates generator, symbols, sessions, fields, bounds and unique objective IDs."
+          },
+          "seed": {
+            "type": "string",
+            "pattern": "^[0-9]{1,20}$",
+            "description": "Unsigned 64-bit decimal seed, including zero."
+          },
+          "plan": {
+            "type": "string"
+          },
+          "challenge": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "scenario",
+          "seed",
+          "plan"
+        ]
+      },
+      "ScenarioPacks": {
+        "type": "object",
+        "properties": {
+          "packs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioPack"
+            }
+          }
+        },
+        "required": [
+          "packs"
         ]
       },
       "PaperEvent": {

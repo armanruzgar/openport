@@ -2751,6 +2751,80 @@ Older round trips without entry context keep null review fields: historical mark
 are not reconstructed. Share trades retain their existing P&L and notes. Each round
 trip's P&L by Greek is its `attribution` (see [P&L by Greek](#pl-by-greek)).
 
+### Edge reports, mistake picks and coaching
+
+Journal reports also group closed trades by entry time in New York (before 09:30,
+09:30–10:30, 10:30–12:00, 12:00–14:00, 14:00–16:00, after 16:00), entry DTE
+(`<1`, `1–7`, `8–30`, `31+`), absolute entry delta (0.20-wide buckets), IV
+(`<15%`, `15–25%`, `25–40%`, `40%+`), underlying, strategy template tag and
+playbook ID across versions. Numerical upper bounds are exclusive. DTE is
+`entry_context.years * 365`, not a rounded calendar-day count. Missing context or
+unlabelled templates/playbooks appear as **Unknown**; no Greeks are reconstructed.
+A template group uses the saved template parameter tag. Multiple labels count in
+each matching group. Whole-trade mode uses its first entry context and combined
+review; otherwise each closed round trip counts once.
+
+Each group displays trades, win rate (wins divided by nonzero outcomes),
+expectancy (net P&L divided by all closed trades), average recorded R, profit
+factor and average recorded give-back. Missing review values are excluded from
+those averages. Profit factor is infinite with wins and no losses, and undefined
+when there are no decided trades. These are browser display summaries; accounting
+remains exact on the server.
+
+Notes now have a separate `mistakes` array with fixed picks: `chased`, `oversized`,
+`moved stop`, `revenge`, `broke plan`, `early exit`, and the positive `A+ setup`.
+They never become free-text `tags`. `PUT /api/trades/{id}/note` replaces note,
+tags and mistakes; omitted fields clear them. Picks persist in the journal and
+CSV export for options and shares. Journal compares observed net P&L and counts
+with and without each pick. It is an association, not a counterfactual cost or
+proof of causation. Trade-level edits on an archived replay remain read-only.
+
+Closed option review flags give-back above 50% of a positive MFE, heat above 1R,
+a held interval overlapping an authored scenario event, any explicitly false
+playbook adherence rule, and peak size above twice the median closed-trade peak
+size for the same underlying (at least three observations). Share cohorts use
+peak shares separately from option contracts. The median includes the reviewed
+trade. Flags use available evidence; absent evidence is not a passed rule.
+The same flags can group Journal reports. A trade's `entry_order` joins its
+playbook report even when it is a single leg. These are transparent rules, not
+predictions or personalised trading advice.
+
+The underlying trade chart and intraday equity curve show scenario events at
+resolved UTC times, with New York labels. Event durations also mark their ends.
+Markers describe authored simulated events; they do not create missing candles,
+equity marks or market timestamps. Recorded days have no authored scenario events.
+
+### Replay from a trade
+
+**Replay from here** opens a new isolated, paused paper account five minutes before
+a trade's entry, clamped to the available source/session open. It uses the
+source scenario or recording, seed, date, generator revision and initial plan and
+settings. It copies no prior trade commands. The source journal is preserved;
+the new replay replaces whichever replay is active, while live accounts keep
+running. Source identity is checked against the journal: missing/changed recordings,
+missing/changed scenario files, unsupported drivers or changed calendars are
+refused with a clear error. Replays without durable source history cannot use it.
+This is distinct from **Restart from…**, which re-executes the earlier commands.
+
+### Optional AI review
+
+AI review is off by default. In a trade review, expand **Optional AI review**, check
+**Enable for this review**, enter your own endpoint and bearer key, and press
+**Send AI review**. No request is made on load, while typing, or without all three
+settings. Settings/key stay in component memory and clear when it unmounts; the
+key is not stored on the server or in browser storage. No built-in provider or key
+is supplied. The browser sends the selected trade JSON (including notes/tags),
+coach flags, `paper_trade: true`, and an instruction to `POST` the configured URL.
+The endpoint must return `{"review":"text"}` and allow the terminal's origin with
+CORS. This small adapter protocol is not an assumed vendor API format.
+
+Use HTTPS, or HTTP on localhost. The request includes `Authorization: Bearer KEY`,
+omits cookies, refuses redirects, and times out after 30 seconds. Returned text is
+rendered as text. Configure only an endpoint you intend to receive the review.
+Local tests use a mock HTTP server; no paid endpoint or external model validation
+is claimed. Rule-based flags remain available with AI review disabled.
+
+
 ### Return on buying power
 
 A premium-based return misleads for credit spreads: a $1.00 credit on a $5-wide

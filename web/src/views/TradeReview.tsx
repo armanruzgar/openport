@@ -1,3 +1,10 @@
+import { useReplayControls } from "./ReplayView"
+import { scenarioMarkers } from "../lib/practice"
+import { useState } from "react"
+import { useTrades } from "../api/trading"
+import { coachFlags, type JournalTrade } from "../lib/journal"
+import { requestAiReview } from "../lib/ai-review"
+import { TradingError } from "../components/TradingControls"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "../api/client"
 import { marketNow, useLive } from "../api/live"
@@ -68,13 +75,48 @@ export function TradeChart({ trade }: { trade: Trade }) {
     { label: "MAE", time: trade.review?.worst?.time, spot: trade.review?.worst?.spot, color: "var(--bearish)" },
     { label: "MFE", time: trade.review?.best?.time, spot: trade.review?.best?.spot, color: "var(--bullish)" },
   ].filter((m) => m.time != null)
-  const markers: Marker[] = marks.map((m) => ({ x: Date.parse(m.time!) / 1000, label: m.label, color: m.color }))
+  const markers: Marker[] = [...marks.map((m) => ({ x: Date.parse(m.time!) / 1000, label: m.label, color: m.color })), ...scenarioMarkers(live.replay?.events ?? [], from * 1000, to * 1000, 1000, trade.underlying)]
   const series: Series[] = [{ id: "underlying", label: "1m candle close", color: "var(--muted)", points: bars.map((bar) => ({ x: bar.t, y: bar.c })) },
     ...marks.map((m) => ({ id: m.label, label: m.label, color: m.color, dots: true, points: [{ x: Date.parse(m.time!) / 1000, y: m.spot ?? null }] }))]
   return <section aria-label="Underlying across trade">
     <h3 className="text-xs font-medium">{trade.underlying} across the trade{live.status?.provider.simulated ? " · Simulated prices" : ""}</h3>
-    {query.error ? <p className="text-xs text-muted">Underlying candles unavailable.</p> : !bars.length ? <p className="text-xs text-muted">{query.isPending ? "Loading underlying candles…" : "No stored candles for this trade."}</p> :
-      <LineChart series={series} markers={markers} height={190} formatX={(x) => chartTime.format(x * 1000)} xLabel="New York time" formatY={(y) => y.toFixed(2)} />}
+    {query.error && <p className="text-xs text-muted">Underlying candles unavailable.</p>}
+    {bars.length || marks.some(m => m.spot != null) ? <LineChart series={series} markers={markers} height={190} formatX={(x) => chartTime.format(x * 1000)} xLabel="New York time" formatY={(y) => y.toFixed(2)} />
+      : <p className="text-xs text-muted">{query.isPending ? "Loading underlying candles…" : "No stored prices for this trade."}</p>}
     <p className="text-[11px] text-muted">Candle closes and stamped spot markers. Missing history is not reconstructed.</p>
+  </section>
+}
+
+export function TradeCoach({ trade }: { trade: JournalTrade }) {
+  const live = useLive()
+  const trades = useTrades("all")
+  const controls = useReplayControls()
+  const playbooks = useQuery({ queryKey: ["review-playbooks", live.accountScope, live.trading?.account_version], queryFn: ({ signal }) => api.playbooks(signal) })
+  const brokenOrders = new Set(Object.values(playbooks.data?.reports ?? {}).flatMap(report => report.trades.filter(t => Object.values(t.rules).some(v => v === false)).map(t => t.order)))
+  const flags = coachFlags(trade, [...(trades.data?.trades ?? []), ...(trades.data?.share_trades ?? [])], { brokenOrders, events: live.replay?.events })
+  const [enabled, setEnabled] = useState(false)
+  const [endpoint, setEndpoint] = useState("")
+  const [key, setKey] = useState("")
+  const [result, setResult] = useState("")
+  const [error, setError] = useState<unknown>()
+  const [pending, setPending] = useState(false)
+  async function review() {
+    setPending(true); setError(undefined)
+    try { setResult(await requestAiReview({ enabled, endpoint, key }, trade, flags)) }
+    catch (e) { setError(e) } finally { setPending(false) }
+  }
+  return <section className="space-y-2 text-xs" aria-label="Trade coach">
+    {live.replay?.id && <><button className="trade-button" disabled={controls.blocked || controls.pending} onClick={() => void controls.fromTrade(live.replay!.id!, trade.id, () => live.switchSource("replay", "user"))}>Replay from here</button><p className="text-muted">New paused paper account, five minutes before entry (clamped to the session open), with the source seed, date and plan.</p><TradingError error={controls.error} /></>}
+    <h3 className="font-medium">Coach flags</h3>
+    {flags.length ? <ul>{flags.map(flag => <li key={flag}>{flag}</li>)}</ul> : <p className="text-muted">No flags from available data.</p>}
+    <p className="text-muted">Size flag: over twice the median peak size of at least three closed trades in this underlying. Missing evidence is not treated as a passed rule.</p>
+    <details><summary>Optional AI review · off by default</summary>
+      <p className="my-2">Sends this trade’s review JSON, including notes and tags, to your endpoint only when you press Send. Your key stays in memory. The endpoint must allow this browser’s origin and return a JSON review string.</p>
+      <label className="block"><input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} /> Enable for this review</label>
+      <label className="block">Endpoint<input className="trade-input" value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="https://your-host/review" /></label>
+      <label className="block">Your key<input className="trade-input" type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} /></label>
+      <button className="trade-button" disabled={!enabled || !endpoint || !key || pending} onClick={() => void review()}>{pending ? "Reviewing…" : "Send AI review"}</button>
+      <TradingError error={error} />{result && <p className="whitespace-pre-wrap">{result}</p>}
+    </details>
   </section>
 }

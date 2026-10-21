@@ -132,3 +132,22 @@ it("shows fill actors in the trade review", async () => {
   await render(<TradeDetail trade={trade} fills={[{ ...fill, actor: "research-agent" }]} trading={trading} />)
   expect(host.textContent).toContain("research-agent")
 })
+
+it("saves fixed mistake picks independently of free-text tags", async () => {
+  const save = vi.spyOn(api, "annotateTrade").mockResolvedValue({ trade: trade.id, account_version: "18", note: trade.note!, tags: ["patient"], mistakes: ["chased"] })
+  await render(<TradeDetail trade={trade} fills={[fill]} trading={trading} />)
+  const label = [...host.querySelectorAll("label")].find(e => e.textContent?.trim() === "chased")!
+  await act(async () => label.querySelector<HTMLInputElement>("input")!.click())
+  const button = [...host.querySelectorAll("button")].find(e => e.textContent === "Save note")!
+  await act(async () => button.click())
+  expect(save).toHaveBeenCalledWith(trade.id, { note: trade.note, tags: ["patient"], mistakes: ["chased"] }, trading.write)
+})
+
+it("retains authored event markers on stamped review prices when archived candles are absent", async () => {
+  vi.spyOn(api, "candles").mockResolvedValue({ symbol: "SPX", interval: "1m", bars: [] })
+  const replay = { id: "saved", events: [{ type: "crush", time: "2026-09-22T14:21:00Z", symbols: ["SPX"] }] } as unknown as import("../api/types").ReplayState
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open", 0, "main", () => {}, "history:saved", replay))
+  await render(<TradeDetail trade={{ ...trade, opened: "2026-09-22T14:20:00Z", closed: "2026-09-22T14:23:00Z" }} fills={[]} trading={trading} />)
+  expect(host.querySelector('[aria-label="Underlying across trade"]')?.textContent).toContain("Scenario crush")
+  expect(host.textContent).toContain("Missing history is not reconstructed")
+})

@@ -307,3 +307,13 @@ tags and at least one required reviewer. The package owner must also register
 `openport-client` on PyPI with a trusted publisher for repository `38st/openport`,
 workflow `python-release.yml` and environment `pypi`. No package has been
 published and no GitHub settings were changed as part of this change.
+
+Journal practice: `note(id, note, tags, mistakes=["chased"])` keeps fixed picks
+separate. `replay_from_trade(run_id, trade_id)` starts a fresh paused account before
+entry. `scenario_packs()`, `scenario_pack(pack_id)`, `import_scenario_pack(pack)` and
+`start_scenario_pack(pack_id)` export/import fixed seed/plan/objective packs.
+These controls use global replay routes even from a history client. MCP exposes
+`replay_from_trade`, `scenario_packs`, `import_scenario_pack`, and
+`start_scenario_pack`; writes retain its explicit account requirement. Drill
+scores and bests are returned in replay history; challenge inputs and recomputed
+results are included in verification receipts. See [scenarios](../docs/scenarios.md).

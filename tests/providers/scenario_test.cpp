@@ -513,3 +513,44 @@ TEST(Scenarios, StressRecordingsAreByteIdentical) {
     if (std::holds_alternative<md::SnapshotHeartbeat>(event->event)) ++heartbeats;
   EXPECT_EQ(heartbeats, 390U * 4);
 }
+
+namespace {
+TEST(Scenarios, MachineObjectivesValidateTypesLimitsAndSessionDeadlines) {
+  auto source = valid();
+  source["objectives"] = {{{"id", "flat"}, {"type", "flat_by"}, {"at", "15:45"}},
+                           {{"id", "room"}, {"type", "min_floor_room"}, {"limit", 25}}};
+  const auto parsed = providers::parse_scenario(source.dump(), "test.json");
+  ASSERT_EQ(parsed.objectives.size(), 2U);
+  EXPECT_EQ(parsed.objectives.front().at, "15:45");
+  for (const auto& bad : std::vector<json>{
+      {{"id", "x"}, {"type", "magic"}, {"limit", 1}},
+      {{"id", "x"}, {"type", "min_floor_room"}, {"limit", 101}},
+      {{"id", "x"}, {"type", "max_loss"}, {"limit", -1}},
+      {{"id", "x"}, {"type", "flat_by"}, {"at", "25:00"}},
+      {{"id", "x"}, {"type", "flat_by"}, {"at", "10:00"}, {"session", 2}},
+      {{"id", "x"}, {"type", "max_net_vega"}, {"limit", 100}},
+      {{"id", "x"}, {"type", "max_loss"}, {"limit", 100}, {"at", "10:00"}}}) {
+    source["objectives"] = json::array({bad});
+    EXPECT_THROW((void)providers::parse_scenario(source.dump(), "test.json"), std::invalid_argument) << bad;
+  }
+  source["objectives"] = json::array({{{"id", "x"}, {"type", "max_loss"}, {"limit", 100}}, {{"id", "x"}, {"type", "max_loss"}, {"limit", 100}}});
+  EXPECT_THROW((void)providers::parse_scenario(source.dump(), "test.json"), std::invalid_argument);
+}
+TEST(Scenarios, BuiltInObjectivesComeFromTheirOwnFileKeyedByScenarioId) {
+  EXPECT_TRUE(providers::valid_scenario_id("range-bleed"));
+  for (const auto* id : {"", "-lead", "trail-", "Upper", "../up", "a/b", "a.b", "0123456789012345678901234567890123456789x"})
+    EXPECT_FALSE(providers::valid_scenario_id(id)) << id;
+  for (const auto& scenario : providers::builtin_scenarios()) {
+    EXPECT_EQ(json::parse(scenario.source).count("objectives"), 0U) << scenario.id;
+    if (scenario.id == "morning-crush" || scenario.id == "afternoon-waterfall" || scenario.id == "range-bleed")
+      EXPECT_FALSE(scenario.objectives.empty()) << scenario.id;
+  }
+  std::vector<providers::Scenario> scenarios{providers::parse_scenario(valid().dump(), "test.json")};
+  const auto id = scenarios.front().id;
+  EXPECT_THROW(providers::apply_builtin_objectives(scenarios, R"({"unknown":[]})", "objectives.json"), std::invalid_argument);
+  EXPECT_THROW(providers::apply_builtin_objectives(scenarios, json{{id, {{{"id", "x"}, {"type", "magic"}}}}}.dump(), "objectives.json"), std::invalid_argument);
+  providers::apply_builtin_objectives(scenarios, json{{id, {{{"id", "loss"}, {"type", "max_loss"}, {"limit", 100}}}}}.dump(), "objectives.json");
+  ASSERT_EQ(scenarios.front().objectives.size(), 1U);
+  EXPECT_THROW(providers::apply_builtin_objectives(scenarios, json{{id, json::array()}}.dump(), "objectives.json"), std::invalid_argument);
+}
+}

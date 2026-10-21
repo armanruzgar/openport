@@ -61,6 +61,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/backtest_test.cpp
     server/paper_test.cpp
     server/review_test.cpp
+    server/practice_test.cpp
   )
   target_compile_definitions(openport_tests PRIVATE OPENPORT_APPS_DIR="${PROJECT_BINARY_DIR}/apps")
   add_dependencies(openport_tests openportd openport-probe)

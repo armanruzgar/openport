@@ -76,6 +76,7 @@ describe("notes and tags in the journal", () => {
     expect(html).toContain('<option value="breakout">breakout</option>')
     expect(html).toContain(">breakout</span>")
     expect(html).toContain('title="Chased the open">note</span>')
-    expect(html).toContain(">Tag</button>")
+    expect(html).toContain('<option value="tag">Tag</option>')
+    expect(html).toContain("Mistake cost comparison")
   })
 })

@@ -17,8 +17,8 @@ def call(server, name, **arguments):
 def test_tool_schemas_name_accounts_and_typed_orders(stub):
     server = create_server(Client(stub.url, "secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert {"status", "symbols", "summary", "chain", "volatility", "volatility_history", "surface_history", "volatility_scanner", "exposure", "account", "positions", "orders", "risk", "risk_profile", "risk_history", "risk_scenarios", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"} <= set(tools)
-    for name in ["start_replay", "step_replay", "stop_replay"]:
+    assert {"status", "symbols", "summary", "chain", "volatility", "volatility_history", "surface_history", "volatility_scanner", "exposure", "account", "positions", "orders", "risk", "risk_profile", "risk_history", "risk_scenarios", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay", "replay_from_trade", "scenario_packs", "import_scenario_pack", "start_scenario_pack"} <= set(tools)
+    for name in ["start_replay", "step_replay", "stop_replay", "replay_from_trade", "import_scenario_pack", "start_scenario_pack"]:
         assert "account" in tools[name].input_schema["required"]
     schema = tools["place_order"].input_schema
     assert schema["$defs"]["Order"]["properties"]["quantity"]["type"] == "integer"
@@ -217,3 +217,15 @@ def test_batch_tools_do_not_borrow_live_quote_provenance(stub):
     assert response["simulated"] is True
     assert response["as_of"] is None
     assert response["feed"] == {"provider": None, "delayed": None, "delay_seconds": None}
+
+
+def test_practice_tools_use_global_replay_controls(stub):
+    server = create_server(Client(stub.url, "secret"))
+    assert "error" not in call(server, "replay_from_trade", account="main", run_id="run-1", trade_id="7")
+    assert [r for r in stub.requests if r[0] == "POST"][-1][1] == "/api/replay"
+    assert [r for r in stub.requests if r[0] == "POST"][-1][3] == {"replay_from": "run-1", "trade": "7"}
+    assert "error" in call(server, "start_scenario_pack", account="wrong", pack_id="practice")
+    assert "error" not in call(server, "start_scenario_pack", account="main", pack_id="practice")
+    assert [r for r in stub.requests if r[0] == "POST"][-1][3] == {"pack": "practice", "paused": True, "speed": 1}
+    assert "error" not in call(server, "scenario_packs")
+    assert stub.requests[-1][1] == "/api/replay/packs"

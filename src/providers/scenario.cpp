@@ -223,6 +223,61 @@ std::vector<ScenarioWindow> scenario_windows(const Scenario& scenario, md::Date 
 }
 md::Timestamp scenario_end(const Scenario& scenario, md::Date date) { return scenario_windows(scenario, date).back().last; }
 
+namespace {
+// Objectives need the scenario's sessions, so they parse after the rest of it.
+std::vector<ScenarioObjective> objectives_of(const json& objectives, const Scenario& s) {
+  require(objectives.is_array() && objectives.size() <= 16, "objectives", "expected at most 16 objectives");
+  std::vector<ScenarioObjective> out;
+  std::set<std::string> ids;
+  const auto windows = scenario_windows(s, s.date);
+  for (const auto& value : objectives) {
+    keys(value, {"id", "type", "limit", "at", "session"}, "objectives");
+    ScenarioObjective o;
+    o.id = text(value.at("id"), "objectives.id", 80);
+    require(ids.insert(o.id).second, "objectives.id", "must be unique");
+    o.type = text(value.at("type"), "objectives.type", 40);
+    require(o.type == "max_net_vega" || o.type == "min_floor_room" || o.type == "flat_by" || o.type == "max_loss", "objectives.type", "unknown objective");
+    if (o.type != "flat_by") o.limit = number(value.at("limit"), "objectives.limit", 0, o.type == "min_floor_room" ? 100 : 1e9);
+    else require(!value.contains("limit"), "objectives.limit", "flat_by has no limit");
+    const bool timed = o.type == "max_net_vega" || o.type == "flat_by";
+    if (timed) {
+      o.at = text(value.at("at"), "objectives.at", 5);
+      if (value.contains("session")) {
+        require(value.at("session").is_number_unsigned() || value.at("session").is_number_integer(), "objectives.session", "expected integer");
+        require(value.at("session") >= 1 && value.at("session") <= windows.size(), "objectives.session", "outside scenario sessions");
+        o.session = value.at("session").get<std::size_t>();
+      }
+      const auto& w = windows.at(o.session - 1);
+      (void)scenario_event_time(o.at, w);
+    } else require(!value.contains("at") && !value.contains("session"), "objectives", "continuous objectives have no deadline");
+    out.push_back(std::move(o));
+  }
+  return out;
+}
+}  // namespace
+
+bool valid_scenario_id(std::string_view id) {
+  return !id.empty() && id.size() <= 40 && id.front() != '-' && id.back() != '-' && std::all_of(id.begin(), id.end(), [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+  });
+}
+
+void apply_builtin_objectives(std::vector<Scenario>& scenarios, std::string_view source, const std::filesystem::path& file) {
+  try {
+    const auto j = json::parse(source);
+    require(j.is_object(), "$", "expected an object keyed by scenario id");
+    for (const auto& [id, objectives] : j.items()) {
+      const auto scenario = std::find_if(scenarios.begin(), scenarios.end(), [&](const auto& s) { return s.id == id; });
+      require(scenario != scenarios.end(), id, "no built-in scenario has this id");
+      require(scenario->objectives.empty(), id, "objectives are already declared");
+      try { scenario->objectives = objectives_of(objectives, *scenario); }
+      catch (const std::exception& error) { throw std::invalid_argument(id + "." + error.what()); }
+    }
+  } catch (const std::exception& error) {
+    throw std::invalid_argument(file.string() + ": " + error.what());
+  }
+}
+
 Scenario read_scenario(const std::filesystem::path& file) {
   std::string source;
   try {
@@ -241,7 +296,7 @@ Scenario parse_scenario(std::string_view source, const std::filesystem::path& fi
   try {
     require(source.size() <= 64 * 1024, "$", "file exceeds 64 KiB");
     const auto j = json::parse(source);
-    keys(j, {"id", "title", "description", "goal", "symbols", "session", "date", "seed", "generator", "drift", "volatility", "iv_shift", "spot_vol", "events", "sessions", "previous_close", "strike_window"}, "$");
+    keys(j, {"id", "title", "description", "goal", "symbols", "session", "date", "seed", "generator", "drift", "volatility", "iv_shift", "spot_vol", "events", "sessions", "previous_close", "strike_window", "objectives"}, "$");
     const bool several = j.contains("sessions");
     for (const auto* field : {"id", "title", "description", "symbols", "date", "seed", "generator"})
       require(j.contains(field), field, "required field is missing");
@@ -258,9 +313,7 @@ Scenario parse_scenario(std::string_view source, const std::filesystem::path& fi
     if (j.contains("previous_close")) s.previous_close = number(j.at("previous_close"), "previous_close", -0.3, 0.3);
     if (j.contains("strike_window")) s.strike_window = number(j.at("strike_window"), "strike_window", 0.03, 0.5);
     s.id = text(j.at("id"), "id", 40);
-    require(s.id.front() != '-' && s.id.back() != '-' && std::all_of(s.id.begin(), s.id.end(), [](char c) {
-      return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
-    }), "id", "use lowercase letters, digits and interior hyphens");
+    require(valid_scenario_id(s.id), "id", "use lowercase letters, digits and interior hyphens");
     s.title = text(j.at("title"), "title", 100);
     s.description = text(j.at("description"), "description");
     if (j.contains("goal")) s.goal = text(j.at("goal"), "goal");
@@ -321,6 +374,7 @@ Scenario parse_scenario(std::string_view source, const std::filesystem::path& fi
     require(j.at("seed").is_number_unsigned() || (j.at("seed").is_number_integer() && j.at("seed").get<std::int64_t>() >= 0), "seed", "expected uint64");
     s.seed = j.at("seed").get<std::uint64_t>();
     require(j.at("generator").is_number_integer() && j.at("generator") == 1, "generator", "only version 1 is supported");
+    if (j.contains("objectives")) s.objectives = objectives_of(j.at("objectives"), s);
     if (several) {
       const auto windows = scenario_windows(s, s.date);
       for (std::size_t i = 0; i < s.sessions.size(); ++i) {

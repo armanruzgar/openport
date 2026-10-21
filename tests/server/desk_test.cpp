@@ -31,6 +31,13 @@ std::string read_file(const std::filesystem::path& file) {
   contents << input.rdbuf();
   return contents.str();
 }
+/// A restarted run journals one restart input after its source's retained prefix.
+std::string without_restart(const std::string& journal) {
+  const auto end = journal.rfind('\n', journal.size() - 2);
+  const auto last = json::parse(journal.substr(end + 1));
+  EXPECT_EQ(last.at("payload").at("events").at(0).at("payload").at("kind"), "restart");
+  return journal.substr(0, end + 1);
+}
 std::vector<md::Event> market_batch(const test::ScriptedMarket& market, double ask = 4.2) {
   return {md::ContractDefinition{0, market.contract},
           md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000},
@@ -2582,7 +2589,7 @@ TEST(ReplayRun, RestartPreservesTheSourceAndReexecutesItsInclusiveCommandPrefix)
     EXPECT_NE(new_id, id);
     EXPECT_EQ(read_file(journal), source_bytes);
     const auto new_journal = file.directory / "replays" / (new_id + ".jsonl");
-    EXPECT_EQ(read_file(new_journal), prefix);
+    EXPECT_EQ(without_restart(read_file(new_journal)), prefix);
     EXPECT_EQ(json::parse(replay_call(host, "GET", "/api/replay/fills").body).at("fills"), fills);
     // Continue with different commands; the source remains byte-identical.
     ASSERT_EQ(replay_call(host, "PUT", "/api/replay", {{"until", "+1s"}}).status, 200);
@@ -2688,6 +2695,7 @@ TEST(ReproducibleRun, LockstepSmallAndLargeStepsMatchContinuousCommandsAndVerify
       options.replay = true;
       options.initial_actor = "test-actor";
       options.run_input = server::recording_input(file.path);
+      options.run_start_at = 0;  // The host records that its runs play from the open.
       options.paper_journal = journal;
       // ReplayHost's default plan is practice.
       options.paper.rules = server::find_plan("practice")->rules;

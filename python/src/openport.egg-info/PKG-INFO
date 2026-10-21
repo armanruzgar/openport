@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: openport
+Version: 0.1.0
+Summary: Client for the openport options analytics and paper simulator API
+License-Expression: MIT
+Requires-Python: >=3.10
+License-File: LICENSE
+Provides-Extra: pandas
+Requires-Dist: pandas>=2; extra == "pandas"
+Provides-Extra: ws
+Requires-Dist: websockets>=14; extra == "ws"
+Provides-Extra: mcp
+Requires-Dist: mcp<3,>=2.2; extra == "mcp"
+Dynamic: license-file

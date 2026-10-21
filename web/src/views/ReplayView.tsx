@@ -1,3 +1,4 @@
+import { PracticePanel } from "./PracticePanel"
 import { userReplayChange } from "../api/destination"
 import { useActionApi } from "../api/action-client"
 import { CopySettingsPicker } from "../components/CopySettingsPicker"
@@ -7,6 +8,7 @@ import { type ReplaySource, type ReplayStart } from "../api/client"
 import { usePlans } from "../api/trading"
 import { Dialog } from "../components/Dialog"
 import { formatMoney } from "../lib/trading"
+import { personalBestLabel } from "../lib/practice"
 import type { View } from "../lib/route"
 import { useLive } from "../api/live"
 import type { ReplayRecording, ReplaySession, ReplayState } from "../api/types"
@@ -94,6 +96,7 @@ export function useReplayControls() {
     stop: () => interrupt(() => api.stopReplay(mode)),
     start: (source: ReplaySource, speed: number, then: () => void, options?: ReplayStart) => run(async () => { await userReplayChange(() => api.startReplay(source, speed, mode, options)); then() }),
     resume: (id: string, speed: number, then: () => void) => run(async () => { await userReplayChange(() => api.resumeReplay(id, speed, mode)); then() }),
+    fromTrade: (id: string, trade: string, then: () => void) => run(async () => { await userReplayChange(() => api.replayFromTrade(id, trade, mode)); then() }),
     restart: (id: string, at: string | undefined, then: () => void) => run(async () => { await userReplayChange(() => api.restartReplay(id, at, mode)); then() }),
     verify: (id: string, then: () => void) => run(async () => { await api.verifyReplay(id, mode); then() }),
     receipt: (id: string) => run(() => api.downloadVerificationReceipt(id), true),
@@ -283,6 +286,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
         </div>
       )}
     </Panel>
+    <PracticePanel listing={listing.data} refresh={() => { void listing.refetch() }} />
     <Panel title="Finished runs">
       {!listing.data?.history?.length ? <Empty>No finished runs yet.</Empty> : <div className="space-y-2">
         {listing.data.history.map((run) => <div key={run.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border p-3 text-xs">
@@ -291,6 +295,8 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
           <span>{run.date} · {run.start_at || "open"} · {run.plan_name ?? run.plan}{run.plan_id ? ` · ${run.plan_id}` : ""}</span>
           <Badge tone={run.result === "pass" ? "positive" : run.result === "fail" ? "warn" : "neutral"}>{run.result}</Badge>
           <span>P&amp;L {run.pnl === null ? "—" : formatMoney(run.pnl)}{run.valuation_complete === false ? " (incomplete marks)" : ""}</span>
+          {run.drill && <details className="w-full"><summary>Drill score {run.drill.score == null ? "Not graded (incomplete run or evidence)" : `${run.drill.score.toFixed(0)}/100`}{personalBestLabel(run)}</summary>
+            <ul>{run.drill.objectives.map(o => <li key={o.id}>{o.id}: {o.passed == null ? "Unknown" : o.passed ? "Passed" : "Missed"}{o.observed == null ? "" : ` · observed ${o.observed.toFixed(2)}`}</li>)}</ul><p>{run.drill.basis}</p></details>}
           {run.journal_size && <span>{size(run.journal_size.bytes)} journal · {run.journal_size.records.toLocaleString()} records</span>}
           {run.journal_size?.warning && <p className="w-full text-warn">{run.journal_size.warning}</p>}
           {run.verification_cost && <p className="w-full text-muted">Verification estimate: about {run.verification_cost.estimated_seconds} seconds or more.

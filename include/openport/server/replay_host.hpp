@@ -6,6 +6,7 @@
 #include <deque>
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -74,11 +75,13 @@ class ReplayHost {
   void stop_session(bool shutdown = false);  // control_mutex_ held
   void control(const ApiRequest& request, const ApiCompletion& complete);
   void resume(const std::string& id, int speed, bool paused, const ApiCompletion& complete,
-              bool restart = false, const std::string& at = {});
+              bool restart = false, const std::string& at = {}, const std::string& trade = {}, const std::string& actor = {});
   void history(const ApiRequest& request, const ApiCompletion& complete);
   /// Queues a change for the control thread, which runs each under control_mutex_.
   void enqueue(const ApiRequest& request, const ApiCompletion& complete);
   void work();
+  void packs(const ApiRequest& request, const ApiCompletion& complete);
+  std::map<std::string, std::string> packs_;  // control thread; writes also hold handoff_mutex_
   void stop_verifier();  // control_mutex_ held
   [[nodiscard]] std::shared_ptr<Session> current() const;
 

@@ -1,5 +1,6 @@
 #include "openport/server/run.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <fstream>
@@ -9,6 +10,8 @@
 #include <unistd.h>
 
 #include "openport/providers/replay_batches.hpp"
+#include "openport/server/practice.hpp"
+#include "openport/server/plans.hpp"
 #include "run_json.hpp"
 
 namespace openport::server {
@@ -199,6 +202,14 @@ std::vector<std::string> run_inputs(const trading::JournalRecovery& journal) {
   }
   return inputs;
 }
+bool run_from_open(const trading::JournalRecovery& journal) {
+  const auto inputs = run_inputs(journal);
+  if (inputs.empty()) return false;
+  const auto start = json::parse(inputs.front());
+  // Older runs did not record where play began, so they cannot show a start at the open.
+  if (start.at("kind") != "start" || !start.contains("start_at") || start.at("start_at") != 0) return false;
+  return std::none_of(inputs.begin(), inputs.end(), [](const auto& input) { return json::parse(input).at("kind") == "restart"; });
+}
 std::shared_ptr<trading::Journal> resuming_journal(const trading::JournalRecovery& expected,
                                                    std::shared_ptr<trading::Journal> file) {
   if (file->sequence() != expected.records.size() || file->head() != expected.head)
@@ -366,6 +377,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     const auto& input = start.at("input");
     const md::ScheduledDaysScope calendar(start.value("calendar", std::vector<md::ScheduledDay>{}));
     std::unique_ptr<TemporaryInput> generated_input;
+    std::optional<providers::Scenario> graded_scenario;
     const auto open_input = [&](const json& identity) {
       if (identity.at("version") != 1) throw std::runtime_error("Unsupported run driver version");
       if (identity.contains("file")) private_paths.emplace_back(identity.at("file").get<std::string>());
@@ -378,7 +390,9 @@ RunVerification verify_run(const std::filesystem::path& journal,
           throw std::runtime_error("Recording input changed: " + file.filename().string());
       } else if (identity.at("kind") == "scenario") {
         providers::Scenario scenario;
-        if (identity.at("builtin").get<bool>()) {
+        if (identity.contains("challenge") && identity.contains("scenario_source") && !identity.at("builtin").get<bool>()) {
+          scenario = providers::parse_scenario(identity.at("scenario_source").get<std::string>(), identity.at("file").get<std::string>());
+        } else if (identity.at("builtin").get<bool>()) {
           bool found = false;
           for (const auto& candidate : providers::builtin_scenarios()) {
             if (candidate.id != identity.at("id").get<std::string>()) continue;
@@ -387,6 +401,9 @@ RunVerification verify_run(const std::filesystem::path& journal,
             break;
           }
           if (!found) throw std::runtime_error("Missing built-in scenario: " + identity.at("id").get<std::string>());
+          // An embedded source labelled built-in must be the shipped one, not an easier market under its name.
+          if (identity.contains("scenario_source") && identity.at("scenario_source") != scenario.source)
+            throw std::runtime_error("Embedded source differs from built-in scenario " + scenario.id);
         } else {
           file = identity.at("file").get<std::string>();
           if (!std::filesystem::is_regular_file(file)) throw std::runtime_error("Missing scenario input: " + file.filename().string());
@@ -394,6 +411,17 @@ RunVerification verify_run(const std::filesystem::path& journal,
         }
         if (hash_text(scenario.source) != identity.at("sha256").get<std::string>())
           throw std::runtime_error("Scenario input changed: " + scenario.id);
+        if (identity.contains("challenge")) {
+          const auto& pack = identity.at("challenge");
+          const auto* plan = find_plan(pack.at("plan").get<std::string>());
+          const auto config = json::parse(expected.records.front().payload).at("state").at("config").get<trading::SessionConfig>();
+          if (pack.at("scenario") != json::parse(scenario.source) || pack.at("seed") != std::to_string(identity.at("seed").get<std::uint64_t>()) ||
+              pack.at("scenario").at("date") != md::format_date(identity.at("date").get<md::Date>()) || !plan ||
+              json(config.rules) != json(plan->rules) || config.initial_cash != plan->initial_cash)
+            throw std::runtime_error("Challenge inputs disagree with the recorded run");
+        }
+        if (identity == input) graded_scenario = scenario;
+        else graded_scenario.reset();
         if (scenario.generator != identity.at("generator").get<decltype(scenario.generator)>()) throw std::runtime_error("Scenario generator version changed");
         // Runs from before revisions regenerate the first revision's chain.
         const auto revision = identity.value("revision", 1);
@@ -437,6 +465,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     options.exact_margin = start.value("exact_margin", false);
     options.opening_rule_checks = start.value("opening_rule_checks", false);
     options.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);
+    if (start.contains("start_at")) options.run_start_at = start.at("start_at").get<md::Timestamp>();
     options.candles = std::make_shared<CandleStore>();
     options.run_input = input.dump();
     if (start.contains("playbooks") && !start.at("playbooks").is_null()) options.initial_playbooks = start.at("playbooks").dump();
@@ -467,6 +496,8 @@ RunVerification verify_run(const std::filesystem::path& journal,
                      operation.at("time").get<md::Timestamp>(), operation.at("driver_time").get<md::Timestamp>());
       } else if (operation.at("kind") == "dividends") {
         desk.set_dividends(operation.at("dividends").get<std::vector<trading::Dividend>>());
+      } else if (operation.at("kind") == "restart") {
+        desk.replay_restart(operation.dump());
       } else throw std::runtime_error("Unknown recorded run operation");
     }
     // A batch's transactions precede its boundary input. When a crash cut that input
@@ -481,6 +512,14 @@ RunVerification verify_run(const std::filesystem::path& journal,
     const auto view = desk.trading_view();
     if (!view || view->snapshot->equity != restored.snapshot()->equity || comparison->head() != expected.head)
       throw std::runtime_error("Final equity or head hash differs");
+    if (graded_scenario && !graded_scenario->objectives.empty()) {
+      const auto date = input.at("date").get<md::Date>();
+      auto grade = grade_drill(expected, drill_objectives(*graded_scenario, date));
+      const bool complete = result.time >= providers::scenario_end(*graded_scenario, date) && !comparison->cut && run_from_open(expected);
+      grade["complete_run"] = complete;
+      if (!complete) grade["score"] = nullptr;
+      result.run["drill"] = std::move(grade);
+    }
     result.matched = true;
     result.cut = comparison->cut;
     result.transactions = comparison->sequence();

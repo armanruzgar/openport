@@ -158,7 +158,7 @@ export function LineChart({ series, markers = [], references = [], height = 320,
             </text>
           )}
           {markers.map((m, i) => (
-            <g key={m.label}>
+            <g key={`${m.x}-${m.label}-${i}`}>
               <line x1={layout.x(m.x)} x2={layout.x(m.x)} y1={margin.top} y2={height - margin.bottom} style={{ stroke: m.color }} strokeDasharray="4 3" strokeOpacity={0.8} />
               <text x={layout.x(m.x) + 4} y={margin.top + 10 + 12 * layout.rows[i]!} style={{ fill: m.color, stroke: "var(--panel)", strokeWidth: 3, paintOrder: "stroke" }} className="text-[10px]">
                 {m.label}

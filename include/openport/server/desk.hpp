@@ -3,6 +3,7 @@
 #include <deque>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -31,6 +32,12 @@ class Desk {
     std::shared_ptr<SeriesStore> series;
     std::string run_input;  ///< Canonical provenance JSON; empty for legacy/live desks.
     std::string run_id;     ///< The run's id, named in its exports; empty without one.
+    /// A replay run records where play began in its start input: 0 for the open, or its
+    /// start_at time. Unset for runs from before it was recorded, whose start is unknown.
+    std::optional<md::Timestamp> run_start_at;
+    /// A restarted run's {"kind":"restart"} input, recorded once the source run's
+    /// retained inputs have re-executed. Empty for every other run.
+    std::string run_restart;
     bool paper_enabled = true;
     bool replay = false;  ///< Publish the replay market clock and keep halt state isolated.
     md::Timestamp replay_start = 0, replay_end = 0;  ///< Last complete market batch for pending-setting guidance.
@@ -105,6 +112,8 @@ class Desk {
   void apply_command(PendingCommand& pending, md::Timestamp market_time, md::Timestamp driver_time);
   /// Begin a later recording while keeping the account and candle history.
   void replay_source(const std::string& input, const md::RecordingHeader& header);
+  /// Records that a restarted run continues from here; verification replays it in place.
+  void replay_restart(const std::string& input);
   void replay_batch(const std::vector<md::Event>& batch, md::Timestamp driver_time, md::Timestamp boundary_time = 0);
   void command(TradingCommand command, TradingCompletion completion, md::Timestamp time, md::Timestamp driver_time);
   [[nodiscard]] bool active() const;
@@ -157,7 +166,9 @@ class Desk {
   void replay_recorded();
   /// Stops every account of a resumed run whose inputs no longer match its recording.
   void resume_failed(const std::string& reason);
+
   std::deque<std::string> resume_inputs_;  ///< A resumed run's inputs still to re-execute.
+  std::string pending_restart_;  ///< options_.run_restart until it is recorded.
   [[nodiscard]] bool inputs_first() const {
     return options_.instant_batches && options_.closing_rollover && options_.inputs_first;
   }

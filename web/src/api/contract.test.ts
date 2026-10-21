@@ -312,3 +312,15 @@ it("notification event kinds match the published contract", () => {
   const declared = /export type NotificationEvent = ([^\n]+)/.exec(marketTypes)![1]!
   expect(normalize(declared)).toBe(wireType(spec.components.schemas.NotificationEvent!))
 })
+
+it("declares journal practice wire fields and fixed mistake picks", () => {
+  const schemas = spec.components.schemas
+  for (const name of ["Trade", "ShareTrade", "TradeNote", "TradeNoteResponse"]) {
+    expect(schemas[name]!.properties!.mistakes).toBeDefined()
+  }
+  for (const name of ["ReplayState", "ReplayHistory", "ReplayDemo"]) {
+    expect(wireType(schemas[name]!.properties!.events!)).toBe("ScenarioMark[]")
+    expect(wireType(schemas[name]!.properties!.objectives!)).toBe("DrillObjective[]")
+  }
+  for (const name of ["replay_from", "trade", "pack"]) expect(wireType(schemas.ReplayStart!.properties![name]!)).toBe("string")
+})

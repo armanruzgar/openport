@@ -417,7 +417,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       ((request.method == "POST" && (path == "/account/reset" || path == "/risk/kill" || path == "/account/cash-flows" || path == "/market/halt")) ||
        (request.method == "PUT" && (path == "/risk/limits" || path == "/risk/guardrails")));
   const bool permitted = (create_sandbox && sandbox.empty()) || has("admin") || (read ? has("read") || !policy.require_token :
-      ((path == "/replay" || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
+      ((path == "/replay" || (replay && path == "/packs") || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
        (replay_settings && has("replay")) || (trade && (replay ? has("replay") : has("trade:*") || has("trade:" + account)))));
   if (!permitted) return api_error(403, "SCOPE_REQUIRED", "Token does not permit this operation");
   if (replay && path.starts_with("/playbooks/") && path.ends_with("/evaluate"))

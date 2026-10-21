@@ -119,6 +119,17 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Python client coverage for every documented HTTP operation, with a contract parity guard.
 - MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
   market views and order changes, retaining account scopes and preview guidance.
+- Journal: add entry-context edge reports, persisted mistake/setup picks and
+  with/without cost comparisons; transparent trade coach flags and an opt-in,
+  user-configured HTTP AI review hook.
+- Replay: start a fresh paused account from a reviewed entry with the original
+  source/seed/date/plan, and mark authored scenario events on review/equity charts.
+- Practice: grade declared objectives from journal states, retain scores and
+  personal bests, and offer spaced fresh-seed practice with completion streaks.
+- Scenarios: import/export packs and fixed challenges, including challenge inputs
+  and recomputed drill results in replay verification receipts. Morning crush,
+  Afternoon waterfall and Range bleed have objectives in a separate built-in
+  objectives file, so their sources and earlier runs' hashes are unchanged.
 
 ## 0.4.0 (2026-10-06)
 

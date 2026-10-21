@@ -1,7 +1,8 @@
+import { useQuery } from "@tanstack/react-query"
 import { useActionApi } from "../api/action-client"
 import { FeeAmount } from "../components/FeeAmount"
 import { Fragment, useMemo, useState } from "react"
-import { downloadCsv } from "../api/client"
+import { api, downloadCsv } from "../api/client"
 import { marketNow, useLive } from "../api/live"
 import { useAllOrders, useFills, useRefreshTrading, useSettlements, useTrades, useTradingSession } from "../api/trading"
 import type { Order, DayNote, Fill, RunIdentity, SettlementRecord, ShareTrade, Trade, TradingStatus, WholeTrade } from "../api/trading-types"
@@ -11,11 +12,11 @@ import { TradingError, WriteAccess, writeBlocked } from "../components/TradingCo
 import { Empty, PageHeader, Panel, Segmented, Tile, toneOf, toneText } from "../components/ui"
 import { signedPercent } from "../lib/format"
 import { timestampET } from "../lib/freshness"
-import { contractLabel, dailyResults, exitLabel, formatDuration, journalLabel, journalStats, monthWeeks, newYorkDate, parseTags, shareSourceLabel, strategyResults, tradeBuckets, tradeNet, tradeTags, wholeEntries, type Dimension, type JournalTrade, type Side } from "../lib/journal"
+import { dimensions, mistakePicks, mistakeCosts, contractLabel, dailyResults, exitLabel, formatDuration, journalLabel, journalStats, monthWeeks, newYorkDate, parseTags, shareSourceLabel, strategyResults, tradeBuckets, tradeNet, tradeTags, wholeEntries, type Dimension, type JournalTrade, type Side } from "../lib/journal"
 import { tradeGroups, type TradeGroup } from "../lib/positions"
 import { formatMoney, signedMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
-import { ContextCard, ReviewMetrics, TradeChart, TripAttribution } from "./TradeReview"
+import { TradeCoach, ContextCard, ReviewMetrics, TradeChart, TripAttribution } from "./TradeReview"
 import { netLabel } from "./OrdersView"
 
 const usd = (value: number) => signedMoney(value.toFixed(2))
@@ -211,12 +212,15 @@ export function Calendar({ trades, notes, trading }: { trades: JournalTrade[]; n
 function Reports({ trades }: { trades: JournalTrade[] }) {
   const [side, setSide] = useState<Side>("all")
   const [dimension, setDimension] = useState<Dimension>("duration")
-  const buckets = tradeBuckets(trades, dimension, side)
-  const by = dimension === "duration" ? "hold time" : dimension === "weekday" ? "weekday" : dimension === "month" ? "month" : "tag"
+  const live = useLive()
+  const playbooks = useQuery({ queryKey: ["review-playbooks", live.accountScope, live.trading?.account_version], queryFn: ({ signal }) => api.playbooks(signal) })
+  const brokenOrders = new Set(Object.values(playbooks.data?.reports ?? {}).flatMap(r => r.trades.filter(t => Object.values(t.rules).some(v => v === false)).map(t => t.order)))
+  const buckets = tradeBuckets(trades, dimension, side, { events: live.replay?.events, brokenOrders })
+  const by = dimensions.find(d => d.value === dimension)!.label.toLowerCase()
   return (
     <Panel title="Trade reports" actions={<>
       <Segmented label="Contracts" value={side} onChange={setSide} options={[{ value: "all", label: "All" }, { value: "call", label: "Calls" }, { value: "put", label: "Puts" }]} />
-      <Segmented label="Group by" value={dimension} onChange={setDimension} options={[{ value: "duration", label: "Hold time" }, { value: "weekday", label: "Weekday" }, { value: "month", label: "Month" }, { value: "tag", label: "Tag" }]} />
+      <select aria-label="Group by" className="trade-input !w-auto" value={dimension} onChange={e => setDimension(e.target.value as Dimension)}>{dimensions.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}</select>
     </>}>
       <div className="grid gap-6 lg:grid-cols-3">
         <div><h3 className="mb-2 text-xs text-muted">Net P&L by {by}</h3>
@@ -226,6 +230,11 @@ function Reports({ trades }: { trades: JournalTrade[] }) {
         <div><h3 className="mb-2 text-xs text-muted">Win rate by {by}</h3>
           <HBarChart label={`Win rate by ${by}`} domain={1} rows={buckets.map((b) => ({ label: b.label, value: b.winRate }))} format={(v) => `${(v * 100).toFixed(0)}%`} /></div>
       </div>
+      <div className="mt-4 overflow-x-auto"><table className="w-full text-xs tabular"><thead><tr>{["Group", "Trades", "Win rate", "Expectancy", "Average R", "Profit factor", "Average give-back"].map(h => <th key={h} className="p-2 text-left">{h}</th>)}</tr></thead>
+        <tbody>{buckets.map(b => <tr key={b.label}>{[b.label, b.trades, b.winRate == null ? "—" : `${(b.winRate * 100).toFixed(1)}%`, b.expectancy == null ? "—" : usd(b.expectancy), b.averageR?.toFixed(2) ?? "—", b.profitFactor === Infinity ? "∞" : b.profitFactor?.toFixed(2) ?? "—", b.giveBack == null ? "—" : usd(b.giveBack)].map((v, i) => <td key={i} className="p-2">{v}</td>)}</tr>)}</tbody></table></div>
+      <h3 className="mt-4 text-xs font-medium">Mistake cost comparison</h3>
+      <p className="text-xs text-muted">Observed net P&amp;L, not an estimate of what would have happened without the mistake. A+ setup is a positive pick.</p>
+      <table className="mt-2 w-full text-xs"><thead><tr><th className="text-left">Pick</th><th>With pick</th><th>Without pick</th></tr></thead><tbody>{mistakeCosts(trades).map(row => <tr key={row.label}><td>{row.label}</td><td className="text-center">{usd(row.with.net)} · {row.with.trades} trades</td><td className="text-center">{usd(row.without.net)} · {row.without.trades} trades</td></tr>)}</tbody></table>
     </Panel>
   )
 }
@@ -241,23 +250,24 @@ function Tags({ trade }: { trade: { note?: string; tags?: string[] } | undefined
 }
 
 /** A trade's note and tags; a strategy's apply to each of its legs. */
-function NoteEditor({ trades, trading }: { trades: { id: string; note?: string; tags?: string[] }[]; trading: TradingStatus }) {
+function NoteEditor({ trades, trading }: { trades: { id: string; note?: string; tags?: string[]; mistakes?: string[] }[]; trading: TradingStatus }) {
   const api = useActionApi()
   const first = trades[0]!
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const [note, setNote] = useState(first.note ?? "")
   const [tags, setTags] = useState((first.tags ?? []).join(", "))
+  const [mistakes, setMistakes] = useState(first.mistakes ?? [])
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<unknown>()
   const [saved, setSaved] = useState(false)
-  const dirty = note.trim() !== (first.note ?? "") || parseTags(tags).join() !== (first.tags ?? []).join()
+  const dirty = mistakes.join() !== (first.mistakes ?? []).join() || note.trim() !== (first.note ?? "") || parseTags(tags).join() !== (first.tags ?? []).join()
   async function save() {
     setPending(true)
     setError(undefined)
     setSaved(false)
     try {
-      for (const trade of trades) await api.annotateTrade(trade.id, { note: note.trim(), tags: parseTags(tags) }, trading.write)
+      for (const trade of trades) await api.annotateTrade(trade.id, { note: note.trim(), tags: parseTags(tags), mistakes }, trading.write)
       setSaved(true)
     } catch (failure) {
       setError(failure)
@@ -272,6 +282,7 @@ function NoteEditor({ trades, trading }: { trades: { id: string; note?: string; 
         placeholder="Why you took it, how you managed it, what you would change" /></label>
     <label className="trade-label">Tags
       <input className="trade-input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="breakout, 0dte, fomc" /></label>
+    <fieldset className="flex flex-wrap gap-2"><legend className="text-xs">Mistakes / setup</legend>{mistakePicks.map(pick => <label key={pick} className="text-xs"><input type="checkbox" checked={mistakes.includes(pick)} onChange={e => setMistakes(e.target.checked ? [...mistakes, pick] : mistakes.filter(v => v !== pick))} /> {pick}</label>)}</fieldset>
     <WriteAccess trading={trading} />
     <TradingError error={error} />
     <div className="flex flex-wrap items-center gap-2">
@@ -505,6 +516,7 @@ function Shares({ trades, trading }: { trades: ShareTrade[]; trading: TradingSta
             </tr>
             {expanded === t.id && <tr className="bg-raised/30"><td colSpan={shareHeaders.length} className="px-4 py-3 text-left">
               <NoteEditor key={t.id} trades={[t]} trading={trading} />
+              <TradeCoach trade={t} />
             </td></tr>}
             </Fragment>)}
           </tbody>
@@ -553,6 +565,7 @@ export function TradeDetail({ trade, fills, trading, orders = [] }: { trade: Tra
   <ReviewMetrics review={trade.review} />
   <TripAttribution attribution={trade.attribution} open={trade.status === "open"} />
   <TradeChart trade={trade} />
+  <TradeCoach trade={trade} />
   <NoteEditor key={trade.id} trades={[trade]} trading={trading} />
   </div>
 }

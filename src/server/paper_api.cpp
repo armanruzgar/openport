@@ -1050,7 +1050,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
     const auto* settlement = settled == settlements.end() ? nullptr : settled->second;
     const auto buying_power = entry_buying_power({&t});
     const auto strategy_power = strategy_legs.empty() ? std::optional<Money>{} : std::optional(entry_buying_power(strategy_legs));
-    trades.push_back({{"entry_context", context_json(t.entry_context)}, {"exit_context", context_json(t.exit_context)},
+    trades.push_back({{"entry_order", std::to_string(order_id)}, {"entry_context", context_json(t.entry_context)}, {"exit_context", context_json(t.exit_context)},
         {"review", review_json(review == s.trade_reviews.end() ? nullptr : &review->second, open ? std::nullopt : std::optional(net))},
         {"strategy_id", strategy == s.strategy_reviews.end() ? json(nullptr) : json(std::to_string(order_id))},
         {"strategy_review", strategy == s.strategy_reviews.end() ? json(nullptr) : review_json(&strategy->second, strategy_net)},
@@ -1080,6 +1080,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
         {"attribution", trip_attribution_json(s, std::to_string(t.first_fill))},
         {"group", trade_group(t, s.groups)},
         {"fills", fills},
+        {"mistakes", a == s.annotations.end() ? json::array() : json(a->second.mistakes)},
         {"note", a == s.annotations.end() ? std::string{} : a->second.note},
         {"tags", a == s.annotations.end() ? json::array() : json(a->second.tags)}});
   }
@@ -1187,6 +1188,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
         {"opened_by", source(first)}, {"option", option_of(first)},
         {"closed_by", source(last)}, {"closing_option", option_of(last)},
         {"attribution", trip_attribution_json(s, "s" + std::to_string(first))}, {"fills", fills},
+        {"mistakes", note == s.annotations.end() ? json::array() : json(note->second.mistakes)},
         {"note", note == s.annotations.end() ? std::string{} : note->second.note},
         {"tags", note == s.annotations.end() ? json::array() : json(note->second.tags)}});
   }
@@ -1437,6 +1439,7 @@ ApiResponse command_response(const TradingCommand& command, const TradingReply& 
       body["trade"] = key;
       body["note"] = a == s.annotations.end() ? std::string{} : a->second.note;
       body["tags"] = a == s.annotations.end() ? json::array() : json(a->second.tags);
+      body["mistakes"] = a == s.annotations.end() ? json::array() : json(a->second.mistakes);
       break;
     }
     case TradingCommand::Kind::CreateAlert: {
@@ -2179,7 +2182,12 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   }
   if (request.method == "PUT" && path.starts_with("/api/trades/")) {
     // PUT /api/trades/{id}/note: the note and tags replace the trade's.
-    fields(body, {}, {"note", "tags"});
+    fields(body, {}, {"note", "tags", "mistakes"});
+    if (body.contains("mistakes")) {
+      const auto& picks = body.at("mistakes");
+      if (!picks.is_array() || picks.size() > 7) throw std::invalid_argument("mistakes must be an array of at most seven fixed picks");
+      command.mistakes = picks.get<std::vector<std::string>>();
+    }
     command.kind = TradingCommand::Kind::Annotate;
     auto id = path.substr(std::string_view("/api/trades/").size());
     id = id.substr(0, id.size() - std::string_view("/note").size());

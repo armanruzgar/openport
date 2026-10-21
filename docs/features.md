@@ -13,6 +13,22 @@ unknown. These mappings are sample/mock tested, not yet validated live.
 JSON/Markdown reports with event counts, contract coverage, clock checks, Greek
 scale hints and errors. [Certification](providers.md#live-certification-reports).
 
+## Journal and deliberate practice
+
+- Entry-context edge reports group by time, DTE, delta, IV, underlying, template
+  and playbook, with expectancy, R, profit factor and give-back.
+- Separate fixed mistake/setup picks persist with notes and compare net results
+  with/without each pick. Transparent coach flags also group reports. Optional AI
+  review sends data only on an explicit request to a user-configured endpoint.
+- Replay from a reviewed entry preserves source, seed, date and plan in a fresh
+  paused account. Scenario events mark review and intraday equity charts.
+- Machine objectives grade full scenario runs from committed journal states;
+  retained history supplies personal bests (unverified until re-verified), a
+  spaced practice queue and streaks.
+- Import/export scenario packs in the API and terminal. Fixed challenges retain
+  their inputs in the journal and existing replay verification receipts.
+  [Practice scenarios](scenarios.md#scored-drills), [trade review](paper-trading.md#trade-review).
+
 ## Market analytics
 
 - **Chain**: bid, mid and ask with their implied volatilities, delta, gamma, vega,

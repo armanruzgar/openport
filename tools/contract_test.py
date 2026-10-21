@@ -142,6 +142,8 @@ class Contract:
         accounts = self.call("GET", prefix + "/accounts", success=True)["accounts"]
         playbooks = self.call("GET", prefix + "/playbooks", success=True)["definitions"]
         playbook = next(iter(playbooks), None)
+        packs = self.call("GET", "/api/replay/packs", success=True)["packs"] if prefix == "/api/replay" else []
+        pack = packs[0]["scenario"]["id"] if packs else None
         for template, raw in self.spec["paths"].items():
             if not template.startswith("/api/") or "get" not in self.resolve(raw):
                 continue
@@ -154,6 +156,8 @@ class Contract:
             path = template.replace("{symbol}", quote(symbol, safe="")).replace("{run_id}", quote(run_id or "", safe=""))
             if playbook is not None:
                 path = path.replace("/playbooks/{id}", "/playbooks/" + quote(playbook, safe=""))
+            if pack is not None:
+                path = path.replace("/packs/{id}", "/packs/" + quote(pack, safe=""))
             if path in {"/api/backtests/{id}", "/api/backtests/sweeps/{id}"}:
                 path = path.replace("{id}", "000000")  # A missing saved run exercises the documented error.
             path = path.replace("/orders/{id}", "/orders/1")

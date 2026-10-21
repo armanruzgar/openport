@@ -365,6 +365,9 @@ export interface SurfaceHistory {
 
 /** The replay running beside the live feed: its recording, speed and clock. */
 export interface ReplayState {
+  objectives?: DrillObjective[]
+  challenge?: ScenarioPack
+  events?: { type: string; time: string; end?: string; symbols?: string[] }[]
   imported?: boolean
   id?: string
   scenario?: string | null
@@ -416,8 +419,10 @@ export interface ReplayRecording {
   error?: string
 }
 /** A simulated day the demo market plays, in these symbols. */
-export interface ReplayDemo { goal?: string; session?: "regular" | "overnight"; date?: string; seed?: string; generator?: number; id?: string; title?: string; description?: string; provider: string; symbols: string[]; started: string; sessions?: ReplaySession[]; end?: string }
+export interface ReplayDemo { objectives?: DrillObjective[]; events?: import("../lib/journal").ScenarioMark[]; goal?: string; session?: "regular" | "overnight"; date?: string; seed?: string; generator?: number; id?: string; title?: string; description?: string; provider: string; symbols: string[]; started: string; sessions?: ReplaySession[]; end?: string }
 export interface RunInput {
+  challenge?: ScenarioPack
+  scenario_source?: string
   kind: "scenario" | "recording"
   version: number
   sha256: string
@@ -433,6 +438,7 @@ export interface RunInput {
   seed?: string
 }
 export interface VerificationRun {
+  drill?: DrillGrade
   id: string
   file: string
   inputs: RunInput[]
@@ -462,6 +468,11 @@ export interface RunJournal {
   bytes: number
 }
 export interface ReplayHistory extends ReplayState {
+  drill?: DrillGrade
+  personal_best?: number
+  /** False until a passed verification of the best run recomputes its score. */
+  personal_best_verified?: boolean
+  completed_at?: string
   journal_size?: import("./trading-types").JournalSize
   verification_cost?: VerificationCost
   verification?: RunVerification
@@ -722,3 +733,7 @@ export interface ExPostVrp {
   summaries: { years: number; observations: number; proxy_observations: number; from: string; to: string;
     mean_variance: Num; median_variance: Num; mean_vol_points: Num; median_vol_points: Num; positive_share: Num }[]
 }
+
+export interface DrillObjective { id: string; type: "max_net_vega" | "min_floor_room" | "flat_by" | "max_loss"; limit: number; at?: string }
+export interface DrillGrade { score: number | null; passed: number; total: number; complete_run: boolean; basis: string; objectives: { id: string; type: string; passed: boolean | null; observed: number | null }[] }
+export interface ScenarioPack { version: 1; scenario: { id: string; title: string; [key: string]: unknown }; seed: string; plan: string; challenge?: { id: string; title: string } }

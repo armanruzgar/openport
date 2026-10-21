@@ -118,3 +118,30 @@ TEST(TradingNotes, ACrlfLineBreakIsANewlineAndAControlCharacterIsNamedAsOne) {
 
 }  // namespace
 }  // namespace openport::trading
+
+namespace openport::trading {
+TEST(TradingNotes, FixedMistakesAreSeparateValidatedAndRecovered) {
+  test::ScriptedMarket f;
+  const auto path = (std::filesystem::temp_directory_path() / ("openport-mistakes-" + std::to_string(::getpid()) + ".jsonl")).string();
+  std::filesystem::remove(path);
+  {
+    TradingSession s({}, f.time, FileJournal::create(path));
+    f.seed(s);
+    ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
+    ASSERT_TRUE(s.annotate(1, "review", {"chased"}, f.time, {"chased", "A+ setup", "chased"}).decision.ok());
+    const auto& a = s.snapshot()->annotations.at("1");
+    EXPECT_EQ(a.tags, std::vector<std::string>{"chased"});
+    EXPECT_EQ(a.mistakes, (std::vector<std::string>{"chased", "A+ setup"}));
+    const auto version = s.snapshot()->account_version;
+    EXPECT_THROW((void)s.annotate(1, "", {}, f.time, {"unknown"}), TradingError);
+    EXPECT_EQ(s.snapshot()->account_version, version);
+  }
+  auto s = TradingSession::recover(FileJournal::read(path));
+  EXPECT_EQ(s.snapshot()->annotations.at("1").mistakes.size(), 2U);
+  ASSERT_TRUE(s.annotate(1, "", {}, f.time, {"revenge"}).decision.ok());
+  EXPECT_EQ(s.snapshot()->annotations.at("1").mistakes, std::vector<std::string>{"revenge"});
+  ASSERT_TRUE(s.annotate(1, "", {}, f.time).decision.ok());
+  EXPECT_TRUE(s.snapshot()->annotations.empty());
+  std::filesystem::remove(path);
+}
+}

@@ -100,6 +100,12 @@ if(OPENPORT_BUILD_PROVIDERS)
     string(APPEND OPENPORT_EMBEDDED_SCENARIOS
       "    append(\"scenarios/${scenario_name}\", R\"${scenario_delimiter}(${scenario_text})${scenario_delimiter}\");\n")
   endforeach()
+  # Drill objectives for built-ins live apart from their sources, whose hashes old runs recorded.
+  set(OPENPORT_OBJECTIVES_FILE "${PROJECT_SOURCE_DIR}/scenarios/objectives/builtin.json")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${OPENPORT_OBJECTIVES_FILE}")
+  file(READ "${OPENPORT_OBJECTIVES_FILE}" OPENPORT_BUILTIN_OBJECTIVES)
+  string(SHA256 objectives_hash "${OPENPORT_BUILTIN_OBJECTIVES}")
+  string(SUBSTRING "${objectives_hash}" 0 12 OPENPORT_OBJECTIVES_DELIMITER)
   configure_file(providers/builtin_scenarios.cpp.in builtin_scenarios.cpp @ONLY)
 
   # One adapter per market-data provider.
@@ -164,6 +170,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/plans.cpp
     server/api.cpp
     server/replay_host.cpp
+    server/practice.cpp
     server/sandboxes.cpp
     server/signals.cpp
     server/web_server.cpp

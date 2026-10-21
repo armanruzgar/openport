@@ -1452,3 +1452,188 @@ TEST(EngineRecording, DirectoryRecordingRollsFromTheEngineReceiptClock) {
   EXPECT_GT(engine.recording_stats().events, 0U);
 }
 }  // namespace
+
+namespace {
+TEST(ReplayHost, ReplayFromTradeStartsFreshAndRefusesAMissingRecording) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  drill_recording(file.path);
+  server::Engine::Options base;
+  base.paper_journal = file.directory / "main.jsonl";
+  server::ReplayHost host({file.directory, base, false});
+  const auto response = call(host, "POST", "/api/replay", R"({"file":"session.oprec","start_at":"15:00","paused":true,"plan":"intraday-25k"})");
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto id = json::parse(response.body)["replay"]["id"].get<std::string>();
+  ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(call(host, "GET", "/api/replay").body)["replay"]["fast_forwarding"].get<bool>(); }));
+  const json order{{"client_order_id", "entry"}, {"symbol", md::parse_osi("SPXW261022C06000000")->osi_symbol()},
+      {"side", "buy"}, {"type", "market"}, {"quantity", 1}, {"time_in_force", "ioc"}};
+  ASSERT_EQ(call(host, "POST", "/api/replay/orders", order.dump()).status, 201);
+  const auto note = call(host, "PUT", "/api/replay/trades/1/note", R"({"note":"review","tags":["chased"],"mistakes":["chased","early exit"]})");
+  ASSERT_EQ(note.status, 200) << note.body;
+  EXPECT_EQ(json::parse(note.body)["mistakes"].size(), 2U);
+  const auto invalid = call(host, "PUT", "/api/replay/trades/1/note", R"({"mistakes":["invalid"]})");
+  EXPECT_EQ(invalid.status, 422);
+  EXPECT_EQ(json::parse(invalid.body)["error"]["code"], "INVALID_NOTE");
+  const auto fresh = call(host, "POST", "/api/replay", json{{"replay_from", id}, {"trade", "1"}}.dump());
+  ASSERT_EQ(fresh.status, 201) << fresh.body;
+  const auto state = json::parse(fresh.body)["replay"];
+  EXPECT_TRUE(state["paused"]);
+  EXPECT_EQ(state["plan"], "intraday-25k");
+  EXPECT_NE(state["id"], id);
+  EXPECT_EQ(state["start_at"], "2026-09-16T18:55:00.000Z");
+  EXPECT_TRUE(json::parse(call(host, "GET", "/api/replay/fills").body)["fills"].empty());
+  const auto source = json::parse(call(host, "GET", "/api/replay/history/" + id + "/trades").body);
+  EXPECT_EQ(source["trades"][0]["mistakes"].size(), 2U);
+  std::filesystem::remove(file.path);
+  const auto missing = call(host, "POST", "/api/replay", json{{"replay_from", id}, {"trade", "1"}}.dump());
+  EXPECT_EQ(missing.status, 409) << missing.body;
+  EXPECT_EQ(json::parse(call(host, "GET", "/api/replay").body)["replay"]["id"], state["id"]);
+}
+TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  server::Engine::Options base;
+  base.paper_journal = file.directory / "main.jsonl";
+  auto scenario = json::parse(providers::builtin_scenarios().front().source);
+  scenario["id"] = "test-challenge";
+  scenario["seed"] = std::uint64_t{18446744073709551615ULL};
+  scenario["symbols"] = {"SPX"};
+  scenario["date"] = "2026-11-27";
+  scenario["strike_window"] = .03;
+  scenario["objectives"] = {{{"id", "loss"}, {"type", "max_loss"}, {"limit", 500}}};
+  json pack{{"version", 1}, {"scenario", scenario}, {"seed", "0"}, {"plan", "practice"}, {"challenge", {{"id", "risk-day"}, {"title", "Risk day"}}}};
+  std::string id;
+  {
+    server::ReplayHost host({file.directory, base});
+    auto invalid_version = pack; invalid_version["version"] = 1.5;
+    EXPECT_EQ(call(host, "POST", "/api/replay/packs", invalid_version.dump()).status, 400);
+    const auto imported = call(host, "POST", "/api/replay/packs", pack.dump());
+    ASSERT_EQ(imported.status, 201) << imported.body;
+    EXPECT_EQ(json::parse(imported.body), pack);
+    const auto exported = call(host, "GET", "/api/replay/packs/test-challenge");
+    ASSERT_EQ(exported.status, 200);
+    EXPECT_EQ(json::parse(exported.body), pack);
+    EXPECT_EQ(exported.download, "test-challenge-pack.json");
+    auto conflict = pack; conflict["scenario"]["goal"] = "Different source";
+    EXPECT_EQ(call(host, "POST", "/api/replay/packs", conflict.dump()).status, 400);
+    EXPECT_EQ(call(host, "POST", "/api/replay", R"({"pack":"test-challenge","seed":"1"})").status, 400);
+    const auto started = call(host, "POST", "/api/replay", R"({"pack":"test-challenge","paused":true})");
+    ASSERT_EQ(started.status, 201) << started.body;
+    const auto state = json::parse(started.body)["replay"];
+    EXPECT_EQ(state["seed"], "0"); EXPECT_EQ(state["challenge"], pack);
+    id = state["id"];
+    ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
+    const auto history = json::parse(call(host, "GET", "/api/replay/history").body)["history"];
+    ASSERT_EQ(history.size(), 1U);
+    EXPECT_TRUE(history[0]["drill"]["score"].is_null());
+    EXPECT_FALSE(history[0]["drill"]["complete_run"].get<bool>());
+  }
+  server::ReplayHost restored({file.directory, base});
+  const auto listing = json::parse(call(restored, "GET", "/api/replay/packs").body)["packs"];
+  EXPECT_NE(std::find(listing.begin(), listing.end(), pack), listing.end());
+  const auto verified = server::verify_run(file.directory / "replays" / (id + ".jsonl"));
+  EXPECT_TRUE(verified.matched) << verified.message;
+  EXPECT_EQ(verified.run["inputs"][0]["challenge"], pack);
+  const auto complete = call(restored, "POST", "/api/replay", R"({"pack":"test-challenge","speed":0})");
+  ASSERT_EQ(complete.status, 201) << complete.body;
+  const auto completed_id = json::parse(complete.body)["replay"]["id"].get<std::string>();
+  ASSERT_TRUE(test::recording_eventually([&] { return json::parse(restored.tick())["replay"]["finished"].get<bool>(); }));
+  const auto history = json::parse(call(restored, "GET", "/api/replay").body)["history"];
+  ASSERT_EQ(history.size(), 2U);
+  for (const auto& run : history) {
+    EXPECT_EQ(run["personal_best"], 100);
+    // Sidecar scores are not verified until a verification recomputes them.
+    EXPECT_FALSE(run["personal_best_verified"].get<bool>());
+    if (run["id"] == completed_id) {
+      EXPECT_EQ(run["drill"]["score"], 100);
+      EXPECT_TRUE(run["drill"]["complete_run"].get<bool>());
+      EXPECT_TRUE(run["completed_at"].is_string());
+    }
+  }
+  ASSERT_EQ(call(restored, "DELETE", "/api/replay").status, 200);
+  ASSERT_EQ(call(restored, "POST", "/api/replay/history/" + completed_id + "/verify", "").status, 202);
+  ASSERT_TRUE(test::recording_eventually([&] {
+    return json::parse(call(restored, "GET", "/api/replay/history/" + completed_id + "/verify").body)["status"] != "running"; }));
+  for (const auto& run : json::parse(call(restored, "GET", "/api/replay").body)["history"])
+    EXPECT_TRUE(run["personal_best_verified"].get<bool>()) << run["verification"];
+  std::filesystem::remove(file.directory / "scenario-packs" / "test-challenge.json");
+  const auto full = server::verify_run(file.directory / "replays" / (completed_id + ".jsonl"));
+  ASSERT_TRUE(full.matched) << full.message;
+  ASSERT_TRUE(full.run.contains("drill"));
+  EXPECT_EQ(full.run["drill"]["score"], 100);
+  EXPECT_EQ(full.run["inputs"][0]["scenario_source"], scenario.dump());
+}
+TEST(ReplayHost, ReplayFromTradeKeepsGeneratedInputsAndRefusesMissingScenarioSource) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  server::Engine::Options base;
+  base.paper_journal = file.directory / "main.jsonl";
+  server::ReplayHost host({file.directory, base});
+  auto scenario = json::parse(providers::builtin_scenarios().front().source);
+  scenario["id"] = "sandbox-source";
+  scenario["symbols"] = {"SPX"};
+  scenario["strike_window"] = .03;
+  const json pack{{"version", 1}, {"scenario", scenario}, {"seed", "1234"}, {"plan", "practice"},
+      {"challenge", {{"id", "sandbox"}, {"title", "Sandbox source"}}}};
+  ASSERT_EQ(call(host, "POST", "/api/replay/packs", pack.dump()).status, 201);
+  const auto started = call(host, "POST", "/api/replay", R"({"pack":"sandbox-source","paused":true})");
+  ASSERT_EQ(started.status, 201) << started.body;
+  const auto original = json::parse(started.body)["replay"];
+  ASSERT_TRUE(test::recording_eventually([&] {
+    const auto response = call(host, "GET", "/api/replay/underlyings/SPX/chain?expiry=2026-09-16PM");
+    if (response.status != 200) return false;
+    const auto chain = json::parse(response.body);
+    for (const auto& row : chain["strikes"])
+      if (row["strike"] == 6000 && row["call"].is_object() && row["call"]["ask"].is_number()) return true;
+    return false;
+  }));
+  ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(host.tick())["replay"]["fast_forwarding"].get<bool>(); }));
+  const json order{{"client_order_id", "entry"}, {"symbol", md::parse_osi("SPXW260916C06000000")->osi_symbol()},
+      {"side", "buy"}, {"type", "market"}, {"quantity", 1}, {"time_in_force", "ioc"}};
+  const auto bought = call(host, "POST", "/api/replay/orders", order.dump());
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  const json replay{{"replay_from", original["id"]}, {"trade", "1"}};
+  const auto source = file.directory / "scenario-packs" / "sandbox-source.json";
+  const auto backup = file.directory / "source.json";
+  std::filesystem::rename(source, backup);
+  EXPECT_EQ(call(host, "POST", "/api/replay", replay.dump()).status, 409);
+  std::filesystem::rename(backup, source);
+  const auto fresh = call(host, "POST", "/api/replay", replay.dump());
+  ASSERT_EQ(fresh.status, 201) << fresh.body;
+  const auto state = json::parse(fresh.body)["replay"];
+  for (const auto* key : {"scenario", "seed", "date", "plan"}) EXPECT_EQ(state[key], original[key]);
+  EXPECT_TRUE(state["paused"].get<bool>());
+  EXPECT_FALSE(state.contains("challenge"));
+  EXPECT_TRUE(json::parse(call(host, "GET", "/api/replay/fills").body)["fills"].empty());
+}
+TEST(ReplayHost, ScenarioPacksCannotReplaceBuiltInsOrNameAPathOutsideTheirDirectory) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  server::Engine::Options base;
+  base.paper_journal = file.directory / "main.jsonl";
+  const auto& builtin = providers::builtin_scenarios().front();
+  const json shadow{{"version", 1}, {"scenario", json::parse(builtin.source)}, {"seed", "1"}, {"plan", "practice"}};
+  auto escape = json::parse(builtin.source);
+  escape["id"] = "escaped";
+  {
+    server::ReplayHost host({file.directory, base});
+    const auto refused = call(host, "POST", "/api/replay/packs", shadow.dump());
+    EXPECT_EQ(refused.status, 400);
+    EXPECT_NE(json::parse(refused.body)["error"]["message"].get<std::string>().find("is a built-in scenario"), std::string::npos) << refused.body;
+  }
+  // Saved packs that name a built-in, or an id that is not a file name, are skipped.
+  const auto packs = file.directory / "scenario-packs";
+  std::filesystem::create_directories(packs);
+  { std::ofstream out(packs / (builtin.id + ".json")); out << builtin.source; }
+  { std::ofstream out(packs / (builtin.id + ".pack")); out << shadow.dump(); }
+  { std::ofstream out(file.directory / "escaped.json"); out << escape.dump(); }
+  escape["id"] = "../escaped";
+  { std::ofstream out(packs / "escaped.pack"); out << json{{"version", 1}, {"scenario", escape}, {"seed", "1"}, {"plan", "practice"}}.dump(); }
+  server::ReplayHost restored({file.directory, base});
+  for (const auto& pack : json::parse(call(restored, "GET", "/api/replay/packs").body)["packs"]) {
+    EXPECT_NE(pack["scenario"]["id"], "escaped");
+    EXPECT_NE(pack["scenario"]["id"], "../escaped");
+    if (pack["scenario"]["id"] == builtin.id) EXPECT_EQ(pack["seed"], std::to_string(builtin.seed));
+  }
+}
+}

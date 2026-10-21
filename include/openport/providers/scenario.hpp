@@ -41,8 +41,15 @@ struct ScenarioSession {
   std::optional<double> previous_close = std::nullopt; ///< log return relative to the ungapped opening level
 };
 
+struct ScenarioObjective {
+  std::string id, type, at;
+  double limit = 0;
+  std::size_t session = 1;  ///< One-based session index for a deadline.
+};
+
 struct Scenario {
   std::string id, title, description, goal;
+  std::vector<ScenarioObjective> objectives;
   std::vector<std::string> symbols;
   bool overnight = false;  ///< The (first) session is overnight.
   md::Date date;  ///< The (first) session's trading date.
@@ -80,7 +87,14 @@ struct ScenarioWindow {
 /// Invalid built-ins throw; invalid user files are reported and skipped.
 [[nodiscard]] std::vector<Scenario> load_scenarios(const std::filesystem::path& user = {},
     const std::function<void(const std::string&)>& log = {});
+/// Built-in scenarios. Their source text stays as shipped, since run receipts hash it;
+/// their drill objectives come from the separate scenarios/objectives/builtin.json.
 [[nodiscard]] const std::vector<Scenario>& builtin_scenarios();
+/// Lowercase letters, digits and interior hyphens, at most 40 bytes: safe in a file name.
+[[nodiscard]] bool valid_scenario_id(std::string_view id);
+/// Attaches objectives from a JSON object keyed by scenario id. Unknown ids,
+/// scenarios that already declare objectives and invalid objectives throw.
+void apply_builtin_objectives(std::vector<Scenario>& scenarios, std::string_view source, const std::filesystem::path& file);
 [[nodiscard]] md::Timestamp scenario_open(const Scenario& scenario, md::Date date);
 /// The (first) session's close.
 [[nodiscard]] md::Timestamp scenario_close(const Scenario& scenario, md::Date date);

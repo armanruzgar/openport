@@ -653,7 +653,14 @@ inline void from_json(const Json& j, DividendPayment& d) {
   added_field(j, "after_stock_fill", d.after_stock_fill);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ClosingPrint, price, time)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Annotation, note, tags, time)
+inline void to_json(Json& j, const Annotation& a) {
+  j = Json{{"note", a.note}, {"tags", a.tags}, {"time", a.time}};
+  if (!a.mistakes.empty()) j["mistakes"] = a.mistakes;
+}
+inline void from_json(const Json& j, Annotation& a) {
+  j.at("note").get_to(a.note); j.at("tags").get_to(a.tags); j.at("time").get_to(a.time);
+  added_field(j, "mistakes", a.mistakes);
+}
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(BuyingPower, available, reserved, short_requirement)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Position, contract, quantity, basis, realised, fees)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Account, cash, realised, fees)
