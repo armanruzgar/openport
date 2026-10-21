@@ -284,13 +284,36 @@ response bodies. There is no historical IV request or invented underlying last p
 The expiration and strike lists have no date parameter; the date-specific contracts
 list restricts them to series that were quoted on the imported sessions' dates.
 
+`massive_history.cpp` uses the live adapter's `https://api.massive.com` origin
+and bearer authentication with `MASSIVE_API_KEY`. Historical contracts come from
+`/v3/reference/options/contracts` with `as_of` and expiration filters, including
+contracts that have since expired. Options quotes and trades use `/v3/quotes/O:...`
+and `/v3/trades/O:...`, ascending nanosecond timestamp bounds and same-origin
+pagination. One page per contract/stream is retained across import windows, so
+quiet periods do not trigger repeated empty requests. Pages request Massive's
+50,000-row maximum, reduced so that one page per stream fits the one-million-record
+buffer (never below 100 rows); a chain of 20 or fewer streams uses full pages. SIP timestamps order delivery;
+trades preserve an exchange timestamp when supplied, otherwise their SIP time.
+No current snapshots, OI, vendor Greeks or underlying prices enter the history.
+Nonstandard deliverables are excluded; corrected/cancelled trades fail explicitly
+because the normalized event model cannot undo their volume. HTTP/wait injection
+supports offline tests, and errors never include response bodies or credentials.
+
+All three sources use the same range runner: `--import-days START..END` and repeated
+`--date`/`--import-days` flags expand into sorted unique dates. The session calendar
+skips closed dates. Existing files resume only after their provider, trading date,
+symbols, filters and clean end are checked. A failure keeps earlier complete days.
+
 API references: [Databento ranges and limits](https://databento.com/docs/api-reference-historical/basics),
 [Databento instrument identifiers](https://databento.com/docs/standards-and-conventions/common-fields-enums-types),
 [ThetaData historical quotes](https://thetadata.net/docs/operations/option_history_quote.html),
-[ThetaData historical contracts](https://thetadata.net/docs/operations/option_list_contracts.html)
+[ThetaData historical contracts](https://thetadata.net/docs/operations/option_list_contracts.html),
+[Massive contracts](https://massive.com/docs/rest/options/contracts/all-contracts),
+[Massive quotes](https://massive.com/docs/rest/options/trades-quotes/quotes),
+[Massive trades](https://massive.com/docs/rest/options/trades-quotes/trades)
 and [ThetaData concurrency](https://thetadata.net/docs/Articles/Data-And-Requests/Concurrent-Requests.html).
 
-The importers follow the documented Historical and Theta Terminal APIs, are tested
+The importers follow the documented Databento Historical, Massive and Theta Terminal APIs, are tested
 against saved response shapes in `tests/data/history`, and have not yet been run
 live with a key. Fixtures contain generated values, not licensed market data.
 Provider data stays on the user's machine; never bundle, commit or upload it.

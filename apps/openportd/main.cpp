@@ -82,6 +82,8 @@ struct Settings {
   unsigned backtest_keep = 20;
   std::filesystem::path record_file;
   std::filesystem::path record_dir;
+  unsigned record_keep_days = 0;
+  std::uint64_t record_max_bytes = 0;
   std::optional<std::filesystem::path> candle_dir;
   bool history = true;
   bool series = true;
@@ -127,6 +129,7 @@ int usage(const char* error = nullptr) {
       out,
       "usage: openportd [--provider NAME] [--symbols SPX,SPY,QQQ,IWM,DIA] [--address ADDR] [--port N]\n"
       "                 [--scenario-dir DIR] [--web-root DIR] [--expiries N] [--window F] [--poll-seconds N]\n"
+      "                 [--record-keep-days N] [--record-max-gb X]\n"
       "                 [--record FILE] [--record-dir DIR] [--rate R] [--option KEY=VALUE]... [--allowed-origin ORIGIN]...\n"
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
@@ -143,7 +146,8 @@ int usage(const char* error = nullptr) {
       "       openportd --verify-run JOURNAL\n"
       "       openportd --backtest PLAYBOOK[@VERSION][,PLAYBOOK[@VERSION]...] --plan PLAN (--days FILE | --recordings DIR | --scenarios N --seed S) --out REPORT.json\n"
       "                 [--playbooks FILE] [--paper-journal PATH] [--scenario-dir DIR] [--workers 1..16]\n"
-      "       openportd --import-day databento|thetadata --date YYYY-MM-DD --symbols SPX,SPY\n"
+      "       openportd --import-day databento|thetadata|massive --symbols SPX,SPY\n"
+      "                 (--date YYYY-MM-DD | --import-days YYYY-MM-DD..YYYY-MM-DD)...\n"
       "                 [--expiries N] [--window F] [--out DIR] (default ./recordings)\n"
       "       openportd --compact-journals [--paper-journal PATH]\n"
       "       openportd --repair-journals [--dry-run] [--file PATH] [--paper-journal PATH]\n"
@@ -187,7 +191,8 @@ int usage(const char* error = nullptr) {
       "tastytrade: production OAuth only; DXLink time units unknown unless confirmed with\n"
       "            --option dxlink_time_unit=milliseconds\n"
       "record: create a new compressed event file (existing files are never overwritten);\n"
-      "        --record-dir names one per run by provider and start time there, and the\n"
+      "        --record-dir rolls at each trading-date boundary; retention defaults off\n"
+      "        --record-keep-days N (calendar days), --record-max-gb X (decimal GB); the\n"
       "        web terminal replays recordings from it (default ~/.openport/recordings)\n"
       "charts: one-minute bars persist in --candle-dir (default ~/.openport/candles; replay/demo\n"
       "        keeps them in memory); Cboe's free delayed chart history backfills them\n"
@@ -357,32 +362,33 @@ std::string load_write_token(const std::filesystem::path& path, bool create = tr
 int import_command(int argc, char** argv) {
   using namespace openport;
   providers::ImportDay request;
-  bool has_date = false;
+  std::vector<std::string> dates;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     if (i + 1 == argc) return usage("missing value for import option");
     const std::string value = argv[++i];
     if (arg == "--import-day") request.provider = value;
-    else if (arg == "--date") { request.date = providers::import_date(value); has_date = true; }
+    else if (arg == "--date" || arg == "--import-days") dates.push_back(value);
     else if (arg == "--symbols") request.subscription.underlyings = split(value);
     else if (arg == "--expiries") request.subscription.max_expiries = providers::parse_integer(value, "--expiries");
     else if (arg == "--window") request.subscription.strike_window = providers::parse_fraction(value, "--window");
     else if (arg == "--out") request.output = value;
     else return usage("unknown import option");
   }
-  if (!has_date) return usage("--import-day requires --date YYYY-MM-DD");
+  const auto selected = providers::import_dates(dates);
   const auto today = md::new_york_time(md::now()).date;
-  (void)providers::history_windows(request, today);
-  auto source = providers::make_history_source(request.provider);
-  std::fprintf(stderr, "Importing %s %s; data stays in %s\n", request.provider.c_str(), md::format_date(request.date).c_str(), request.output.c_str());
+  std::fprintf(stderr, "Importing %s; data stays in %s\n", request.provider.c_str(), request.output.c_str());
   try {
-    const auto path = providers::import_day(request, *source, today,
-        [](std::size_t completed, std::size_t total, std::uint64_t events) {
-          if (completed == 1 || completed % 20 == 0 || completed == total)
-            std::fprintf(stderr, "import: %zu/%zu windows, %llu events\n", completed, total, static_cast<unsigned long long>(events));
+    providers::import_days(request, selected, today, [&] { return providers::make_history_source(request.provider); },
+        [](const providers::ImportDayProgress& update) {
+          if (update.state != "importing" || update.windows <= 1 || update.windows % 20 == 0 || update.windows == update.total_windows)
+            std::fprintf(stderr, "import: day %zu/%zu %s %s; %zu/%zu windows, %llu events\n",
+                update.day, update.days, md::format_date(update.date).c_str(), update.state.c_str(),
+                update.windows, update.total_windows, static_cast<unsigned long long>(update.events));
         });
-    std::printf("Imported %s\n", path.c_str());
     return 0;
+  } catch (const std::invalid_argument& error) {
+    return usage(error.what());
   } catch (const std::exception& error) {
     std::fprintf(stderr, "openportd: %s\n", error.what());
     return 1;
@@ -489,6 +495,17 @@ int run(int argc, char** argv) {
     } else if (arg == "--record-dir") {
       if (value.empty()) return usage("--record-dir requires a nonempty path");
       settings.record_dir = value;
+    } else if (arg == "--record-keep-days") {
+      settings.record_keep_days = providers::parse_integer(value, "--record-keep-days", 0, 36500);
+    } else if (arg == "--record-max-gb") {
+      double gb = 0;
+      std::istringstream input(value);
+      input.imbue(std::locale::classic());
+      input >> std::noskipws >> gb;
+      if (!input || input.peek() != std::char_traits<char>::eof() || !std::isfinite(gb) || gb < 0 || gb > 1'000'000)
+        return usage("--record-max-gb must be a finite number in [0, 1000000]");
+      settings.record_max_bytes = static_cast<std::uint64_t>(gb * 1'000'000'000);
+      if (gb > 0 && settings.record_max_bytes == 0) return usage("--record-max-gb must be at least one byte");
     } else if (arg == "--series-dir") {
       if (value.empty()) return usage("--series-dir requires a nonempty path");
       settings.series_dir = value;
@@ -616,6 +633,8 @@ int run(int argc, char** argv) {
   }
   if (settings.require_token && settings.tokens.empty() && settings.write_token.empty() && settings.write_token_file.empty())
     return usage("--require-token needs a configured token");
+  if ((settings.record_keep_days || settings.record_max_bytes) && (settings.record_dir.empty() || !settings.record_file.empty()))
+    return usage("recording retention requires --record-dir without --record");
   const bool token_from_file = settings.write_token.empty() && !settings.write_token_file.empty();
   if (token_from_file) settings.write_token = load_write_token(settings.write_token_file);
   for (const auto& token : settings.tokens)
@@ -643,13 +662,6 @@ int run(int argc, char** argv) {
     feed->validate(settings.subscription);
   }
 
-  // Each run records to its own file, named by provider and UTC start time.
-  if (!settings.record_dir.empty() && settings.record_file.empty()) {
-    std::filesystem::create_directories(settings.record_dir);
-    auto stamp = md::format_timestamp(md::now()).substr(0, 19);  // 2026-09-23T20:15:30
-    stamp.erase(std::remove(stamp.begin(), stamp.end(), ':'), stamp.end());
-    settings.record_file = settings.record_dir / (settings.provider.name + "-" + stamp + "Z.oprec");
-  }
   server::CandleStore::Options candle_options;
   if (settings.candle_dir)
     candle_options.directory = *settings.candle_dir;
@@ -673,6 +685,9 @@ int run(int argc, char** argv) {
     engine_options.series = std::make_shared<server::SeriesStore>(series_directory);
   engine_options.analytics.fallback_rate = settings.rate;
   engine_options.record_file = settings.record_file;
+  engine_options.record_dir = settings.record_dir;
+  engine_options.record_keep_days = settings.record_keep_days;
+  engine_options.record_max_bytes = settings.record_max_bytes;
   engine_options.paper_enabled = settings.paper_enabled;
   engine_options.paper_journal = settings.paper_journal;
   engine_options.paper_accounts = paper_accounts;
@@ -805,7 +820,7 @@ int run(int argc, char** argv) {
   std::signal(SIGHUP, on_signal);
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
-  std::string recording_error;
+  std::string recording_error, recording_warning;
   std::string history_error, proxy_error, series_error;
   std::string holidays_error;
   std::string dividends_error;
@@ -821,7 +836,9 @@ int run(int argc, char** argv) {
     if (token_file) (void)token_file->snapshot();
     web.broadcast(server::tick_message(engine, {true, {}}));
     if (auto tick = replays.tick(); !tick.empty()) web.broadcast(tick);
+    engine.roll_recording();
     report(engine.recording_error(), recording_error);
+    report(engine.recording_warning(), recording_warning);
     report(engine.status().circuit_breaker.error, breaker_error);
     if (history) report(history->error(), history_error);
     if (proxy_history) report(proxy_history->error(), proxy_error);
@@ -839,7 +856,7 @@ int run(int argc, char** argv) {
   if (dividends) dividends->stop();
   engine.stop();
   candles->flush();
-  if (!settings.record_file.empty()) {
+  if (!settings.record_file.empty() || !settings.record_dir.empty()) {
     const auto stats = engine.recording_stats();
     const double count = static_cast<double>(stats.events);
     std::printf("recording: %llu events, %llu bytes, %.1f ns/event publish, %.2f bytes/event\n",

@@ -28,6 +28,7 @@ const recordings: ReplayListing = { directory: "/home/trader/.openport/recording
   { file: replay.file, bytes: 48_300_000, provider: "cboe", symbols: ["SPX", "SPY"], started: replay.started, delay_seconds: 900 },
   { file: "broken.oprec", bytes: 10, error: "recording truncated" },
   { file: "generated.oprec", bytes: 100, provider: "demo", simulated: true },
+  { file: "massive-2026-09-23-imported.oprec", date: "2026-09-23", bytes: 200, provider: "massive", symbols: ["SPY"], imported: true },
   { file: "databento-2026-09-22-imported.oprec", bytes: 100, provider: "databento", imported: true },
 ] }
 beforeEach(() => vi.mocked(useLive).mockReturnValue(liveState(status, null, "open")))
@@ -81,6 +82,10 @@ describe("the replay page", () => {
     expect(html).toContain("demo · simulated")
     expect(html).toContain("cboe · recording")
     expect(html).toContain("databento · imported")
+    expect(html).toContain("massive · imported")
+    expect(html).toContain("Trading date")
+    expect(html).toContain("2026-09-23")
+    expect(html).toContain('aria-label="Replay massive-2026-09-23-imported.oprec"')
     expect(html).toContain("Tue, Sep 22, 09:30:00 ET")
     expect(html).toContain("recording truncated")
     expect(html).toContain(`aria-label="Replay ${replay.file}"`)

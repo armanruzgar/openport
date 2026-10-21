@@ -70,16 +70,17 @@ md::Date import_date(std::string_view text) {
   return md::new_york_time(*time).date;
 }
 
-std::vector<HistoryWindow> history_windows(const ImportDay& request, md::Date today) {
-  if (request.provider != "databento" && request.provider != "thetadata")
-    throw std::invalid_argument("import: provider must be databento or thetadata");
+namespace {
+void validate_request(const ImportDay& request, md::Date today) {
+  if (request.provider != "databento" && request.provider != "thetadata" && request.provider != "massive")
+    throw std::invalid_argument("import: provider must be databento, thetadata or massive");
   if (!md::valid_date(request.date) || request.date.year < 2022)
     throw std::invalid_argument("import: date must be valid and in 2022 or later");
   if (request.date >= today) throw std::invalid_argument("import: date must be a completed past day, not today or in the future");
   if (request.provider == "databento" && request.date < md::Date{2023, 3, 28})
     throw std::invalid_argument("import: Databento cbbo-1s requires 2023-03-28 or later");
-  const auto noon = md::new_york_to_utc(request.date, 12, 0);
-  if (!md::stock_session(noon).open) throw std::invalid_argument("import: holiday or weekend has no trading day");
+  if (request.provider == "massive" && request.date < md::Date{2022, 3, 7})
+    throw std::invalid_argument("import: Massive quotes require 2022-03-07 or later");
   if (request.subscription.underlyings.empty() || request.subscription.underlyings.size() > 32)
     throw std::invalid_argument("import: select 1..32 symbols");
   std::set<std::string> symbols;
@@ -91,6 +92,17 @@ std::vector<HistoryWindow> history_windows(const ImportDay& request, md::Date to
   if (request.subscription.max_expiries < 0 || !std::isfinite(request.subscription.strike_window) ||
       request.subscription.strike_window < 0 || request.subscription.strike_window > 1)
     throw std::invalid_argument("import: invalid expiry or strike filter");
+  if (request.output.empty()) throw std::invalid_argument("import: output directory is empty");
+}
+std::filesystem::path import_path(const ImportDay& request) {
+  return request.output / (request.provider + "-" + md::format_date(request.date) + "-imported.oprec");
+}
+}
+
+std::vector<HistoryWindow> history_windows(const ImportDay& request, md::Date today) {
+  validate_request(request, today);
+  const auto noon = md::new_york_to_utc(request.date, 12, 0);
+  if (!md::stock_session(noon).open) throw std::invalid_argument("import: holiday or weekend has no trading day");
   const auto start = md::new_york_to_utc(md::previous_business_day(request.date), 17, 0);
   const auto end = md::new_york_to_utc(request.date, 17, 0);
   std::vector<HistoryWindow> windows;
@@ -115,7 +127,7 @@ std::filesystem::path import_day(const ImportDay& request, HistorySource& source
   const auto windows = history_windows(request, today);
   if (request.output.empty()) throw std::invalid_argument("import: output directory is empty");
   std::filesystem::create_directories(request.output);
-  const auto result = request.output / (request.provider + "-" + md::format_date(request.date) + "-imported.oprec");
+  const auto result = import_path(request);
   if (std::filesystem::exists(result)) throw std::runtime_error("import: recording already exists");
   auto pattern = (request.output / ".import-XXXXXX").string();
   if (!::mkdtemp(pattern.data())) throw std::runtime_error("import: cannot create temporary directory");
@@ -129,7 +141,7 @@ std::filesystem::path import_day(const ImportDay& request, HistorySource& source
   header.capabilities.realtime = true;
   header.capabilities.quotes = true;
   header.capabilities.trades = true;
-  header.capabilities.open_interest = true;
+  header.capabilities.open_interest = request.provider != "massive";
   header.capabilities.history = true;
   std::atomic<md::Timestamp> receipt{header.started};
   Discard discard;
@@ -281,6 +293,67 @@ std::filesystem::path import_day(const ImportDay& request, HistorySource& source
   return result;
 }
 
+std::vector<md::Date> import_dates(const std::vector<std::string>& selections) {
+  std::set<md::Date> dates;
+  for (const auto& selection : selections) {
+    const auto separator = selection.find("..");
+    const auto first = import_date(selection.substr(0, separator));
+    const auto last = separator == std::string::npos ? first : import_date(selection.substr(separator + 2));
+    const auto begin = md::days_since_epoch(first), end = md::days_since_epoch(last);
+    if (end < begin || end - begin >= 3660) throw std::invalid_argument("import: range must be ascending and at most 3660 days");
+    for (auto day = begin; day <= end; ++day) dates.insert(md::date_from_days(day));
+    if (dates.size() > 3660) throw std::invalid_argument("import: select at most 3660 days");
+  }
+  if (dates.empty()) throw std::invalid_argument("--import-day requires --date or --import-days YYYY-MM-DD[..YYYY-MM-DD]");
+  return {dates.begin(), dates.end()};
+}
+
+void import_days(const ImportDay& request, const std::vector<md::Date>& dates, md::Date today,
+                 HistoryFactory factory, std::function<void(const ImportDayProgress&)> progress) {
+  const std::set<md::Date> selected(dates.begin(), dates.end());
+  if (selected.empty() || selected.size() > 3660) throw std::invalid_argument("import: select 1..3660 dates");
+  auto day = request;
+  for (const auto date : selected) { day.date = date; validate_request(day, today); }
+  std::size_t completed = 0;
+  for (const auto date : selected) {
+    day.date = date;
+    ImportDayProgress update{date, ++completed, selected.size(), "importing"};
+    const auto report = [&] { if (progress) progress(update); };
+    if (!md::stock_session(md::new_york_to_utc(date, 12, 0)).open) {
+      update.state = "closed";
+      report();
+      continue;
+    }
+    const auto path = import_path(day);
+    if (std::filesystem::exists(std::filesystem::symlink_status(path))) {
+      if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)))
+        throw std::runtime_error("import: existing destination is not a regular file");
+      md::RecordingReader reader(path);
+      const auto& header = reader.header();
+      auto symbols = header.subscription.underlyings, wanted = day.subscription.underlyings;
+      std::sort(symbols.begin(), symbols.end());
+      std::sort(wanted.begin(), wanted.end());
+      if (!header.imported || header.provider != day.provider || md::trading_date(header.started) != date ||
+          symbols != wanted || header.subscription.max_expiries != day.subscription.max_expiries ||
+          header.subscription.strike_window != day.subscription.strike_window)
+        throw std::runtime_error("import: existing recording has different date, source or filters; choose another output directory");
+      while (reader.next()) {}
+      if (!reader.diagnostic().empty()) throw std::runtime_error("import: existing recording is incomplete; move it aside before retrying");
+      update.state = "existing";
+      report();
+      continue;
+    }
+    report();
+    auto source = factory();
+    (void)import_day(day, *source, today, [&](auto windows, auto total, auto events) {
+      update.windows = windows; update.total_windows = total; update.events = events;
+      report();
+    });
+    update.state = "imported";
+    report();
+  }
+}
+
 std::unique_ptr<HistorySource> make_history_source(const std::string& provider) {
   if (provider == "databento") {
     const char* key = std::getenv("DATABENTO_API_KEY");
@@ -291,19 +364,24 @@ std::unique_ptr<HistorySource> make_history_source(const std::string& provider) 
     throw std::invalid_argument("import: Databento support is not built");
 #endif
   }
-  if (provider == "thetadata") {
+  if (provider == "thetadata" || provider == "massive") {
     // The wrapper owns the HTTP client for the lifetime of its injectable source.
-    class OwnedTheta final : public HistorySource {
+    class OwnedHistory final : public HistorySource {
      public:
-      OwnedTheta() : source(theta_history(http, [](auto delay) { std::this_thread::sleep_for(delay); })) {}
+      explicit OwnedHistory(const std::string& name) {
+        const auto wait = [](auto delay) { std::this_thread::sleep_for(delay); };
+        const auto* key = std::getenv("MASSIVE_API_KEY");
+        source = name == "massive" ? massive_history(http, key ? key : "", wait) : theta_history(http, wait);
+      }
+      md::Timestamp receipt_time() const noexcept override { return source->receipt_time(); }
       void prepare(const ImportDay& request, HistoryWindow day, md::EventSink& sink) override { source->prepare(request, day, sink); }
       void read(HistoryWindow window, md::EventSink& sink) override { source->read(window, sink); }
      private:
       net::HttpClient http;
       std::unique_ptr<HistorySource> source;
     };
-    return std::make_unique<OwnedTheta>();
+    return std::make_unique<OwnedHistory>(provider);
   }
-  throw std::invalid_argument("import: provider must be databento or thetadata");
+  throw std::invalid_argument("import: provider must be databento, thetadata or massive");
 }
 }  // namespace openport::providers

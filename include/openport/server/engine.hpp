@@ -21,6 +21,7 @@
 #include "openport/md/event_queue.hpp"
 #include "openport/md/provider.hpp"
 #include "openport/md/recording.hpp"
+#include "openport/md/recording_directory.hpp"
 #include "openport/server/candles.hpp"
 #include "openport/server/series.hpp"
 #include "openport/analytics/volatility.hpp"
@@ -109,6 +110,9 @@ class Engine final : public MetricsSource {
     bool demo_dividends = true;
     std::filesystem::path record_file;
     md::RecordingSink::Options recording;
+    std::filesystem::path record_dir;
+    unsigned record_keep_days = 0;
+    std::uint64_t record_max_bytes = 0;
     /// Volatility history written by the live engine only; replays and the demo reset it.
     std::function<md::Timestamp()> clock = md::now;
     /// Monotonic cadence for publishing receipt timestamps, independent of wall-clock jumps.
@@ -153,6 +157,9 @@ class Engine final : public MetricsSource {
   bool post_trading(TradingCommand command, TradingCompletion completion) override;
   [[nodiscard]] md::RecordingStats recording_stats() const;
   [[nodiscard]] std::string recording_error() const;
+  /// Retention problems for --record-dir; recording continues.
+  [[nodiscard]] std::string recording_warning() const;
+  void roll_recording();
 
  private:
   using PendingCommand = Desk::PendingCommand;
@@ -173,6 +180,7 @@ class Engine final : public MetricsSource {
   std::shared_ptr<Notifications> configured_notifications_;
   md::EventQueue queue_;
   std::unique_ptr<md::RecordingSink> recorder_;
+  std::unique_ptr<md::RecordingDirectory> daily_recorder_;
   Desk desk_;  // engine thread only
   std::set<std::string> notification_accounts_;  // engine thread; forgotten after joining it
 

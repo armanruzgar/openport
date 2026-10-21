@@ -308,7 +308,10 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 
 - Record sessions and replay beside the live feed at 1×–300× or as fast as possible,
   with isolated practice/evaluation accounts and journals. Historical-day imports
-  from Databento or a local Theta Terminal create private recordings. Importers
+  from Massive (Polygon), Databento or a local Theta Terminal create private recordings.
+  Inclusive ranges and repeated dates skip calendar closures and resume matching
+  complete days with progress. Directory recordings roll by trading date, with
+  optional age/size retention; Replay lists dates, symbols and sources. Importers
   have saved-response tests but have not been run live with a key.
   [Recording and replay](runtime.md#recording-and-replay).
 - Start at a chosen New York time, pause, skip, step by time or snapshot, or use

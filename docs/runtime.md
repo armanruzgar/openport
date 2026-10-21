@@ -347,26 +347,37 @@ openportd --import-day databento --date 2026-09-22 --symbols SPX,SPY \
   --expiries 2 --window 0.10 --out ./recordings
 openportd --import-day thetadata --date 2026-09-22 --symbols SPY \
   --expiries 2 --window 0.10 --out ./recordings
+openportd --import-day massive --import-days 2026-09-01..2026-09-30 \
+  --date 2026-08-31 --symbols SPY --expiries 2 --out ./recordings
 ```
 
-Import reads one completed trading date, writes a `.oprec`, and exits without
+Import reads completed trading dates, writes a `.oprec` for each, and exits without
 starting a feed, HTTP server or paper account. `--out` defaults to `./recordings`.
 Point the server's `--record-dir` at the same directory. Replay lists the source
 provider and `imported`; replay runs use the usual journals and `--verify-run`.
-Databento reads `DATABENTO_API_KEY`. ThetaData uses the logged-in Theta Terminal
+Databento reads `DATABENTO_API_KEY`; Massive reads `MASSIVE_API_KEY`. ThetaData uses the logged-in Theta Terminal
 v3 at `http://127.0.0.1:25503`, just as the live adapter does. There are no key flags.
 Historical access needs the provider's entitlement; Databento requests can incur
 usage charges. These importers follow the documented APIs, are tested against
 saved response shapes with generated values, and have not yet been run live with a key.
 
-The calendar rejects holidays, weekends, today and future dates before making
-requests. Dates before 2022 are refused because the built-in holiday calendar is
+`--date` and `--import-days` may repeat; ranges are inclusive, sorted and deduplicated,
+with at most 3660 calendar dates per command. The calendar skips weekends and holidays.
+All dates and filters are validated before requests; today and future dates fail.
+Progress reports the day number, date, state (`importing`, `imported`, `existing`,
+`closed`), completed windows and event count. Retry the same command to resume:
+matching files are checked through clean EOF and skipped without credentials or
+network access. A different provider, date, symbol selection or filter in the
+expected destination, or a damaged file, stops with an error; move it aside or
+choose another output directory. A failed day removes its temporary file and keeps
+all earlier completed days. Dates before 2022 are refused because the built-in holiday calendar is
 incomplete there. Product sessions use `md::trading_session`, including GTH assigned
 to the requested trading date over a holiday, regular hours, early closes and curb.
 Coverage depends on the provider and subscription. A root without overnight data
 has no invented overnight quotes. Calendar overrides are not fetched during import.
 Databento imports require 2023-03-28 or later, when OPRA's one-second CBBO history
-became available; the older minute-sampled dataset is not used.
+became available; the older minute-sampled dataset is not used. Massive requires
+2022-03-07 or later, when its historical option quotes begin.
 
 The importers merge fifteen-second windows in original capture-time order when
 available, otherwise in event-time order, preserving source order at equal times.
@@ -395,20 +406,30 @@ OI initializes the overnight session until a newer observation arrives. OPRA sup
 prices or vendor Greeks here. ThetaData uses expiration and strike lists, historical
 one-second option quotes, tick trades and daily OI, plus index prices or stock quotes
 on their own timestamps. Missing OI remains missing. Session volume sums reported
-trades; it is not invented from quote sizes. Neither importer supplies official
-underlying closes or vendor Greeks.
+trades; it is not invented from quote sizes. Massive imports tick-level options
+quotes and trades, using the historical contract reference as of the requested date.
+SIP nanoseconds order delivery; a trade uses its exchange timestamp if available,
+otherwise its SIP timestamp. It supplies no historical OI or underlying prices;
+use `--window 0` if contemporaneous parity cannot establish a strike center.
+Adjusted deliverables are excluded and corrected/cancelled trades fail instead of
+silently changing volume. None of these importers supplies official underlying
+closes or vendor Greeks.
 
-Requests are serial, with at least 100 ms between starts. ThetaData retries HTTP
+Requests are serial, with at least 100 ms between starts. ThetaData and Massive retry HTTP
 429 at most three times, honouring integer `Retry-After` values up to 60 seconds;
 longer or malformed values stop the import. Other errors stop it. Databento streams
 responses through SDK callbacks and does not retry a failed billable request.
 The merger caps a window at one million events and the chain at 500,000 contracts.
 Databento pending OI is capped at one million observations. ThetaData responses are
 capped at 32 MiB and 250,000 rows after the HTTP client's bounded download. Exceeding
-a cap fails explicitly; reduce symbols or, for ThetaData, expiries and retry. Memory grows with the
+a cap fails explicitly; reduce symbols or, for ThetaData/Massive, expiries and retry. Memory grows with the
 chain and one window, not a day's quotes. ThetaData requests each selected expiry
 separately, so unrestricted chains can take many requests. Progress reports completed
-windows and written events. Disk space must accommodate the full recording.
+windows and written events. Massive retains one page per quote/trade stream, sized
+from 100 to 50,000 rows so all pages fit a one-million-record buffer cap and 32 MiB response cap; it follows pagination
+as each stream reaches its next window. Quotes and trades require historical plan
+entitlements and can take many requests for broad chains. Disk space must accommodate
+the full recording.
 
 The file is private (mode 0600) and published under
 `PROVIDER-YYYY-MM-DD-imported.oprec` only after every requested symbol has quotes
@@ -430,8 +451,37 @@ Record any provider before the engine's coalescing queue:
 ```
 
 Both CLIs accept `--record FILE`; the probe also accepts repeated `--option KEY=VALUE`.
-`openportd --record-dir DIR` records each run to its own file there, named by provider
-and UTC start time (`cboe-2026-09-23T184820Z.oprec`), creating the directory if needed.
+`openportd --record-dir DIR` creates independently replayable files by trading date,
+creating the directory if needed. It rolls at the calendar's New York 17:00 boundary,
+even while the feed is idle; weekends and holidays advance to the next business date.
+The receipt clock assigns the date; delayed market timestamps remain untouched.
+Each new file repeats known contract definitions without duplicating live delivery.
+Names include the provider, trading date, start nanoseconds and a unique suffix, so
+restarting within a date creates another file without overwriting the earlier one.
+A backward wall-clock adjustment does not reopen an earlier date.
+
+Directory recordings stay in private `.record-*` staging directories until clean
+close, then publish atomically. The Replay page sees them after rollover or shutdown.
+A failed write leaves no published partial day and live delivery continues with a
+recording error. A killed process can leave a hidden staging directory; remove it
+only after that writer has stopped. OpenPort never deletes one: at startup it warns
+about each `.record-*` folder already present and counts its size toward
+`--record-max-gb` while it remains. Explicit `--record FILE` retains its existing
+single-file behavior and can be recovered after an unclean stop.
+
+Retention is opt-in: `--record-keep-days 30 --record-max-gb 20` keeps at most 30
+calendar days by trading date and aims for 20 decimal GB. Zero disables each limit.
+Pruning runs at startup, rollover and close, oldest header start time first, across
+all completed `.oprec` files in that directory, including imports and their `.end`
+indexes. Use a separate directory for recordings that must be kept. Active staging
+files, active explicit recordings, symlinks and damaged files are never pruned.
+The byte budget includes this writer's current file and any stale staging folders.
+The directory can exceed it between pruning runs; an active file is never removed
+to meet the budget. Startup and shutdown prune in place; at rollover pruning runs on
+a background thread, so the feed never waits for it. Files are read once and then
+skipped until their size or modification time changes. A file that cannot be
+removed is skipped and reported on stderr; neither startup nor recording stops.
+Retention requires `--record-dir` without `--record`.
 
 Full chains are large. Cboe's first poll of the whole SPX and SPY chains, about 164,000
 events (definitions, quotes, open interest and Greeks), recorded as 2.7 MB, about 16
@@ -442,7 +492,7 @@ narrow what is recorded.
 Files are created exclusively with mode 0600: an existing pathname, including a
 symlink, fails at startup and is never overwritten. For `--record FILE`, parent
 directories must exist. The original provider name, capabilities, subscription and
-engine start wall time are saved; API keys and provider configuration options are
+recording start wall time are saved; API keys and provider configuration options are
 not stored. Provider status text is recorded verbatim, so recordings inherit
 anything a provider puts in those messages.
 
@@ -605,7 +655,11 @@ adapter is disabled; no additional Docker packages are required.
 chart history. The terminal routes `/api/X` to `/api/replay/X` while showing it;
 “Back to live” returns to the live accounts, which keep running meanwhile.
 Recording entries and active replay state expose `imported`, false for older
-recordings. Imported days appear beside live recordings with their provider name.
+recordings. Imported days appear beside live recordings with their provider name,
+symbols and `date` (the starting trading date, including GTH assignment). Files are
+sorted by start time, newest first across all providers; the picker has a Trading
+date column and a Replay button for each file. Legacy files spanning multiple days
+show their starting trading date. Hidden staging directories never appear.
 
 `POST /api/replay` starts `{file: NAME}` or `{scenario: ID}`; `demo: ID` and
 `demo: true` remain accepted, and `scenario: true`, like `demo: true`, plays the

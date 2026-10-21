@@ -257,17 +257,18 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
         <div className="space-y-2 text-sm text-muted">
           <p>No recordings in <code className="text-foreground">{listing.data.directory || "the recordings directory"}</code> yet.</p>
           <p>Start openportd with <code className="text-foreground">--record-dir {listing.data.directory || "~/.openport/recordings"}</code> to record each session there;
-            every run becomes a day you can replay and trade again.</p>
+            each completed trading date becomes available here. Import past dates with <code>--import-day massive --import-days YYYY-MM-DD..YYYY-MM-DD --symbols SPY --out DIR</code>, using this directory for DIR.</p>
         </div>
       ) : (
         <div className="max-w-full overflow-x-auto" tabIndex={0} role="region" aria-label="Recordings">
           <table className="w-full text-left text-xs tabular">
             <thead className="text-[11px] uppercase tracking-wide text-muted"><tr>
-              {["Recording", "Provider", "Symbols", "Started", "Size", ""].map((h) => <th key={h} scope="col" className="px-2 py-2 font-normal">{h}</th>)}
+              {["Recording", "Trading date", "Provider", "Symbols", "Started", "Size", ""].map((h) => <th key={h} scope="col" className="px-2 py-2 font-normal">{h}</th>)}
             </tr></thead>
             <tbody className="[&_td]:px-2 [&_td]:py-2 [&_tr]:border-t [&_tr]:border-border/40">
               {recordings.map((recording: ReplayRecording) => <tr key={recording.file}>
                 <td className="font-medium">{recording.file}{recording.error && <div className="text-[10px] text-warn">{recording.error}</div>}</td>
+                <td>{recording.date ?? "—"}</td>
                 <td>{recording.provider ?? "—"}{recording.simulated ? " · simulated" : recording.imported ? " · imported" : " · recording"}</td>
                 <td>{recording.symbols?.join(", ") ?? "—"}</td>
                 <td>{recording.started ? replayClock(recording.started) : "—"}</td>

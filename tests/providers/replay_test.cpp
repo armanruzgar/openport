@@ -714,3 +714,37 @@ TEST(Replay, EndIndexAvoidsScanningAndRejectsStaleIndexes) {
   }
 }
 }  // namespace
+
+namespace {
+TEST(Replay, MultipleUnobservedPausesAreAppliedOnceBeforeSpeedRescaling) {
+  const auto file = paced_recording();
+  auto clock = std::make_shared<ManualClock>();
+  providers::ReplayProvider replay({file.path, 1, false, clock});
+  test::EventCollector sink;
+  replay.start({{"SPX"}}, sink);
+  ASSERT_EQ(clock->waiting_for(), providers::ReplayClock::TimePoint{} + 60s);
+  clock->hold_wait(true);
+  clock->advance(10s);
+  replay.set_paused(true);
+  clock->advance(2min);
+  replay.set_paused(false);
+  clock->advance(5s);
+  replay.set_paused(true);
+  clock->advance(3min);
+  replay.set_paused(true);  // an idempotent pause must not restart the paused clock
+  replay.set_speed(10);
+  replay.set_paused(false);
+  const auto resumed = clock->now();
+  const auto generation = clock->wait_generation();
+  clock->hold_wait(false);
+  ASSERT_EQ(clock->waiting_for(generation), resumed + 4500ms);
+  auto next = clock->wait_generation();
+  replay.set_speed(10);  // waking again must not apply the same pauses twice
+  ASSERT_EQ(clock->waiting_for(next), resumed + 4500ms);
+  next = clock->wait_generation();
+  clock->advance(4500ms);
+  ASSERT_TRUE(test::recording_eventually([&] { return quotes(sink) == 1; }));
+  ASSERT_EQ(clock->waiting_for(next), resumed + 10500ms);
+  replay.stop();
+}
+}  // namespace

@@ -179,3 +179,18 @@ def test_joint_backtest_request_contract():
                     {key: value for key, value in body.items() if key != "playbooks"}):
         with pytest.raises(jsonschema.ValidationError):
             validator.validate(invalid)
+
+
+def test_replay_recordings_expose_imported_dates_symbols_and_sources(stub):
+    listing = stub.respond("GET", "/api/replay", {}, None)[1]
+    listing["recordings"] = [
+        {"file": f"{provider}-2026-09-22-imported.oprec", "bytes": 512,
+         "provider": provider, "date": "2026-09-22", "symbols": ["SPX", "SPY"],
+         "started": "2026-09-22T00:15:00.000Z", "imported": True, "simulated": False}
+        for provider in ("massive", "thetadata", "databento")
+    ]
+    contract = Contract("", None, SPEC)
+    contract.validate("GET", "/api/replay", 200, listing)
+    listing["recordings"][0]["date"] = 20260922
+    with pytest.raises(ContractMismatch, match="recordings.0.date"):
+        contract.validate("GET", "/api/replay", 200, listing)

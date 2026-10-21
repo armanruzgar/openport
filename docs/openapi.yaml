@@ -7071,6 +7071,17 @@
       "ReplayRecording": {
         "type": "object",
         "properties": {
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Trading date at the recording start (New York 17:00 boundary and session calendar). Overnight GTH belongs to the following business date; legacy multi-day files show their starting trading date."
+          },
           "imported": {
             "type": "boolean",
             "description": "Historical provider import; false for older recording headers."

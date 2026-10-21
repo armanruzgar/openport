@@ -124,7 +124,7 @@ class ReplayProvider final : public md::Provider {
   std::atomic<bool> seeking_{false};
   std::atomic<bool> preparing_{false};
   std::mutex control_mutex_;
-  ReplayClock::TimePoint::duration paused_duration_{};  // control_mutex_; not yet applied to pacing
+  ReplayClock::TimePoint::duration paused_duration_{};  // control_mutex_; consumed once by pace()
   std::condition_variable control_;
   bool started_ = false;
   Driver driver_;

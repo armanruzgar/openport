@@ -1,0 +1,13 @@
+{
+  "status": "OK",
+  "results": [
+    {
+      "sip_timestamp": 1790083816000000789,
+      "participant_timestamp": 1790083814000000456,
+      "price": 5.2,
+      "size": 3,
+      "correction": 0,
+      "sequence_number": 3
+    }
+  ]
+}

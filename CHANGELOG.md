@@ -49,6 +49,20 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   provider/feed and recent error categories into a reviewable bug report. Local
   fatal signal logs contain no memory dump; there is no telemetry. `/api/status`
   adds optional build metadata for clients.
+- **Import historical options from Massive (Polygon).** Historical contract discovery,
+  paginated quotes and trades preserve vendor timestamps. Tested with generated
+  saved-response fixtures; paid historical access has not been validated live.
+  Quote and trade pages grow up to Massive's 50,000-row maximum within the buffer cap.
+- **Import date ranges and resume.** All importers accept inclusive `--import-days`
+  ranges and repeated dates, skip calendar closures, report progress and skip only
+  matching complete recordings.
+- **Record across trading dates.** `--record-dir` rolls at calendar boundaries and
+  publishes only complete files, with optional oldest-first age/size retention that
+  protects active files. Replay lists trading dates, symbols and sources across providers.
+  Retention runs off the feed thread at rollover, reports files it cannot remove
+  instead of stopping recording, and counts stale staging folders toward the size cap.
+- **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
+  duration and cover multiple pauses/resumes before the pacing loop observes them.
 
 ## 0.4.0 (2026-10-06)
 
