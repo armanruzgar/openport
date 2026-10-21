@@ -2546,6 +2546,8 @@ std::vector<std::string_view> split_list(std::string_view text) {
   }
   return items;
 }
+}  // namespace
+
 /// The beta of `underlying` to `reference`, by the first source that has one.
 BetaEstimate profile_beta(const MetricsSource& source, const std::string& underlying, const std::string& reference,
                           const std::map<std::string, double>& given) {
@@ -2562,6 +2564,7 @@ BetaEstimate profile_beta(const MetricsSource& source, const std::string& underl
   if (!beta.source.empty() && beta.observations >= 30) { beta.source = "intraday"; return beta; }
   return BetaEstimate{0, beta.correlation, beta.observations, ""};
 }
+namespace {
 json level_json(const std::optional<BreachLevel>& value, double spot) {
   if (!value) return nullptr;
   return {{"percent", number(value->percent)}, {"points", spot > 0 ? number(value->points) : json(nullptr)},

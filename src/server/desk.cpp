@@ -9,6 +9,7 @@
 #include "openport/server/run.hpp"
 #include "metric_cache.hpp"
 #include "run_json.hpp"
+#include "paper_json.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -358,6 +359,11 @@ BetaEstimate estimate_beta(const std::vector<md::Bar>& asset, const std::vector<
   if (!std::isfinite(estimate.beta)) estimate.beta = 0;
   else estimate.source = "estimated";
   return estimate;
+}
+
+Valuation contract_valuation(const std::string& symbol, const md::OptionContract& contract,
+                             const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
+  return valuation_for(symbol, contract, metrics);
 }
 
 bool same_index(std::string_view a, std::string_view b) {
