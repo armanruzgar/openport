@@ -1,6 +1,7 @@
 #include "paper_json.hpp"
 #include "event_calendar.hpp"
 #include "openport/server/sandboxes.hpp"
+#include "openport/server/strategy_search.hpp"
 #include "openport/server/hedges.hpp"
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
@@ -3359,6 +3360,39 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   return ApiResponse{200, body.dump()};
 }
 
+namespace {
+/// GET /api/underlyings/{symbol}/optimizer: a search can value thousands of
+/// candidates, so it runs on the search pool and completes from there.
+bool strategy_search(const ApiRequest& request, const MetricsSource& source, ApiCompletion& complete) {
+  constexpr std::string_view prefix = "/api/underlyings/", suffix = "/optimizer";
+  const auto question = request.target.find('?');
+  const std::string_view path = std::string_view(request.target).substr(0, question);
+  if (!path.starts_with(prefix) || !path.ends_with(suffix) || path.size() <= prefix.size() + suffix.size()) return false;
+  const std::string symbol(path.substr(prefix.size(), path.size() - prefix.size() - suffix.size()));
+  if (symbol.find('/') != std::string::npos) return false;
+  const auto metrics = source.metrics(symbol);
+  if (!metrics) return false;  // handle_api answers the missing underlying
+  const auto query = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
+  if (!query) { complete(api_error(400, "INVALID_REQUEST", "duplicate or malformed query parameter")); return true; }
+  StrategySearchRequest search;
+  try { search = parse_strategy_search(*query); }
+  catch (const std::invalid_argument& failure) { complete(api_error(400, "INVALID_REQUEST", failure.what())); return true; }
+  const bool queued = StrategySearchPool::shared().submit([metrics, search, complete] {
+    ApiResponse response;
+    try { response.body = search_strategies(*metrics, search).dump(); }
+    catch (const std::invalid_argument& failure) { response = api_error(400, "INVALID_REQUEST", failure.what()); }
+    catch (const std::exception&) { response = api_error(500, "INTERNAL_ERROR", "Strategy search failed"); }
+    complete(std::move(response));
+  });
+  if (!queued) {
+    auto busy = api_error(503, "SEARCH_BUSY", "Strategy searches are all busy; retry shortly");
+    busy.retry_after = kInboxRetrySeconds;
+    complete(std::move(busy));
+  }
+  return true;
+}
+}  // namespace
+
 void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompletion complete) {
   if (request.method == "POST" && request.target.substr(0, request.target.find('?')) == "/api/sandboxes") {
     if (source.sandboxes()) source.sandboxes()->create(request, source, std::move(complete));
@@ -3366,6 +3400,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (auto rejection = sandbox_visibility(request, source)) { complete(std::move(*rejection)); return; }
+  if (request.method == "GET" && strategy_search(request, source, complete)) return;
   if (request.method == "GET") { complete(handle_api(request, source)); return; }
   if (request.target.starts_with("/api/notifications/")) {
     if (!source.notifications()) { complete(api_error(503, "NOTIFICATIONS_UNAVAILABLE", "Notifications are unavailable on this source")); return; }

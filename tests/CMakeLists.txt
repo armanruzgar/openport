@@ -60,6 +60,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/stress_test.cpp
     server/backtest_test.cpp
     server/paper_test.cpp
+    server/strategy_search_test.cpp
     server/hedges_test.cpp
     server/review_test.cpp
     server/practice_test.cpp
