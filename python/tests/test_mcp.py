@@ -17,7 +17,8 @@ def call(server, name, **arguments):
 def test_tool_schemas_name_accounts_and_typed_orders(stub):
     server = create_server(Client(stub.url, "secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"}
+    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay",
+                          "flow", "earnings", "analysis_portfolios", "analysis_risk"}
     for name in ["start_replay", "step_replay", "stop_replay"]:
         assert "account" in tools[name].input_schema["required"]
     schema = tools["place_order"].input_schema
@@ -136,3 +137,19 @@ def test_sandbox_tools_default_to_own_account_but_other_writers_still_name_one(s
     assert stub.requests[-1][1] == "/api/positions/close"
     ordinary = create_server(Client(stub.url, "named-secret"))
     assert call(ordinary, "place_order", order=order)["error"]["code"] == "INVALID_ACCOUNT"
+
+
+def test_flow_earnings_and_analysis_tools_only_read(stub):
+    server = create_server(Client(stub.url, "secret"))
+    result = call(server, "flow", symbol="SPX", only="block")
+    assert stub.requests[-1][0] == "GET"
+    assert stub.requests[-1][1].startswith("/api/underlyings/SPX/flow?")
+    assert "only=block" in stub.requests[-1][1]
+    assert result["data"]["source"] in {"feed", "simulated", "none"}
+    call(server, "earnings", symbol="AAPL")
+    assert stub.requests[-1][:2] == ("GET", "/api/earnings?symbol=AAPL")
+    call(server, "analysis_portfolios")
+    assert stub.requests[-1][:2] == ("GET", "/api/analysis/portfolios")
+    result = call(server, "analysis_risk", portfolio="ira", view="grid")
+    assert stub.requests[-1][:2] == ("GET", "/api/analysis/portfolios/ira/risk/grid")
+    assert result["error"]["status"] == 404

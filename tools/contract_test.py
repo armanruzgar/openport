@@ -142,6 +142,9 @@ class Contract:
         accounts = self.call("GET", prefix + "/accounts", success=True)["accounts"]
         playbooks = self.call("GET", prefix + "/playbooks", success=True)["definitions"]
         playbook = next(iter(playbooks), None)
+        portfolios = self.call("GET", "/api/analysis/portfolios", success=True)["portfolios"] if prefix == "/api" else []
+        # Without an imported portfolio, a missing one exercises the documented error.
+        portfolio = portfolios[0]["id"] if portfolios else "contract-missing"
         for template, raw in self.spec["paths"].items():
             if not template.startswith("/api/") or "get" not in self.resolve(raw):
                 continue
@@ -157,6 +160,7 @@ class Contract:
             if path == "/api/backtests/{id}":
                 path = "/api/backtests/000000"  # A missing saved run exercises the documented error.
             path = path.replace("/orders/{id}", "/orders/1")
+            path = path.replace("/analysis/portfolios/{id}", "/analysis/portfolios/" + quote(portfolio, safe=""))
             if "{" in path:
                 continue
             item = self.resolve(raw)

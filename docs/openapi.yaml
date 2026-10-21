@@ -5101,6 +5101,458 @@
         },
         "x-scope": "read"
       }
+    },
+    "/api/underlyings/{symbol}/flow": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "description": "Most recent matching prints to return, default 200.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        {
+          "name": "type",
+          "in": "query",
+          "required": false,
+          "description": "Calls or puts only.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put"
+            ]
+          }
+        },
+        {
+          "name": "side",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated sides: bid, ask, mid, outside, unquoted.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "expiry",
+          "in": "query",
+          "required": false,
+          "description": "An expiry id such as 2026-10-16AM.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "min_size",
+          "in": "query",
+          "required": false,
+          "description": "Smallest print in contracts.",
+          "schema": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        {
+          "name": "min_premium",
+          "in": "query",
+          "required": false,
+          "description": "Smallest print premium in dollars.",
+          "schema": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        {
+          "name": "only",
+          "in": "query",
+          "required": false,
+          "description": "Only inferred sweeps, blocks or multi-leg prints.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sweep",
+              "block",
+              "multi_leg"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/flow",
+        "description": "Time and sales and options flow from the retained tape (5,000 prints per underlying). Never invents prints for a live feed.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Flow"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/underlyings/{symbol}/flow": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1flow"
+    },
+    "/api/earnings": {
+      "get": {
+        "operationId": "earningsHistory",
+        "summary": "GET /api/earnings",
+        "description": "Earnings moves, newest first: recorded here from the event calendar, or imported. Not routed to replays.",
+        "x-scope": "read",
+        "parameters": [
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "description": "One underlying.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EarningsHistory"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/earnings/import": {
+      "post": {
+        "summary": "POST /api/earnings/import",
+        "description": "Seed past earnings moves from a CSV; each is labelled imported and none replaces a recorded one.",
+        "x-scope": "admin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EarningsImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EarningsImport"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/earnings/imported": {
+      "delete": {
+        "summary": "DELETE /api/earnings/imported",
+        "description": "Remove every imported earnings move.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EarningsRemoved"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/analysis/portfolios": {
+      "get": {
+        "summary": "GET /api/analysis/portfolios",
+        "description": "Imported analysis-only portfolios.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisPortfolios"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "POST /api/analysis/portfolios",
+        "description": "Import a positions CSV (generic, tastytrade, Schwab or IBKR layout) as an analysis-only portfolio. It is not a paper account and no order can reach it.",
+        "x-scope": "admin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisImportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisPortfolio"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/analysis/portfolios/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/analysis/portfolios/{id}",
+        "description": "Holdings valued from the current analytics, with Greeks by underlying.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisPortfolio"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "DELETE /api/analysis/portfolios/{id}",
+        "description": "Delete an analysis portfolio.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisDeleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/analysis/portfolios/{id}/risk/profile": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "underlying",
+          "in": "query",
+          "required": false,
+          "description": "Move one underlying; default moves the benchmark with each held underlying beta-weighted.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "benchmark",
+          "in": "query",
+          "required": false,
+          "description": "Default SPY.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "SPX"
+            ]
+          }
+        },
+        {
+          "name": "days",
+          "in": "query",
+          "required": false,
+          "description": "Up to four comma-separated horizons in days, 0 to 366. Default 0,1.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "iv",
+          "in": "query",
+          "required": false,
+          "description": "Vol points added to every smile IV, -100 to 100.",
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "name": "range",
+          "in": "query",
+          "required": false,
+          "description": "Percent range either side, default 10.",
+          "schema": {
+            "type": "number"
+          }
+        },
+        {
+          "name": "steps",
+          "in": "query",
+          "required": false,
+          "description": "Odd number of moves, 3 to 201, default 41.",
+          "schema": {
+            "type": "integer"
+          }
+        },
+        {
+          "name": "betas",
+          "in": "query",
+          "required": false,
+          "description": "SYMBOL:BETA pairs that override estimates.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/analysis/portfolios/{id}/risk/profile",
+        "description": "Risk profile of an analysis portfolio.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/analysis/portfolios/{id}/risk/grid": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "spot",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated spot moves in percent (default -10,-5,-2,-1,0,1,2,5,10).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "vol",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated vol shocks in points (default -5,0,5,10).",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/analysis/portfolios/{id}/risk/grid",
+        "description": "Spot and volatility scenario grid of an analysis portfolio.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisGrid"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -24357,6 +24809,1506 @@
           "marked_pnl",
           "entry_reasons",
           "rule_trips"
+        ]
+      },
+      "FlowTotals": {
+        "type": "object",
+        "properties": {
+          "call_net": {
+            "type": "number"
+          },
+          "put_net": {
+            "type": "number"
+          },
+          "net": {
+            "type": "number"
+          },
+          "bought": {
+            "type": "number"
+          },
+          "sold": {
+            "type": "number"
+          },
+          "unclassified": {
+            "type": "number"
+          },
+          "contracts": {
+            "type": "number"
+          },
+          "prints": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "call_net",
+          "put_net",
+          "net",
+          "bought",
+          "sold",
+          "unclassified",
+          "contracts",
+          "prints"
+        ]
+      },
+      "FlowExpiry": {
+        "type": "object",
+        "properties": {
+          "call_net": {
+            "type": "number"
+          },
+          "put_net": {
+            "type": "number"
+          },
+          "net": {
+            "type": "number"
+          },
+          "bought": {
+            "type": "number"
+          },
+          "sold": {
+            "type": "number"
+          },
+          "unclassified": {
+            "type": "number"
+          },
+          "contracts": {
+            "type": "number"
+          },
+          "prints": {
+            "type": "integer"
+          },
+          "expiry": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_net",
+          "put_net",
+          "net",
+          "bought",
+          "sold",
+          "unclassified",
+          "contracts",
+          "prints",
+          "expiry"
+        ]
+      },
+      "FlowStrike": {
+        "type": "object",
+        "properties": {
+          "call_net": {
+            "type": "number"
+          },
+          "put_net": {
+            "type": "number"
+          },
+          "net": {
+            "type": "number"
+          },
+          "bought": {
+            "type": "number"
+          },
+          "sold": {
+            "type": "number"
+          },
+          "unclassified": {
+            "type": "number"
+          },
+          "contracts": {
+            "type": "number"
+          },
+          "prints": {
+            "type": "integer"
+          },
+          "expiry": {
+            "type": "string"
+          },
+          "strike": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "call_net",
+          "put_net",
+          "net",
+          "bought",
+          "sold",
+          "unclassified",
+          "contracts",
+          "prints",
+          "expiry",
+          "strike"
+        ]
+      },
+      "FlowPrint": {
+        "type": "object",
+        "properties": {
+          "sequence": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "expiry": {
+            "type": "string"
+          },
+          "strike": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put"
+            ]
+          },
+          "price": {
+            "type": "number"
+          },
+          "size": {
+            "type": "number"
+          },
+          "premium": {
+            "type": "number"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quote_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "bid",
+              "ask",
+              "mid",
+              "outside",
+              "unquoted"
+            ]
+          },
+          "aggressor": {
+            "anyOf": [
+              {
+                "const": "buy"
+              },
+              {
+                "const": "sell"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sweep": {
+            "type": "boolean"
+          },
+          "block": {
+            "type": "boolean"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "simulated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sequence",
+          "time",
+          "symbol",
+          "expiry",
+          "strike",
+          "type",
+          "price",
+          "size",
+          "premium",
+          "bid",
+          "ask",
+          "quote_time",
+          "side",
+          "aggressor",
+          "venue",
+          "sweep",
+          "block",
+          "group",
+          "simulated"
+        ],
+        "description": "One option print. side compares it with the quote applied before it; aggressor is buy at or above the ask, sell at or below the bid. venue is the provider's own exchange number. simulated prints come only from the demo market."
+      },
+      "Flow": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "trades": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "feed",
+              "simulated",
+              "none"
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "block_size": {
+            "type": "number"
+          },
+          "capacity": {
+            "type": "integer"
+          },
+          "retained": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          },
+          "evicted": {
+            "type": "integer"
+          },
+          "matched": {
+            "type": "integer"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/FlowTotals"
+          },
+          "expiries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowExpiry"
+            }
+          },
+          "strikes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowStrike"
+            }
+          },
+          "prints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlowPrint"
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "provider",
+          "trades",
+          "source",
+          "message",
+          "as_of",
+          "block_size",
+          "capacity",
+          "retained",
+          "total",
+          "evicted",
+          "matched",
+          "totals",
+          "expiries",
+          "strikes",
+          "prints",
+          "model"
+        ],
+        "description": "Time and sales and net premium. source none: the feed delivers no option trades and message says so; simulated: the demo market's labelled prints."
+      },
+      "EarningsMove": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string",
+            "enum": [
+              "before_open",
+              "after_close"
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "recorded",
+              "imported"
+            ]
+          },
+          "implied": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "implied_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "straddle": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "realized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "close_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "close_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priced": {
+            "anyOf": [
+              {
+                "const": "over"
+              },
+              {
+                "const": "under"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "date",
+          "session",
+          "label",
+          "source",
+          "implied",
+          "implied_at",
+          "expiry",
+          "strike",
+          "straddle",
+          "spot",
+          "realized",
+          "before",
+          "after",
+          "close_before",
+          "close_after",
+          "priced"
+        ],
+        "description": "Moves are fractions of spot (0.052 is 5.2%); realized is signed. priced is over when the implied move exceeded the realized move's size."
+      },
+      "EarningsSummary": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "integer"
+          },
+          "over": {
+            "type": "integer"
+          },
+          "under": {
+            "type": "integer"
+          },
+          "imported": {
+            "type": "integer"
+          },
+          "over_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mean_implied": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mean_realized": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "events",
+          "over",
+          "under",
+          "imported",
+          "over_rate",
+          "mean_implied",
+          "mean_realized"
+        ]
+      },
+      "EarningsHistory": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "moves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EarningsMove"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/EarningsSummary"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "moves",
+          "summary",
+          "error",
+          "model"
+        ]
+      },
+      "EarningsImportRequest": {
+        "type": "object",
+        "properties": {
+          "csv": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "csv"
+        ],
+        "additionalProperties": false,
+        "description": "symbol,date,session,implied_move,realized_move[,label] with a header line; moves in percent. Up to the 64 KiB request limit."
+      },
+      "EarningsImport": {
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "integer"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "added",
+          "skipped"
+        ]
+      },
+      "EarningsRemoved": {
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "removed"
+        ]
+      },
+      "AnalysisPortfolioSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "imported": {
+            "type": "string"
+          },
+          "holdings": {
+            "type": "integer"
+          },
+          "analysis_only": {
+            "const": true
+          },
+          "read_only": {
+            "const": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "format",
+          "imported",
+          "holdings",
+          "analysis_only",
+          "read_only"
+        ]
+      },
+      "AnalysisPortfolios": {
+        "type": "object",
+        "properties": {
+          "portfolios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisPortfolioSummary"
+            }
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "portfolios",
+          "formats",
+          "note",
+          "error"
+        ]
+      },
+      "AnalysisImportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "csv"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "csv": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "generic",
+              "tastytrade",
+              "schwab",
+              "ibkr"
+            ]
+          }
+        }
+      },
+      "AnalysisHolding": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "underlying": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put",
+              "shares"
+            ]
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "multiplier": {
+            "type": "number"
+          },
+          "mark": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unrealised": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gamma": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vega": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "theta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "priced",
+              "unpriced",
+              "no_market_data",
+              "not_in_chain",
+              "expired"
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "quantity",
+          "source",
+          "cost",
+          "underlying",
+          "type",
+          "expiry",
+          "strike",
+          "multiplier",
+          "mark",
+          "value",
+          "unrealised",
+          "delta",
+          "gamma",
+          "vega",
+          "theta",
+          "status"
+        ]
+      },
+      "AnalysisExposureRow": {
+        "type": "object",
+        "properties": {
+          "dollar_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dollar_gamma_1pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vega": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "theta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "underlying": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dollar_delta",
+          "dollar_gamma_1pct",
+          "vega",
+          "theta",
+          "underlying"
+        ]
+      },
+      "AnalysisExposure": {
+        "type": "object",
+        "properties": {
+          "aggregate": {
+            "type": "object",
+            "properties": {
+              "dollar_delta": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dollar_gamma_1pct": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "vega": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "theta": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "dollar_delta",
+              "dollar_gamma_1pct",
+              "vega",
+              "theta"
+            ]
+          },
+          "underlyings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisExposureRow"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "aggregate",
+          "underlyings",
+          "complete"
+        ]
+      },
+      "AnalysisPortfolio": {
+        "type": "object",
+        "properties": {
+          "portfolio": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "analysis_only": {
+            "const": true
+          },
+          "read_only": {
+            "const": true
+          },
+          "note": {
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unpriced": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "imported": {
+            "type": "string"
+          },
+          "holdings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisHolding"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unrealised": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "exposure": {
+            "$ref": "#/components/schemas/AnalysisExposure"
+          },
+          "views": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "portfolio",
+          "name",
+          "analysis_only",
+          "read_only",
+          "note",
+          "as_of",
+          "unpriced",
+          "complete",
+          "id",
+          "format",
+          "imported",
+          "holdings",
+          "skipped",
+          "value",
+          "cost",
+          "unrealised",
+          "exposure",
+          "views"
+        ],
+        "description": "Analysis only: never a paper account and never traded. views names the risk views available under /risk/{view}."
+      },
+      "AnalysisDeleted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "deleted": {
+            "const": true
+          }
+        },
+        "required": [
+          "id",
+          "deleted"
+        ]
+      },
+      "AnalysisBeta": {
+        "type": "object",
+        "properties": {
+          "underlying": {
+            "type": "string"
+          },
+          "beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observations": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "underlying",
+          "beta",
+          "source",
+          "observations"
+        ]
+      },
+      "AnalysisProfileCurve": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "number"
+          },
+          "time": {
+            "type": "string"
+          },
+          "pnl": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "clamped": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "days",
+          "time",
+          "pnl",
+          "clamped"
+        ]
+      },
+      "AnalysisProfile": {
+        "type": "object",
+        "properties": {
+          "portfolio": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "analysis_only": {
+            "const": true
+          },
+          "read_only": {
+            "const": true
+          },
+          "note": {
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unpriced": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "view": {
+            "const": "profile"
+          },
+          "underlying": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "benchmark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vol_points": {
+            "type": "number"
+          },
+          "percent": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "prices": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "curves": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisProfileCurve"
+            }
+          },
+          "betas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisBeta"
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "portfolio",
+          "name",
+          "analysis_only",
+          "read_only",
+          "note",
+          "as_of",
+          "unpriced",
+          "complete",
+          "view",
+          "underlying",
+          "benchmark",
+          "reference",
+          "spot",
+          "vol_points",
+          "percent",
+          "prices",
+          "curves",
+          "betas",
+          "model"
+        ]
+      },
+      "AnalysisGrid": {
+        "type": "object",
+        "properties": {
+          "portfolio": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "analysis_only": {
+            "const": true
+          },
+          "read_only": {
+            "const": true
+          },
+          "note": {
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unpriced": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "view": {
+            "const": "grid"
+          },
+          "spot_percent": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "vol_points": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "pnl": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "portfolio",
+          "name",
+          "analysis_only",
+          "read_only",
+          "note",
+          "as_of",
+          "unpriced",
+          "complete",
+          "view",
+          "spot_percent",
+          "vol_points",
+          "pnl",
+          "model"
         ]
       }
     }

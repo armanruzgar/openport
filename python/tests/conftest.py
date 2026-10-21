@@ -110,7 +110,7 @@ class Stub:
             if view == "chain":
                 return 200, self.chain
             name = {"surface": "Surface", "exposure": "ExposureMatrix", "volatility": "Volatility", "candles": "Candles",
-                    "probability": "Probability"}.get(view, "Summary")
+                    "probability": "Probability", "flow": "Flow"}.get(view, "Summary")
             value = shaped(name, symbol="SPX", as_of=TIME)
             if name == "Summary":
                 value["expiries"] = [self.expiry]
@@ -123,6 +123,12 @@ class Stub:
             return 200, shaped("PassOdds", seed="81723")
         if path == "/api/calendar/events":
             return 200, {"events": []}
+        if path == "/api/earnings":
+            return 200, shaped("EarningsHistory")
+        if path == "/api/analysis/portfolios":
+            return 200, shaped("AnalysisPortfolios")
+        if path.startswith("/api/analysis/portfolios/"):
+            return 404, {"error": {"code": "NOT_FOUND", "message": "No analysis portfolio", "actual": None, "limit": None, "scope": None}}
         if path == "/api/strategy-template":
             return 200, shaped("TemplateResult")
         if path == "/api/orders/what-if":

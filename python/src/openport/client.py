@@ -154,6 +154,40 @@ class Client:
         """Probability cones and each price's odds of finishing beyond or touching it by each horizon."""
         return self._market(symbol, "probability", days=_list(days), prices=_list(prices))
 
+    def flow(self, symbol: str, limit: int | None = None, type: str | None = None, side: list[str] | None = None,
+             expiry: str | None = None, min_size: float | None = None, min_premium: float | None = None,
+             only: str | None = None) -> JSON:
+        """Time and sales with net premium by expiry and strike; source "none" means the feed has no trades."""
+        return self._market(symbol, "flow", limit=limit, type=type, side=_list(side), expiry=expiry,
+                            min_size=min_size, min_premium=min_premium, only=only)
+
+    def earnings(self, symbol: str | None = None) -> JSON:
+        """Earnings implied versus realized moves, recorded here or imported, with the over-priced rate."""
+        return self._request("GET", "/earnings", params={"symbol": symbol}, control=True)
+
+    def import_earnings(self, csv: str) -> JSON:
+        """Admin: seed past moves from symbol,date,session,implied_move,realized_move[,label] (percent)."""
+        return self._request("POST", "/earnings/import", {"csv": csv}, control=True, retry=False)
+
+    def analysis_portfolios(self) -> JSON:
+        return self._request("GET", "/analysis/portfolios", control=True)
+
+    def import_portfolio(self, name: str, csv: str, format: str = "auto") -> JSON:
+        """Admin: an analysis-only portfolio from a positions CSV. It is never traded."""
+        return self._request("POST", "/analysis/portfolios", {"name": name, "csv": csv, "format": format},
+                             control=True, retry=False)
+
+    def analysis_portfolio(self, portfolio: str) -> JSON:
+        return self._request("GET", "/analysis/portfolios/" + quote(portfolio, safe=""), control=True)
+
+    def analysis_risk(self, portfolio: str, view: str = "profile", **params) -> JSON:
+        """A risk view of an analysis portfolio: profile or grid (the portfolio's views lists them)."""
+        return self._request("GET", "/analysis/portfolios/" + quote(portfolio, safe="") + "/risk/" + quote(view, safe=""),
+                             params=params, control=True)
+
+    def delete_analysis_portfolio(self, portfolio: str) -> JSON:
+        return self._request("DELETE", "/analysis/portfolios/" + quote(portfolio, safe=""), control=True, retry=False)
+
     def account(self) -> Account:
         return self._request("GET", "/account", scoped=True)
 
