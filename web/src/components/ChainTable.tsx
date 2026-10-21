@@ -109,7 +109,9 @@ export function ChainTable({ rows, forward, atmStrike, showGreeks, showLiquidity
         if (button && onQuote && (key === "b" || key === "s" || key === "enter")) {
           event.preventDefault(); event.stopPropagation()
           const row = rows[index]!, quote = row[type]
-          if (quote) choose(quote, row, type, key === "s" ? "bid" : "ask")
+          // Enter acts on the focused cell, so Enter on a bid sells, like clicking it.
+          const cell = key === "enter" ? button.dataset.cell === "bid" ? "bid" : "ask" : key === "s" ? "bid" : "ask"
+          if (quote) choose(quote, row, type, cell)
         }
       }}>
       <table className="w-full border-collapse text-xs" aria-label="Option chain" aria-rowcount={rows.length + 2}>

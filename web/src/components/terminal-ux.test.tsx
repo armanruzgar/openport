@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { ChainTable } from "./ChainTable"
 import { CandleChart } from "../charts/CandleChart"
 import { ChartDrawings } from "./ChartDrawings"
-import { Popout } from "./TerminalTools"
+import { HotkeyHelp, Popout } from "./TerminalTools"
 import { searchSymbols, SymbolSearch, Watchlist } from "./Watchlist"
 import { liveState, useLive } from "../api/live"
 import { Positions } from "../views/PositionsView"
@@ -52,15 +52,42 @@ it("shows only calls or puts and compact quote columns on a phone", async () => 
   expect(host.querySelector('[data-side="call"]')).toBeNull()
   expect(host.querySelector('[data-side="put"]')).not.toBeNull()
 })
-it("Enter reviews a ticket without submitting, and editable fields retain their keys", async () => {
-  const submit = vi.fn()
-  await act(async () => root.render(<form onKeyDownCapture={reviewTicketKey} onSubmit={submit}><button type="button">Side</button><input /><div data-ticket-review tabIndex={-1}>Preview</div><button type="submit">Send</button></form>))
-  await key(host.querySelector("button")!, "Enter")
+it("Enter on a focused quote opens the ticket for that cell's side", async () => {
+  const choose = vi.fn()
+  await act(async () => root.render(<ChainTable rows={rows.slice(0, 3)} forward={5001} atmStrike={5001} showGreeks={false} showLiquidity={false} provider="demo" onQuote={choose} />))
+  const bid = host.querySelector<HTMLButtonElement>('button[data-strike="5001"][data-side="put"][data-cell="bid"]')!
+  bid.focus()
+  await key(bid, "Enter")
+  expect(choose).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: "put1" }), rows[1], "put", "bid")
+  const ask = host.querySelector<HTMLButtonElement>('button[data-strike="5001"][data-side="call"][data-cell="ask"]')!
+  ask.focus()
+  await key(ask, "Enter")
+  expect(choose).toHaveBeenLastCalledWith(expect.objectContaining({ symbol: "call1" }), rows[1], "call", "ask")
+  expect(choose).toHaveBeenCalledTimes(2)
+})
+it("Enter reviews a ticket from non-editable content, leaving buttons and fields their own Enter", async () => {
+  const submit = vi.fn((event: Event) => event.preventDefault())
+  await act(async () => root.render(<form onKeyDownCapture={reviewTicketKey} onSubmit={(event) => submit(event.nativeEvent)}>
+    <button type="button">Side</button><div role="radio" aria-checked tabIndex={0}>Buy</div><input /><p tabIndex={0}>Legs</p>
+    <div data-ticket-review tabIndex={-1}>Preview</div><button type="submit">Send</button></form>))
+  const enter = async (target: HTMLElement) => {
+    target.focus()
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+    await act(async () => { target.dispatchEvent(event) })
+    return event
+  }
+  for (const target of [host.querySelector<HTMLElement>("button")!, host.querySelector<HTMLElement>('[role="radio"]')!, host.querySelector("input")!]) {
+    expect((await enter(target)).defaultPrevented).toBe(false)
+    expect(document.activeElement).toBe(target)
+  }
+  expect((await enter(host.querySelector("p")!)).defaultPrevented).toBe(true)
   expect(document.activeElement).toBe(host.querySelector("[data-ticket-review]"))
   expect(submit).not.toHaveBeenCalled()
-  host.querySelector("input")!.focus()
-  await key(host.querySelector("input")!, "Enter")
-  expect(document.activeElement).toBe(host.querySelector("input"))
+})
+it("describes Enter in a ticket as the docs do", async () => {
+  await act(async () => root.render(<HotkeyHelp onClose={() => {}} />))
+  expect(document.body.textContent).toContain("From a non-editable control, focus the order review; in a field, submit")
+  expect(document.body.textContent).not.toContain("explicit submit still required")
 })
 it("searches only subscribed symbols and jumps with Enter", async () => {
   expect(searchSymbols(["SPX", "SPY", "QQQ"], " sp ")).toEqual(["SPX", "SPY"])
@@ -70,12 +97,17 @@ it("searches only subscribed symbols and jumps with Enter", async () => {
   expect(select).toHaveBeenCalledWith("SPX")
   expect(close).toHaveBeenCalledOnce()
 })
-it("uses hash routes and an isolated new window for panels", async () => {
+it("opens panels by hash route in a same-origin window that keeps its opener and write token", async () => {
   const open = vi.spyOn(window, "open").mockReturnValue(null)
   await act(async () => root.render(<Popout route={{ symbol: "SPX", view: "orders", expiry: null }} label="orders" />))
-  expect(host.querySelector("a")?.getAttribute("href")).toBe("#/SPX/orders")
-  await act(async () => host.querySelector("a")!.click())
-  expect(open).toHaveBeenCalledWith("#/SPX/orders", "_blank", expect.stringContaining("noopener"))
+  const link = host.querySelector("a")!
+  expect(link.getAttribute("href")).toBe("#/SPX/orders")
+  expect(link.getAttribute("rel")).not.toMatch(/noopener|noreferrer/)
+  await act(async () => link.click())
+  expect(open).toHaveBeenCalledWith("#/SPX/orders", "_blank", expect.stringContaining("popup"))
+  // noreferrer implies noopener, and either drops the sessionStorage copy holding the token.
+  expect(open.mock.calls[0]![2]).not.toMatch(/noopener|noreferrer/)
+  expect(open.mock.calls[0]![0]).not.toContain("token")
 })
 it("renders studies and drawings from actual candle anchors and offers a line as an alert", async () => {
   const bars = Array.from({ length: 25 }, (_, i) => ({ t: 1792157400 + i * 60, o: 100 + i, h: 102 + i, l: 99 + i, c: 101 + i }))

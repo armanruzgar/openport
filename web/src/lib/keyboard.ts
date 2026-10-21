@@ -31,10 +31,13 @@ export function chainKeyFocus(key: string, index: number, side: "call" | "put", 
   return null
 }
 
-/** Enter reviews a ticket; sending still requires activating its explicit submit button. */
+/** Activatable controls (buttons, links, toggles) keep Enter for their own native click. */
+const activatable = 'button, a[href], summary, [role="button"], [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"], [role="option"]'
+/** Enter on a ticket's non-editable, non-activatable content moves focus to its review.
+ * Fields keep Enter (it submits the form natively) and buttons keep their own click. */
 export function reviewTicketKey(event: import("react").KeyboardEvent<HTMLFormElement>) {
   if (event.key !== "Enter" || !shortcutAllowed(event.nativeEvent) ||
-      (event.target instanceof Element && event.target.closest('button[type="submit"]'))) return
+      (event.target instanceof Element && event.target.closest(activatable))) return
   event.preventDefault()
   event.stopPropagation()
   event.currentTarget.querySelector<HTMLElement>("[data-ticket-review]")?.focus()

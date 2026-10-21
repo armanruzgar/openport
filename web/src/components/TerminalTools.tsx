@@ -9,7 +9,7 @@ export function HotkeyHelp({ onClose }: { onClose: () => void }) {
       {[["?", "Show this help"], ["Ctrl / ⌘ K", "Search subscribed symbols"], ["1–9", "Switch sidebar page"],
         ["← / →", "Previous / next expiry outside the chain"], ["↑ / ↓", "Move through strikes in the focused chain"],
         ["← / → in chain", "Select calls / puts"], ["B / S", "Buy / sell focused contract; prefill the ticket"],
-        ["Enter", "Review the ticket; explicit submit still required"], ["Esc", "Cancel the ticket or close a dialog"],
+        ["Enter on a quote", "Open the ticket for that bid or ask"], ["Enter in a ticket", "From a non-editable control, focus the order review; in a field, submit"], ["Esc", "Cancel the ticket or close a dialog"],
         ["F on a position", "Open its existing close confirmation"]].map(([key, text]) => <div key={key} className="contents"><dt><kbd className="tabular">{key}</kbd></dt><dd>{text}</dd></div>)}
     </dl>
     <p className="text-xs text-muted">Trading shortcuts are inactive inside inputs. Tab into a chain or position to select it. Orders and fills are simulated.</p>
@@ -40,6 +40,8 @@ export function Workspaces({ route }: { route: Route }) {
   </>
 }
 export function Popout({ route, label }: { route: Route; label: string }) {
-  return <a className="trade-button" href={formatRoute(route)} target="_blank" rel="noopener noreferrer" aria-label={`Open ${label} in new window`}
-    onClick={(event) => { event.preventDefault(); window.open(formatRoute(route), "_blank", "popup,width=1200,height=900,noopener,noreferrer") }}>↗ {label}</a>
+  // A same-origin pop-out keeps its opener so the browser copies this tab's sessionStorage,
+  // write token included; noopener (which noreferrer implies) would leave it view-only.
+  return <a className="trade-button" href={formatRoute(route)} target="_blank" rel="opener" aria-label={`Open ${label} in new window`}
+    onClick={(event) => { event.preventDefault(); window.open(formatRoute(route), "_blank", "popup,width=1200,height=900") }}>↗ {label}</a>
 }

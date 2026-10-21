@@ -14,13 +14,15 @@ the chain retain the existing previous/next-expiry behavior.
 
 Tab into a chain quote. Up/down moves through strikes, left/right chooses calls
 or puts, and Home/End jumps to the first/last strike. **B** prefills a buy at the
-ask; **S** prefills a sell at the bid. Enter on a quote opens the buy ticket.
+ask; **S** prefills a sell at the bid. Enter on a quote opens the ticket for that
+cell: buy at the ask, sell at the bid.
 These actions use the latest loaded quote and retain the server's trading checks.
 In strategy mode they add or remove a leg using the same rules as clicking quotes.
 
 Inside a ticket, Enter from a non-editable control moves focus to its order
-review. Sending still requires activating the explicit submit button. Escape
-closes the ticket; native modal dialogs trap focus and restore it when closed.
+review; buttons and toggles keep Enter for their own action, and Enter in a field
+submits the form like its submit button. Escape closes the ticket and keeps any
+strategy legs already picked; native modal dialogs trap focus and restore it when closed.
 On Positions, focus a position row and press **F** to open that contract's
 existing close ticket. It does not flatten the entire account or bypass review.
 Shortcuts ignore editable inputs, composition and held-key repeats.
@@ -43,7 +45,11 @@ expiry), chain preferences and chart settings. Saving an existing name replaces
 it. Restore or delete a workspace from the same dialog. Up to 20 workspaces are
 kept locally. Drawings remain associated with their symbol, independently of
 workspace selection. Neither workspace restoration nor a pop-out changes the
-paper account or submits an order.
+paper account or submits an order. A pop-out opens in the same origin with this
+tab as its opener, so the browser copies the tab's session write token into it;
+the token never goes in the pop-out's address. Restoring a workspace, or changing
+the ticket mode in another tab, clears the open ticket and picked legs, as the
+Single / Strategy toggle does.
 
 **Stack expiries** adds collapsible sections below the selected chain. Only opened
 sections and expiries needed by strategy legs are fetched. Each chain renders a
