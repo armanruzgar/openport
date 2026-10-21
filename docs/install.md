@@ -18,7 +18,8 @@ brew services start openport
 Open the `http://localhost:8080/#token=…` link in
 `$(brew --prefix)/var/log/openport.log`. If it has not appeared yet, append the
 contents of `$(brew --prefix)/var/openport/write-token` to
-`http://localhost:8080/#token=`. The service keeps accounts and chart history under
+`http://localhost:8080/#token=`, percent-encoded if you replaced the generated hex
+token with one that has other characters. The service keeps accounts and chart history under
 `$(brew --prefix)/var/openport`; logs are in `var/log/openport.log` and
 `var/log/openport.error.log`. The formula installs the self-contained macOS archive.
 For Intel Macs and Linux, use Docker or the source build.
@@ -44,6 +45,12 @@ docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport -e DATABENT
 ```
 
 `docker build -t openport .` builds the same image from a checkout.
+
+The commands that run once and exit, `--verify-run FILE`, `--backtest` and
+`--import-day`, use the same image and get only the arguments you pass, for example
+`docker run --rm -v openport:/var/lib/openport ghcr.io/38st/openport --verify-run /var/lib/openport/paper-journal.jsonl`.
+Add `--paper-journal /var/lib/openport/paper-journal.jsonl` to a backtest to use the
+server's playbooks, and write its `--out` report inside the volume.
 
 ## Docker Compose
 
