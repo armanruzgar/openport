@@ -80,6 +80,7 @@ target_sources(openport_tests PRIVATE
   trading/matching_test.cpp
   trading/fills_test.cpp
   trading/fill_models_test.cpp
+  trading/fill_quality_test.cpp
   trading/walk_test.cpp
   trading/costs_test.cpp
   trading/kill_test.cpp
