@@ -1,5 +1,19 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- **Import historical options from Massive (Polygon).** Historical contract discovery,
+  paginated quotes and trades preserve vendor timestamps. Tested with generated
+  saved-response fixtures; paid historical access has not been validated live.
+- **Import date ranges and resume.** All importers accept inclusive `--import-days`
+  ranges and repeated dates, skip calendar closures, report progress and skip only
+  matching complete recordings.
+- **Record across trading dates.** `--record-dir` rolls at calendar boundaries and
+  publishes only complete files, with optional oldest-first age/size retention that
+  protects active files. Replay lists trading dates, symbols and sources across providers.
+- **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
+  duration and cover multiple pauses/resumes before the pacing loop observes them.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans
