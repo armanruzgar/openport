@@ -14,6 +14,11 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Volatility history:** ranks, percentiles and population z-scores for signed skew
   and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
   Live comparison measurements remain pending.
+- **Volatility fixes:** surface history keeps one close per session on disk, loads
+  13 months and keeps 400 days in memory; range lists return at most 400 snapshots
+  with a `truncated` flag, and Python defaults to comparisons. Scanner rows are cached
+  per publication. Event estimates count one event per date and session, and an
+  event at a settlement instant now solves after that expiry.
 
 ## 0.4.0 (2026-10-06)
 

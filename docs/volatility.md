@@ -416,8 +416,10 @@ differences remain pending; synthetic tests establish arithmetic, not accuracy.
 `event_volatility` supplements the allocated session moves with a **derived**
 event premium. It reads `--events` labels, earnings/news in `--event-calendar`,
 and the requested account's plan calendar (`?account=...`, normally the selected
-terminal account). Imported duplicates count once. Symbol-specific entries only
-apply to that underlying. Dividends and splits are excluded: their mechanical
+terminal account). Entries on the same date that resolve to the same session
+count once, with their labels joined, so an earnings date imported into the plan or
+listed by two sources is one event. Symbol-specific entries only apply to that
+underlying. Dividends and splits are excluded: their mechanical
 price adjustments are not event uncertainty. Plan changes are read on each
 request even when the market snapshot has not advanced.
 
@@ -428,7 +430,10 @@ session, including across weekends/holidays. News uses its supplied exact time.
 The response's `time` is null for date-only/BMO/AMC events; these timing conventions
 do not fabricate a release or market timestamp.
 
-Choose the **adjacent listed expiries** immediately before and at/after the event.
+Choose the **adjacent listed expiries** immediately before and after the event.
+An event exactly at a settlement instant (news timed at the close) falls after that
+expiry, matching the next-session assignment above; a BMO event still falls inside
+the same morning's AM settlement.
 Do not skip an unusable expiry. Both must still be unexpired at market `as_of`.
 Let W₁ and W₂ be their total variances. N₁ is the business-session weight from
 `as_of` to the earlier settlement; N₂ is N₁ plus the weight of the interval
@@ -458,6 +463,14 @@ null moves with `event_not_bracketed`, `no_baseline_sessions`,
 `multiple_events_in_solve`, or `unusable_variance`. A negative premium remains
 reported but has a null move (`negative_event_premium`); a decreasing total
 variance flags `negative_forward_variance`. Roundoff within 1e-12 is zero.
+
+News entries without a symbol, and every `--events` label, apply to **every**
+underlying, so they count against each symbol's solve. A single stock usually lists
+only weekly or monthly expiries; a macro release (CPI, payrolls, FOMC) almost always
+falls between its earnings date and the later expiry, so its earnings estimate is
+often `multiple_events_in_solve`. Index products with daily expiries are affected
+far less. Give macro news a symbol, or keep separate calendars, when single-stock
+earnings estimates matter more than macro labels on those symbols.
 Unknown events, changing background volatility, coarse AM/PM allocation,
 wide expiry spacing, risk premiums and illiquid/truncated strips can all distort
 this estimate. It is not a uniquely identified event forecast or observed return.
@@ -481,6 +494,10 @@ proxy before local observations; RR history never does. Today's move requires an
 unexpired same-day settlement; absence is null, not zero. Values retain the same
 finite-strip, smile, coverage and staleness limits as the individual endpoints.
 
+Scanner rows are cached per symbol publication: polling tabs reuse a row until that
+symbol publishes a new snapshot, while feed state is read on every request. History
+stored meanwhile enters the ranks with the next publication.
+
 The Python client and MCP server expose `volatility_history`, `surface_history` and
-`volatility_scanner`; Python's `series(symbol)` continues to mean listed expiry series for
-compatibility. Surface history storage and comparison details are in [SVI](svi.md#historical-surface-snapshots).
+`volatility_scanner`. Both default `surface_history` to the comparisons only. Python's
+`series(symbol)` continues to mean listed expiry series for compatibility. Surface history storage and comparison details are in [SVI](svi.md#historical-surface-snapshots).
