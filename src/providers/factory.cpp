@@ -8,6 +8,7 @@
 
 #include "openport/providers/alpaca.hpp"
 #include "openport/providers/cboe.hpp"
+#include "openport/providers/failover.hpp"
 #include "openport/providers/massive.hpp"
 #include "openport/providers/options.hpp"
 #include "openport/providers/replay.hpp"
@@ -245,6 +246,17 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
     return std::make_unique<ThetaDataProvider>(std::move(options));
   }
   throw std::invalid_argument("unknown provider: " + config.name);
+}
+
+std::unique_ptr<md::Provider> make_failover_provider(const md::ProviderConfig& primary,
+                                                    const md::ProviderConfig& backup, std::chrono::seconds after) {
+  for (const auto* config : {&primary, &backup})
+    if (config->name == "replay" || config->name == "demo")
+      throw std::invalid_argument("--fallback-provider: " + config->name + " is not a live feed");
+  if (primary.name == backup.name) throw std::invalid_argument("--fallback-provider must name a different provider");
+  FailoverProvider::Options options;
+  options.after = after;
+  return std::make_unique<FailoverProvider>(make_provider(primary), make_provider(backup), std::move(options));
 }
 
 }  // namespace openport::providers

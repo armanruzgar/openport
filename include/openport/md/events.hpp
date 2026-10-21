@@ -101,6 +101,9 @@ struct ProviderStatus {
   FeedState state = FeedState::Connecting;
   std::string message;
   std::string underlying;  ///< empty only for provider-wide failures
+  /// The feed now supplying `underlying`, as a failover provider names it; empty
+  /// from a single feed. Not recorded: a recording's header names its provider.
+  std::string feed{};
 };
 
 /// An underlying's official closing price for a trading date, as its provider

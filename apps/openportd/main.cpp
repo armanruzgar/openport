@@ -68,6 +68,8 @@ void on_signal(int signal) {
 
 struct Settings {
   md::ProviderConfig provider{"cboe", "", {}};
+  md::ProviderConfig fallback{"", "", {}};
+  std::optional<int> fallback_seconds;
   bool explicit_symbols = false;
   md::Subscription subscription{{"SPX", "SPY", "QQQ", "IWM", "DIA"}, 0, 0.0};
   std::string address = "127.0.0.1";
@@ -123,6 +125,7 @@ int usage(const char* error = nullptr) {
       "usage: openportd [--provider NAME] [--symbols SPX,SPY,QQQ,IWM,DIA] [--address ADDR] [--port N]\n"
       "                 [--scenario-dir DIR] [--web-root DIR] [--expiries N] [--window F] [--poll-seconds N]\n"
       "                 [--record FILE] [--record-dir DIR] [--rate R] [--option KEY=VALUE]... [--allowed-origin ORIGIN]...\n"
+      "                 [--fallback-provider NAME [--fallback-seconds N] [--fallback-option KEY=VALUE]...]\n"
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
       "                 [--paper-journal PATH] [--plan ID] [--paper-cash DECIMAL] [--paper-fee DECIMAL]\n"
@@ -177,6 +180,9 @@ int usage(const char* error = nullptr) {
       "        --option stock_feed=iex|sip|delayed_sip\n"
       "ibkr: local Client Portal gateway you have logged in to; needs --expiries and --window;\n"
       "      --option base_url=https://localhost:5000/v1/api --option max_lines=100\n"
+      "fallback: another live provider takes over an underlying once the main one has been\n"
+      "          stale, in error or silent for N seconds (default 30), and hands it back on\n"
+      "          recovery; its data reports delayed and fills name the feed that priced them\n"
       "record: create a new compressed event file (existing files are never overwritten);\n"
       "        --record-dir names one per run by provider and start time there, and the\n"
       "        web terminal replays recordings from it (default ~/.openport/recordings)\n"
@@ -522,6 +528,14 @@ int run(int argc, char** argv) {
         return usage("--rate must be a finite number in [-0.05, 0.25]");
     } else if (arg == "--poll-seconds") {
       settings.provider.options["poll_seconds"] = value;
+    } else if (arg == "--fallback-provider") {
+      settings.fallback.name = value;
+    } else if (arg == "--fallback-seconds") {
+      settings.fallback_seconds = providers::parse_integer(value, "--fallback-seconds", 1, 3600);
+    } else if (arg == "--fallback-option") {
+      const std::size_t eq = value.find('=');
+      if (eq == std::string::npos) return usage("--fallback-option takes KEY=VALUE");
+      settings.fallback.options[value.substr(0, eq)] = value.substr(eq + 1);
     } else if (arg == "--option") {
       const std::size_t eq = value.find('=');
       if (eq == std::string::npos) return usage("--option takes KEY=VALUE");
@@ -534,6 +548,9 @@ int run(int argc, char** argv) {
   if (settings.sandboxes.capacity && !demo) return usage("--sandboxes requires --provider demo");
   if (settings.sandboxes.capacity && !settings.paper_enabled) return usage("--sandboxes requires paper trading");
   const bool offline = demo || settings.provider.name == "replay";
+  if (settings.fallback.name.empty() && (settings.fallback_seconds || !settings.fallback.options.empty()))
+    return usage("--fallback-seconds and --fallback-option require --fallback-provider");
+  if (!settings.fallback.name.empty() && offline) return usage("--fallback-provider needs a live --provider");
   if (settings.paper_journal.empty()) {
     if (const auto* home = std::getenv("HOME"))
       settings.paper_journal = std::filesystem::path(home) /
@@ -592,9 +609,16 @@ int run(int argc, char** argv) {
   if (settings.paper_enabled && settings.paper_journal.empty())
     return usage("HOME is unavailable; specify --paper-journal or --no-paper");
   if (!demo) providers::validate_subscription(settings.provider.name, settings.subscription);
+  if (!settings.fallback.name.empty()) {
+    providers::validate_subscription(settings.fallback.name, settings.subscription);
+    settings.fallback.api_key = env_key_for(settings.fallback.name);
+  }
   // A SIGKILLed run leaves its generated days behind; nothing else would remove them.
   providers::remove_orphaned_demo_directories();
-  auto provider = providers::make_provider(settings.provider);
+  auto provider = settings.fallback.name.empty()
+      ? providers::make_provider(settings.provider)
+      : providers::make_failover_provider(settings.provider, settings.fallback,
+                                          std::chrono::seconds(settings.fallback_seconds.value_or(30)));
   if (const auto* feed = dynamic_cast<providers::DemoProvider*>(provider.get())) {
     if (!settings.explicit_symbols) settings.subscription.underlyings = feed->symbols();
     feed->validate(settings.subscription);
@@ -605,7 +629,7 @@ int run(int argc, char** argv) {
     std::filesystem::create_directories(settings.record_dir);
     auto stamp = md::format_timestamp(md::now()).substr(0, 19);  // 2026-09-23T20:15:30
     stamp.erase(std::remove(stamp.begin(), stamp.end(), ':'), stamp.end());
-    settings.record_file = settings.record_dir / (settings.provider.name + "-" + stamp + "Z.oprec");
+    settings.record_file = settings.record_dir / (std::string(provider->name()) + "-" + stamp + "Z.oprec");
   }
   server::CandleStore::Options candle_options;
   if (settings.candle_dir)
@@ -750,7 +774,7 @@ int run(int argc, char** argv) {
     symbols += (symbols.empty() ? "" : ", ") + symbol;
   }
   std::printf("OpenPort on http://%s:%u  (provider %s: %s)\n", settings.address.c_str(), web.port(),
-              settings.provider.name.c_str(), symbols.c_str());
+              std::string(provider->name()).c_str(), symbols.c_str());
   std::printf("web terminal: %s\n", settings.web_root.string().c_str());
   if (token_from_file) {
     std::printf("write token: kept in %s; to trade, open this once in a browser tab:\n"

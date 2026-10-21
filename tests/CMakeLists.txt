@@ -44,6 +44,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/dxlink_test.cpp
     providers/schwab_test.cpp
     providers/alpaca_test.cpp
+    providers/failover_test.cpp
     server/api_test.cpp
     server/candles_test.cpp
     server/series_test.cpp
