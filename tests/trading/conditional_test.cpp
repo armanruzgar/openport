@@ -832,6 +832,52 @@ TEST(TradingConditional, TwoOrdersThatCancelEachOtherEndOnTheFirstFill) {
   }
 }
 
+TEST(TradingConditional, AnOrderThatFillsOnAcceptanceCancelsItsPairBeforeItTrades) {
+  ScriptedMarket f;
+  TradingSession s(roomy(), f.time);
+  f.seed(s);
+  const auto placed = s.submit(or_else(f.market("now"), f.market("")), f.time);
+  ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+  ASSERT_EQ(s.snapshot()->recent_orders.size(), 2U);
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Filled);
+  EXPECT_EQ(order(s, 2).status, OrderStatus::Cancelled);
+  EXPECT_EQ(order(s, 2).reason.code, Reason::OCO_FILLED);
+  EXPECT_EQ(order(s, 2).filled_quantity, 0);
+  EXPECT_EQ(order(s, 1).oco, 2U);
+  EXPECT_EQ(order(s, 2).oco, 1U);
+  EXPECT_EQ(s.snapshot()->positions.front().position.quantity, 1);
+  // The other is still checked: a refused other refuses the pair, and nothing fills.
+  const auto refused = s.submit(or_else(f.market("again"), f.limit("", 1, "3.53")), f.time);
+  EXPECT_EQ(refused.decision.code, Reason::INVALID_TICK);
+  EXPECT_EQ(s.snapshot()->positions.front().position.quantity, 1);
+}
+
+TEST(TradingConditional, AChainedCloseThatSupersedesAStopOnABuyOnlyPlanIsPlaced) {
+  ScriptedMarket f;
+  AccountRules rules;
+  rules.buy_only = true;
+  TradingSession s(roomy(rules), f.time);
+  f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("long", 1), f.time).decision.ok());
+  auto stop = f.market("stop", 1, Side::Sell);
+  stop.trigger = trigger(TriggerSource::Option, TriggerDirection::AtOrBelow, "3.00");
+  ASSERT_TRUE(s.submit(stop, f.time).decision.ok());
+  // Resting until the next quote, so it is among the open orders when it fills.
+  // Placing the close replaces the account state while the open orders are visited,
+  // and a later open order is still to be visited.
+  ASSERT_TRUE(s.submit(then(f.limit("add", 1, "3.90"), f.limit("", 2, "4.40", Side::Sell, TimeInForce::Gtc)), f.time).decision.ok());
+  const auto low = s.submit(f.limit("low", 1, "3.80", Side::Buy, TimeInForce::Gtc), f.time);
+  ASSERT_TRUE(low.decision.ok()) << low.decision.message;
+  quote(s, f, "3.80", "3.90");
+  EXPECT_EQ(order(s, 3).status, OrderStatus::Filled);
+  ASSERT_EQ(s.snapshot()->recent_orders.size(), 5U);
+  EXPECT_EQ(order(s, 2).status, OrderStatus::Cancelled);
+  EXPECT_EQ(order(s, 2).reason.code, Reason::POSITION_CLOSED);
+  EXPECT_EQ(order(s, 5).status, OrderStatus::Working);
+  EXPECT_EQ(order(s, 3).chained, 5U);
+  EXPECT_EQ(order(s, 4).status, OrderStatus::Working);
+}
+
 TEST(TradingConditional, TwoOrdersThatCancelEachOtherAreAcceptedTogetherOrNotAtAll) {
   ScriptedMarket f;
   TradingSession s(roomy(), f.time);

@@ -98,6 +98,9 @@ TEST(TradingConditions, ATimeTriggerClosesAtANewYorkMinuteAndFiresAtOnceWhenItHa
   // Placed after its time, it is reached at once; at_or_below waits for the next morning.
   auto late = f.limit("late", 1, "4.20");
   late.trigger = at(15, 0);
+  const auto warned = s.preview(late, f.time).warnings;
+  ASSERT_EQ(warned.size(), 1U);
+  EXPECT_EQ(warned.front().message, "The trigger, at or after 15:00 New York time, is already reached: the order activates at once");
   ASSERT_TRUE(s.submit(late, f.time).decision.ok());
   EXPECT_EQ(order(s, 3).status, OrderStatus::Filled);
   auto morning = f.limit("morning", 1, "4.20", Side::Buy, TimeInForce::Gtc);

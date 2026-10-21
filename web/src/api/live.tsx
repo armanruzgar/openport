@@ -153,8 +153,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       } })
   }, [source, switchSource, queryClient])
   // Fall back to the main account when the active one is gone (or the server keeps only one).
-  const known = tick?.accounts ?? (source === "live" ? status.data?.accounts ?? (status.data ? [] : undefined) : undefined)
+  const known = useMemo(() => tick?.accounts ?? (source === "live" ? status.data?.accounts ?? (status.data ? [] : undefined) : undefined),
+    [tick, source, status.data])
+  // Judge an account only against a list that arrived after switching to it: a just-created
+  // account is missing from the tick that was current when it was created.
+  const judged = useRef({ account, known })
   useEffect(() => {
+    if (judged.current.account !== account) { judged.current = { account, known }; return }
+    if (judged.current.known === known) return
+    judged.current.known = known
     if (!isSandboxToken(token) && source === "live" && known && account !== MAIN_ACCOUNT && !known.some((a) => a.id === account)) {
       switchAccount(MAIN_ACCOUNT, "automatic")
       announceDestination("The active account is no longer available.")

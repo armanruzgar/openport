@@ -20,6 +20,8 @@ bool has(const AccountRules& r, const std::string& kind) {
 }
 md::Date event_date(const PlanEvent& e) { return md::date_from_days(event_time(e) / md::kNanosPerDay); }
 Timestamp at(md::Date day, std::int64_t minute) {
+  // day_end may be 24:00, which is midnight starting the next day.
+  if (minute >= 24 * 60) { day = md::date_from_days(md::days_since_epoch(day) + minute / (24 * 60)); minute %= 24 * 60; }
   return md::new_york_to_utc(day, static_cast<int>(minute / 60), static_cast<int>(minute % 60));
 }
 // Canonical UTC, retaining all nanoseconds (the ordinary display formatter uses milliseconds).

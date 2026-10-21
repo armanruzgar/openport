@@ -209,6 +209,23 @@ TEST(Playbooks, StageTrailingRuleLatchesAndAutoWaitsWithoutCancellingProtection)
   EXPECT_EQ(view->snapshot->recent_orders.back().request.note, "Playbook automatic trailing stop; entry 1");
   EXPECT_EQ(server::playbook_report(json::parse(view->playbooks_json), *view).at("morning").at("trades")[0].at("rules").at("trailing_stop"), false);
 }
+TEST(Playbooks, ATrailingStopThatCannotPreviewWhileStoppingWaits) {
+  const auto opened = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  server::Desk::Options options; options.replay = true;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(opened, 10), opened, opened);
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", breadth_setup()}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  ASSERT_EQ(desk.trading_view()->snapshot->positions.size(), 2U);
+  const auto peak = opened + md::kNanosPerMinute, fire = peak + md::kNanosPerMinute;
+  desk.replay_batch(breadth_batch(peak, 9), peak, peak);
+  // Stopping refuses the stop's preview; the evaluation must not throw out of the update.
+  desk.halt();
+  EXPECT_NO_THROW(desk.replay_batch(breadth_batch(fire, 9.5), fire, fire));
+  EXPECT_EQ(desk.trading_view()->snapshot->positions.size(), 2U);
+  EXPECT_EQ(desk.accounts().front().trading.reason, "");
+}
 TEST(Playbooks, TechnicalInputsExcludeCurrentAndFutureBars) {
   const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
   auto setup = breadth_setup();
@@ -337,6 +354,22 @@ TEST(Playbooks, EditsVersionAndArchiveRetainsHistoryOnDisk) {
   EXPECT_EQ(record.at("versions")[0].at("name"), "Morning spread");
   EXPECT_EQ(record.at("versions")[1].at("version"), 2);
   EXPECT_THROW(recovered.change({{"action", "create"}, {"definition", definition()}}, "main", false), std::invalid_argument);
+}
+TEST(Playbooks, SaveRefusesHistoryThatStartupCouldNotLoad) {
+  test::RecordingFile file;
+  const auto path = file.directory / "playbooks.json";
+  // About 4 MiB compact, but more than 8 MiB once indented as it is written.
+  json versions = json::array();
+  while (versions.size() % 500 != 0 || json(versions).dump().size() < 4 * 1024 * 1024) {
+    auto version = definition();
+    version["version"] = static_cast<int>(versions.size()) + 1;
+    versions.push_back(std::move(version));
+  }
+  const auto current = static_cast<int>(versions.size());
+  server::Playbooks store(path, {{"schema", 1}, {"definitions", {{"morning", {{"versions", versions}, {"deleted", false}}}}}, {"modes", json::object()}});
+  auto edited = definition(); edited["version"] = current;
+  EXPECT_THROW(store.change({{"action", "update"}, {"definition", edited}}, "main", false), std::invalid_argument);
+  EXPECT_FALSE(std::filesystem::exists(path));
 }
 TEST(Playbooks, LiveAutoBindingsAreAccountSpecific) {
   server::Playbooks store;
@@ -556,6 +589,45 @@ struct ScenarioFixture {
     return value;
   }
 };
+TEST(Playbooks, AJournalFailureDuringAnAutomaticCancelFailsOnlyItsAccount) {
+  ScenarioFixture fixture;
+  md::RecordingReader reader(fixture.file.path);
+  providers::ReplayBatches batches(reader, reader.header().subscription);
+  const auto first = batches.next(); ASSERT_TRUE(first);
+  // The disk fills after `allowed` more writes, once armed.
+  bool armed = false;
+  int writes = 0, allowed = 0;
+  server::Desk::Options options; options.replay = true;
+  options.paper_journal = fixture.file.directory / "main.jsonl";
+  options.journal_io.free_bytes = [&](int) { ++writes; return armed && writes > allowed ? 12345ULL : 1024ULL * 1024 * 1024; };
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("replay (test)", reader.header().capabilities, reader.header().subscription, options);
+  desk.start_trading(); desk.replay_batch(first->events, first->received, first->time);
+  auto setup = fixture.setup();
+  setup["management"]["take_profit_percent"] = 50;
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", setup}}, desk.market_time()).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, desk.market_time()).decision.ok());
+  ASSERT_FALSE(desk.trading_view()->snapshot->open_orders.empty());
+  // Past close_by the time stop, evaluated after the update's own writes, cancels the
+  // take-profit first, and that write fails.
+  bool fired = false;
+  int per_batch = 0;
+  while (const auto batch = batches.next()) {
+    if (batch->time < first->time + 2 * md::kNanosPerMinute) {
+      writes = 0;
+      desk.replay_batch(batch->events, batch->received, batch->time);
+      per_batch = writes;
+      continue;
+    }
+    writes = 0; allowed = per_batch; armed = true;
+    EXPECT_NO_THROW(desk.replay_batch(batch->events, batch->received, batch->time));
+    fired = true;
+    break;
+  }
+  ASSERT_TRUE(fired);
+  EXPECT_TRUE(desk.trading_status().reason.starts_with("JOURNAL_IO: ")) << desk.trading_status().reason;
+  desk.stop();
+}
 TEST(Playbooks, LiveAutoRecoversEntryAndOverdueTimeStopWithoutDuplicates) {
   ScenarioFixture fixture;
   md::RecordingReader reader(fixture.file.path);

@@ -118,6 +118,35 @@ TEST(Databento, MapsDefinitionsQuotesTradesAndOpenInterest) {
   EXPECT_DOUBLE_EQ(oi[0].contracts, 1520.0);
 }
 
+TEST(Databento, AReusedIdFollowsItsLatestDefinitionAndAContractKeepsItsId) {
+  Collector sink;
+  providers::DatabentoMapper mapper(sink);
+  const auto quote_for = [&](std::uint32_t vendor, std::uint64_t ts) {
+    db::CbboMsg quote{};
+    stamp(quote, db::RType::Cbbo1S, vendor, ts);
+    quote.levels[0].bid_px = kScale;
+    quote.levels[0].ask_px = 2 * kScale;
+    feed(mapper, quote);
+    return sink.all<md::OptionQuote>().back().id;
+  };
+  // Yesterday's definition from the start-of-day replay, then today's for the same ID.
+  auto yesterday = definition(1234, "SPXW  261021C07400000", db::InstrumentClass::Call);
+  feed(mapper, yesterday);
+  EXPECT_EQ(quote_for(1234, 10), 0u);
+  auto today = definition(1234, "SPXW  261022P07450000", db::InstrumentClass::Put);
+  feed(mapper, today);
+  const auto definitions = sink.all<md::ContractDefinition>();
+  ASSERT_EQ(definitions.size(), 2u);
+  EXPECT_EQ(definitions[1].id, 1u);
+  EXPECT_DOUBLE_EQ(definitions[1].contract.strike, 7450.0);
+  EXPECT_EQ(quote_for(1234, 20), 1u);
+  // After midnight the first contract arrives under a new ID: no second definition.
+  auto renumbered = definition(77, "SPXW  261021C07400000", db::InstrumentClass::Call);
+  feed(mapper, renumbered);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 2u);
+  EXPECT_EQ(quote_for(77, 30), 0u);
+}
+
 TEST(Databento, DropsRecordsForUndefinedInstrumentsAndHandlesEmptySides) {
   Collector sink;
   providers::DatabentoMapper mapper(sink);

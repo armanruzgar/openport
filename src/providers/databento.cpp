@@ -88,8 +88,13 @@ void DatabentoMapper::on_definition(const db::InstrumentDefMsg& def) {
   std::optional<md::OptionContract> contract = md::parse_osi(def.RawSymbol());
   if (!contract) return;
 
+  // OPRA IDs are unique only within a UTC day: the start-of-day replay reaches into
+  // the previous day, and a session running past midnight gets new IDs. Definitions
+  // arrive in time order, so the latest one for a Databento ID wins, and a contract
+  // keeps our ID whatever Databento ID it had.
   const auto [it, inserted] =
-      ids_.try_emplace(def.hd.instrument_id, static_cast<md::InstrumentId>(ids_.size()));
+      contracts_.try_emplace(contract->osi_symbol(), static_cast<md::InstrumentId>(contracts_.size()));
+  ids_.insert_or_assign(def.hd.instrument_id, it->second);
   if (inserted) {
     underlyings_.push_back(contract->underlying);
     sink_.publish(md::ContractDefinition{it->second, std::move(*contract)});

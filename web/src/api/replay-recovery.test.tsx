@@ -103,6 +103,18 @@ it("keeps a deliberate sidebar account switch silent, then announces its automat
   expect(activeAccount.get()).toBe("main")
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("active account is no longer available")
 })
+it("keeps a just-created account active until a newer account list leaves it out", async () => {
+  dataSource.set("live")
+  const accounts = [{ id: "main", name: "Practice", trading: status.trading! }]
+  vi.mocked(api.status).mockResolvedValue({ ...status, accounts })
+  await render(); await advance(1)
+  await act(async () => activeAccount.set("fresh", "user")); await advance(1)
+  expect(activeAccount.get()).toBe("fresh")
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+  vi.mocked(api.status).mockResolvedValue({ ...status, accounts: [...accounts, { id: "fresh", name: "Fresh", trading: status.trading! }] })
+  await act(async () => { await client.invalidateQueries({ queryKey: ["status"] }) }); await advance(1)
+  expect(activeAccount.get()).toBe("fresh")
+})
 it("keeps Trade this replay and both Back to live controls silent", async () => {
   dataSource.set("live")
   vi.spyOn(api, "plans").mockResolvedValue({ plans: [] })

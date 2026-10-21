@@ -74,6 +74,7 @@ class DatabentoMapper {
 
   md::EventSink& sink_;
   std::unordered_map<std::uint32_t, md::InstrumentId> ids_;  // Databento id -> ours
+  std::unordered_map<std::string, md::InstrumentId> contracts_;  // OSI symbol -> ours
   std::vector<std::string> underlyings_;
   std::set<std::string> live_underlyings_;
   struct Volume {

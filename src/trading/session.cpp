@@ -4306,7 +4306,14 @@ CommandResult place(State& s, OrderRequest request, Timestamp time, const Decisi
   other.client_order_id = request.client_order_id + ":oco";
   const auto first = place_one(s, request, time, rejection, events);
   if (!first.decision.ok()) return first;
-  const auto second = place_one(s, std::move(other), time, {}, events, *first.order_id);
+  const auto a = *first.order_id;
+  // A first order that filled on acceptance leaves the other nothing to trade: it is
+  // checked for acceptance on a copy, then recorded and cancelled before it can match.
+  const bool first_filled = s.orders.at(static_cast<std::size_t>(a - 1)).filled_quantity > 0;
+  std::optional<State> trial;
+  if (first_filled) trial.emplace(s);
+  Events trial_events;
+  const auto second = place_one(first_filled ? *trial : s, other, time, {}, first_filled ? trial_events : events, a);
   if (!second.decision.ok()) {
     s = before;
     events.erase(events.begin() + static_cast<std::ptrdiff_t>(recorded), events.end());
@@ -4314,7 +4321,18 @@ CommandResult place(State& s, OrderRequest request, Timestamp time, const Decisi
     refused.message = "The order that cancels it: " + refused.message;
     return place_one(s, std::move(request), time, refused, events);
   }
-  const auto a = *first.order_id, b = *second.order_id;
+  if (first_filled) {
+    Order order;
+    order.id = static_cast<OrderId>(s.orders.size() + 1);
+    order.request = std::move(other);
+    order.actor = s.actor;
+    order.accepted_at = time;
+    order.status = order.request.trigger ? OrderStatus::Armed : OrderStatus::Working;
+    order.day_end = order_end(s, order.request, time);
+    add_order(s, order);
+    event(events, "order_accepted", s.orders.back());
+  }
+  const auto b = first_filled ? static_cast<OrderId>(s.orders.size()) : *second.order_id;
   s.orders.mut(a - 1).oco = b;
   s.orders.mut(b - 1).oco = a;
   for (const auto& [filled, open] : {std::pair{a, b}, std::pair{b, a}})
@@ -4340,7 +4358,10 @@ void place_chained(State& s, Events& events) {
     s.orders.mut(id - 1).chained = *placed.order_id;
     s.orders.mut(*placed.order_id - 1).chained_from = id;
   };
-  for (const auto id : s.working) visit(id);
+  // place() can replace the whole State (a superseded stop's trial, a refused pair),
+  // so iterate a copy of the orders that were open.
+  const auto working = s.working;
+  for (const auto id : working) visit(id);
   for (auto i = s.indexed; i < s.orders.size(); ++i) visit(static_cast<OrderId>(i + 1));
 }
 std::string underlying_of(const State& s, const Order& o) {
@@ -5065,7 +5086,16 @@ std::vector<OrderWarning> order_warnings(const State& s, const OrderRequest& r) 
   for (const auto& symbol : order_symbols(r))
     if (!s.contracts.contains(symbol) || !s.books.contains(symbol)) return out;
   const auto level_text = [](const Trigger& t) {
+    if (t.source == TriggerSource::Time) {
+      const auto clock = std::to_string(100 + t.minute / 60).substr(1) + ":" + std::to_string(100 + t.minute % 60).substr(1);
+      return std::string(t.direction == TriggerDirection::AtOrBelow ? "at or before " : "at or after ") + clock + " New York time";
+    }
     return std::string(t.direction == TriggerDirection::AtOrBelow ? "at or below " : "at or above ") + t.level.str();
+  };
+  // A time trigger reads the clock and has no value to show.
+  const auto now_text = [&](const Order& o) {
+    const auto value = trigger_value(s, o);
+    return value ? " (now " + value->str() + ")" : std::string();
   };
   // A bracket's exits as attach_exits makes them; held exits already close.
   const auto exit_of = [&](const ExitSpec& spec, OrderRole role) {
@@ -5097,8 +5127,8 @@ std::vector<OrderWarning> order_warnings(const State& s, const OrderRequest& r) 
       if (value && marketable(exit, *value)) message += "; the closing price now, " + value->str() + ", already reaches it, so it closes the position " + fires;
       out.push_back({"STOP_AS_LIMIT", message + ". Give the stop a trigger instead."});
     } else if (exit.request.trigger && reached(s, exit)) {
-      out.push_back({"STOP_REACHED", "The stop's trigger, " + level_text(*exit.request.trigger) + ", is already reached (now " +
-                     trigger_value(s, exit)->str() + "): it fires " + fires});
+      out.push_back({"STOP_REACHED", "The stop's trigger, " + level_text(*exit.request.trigger) + ", is already reached" +
+                     now_text(exit) + ": it fires " + fires});
     }
   }
   if (r.bracket && r.bracket->take_profit && r.bracket->take_profit->limit_price && !r.bracket->take_profit->trigger) {
@@ -5111,8 +5141,8 @@ std::vector<OrderWarning> order_warnings(const State& s, const OrderRequest& r) 
     Order armed;
     armed.request = r;
     if (reached(s, armed))
-      out.push_back({"TRIGGER_REACHED", "The trigger, " + level_text(*r.trigger) + ", is already reached (now " +
-                     trigger_value(s, armed)->str() + "): the order activates at once"});
+      out.push_back({"TRIGGER_REACHED", "The trigger, " + level_text(*r.trigger) + ", is already reached" +
+                     now_text(armed) + ": the order activates at once"});
   }
   // Slippage that alone pushes a market order's price outside the band.
   if (!multi_leg(r) && !r.limit_price && s.config.rules.slippage_ticks > 0 && quote_check(s, r.symbol).ok()) {

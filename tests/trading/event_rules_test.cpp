@@ -331,6 +331,16 @@ TEST(EventRules, OverlappingNewsAndDuplicateHoldingScopesActDeterministically) {
   normalize_event_rules(r, true);
   EXPECT_EQ(event_windows(r, md::new_york_to_utc({2026, 9, 22}, 15, 45), md::new_york_to_utc({2026, 9, 22}, 15, 45)).size(), 1U);
 }
+TEST(EventRules, MidnightDayEndKeepsHoldingWindowsUntilTheNextDay) {
+  AccountRules r; r.day_end_minutes = 24 * 60; r.hold_restrictions = {"weekend"};
+  normalize_event_rules(r, true);
+  const auto friday = md::new_york_to_utc({2026, 9, 25}, 15, 50);
+  const auto windows = event_windows(r, friday, friday);
+  ASSERT_EQ(windows.size(), 1U);
+  EXPECT_EQ(windows.front().start, md::new_york_to_utc({2026, 9, 25}, 15, 45));
+  EXPECT_EQ(windows.front().end, md::new_york_to_utc({2026, 9, 26}, 0, 0));
+  EXPECT_EQ(event_entry_check(r, "SPX", friday).code, Reason::HOLD_RESTRICTED);
+}
 TEST(EventRules, CombinedRolloverPrecedenceAndRecoveryBeforeLateCloses) {
   for (const bool overnight : {false, true}) {
     for (const bool explicit_roll : {false, true}) {

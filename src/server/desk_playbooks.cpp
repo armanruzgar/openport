@@ -83,7 +83,7 @@ void Desk::evaluate_playbooks(md::Timestamp driver_time) {
       }
       return result;
     };
-    const auto preview = [&](const trading::OrderRequest& order, double share) {
+    const auto project = [&](const trading::OrderRequest& order, double share) {
       TradingReply reply;
       TradingCommand command;
       command.kind = TradingCommand::Kind::Preview;
@@ -92,6 +92,10 @@ void Desk::evaluate_playbooks(md::Timestamp driver_time) {
       command.floor_share = share;
       PendingCommand pending{0, command, [&](TradingReply result) { reply = std::move(result); }};
       apply_command(pending, market_time_, driver_time);
+      return reply;
+    };
+    const auto preview = [&](const trading::OrderRequest& order, double share) {
+      auto reply = project(order, share);
       if (!reply.preview) throw std::invalid_argument(reply.decision.message.empty() ? "Preview unavailable" : reply.decision.message);
       return *reply.preview;
     };
@@ -122,8 +126,13 @@ void Desk::evaluate_playbooks(md::Timestamp driver_time) {
         }
       }
       if (time_stop && close_reason != cancel_reason) {
-        const auto check = preview(order, 1.0);
-        if (!check.decision.ok()) { reply.decision = check.decision; return reply; }
+        // An account that cannot preview (failed, or stopping) waits like an unpriced close.
+        const auto check = project(order, 1.0);
+        if (!check.preview || !check.preview->decision.ok()) {
+          reply.decision = check.preview ? check.preview->decision : check.decision;
+          reply.error_code = check.error_code;
+          return reply;
+        }
       }
       if (time_stop) {
         if (!options_.replay) account.session->set_actor("system");
@@ -163,11 +172,19 @@ void Desk::evaluate_playbooks(md::Timestamp driver_time) {
       apply_command(pending.front(), market_time_, driver_time);
       return reply;
     };
-    playbooks_->evaluate(account.id, options_.replay, market_time_, metrics_, *view, inputs, preview, send,
-        [&](trading::OrderId id, trading::Reason reason) {
-          if (!options_.replay) account.session->set_actor("system");
-          account.session->cancel(id, market_time_, reason == trading::Reason::PLAYBOOK_TIME_STOP ? cancel_reason : reason);
-        });
+    // A failure here (a journal write behind an automatic cancel or close) fails this
+    // account only, as in update_trading; it must not reach the engine thread.
+    try {
+      playbooks_->evaluate(account.id, options_.replay, market_time_, metrics_, *view, inputs, preview, send,
+          [&](trading::OrderId id, trading::Reason reason) {
+            if (!options_.replay) account.session->set_actor("system");
+            account.session->cancel(id, market_time_, reason == trading::Reason::PLAYBOOK_TIME_STOP ? cancel_reason : reason);
+          });
+    } catch (const trading::TradingError& error) {
+      fail_trading(account, std::string(to_string(error.code())) + ": " + error.what());
+    } catch (const std::exception& error) {
+      fail_trading(account, std::string("TRADING_UNAVAILABLE: ") + error.what());
+    }
   }
   if (evaluated) publish_trading();
 }

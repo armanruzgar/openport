@@ -481,10 +481,12 @@ Playbooks::Playbooks(std::filesystem::path file, Json initial) : file_(std::move
   }
 }
 void Playbooks::save(const Json& next) {
-  if (next.dump().size() > 8 * 1024 * 1024) invalid("Playbook history exceeds 8 MiB");
+  // Limit the bytes written, which is what the constructor checks on the next start.
+  const auto text = next.dump(2) + '\n';
+  if (text.size() > 8 * 1024 * 1024) invalid("Playbook history exceeds 8 MiB");
   if (!file_.empty()) {
     const auto temporary = file_.string() + ".tmp";
-    { std::ofstream output(temporary, std::ios::trunc); output << next.dump(2) << '\n'; output.flush(); if (!output) invalid("Cannot save playbooks.json"); }
+    { std::ofstream output(temporary, std::ios::trunc); output << text; output.flush(); if (!output) invalid("Cannot save playbooks.json"); }
     const int fd = ::open(temporary.c_str(), O_RDONLY);
     if (fd < 0) invalid("Cannot sync playbooks.json");
     const bool synced = ::fsync(fd) == 0;
