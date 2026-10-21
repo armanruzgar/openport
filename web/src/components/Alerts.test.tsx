@@ -115,6 +115,25 @@ describe("the alert watcher", () => {
     expect(host.textContent).toContain("SPX rose to 5,000.00")
   })
 
+  it("keeps another tab's alerts and does not repeat one it already fired", async () => {
+    const up = { id: "up", symbol: "SPX", direction: "above" as const, level: 5000, created: "2026-09-23T19:00:00.000Z" }
+    const down = { ...up, id: "down", direction: "below" as const, level: 4900 }
+    const added = { ...up, id: "added", level: 5100 }
+    alertStore.set({ fills: false, sound: false, prices: [up, down] })
+    live(4990)
+    await render(<AlertWatcher />)
+    // Another tab fired "up" and added an alert; its storage event has not arrived here yet.
+    localStorage.setItem("openport.alerts", JSON.stringify({ fills: false, sound: false, prices: [down, added] }))
+    live(5001)
+    await render(<AlertWatcher />)
+    expect(shown).toEqual([])
+    expect(alertStore.get().prices.map((a) => a.id)).toEqual(["down", "added"])
+    // Its later changes arrive as storage events.
+    localStorage.setItem("openport.alerts", JSON.stringify({ fills: false, sound: false, prices: [down] }))
+    await act(async () => window.dispatchEvent(new StorageEvent("storage", { key: "openport.alerts" })))
+    expect(alertStore.get().prices.map((a) => a.id)).toEqual(["down"])
+  })
+
   it("ignores a replay's prices", async () => {
     alertStore.set({ ...noAlerts, prices: [{ id: "up", symbol: "SPX", direction: "above", level: 5000, created: "2026-09-23T19:00:00.000Z" }] })
     live(5100, "replay")

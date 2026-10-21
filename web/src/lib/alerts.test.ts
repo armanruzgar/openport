@@ -43,6 +43,17 @@ describe("price alerts", () => {
     broken.set({ ...noAlerts, fills: true })
     expect(broken.get().fills).toBe(true)
   })
+
+  it("change the stored settings as they are now, keeping another tab's alerts", () => {
+    const items = new Map<string, string>()
+    const store = createAlertStore(() => ({ getItem: (k) => items.get(k) ?? null, setItem: (k, v) => { items.set(k, v) } }))
+    store.set({ fills: false, sound: true, prices: [alert] })
+    const other = { ...alert, id: "b", level: 4900, direction: "below" as const }
+    items.set("openport.alerts", JSON.stringify({ fills: false, sound: true, prices: [alert, other] }))
+    store.update((current) => ({ ...current, sound: false }))
+    expect(store.get()).toEqual({ fills: false, sound: false, prices: [alert, other] })
+    expect(parseAlerts(items.get("openport.alerts") ?? null)).toEqual(store.get())
+  })
 })
 
 describe("fill alerts", () => {

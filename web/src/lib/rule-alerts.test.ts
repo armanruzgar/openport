@@ -25,21 +25,28 @@ describe("rule alerts", () => {
     const storage = () => ({ getItem: () => text, setItem: (_key: string, value: string) => { text = value } })
     const first = createRuleAlertStore(storage)
     const alerts = [{ id: "floor-50", title: "Floor", body: "room" }]
-    expect(first.fresh("main", "2026-09-22", alerts)).toHaveLength(1)
-    expect(first.fresh("main", "2026-09-22", alerts)).toEqual([])
+    expect(first.fresh("main", 1, "2026-09-22", alerts)).toHaveLength(1)
+    expect(first.fresh("main", 1, "2026-09-22", alerts)).toEqual([])
     const reloaded = createRuleAlertStore(storage)
-    expect(reloaded.fresh("main", "2026-09-22", alerts)).toEqual([])
-    expect(reloaded.fresh("second", "2026-09-22", alerts)).toHaveLength(1)
-    expect(reloaded.fresh("main", "2026-09-23", alerts)).toHaveLength(1)
-    expect(reloaded.fresh("main", "2026-09-23", alerts)).toEqual([])
+    expect(reloaded.fresh("main", 1, "2026-09-22", alerts)).toEqual([])
+    expect(reloaded.fresh("second", 1, "2026-09-22", alerts)).toHaveLength(1)
+    expect(reloaded.fresh("main", 1, "2026-09-23", alerts)).toHaveLength(1)
+    expect(reloaded.fresh("main", 1, "2026-09-23", alerts)).toEqual([])
+  })
+  it("alerts again for a new attempt started on the same day", () => {
+    const store = createRuleAlertStore(() => { throw new Error("denied") })
+    const alerts = [{ id: "floor-25", title: "Floor", body: "room" }]
+    expect(store.fresh("main", 1, "2026-09-22", alerts)).toHaveLength(1)
+    expect(store.fresh("main", 2, "2026-09-22", alerts)).toHaveLength(1)
+    expect(store.fresh("main", 2, "2026-09-22", alerts)).toEqual([])
   })
   it("survives denied and corrupt storage with in-memory deduplication", () => {
     const alerts = [{ id: "profit", title: "Target", body: "near" }]
     const store = createRuleAlertStore(() => { throw new Error("denied") })
-    expect(store.fresh("main", "today", alerts)).toHaveLength(1)
-    expect(store.fresh("main", "today", alerts)).toEqual([])
+    expect(store.fresh("main", 1, "today", alerts)).toHaveLength(1)
+    expect(store.fresh("main", 1, "today", alerts)).toEqual([])
     const corrupt = createRuleAlertStore(() => ({ getItem: () => "{", setItem: () => {} }))
-    expect(corrupt.fresh("main", "today", alerts)).toHaveLength(1)
+    expect(corrupt.fresh("main", 1, "today", alerts)).toHaveLength(1)
   })
   it("does not infer numbers from missing marks or disabled limits", () => {
     const alerts = ruleAlerts({ ...account, rules: { ...account.rules, max_drawdown: null, profit_target: null }, evaluation: { ...account.evaluation, marked: false, valuation_complete: false } }, { ...risk, limits: { ...risk.limits, max_daily_loss: "0" } })
