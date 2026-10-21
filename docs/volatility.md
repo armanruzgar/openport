@@ -189,6 +189,39 @@ must be valid and representable in the market timestamp range. Labels are trimme
 label. Duplicate dates are rejected with a line number. Labels are read at startup
 and only shown on matching sessions. No event dates ship with OpenPort.
 
+## Earnings implied versus realized
+
+For each `earnings` event in the daemon's `--event-calendar` whose symbol is a
+subscribed underlying, `openportd` records once a minute, from the live feed only:
+
+- **Implied move**: the front at-the-money straddle's mid over spot, from the last
+  analytics before the news. The last session before the news is the event day for
+  `after_close` and the business day before for `before_open`; only its analytics,
+  from its 09:30 ET open until the news (09:30 or the close of the event day), are
+  used. The straddle is in the first expiry settling at or after the close of the
+  reaction session (the event day for `before_open`, the next business day for
+  `after_close`), at the strike nearest that expiry's forward with both sides
+  quoted. Straddle over spot is the usual rule of thumb, not a model-free move.
+- **Realized move**: the reaction session's close over the last close before the
+  news, from the local daily candles (the vendor's closes, or sessions built from
+  recorded minutes), once the reaction session has closed.
+- **Priced**: `over` when the implied move exceeded the realized move's size,
+  `under` otherwise. The summary counts both and gives the share that was over.
+
+The history is kept in `earnings.json` beside the candle directory
+(`~/.openport/earnings.json` by default); replay and the demo keep it in memory and
+never record simulated markets. `POST /api/earnings/import` seeds past quarters:
+
+```
+symbol,date,session,implied_move,realized_move,label
+AAPL,2026-07-30,after_close,4.1,-2.3,Q3 FY26
+```
+
+Moves are percents (a trailing `%` is allowed); the label is optional. Imported
+rows are labelled `imported` everywhere and never replace a recorded one for the
+same symbol and date; the import reports them as skipped. A malformed file adds
+nothing. `DELETE /api/earnings/imported` removes them all.
+
 ## Comparing with published indices
 
 On a machine with network access, run an unrestricted SPX chain during the session:

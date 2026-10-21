@@ -61,7 +61,7 @@ style, multiplier and the nonstandard-contract flag.
 | --- | --- |
 | `ContractDefinition` | Assign a stable, dense, per-feed `InstrumentId`. Publish its definition before any event referring to that ID. Definitions are ordering barriers in the queue. |
 | `OptionQuote` | Best bid and offer, with sizes in contracts. A zero price means no quote on that side, not an executable free option. Preserve missing sides and sizes; never manufacture liquidity. |
-| `OptionTrade` | A reported execution price and size, not an inferred mid-price trade. Trades may be dropped under queue overload; quote state is retained. |
+| `OptionTrade` | A reported execution price and size, not an inferred mid-price trade, with the printing venue in the provider's own numbering when it says (Databento's OPRA publisher id, ThetaData's exchange code), zero otherwise. Recordings keep a known venue as an optional trailing field. Trades may be dropped under queue overload; quote state is retained. |
 | `OptionVolume` | Cumulative contracts traded in the trading date of `ts`, not an increment. Publish only finite nonnegative counts with a known market timestamp. Snapshot deduplication retains equal totals across trading-date changes. |
 | `OpenInterest` | The vendor's reported contract count. Missing OI is not zero OI: publish only what is known. |
 | `VendorGreeks` | Comparison values, not OpenPort's pricing inputs. IV is decimal, gamma per dollar of underlying, vega per vol point, theta per calendar day and rho per 1% of rate, all per unit of underlying. Use NaN for an unpublished field or undocumented unit. |

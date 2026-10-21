@@ -27,6 +27,17 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 - **Exposure**: gamma and vanna by strike and expiry, total gamma profile, gamma
   flip, call and put walls. Dealer exposure assumes dealers are long calls and
   short puts; it does not reveal their actual positions. [Methods](methods.md).
+- **Flow**: time and sales from feeds that deliver option trades (Databento, and
+  recordings or ThetaData imports that hold them). Each print is classified at the
+  bid, at the ask, between them or outside them against the quote standing when it
+  arrived. Sweeps, blocks and best-effort multi-leg groups are inferred, and net
+  premium is summed by expiry and strike. A feed without trades says so; only the
+  demo market adds prints, labelled simulated. [Flow](flow.md).
+- **Earnings implied versus realized**: for each earnings event in the daemon's
+  event calendar, the front straddle's implied move before the news and the
+  realized move after it build a history on the Volatility page, with how often
+  the straddle priced more than came. Past quarters can be imported from a CSV
+  and stay labelled imported. [Earnings](volatility.md#earnings-implied-versus-realized).
 - Pricing includes Black-76, Black-Scholes-Merton, a safeguarded IV solver,
   Cox-Ross-Rubinstein and Leisen-Reimer trees. [Architecture](architecture.md).
 
@@ -264,6 +275,10 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 - Volatility probability cones estimate finishing beyond or touching chosen prices
   by chosen dates. These are labelled model estimates, not predictions.
   [Profiles and probabilities](paper-trading.md#risk-profile-and-probabilities).
+- **Analysis portfolios**: import a CSV of positions held elsewhere (generic columns,
+  or tastytrade, Schwab and IBKR exports) to see their Greeks, risk profile and
+  scenario grid on your feed. They are analysis only: not paper accounts, never
+  traded, and labelled as such. [Analysis](analysis.md).
 
 ## Journal and review
 

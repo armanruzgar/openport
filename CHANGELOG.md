@@ -1,5 +1,30 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+### Flow, earnings and outside portfolios
+
+- **Read the option tape.** A Flow tab on Trade shows time and sales from feeds
+  that deliver option trades (Databento, and recordings or imports that hold them),
+  each print classified at the bid, at the ask, mid or outside. Sweeps, blocks and
+  best-effort multi-leg groups are inferred, and net premium is summed by expiry and
+  strike. Feeds without trades say so plainly; only the demo market adds prints,
+  labelled simulated. `GET /api/underlyings/{symbol}/flow`.
+- **Keep a record of earnings moves.** For each earnings event in the event
+  calendar, the front straddle's implied move before the news and the realized move
+  after it build a history on the Volatility page, with how often the straddle
+  priced more than came. Past quarters can be imported from a CSV and stay
+  labelled imported. `GET /api/earnings`.
+- **Analyse a portfolio held elsewhere.** Import a positions CSV (generic columns,
+  or tastytrade, Schwab or IBKR exports) into an analysis-only portfolio and see its
+  Greeks, risk profile and scenario grid on your feed. It is not a paper account and
+  can never be traded. `/api/analysis/portfolios`.
+- Option prints now carry the printing venue where the provider gives one;
+  recordings keep it as an optional trailing field. Builds before this one cannot
+  read trades with a venue in new recordings.
+- The Python client and MCP server can read the tape, the earnings history and
+  analysis portfolios.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

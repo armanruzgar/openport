@@ -150,6 +150,8 @@ saying how it went is welcome. The broker adapters read market data only.
 - [Configuration](docs/configuration.md): providers, flags, update checks and security
 - [Paper trading](docs/paper-trading.md): orders, fills, rules, the journal and reason codes
 - [Playbooks](docs/playbooks.md): setups, staged orders, pass odds and batch backtests
+- [Flow](docs/flow.md): time and sales and net premium; [analysis portfolios](docs/analysis.md)
+  for positions held elsewhere
 - [How the numbers are made](docs/methods.md): forwards, IV, Greeks, exposure, accuracy
   and performance, with [volatility metrics](docs/volatility.md), [SVI](docs/svi.md)
   and [American analytics](docs/american-analytics.md)
