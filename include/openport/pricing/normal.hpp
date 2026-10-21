@@ -20,4 +20,9 @@ inline constexpr double kInvSqrt2 = 0.707106781186547524400844362104849039;
   return 0.5 * std::erfc(-x * kInvSqrt2);
 }
 
+/// Bivariate standard normal cumulative distribution P(X <= x, Y <= y) with
+/// correlation rho, by Genz's (2004) Gauss-Legendre form of Drezner and
+/// Wesolowsky; absolute error near 1e-15. NaN outside -1 <= rho <= 1.
+[[nodiscard]] double bivariate_norm_cdf(double x, double y, double rho) noexcept;
+
 }  // namespace openport::pricing

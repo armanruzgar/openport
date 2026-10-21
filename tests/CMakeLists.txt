@@ -2,6 +2,7 @@ add_executable(openport_tests
   pricing/black_test.cpp
   pricing/implied_vol_test.cpp
   pricing/binomial_test.cpp
+  pricing/american_test.cpp
   md/time_test.cpp
   md/contract_test.cpp
   md/event_queue_test.cpp

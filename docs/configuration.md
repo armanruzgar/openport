@@ -43,6 +43,7 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--provider demo --option days=ID,ID,... --option speed=N` | Built-in regular scenarios in the given order; default all regular scenarios at 1×, supported speeds 1, 2, 5, 10, 30, 60, 120, 300. Symbols default to their coverage. Network services are off; candles stay in memory unless `--candle-dir` is given |
 | `--symbols SPX,SPY,QQQ,IWM,DIA`, `--expiries N`, `--window F` | The underlyings (default SPX, SPY, QQQ, IWM and DIA), the nearest N expiries and strikes within ±F of spot |
 | `--rate R` | The rate assumed when no index curve is available |
+| `--american-model lr\|bs2002\|baw` | How American expiries' early exercise premium is removed before IV solves: the default 31-step Leisen-Reimer tree (`lr`), or the faster Bjerksund-Stensland (2002) or Barone-Adesi-Whaley closed forms. Expiries with cash dividends always use the tree. Accuracy and timing are in [American analytics](american-analytics.md#closed-form-alternatives) |
 | `--address`, `--port`, `--web-root`, `--allowed-origin`, `--allowed-host`, `--write-token`, `--write-token-file` | The web server and who may write (see [Security](#security)) |
 | `--token-file FILE` | Named tokens: one `NAME SCOPES SECRET` per line, with comma-separated scopes and `#` comments |
 | `--notify-config FILE` | Owner-only JSON file for notification channels, filters and the `include_simulated` demo/replay opt-in (default false); alternatively `OPENPORT_NOTIFY_JSON` or channel environment variables ([setup](runtime.md#external-notifications)) |

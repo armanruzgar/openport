@@ -175,6 +175,8 @@ export interface Expiry {
   rate_source?: "parity" | "term" | "curve" | "assumed" | null
   rate_curve_symbol?: string | null
   deamericanized?: boolean | null
+  /** Model that removed the early exercise premium; null when none was removed. */
+  eep_model?: "leisen_reimer" | "bjerksund_stensland_2002" | "barone_adesi_whaley" | null
   dividends?: { ex_date: string; amount: number }[]
   atm_iv: Num
   gex: Num

@@ -6069,6 +6069,26 @@
               }
             ]
           },
+          "eep_model": {
+            "description": "The model that removed the early exercise premium: leisen_reimer (the default 31-step tree, and the fallback for cash dividends) or a configured closed form; null when nothing was removed.",
+            "anyOf": [
+              {
+                "const": "leisen_reimer",
+                "type": "string"
+              },
+              {
+                "const": "bjerksund_stensland_2002",
+                "type": "string"
+              },
+              {
+                "const": "barone_adesi_whaley",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dividends": {
             "type": "array",
             "items": {

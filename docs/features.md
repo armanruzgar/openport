@@ -29,6 +29,9 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   short puts; it does not reveal their actual positions. [Methods](methods.md).
 - Pricing includes Black-76, Black-Scholes-Merton, a safeguarded IV solver,
   Cox-Ross-Rubinstein and Leisen-Reimer trees. [Architecture](architecture.md).
+  Bjerksund-Stensland (2002) and Barone-Adesi-Whaley closed forms can replace the
+  tree's early exercise premium (`--american-model`); the tree stays the default
+  because it measured more accurate and no slower ([results](american-analytics.md#closed-form-alternatives)).
 
 ## Trading terminal
 

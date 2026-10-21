@@ -66,6 +66,10 @@ TEST(Cli, DaemonRejectsMalformedRangesUnknownFlagsAndStartupFailures) {
     rejects("openportd", std::string("--rate ") + rate, "--rate");
   for (const auto* rate : {"-0.05", "0.25", "0.045"})
     rejects("openportd", std::string("--rate ") + rate + " --provider missing", "unknown provider");
+  for (const auto* model : {"crr", "BAW", "", "bs2002x"})
+    rejects("openportd", std::string("--american-model '") + model + "'", "--american-model");
+  for (const auto* model : {"lr", "bs2002", "baw", "barone_adesi_whaley"})
+    rejects("openportd", std::string("--american-model ") + model + " --provider missing", "unknown provider");
   rejects("openportd", "--poll-seconds 0", "poll_seconds");
   rejects("openportd", "--poll-seconds 1x", "poll_seconds");
   rejects("openportd", "--option unknown=1", "unknown provider option");
@@ -310,7 +314,8 @@ TEST(Cli, DaemonHelpGoesToStdoutAndExitsZero) {
     const auto usage = output.substr(0, output.find("\n\n"));
     for (const auto* expected : {"[--symbols SPX,SPY,QQQ,IWM,DIA]", "[--series-dir DIR] [--no-series]",
                                  "--backfill-series FILE... [--force]", "demo: simulated regular sessions",
-                                 "--option revision=1|2|3|4|5|6|7|8 (default 8)", "tradier tastytrade"})
+                                 "--option revision=1|2|3|4|5|6|7|8 (default 8)", "tradier tastytrade",
+                                 "[--american-model lr|bs2002|baw]"})
       EXPECT_NE(output.find(expected), std::string::npos) << expected << '\n' << output;
     EXPECT_NE(usage.find("--no-series"), std::string::npos) << usage;
   }

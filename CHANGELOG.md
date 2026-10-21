@@ -1,5 +1,15 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+### Pricing and volatility models
+
+- **Choose a closed-form American model.** `--american-model bs2002|baw` removes
+  the early exercise premium with Bjerksund-Stensland (2002) or Barone-Adesi-Whaley
+  instead of the 31-step Leisen-Reimer tree. The tree stays the default: measured
+  against a converged tree it was more accurate, and no slower. Expiries with cash
+  dividends always use the tree; each expiry reports its `eep_model`.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

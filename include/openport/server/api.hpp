@@ -98,8 +98,9 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
 /// (borrowed from this underlying's longer European expiries), "curve" (another
 /// underlying's European parity curve), or "assumed" (flat fallback). rate_fitted
 /// remains true only for "parity". rate_curve_symbol names the curve (e.g. "SPX")
-/// for "curve", otherwise null. deamericanized reports EEP removal with an LR
-/// tree. Chain bid/ask/mid remain the raw market quotes; iv/bid_iv/ask_iv use
+/// for "curve", otherwise null. deamericanized reports EEP removal; eep_model names
+/// the model that removed it (leisen_reimer, the default tree, or a configured
+/// closed form) and is null when nothing was removed. Chain bid/ask/mid remain the raw market quotes; iv/bid_iv/ask_iv use
 /// premium-adjusted prices. Each option includes eep, the per-unit price premium
 /// used for those solves (null when not computed, zero when computed as zero).
 /// Greeks remain European Black-76 Greeks at the final smile IV, accurate OTM.

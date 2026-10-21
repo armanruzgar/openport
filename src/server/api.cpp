@@ -112,6 +112,7 @@ json expiry_json(const UnderlyingMetrics& m, const SliceMetrics& slice) {
       {"rate_curve_symbol",
        slice.rate_curve_symbol.empty() ? json(nullptr) : json(slice.rate_curve_symbol)},
       {"deamericanized", slice.deamericanized},
+      {"eep_model", slice.deamericanized ? json(pricing::to_string(slice.eep_model)) : json(nullptr)},
       {"dividends", std::move(dividends)},
       {"atm_iv", sig(slice.atm_iv)},
       {"gex", sig(slice.gex)},

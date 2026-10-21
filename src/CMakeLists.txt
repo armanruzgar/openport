@@ -3,6 +3,8 @@ add_library(openport_core
   pricing/black.cpp
   pricing/implied_vol.cpp
   pricing/binomial.cpp
+  pricing/american.cpp
+  pricing/normal.cpp
   md/time.cpp
   md/contract.cpp
   analytics/chain_book.cpp

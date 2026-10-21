@@ -453,6 +453,7 @@ TEST(Api, RateSourcesAndDeamericanisationAreIncludedInBothExpiryViews) {
       EXPECT_EQ(expiry["rate_curve_symbol"], curve ? json("SPX") : json(nullptr));
       EXPECT_EQ(expiry["rate_fitted"], false);
       EXPECT_EQ(expiry["deamericanized"], true);
+      EXPECT_EQ(expiry["eep_model"], "leisen_reimer");
     }
   }
   StubSource european;
@@ -461,6 +462,7 @@ TEST(Api, RateSourcesAndDeamericanisationAreIncludedInBothExpiryViews) {
   EXPECT_EQ(expiry["rate_source"], "parity");
   EXPECT_EQ(expiry["rate_fitted"], true);
   EXPECT_EQ(expiry["deamericanized"], false);
+  EXPECT_TRUE(expiry["eep_model"].is_null());
   EXPECT_TRUE(expiry["rate_curve_symbol"].is_null());
 }
 
