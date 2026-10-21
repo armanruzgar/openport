@@ -19,6 +19,7 @@ import { AbandonDialog, CloseSharesDialog, ExerciseDialog, ExerciseInstructionDi
 import { CloseStrategyDialog, Strategies } from "../components/StrategyActions"
 import { RiskPanel } from "../components/RiskPanel"
 import { RiskProfilePanel } from "../components/RiskProfilePanel"
+import { HedgePanel } from "../components/HedgePanel"
 import { WhatIfPanel } from "../components/WhatIfPanel"
 import { ScenarioGrid } from "../components/ScenarioGrid"
 import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
@@ -298,6 +299,7 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
     <Panel title="Portfolio risk" actions={<button type="button" className="trade-button" disabled={!risk.data || !trading.enabled} onClick={() => { if (risk.data) setEditing(risk.data) }}>Edit limits</button>}>
       <TradingError error={risk.error} />{risk.data ? <RiskPanel risk={risk.data} /> : <p className="text-sm text-muted">{trading.enabled ? "Loading risk…" : "Risk unavailable"}</p>}
     </Panel>
+    {risk.data && trading.enabled && (data?.positions.length || data?.stocks?.length) ? <Panel title="Hedge suggestions"><HedgePanel risk={risk.data} trading={trading} /></Panel> : null}
     {data && trading.enabled && <Panel title="Risk profile"><RiskProfilePanel underlyings={[...new Set([
       ...data.positions.filter((p) => !p.awaiting_settlement).map((p) => p.underlying), ...(data.stocks ?? []).map((s) => s.symbol)])].sort()} /></Panel>}
     {risk.data && <Panel title="Spot × volatility scenarios"><ScenarioGrid scenarios={risk.data.scenarios} /></Panel>}

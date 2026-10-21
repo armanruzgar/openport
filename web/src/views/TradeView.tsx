@@ -1,5 +1,6 @@
 import { StagedOrders } from "../components/Playbooks"
 import type { View } from "../lib/route"
+import { AnalyzeView } from "./AnalyzeView"
 import { ChainView } from "./ChainView"
 import { ExposureView } from "./ExposureView"
 import { SmileView } from "./SmileView"
@@ -7,6 +8,7 @@ import { VolatilityScannerView } from "./VolatilityScannerView"
 
 const tabs: { view: View; label: string; hint: string }[] = [
   { view: "chain", label: "Chain", hint: "Quotes, Greeks and the order ticket" },
+  { view: "analyze", label: "Analyze", hint: "Candidate strategies' P&L by price and date, price slices and the strategy optimizer" },
   { view: "smile", label: "Volatility", hint: "Smile, SVI/SSVI fits and term structure" },
   { view: "exposure", label: "Exposure", hint: "Dealer delta, gamma, vanna, charm and vomma exposure" },
   { view: "vol-scanner", label: "Vol scanner", hint: "Compare all subscribed underlyings" },
@@ -28,7 +30,8 @@ export function TradeView({ symbol, view, expiry, onNavigate }: {
           </button>
         ))}
       </div>
-      {view === "smile" ? <SmileView symbol={symbol} />
+      {view === "analyze" ? <AnalyzeView symbol={symbol} />
+        : view === "smile" ? <SmileView symbol={symbol} />
         : view === "vol-scanner" ? <VolatilityScannerView onSymbol={next => onNavigate({ symbol: next, view: "smile", expiry: null })} />
         : view === "exposure" ? <ExposureView symbol={symbol} />
         : <ChainView symbol={symbol} expiry={expiry} onExpiry={(id) => onNavigate({ expiry: id })} />}

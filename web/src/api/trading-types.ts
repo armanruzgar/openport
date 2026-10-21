@@ -1250,8 +1250,66 @@ export interface RiskProfile {
   weighted_delta: number | null
   complete: boolean
   model: string
+  /** Whether the held book in scope is included; absent on older servers. */
+  held?: boolean
+  /** Hypothetical legs added to the profile, as requested. */
+  legs?: { symbol: string; quantity: number }[]
 }
-export interface RiskProfileQuery { underlying?: string; benchmark?: "SPY" | "SPX"; days?: (number | "expiry")[]; iv?: number; range?: number; steps?: number; betas?: Record<string, number>; term_scaled?: boolean }
+/** `legs` adds hypothetical contracts by padded OSI symbol and signed quantity (with `underlying`); `held: false` values them alone. */
+export interface RiskProfileQuery { underlying?: string; benchmark?: "SPY" | "SPX"; days?: (number | "expiry")[]; iv?: number; range?: number; steps?: number; betas?: Record<string, number>; term_scaled?: boolean; legs?: Record<string, number>; held?: boolean }
+
+export type HedgeTarget = "delta" | "vega" | "grid"
+/** The bucket after the hedge, spread paid. Utilisations are against the bucket's limits. */
+export interface HedgeResidual {
+  dollar_delta_low: number | null
+  dollar_delta_high: number | null
+  vega_low: number | null
+  vega_high: number | null
+  worst_cell: number | null
+  delta_utilisation: number | null
+  vega_utilisation: number | null
+  grid_utilisation: number | null
+  beta_weighted_dollar_delta: number | null
+}
+export interface HedgeOrder { symbol: string; side: Side; type: "limit"; time_in_force: "day"; quantity: number; limit_price: Money }
+/** One candidate hedge at the smallest whole size that meets the target, or why it cannot. */
+export interface Hedge {
+  name: string
+  kind: "shares" | "option"
+  underlying: string
+  instrument: string | null
+  beta_hedge: boolean
+  expiry: string | null
+  strike: number | null
+  type: "call" | "put" | null
+  feasible: boolean
+  reason: string | null
+  side: Side | null
+  quantity: number | null
+  price: number | null
+  /** Cash for the whole hedge, debit positive. */
+  premium: number | null
+  /** Crossing the spread against the mid, before fees. */
+  spread_cost: number | null
+  residual: HedgeResidual | null
+  order: HedgeOrder | null
+  stock_trade: { symbol: string; side: Side; shares: number } | null
+  exceeds_order_limit: boolean
+}
+export interface HedgeSuggestions {
+  account_version: string
+  time: string
+  scope: string
+  target: HedgeTarget
+  utilisation: number
+  current: {
+    dollar_delta_low: number | null; dollar_delta_high: number | null; vega_low: number | null; vega_high: number | null
+    worst_cell: number | null; beta_weighted_dollar_delta: number | null; delta_limit: number | null; vega_limit: number | null; grid_floor: number | null
+  }
+  hedges: Hedge[]
+  simulated: true
+  model: string
+}
 /** A block of contracts at one price, as a fill would trade it. */
 export interface PreviewFill { symbol: string; side: Side; quantity: number; price: Money }
 /** What submitting the order now would execute (a private dry run), and its full size block by block. */
