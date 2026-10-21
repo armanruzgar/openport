@@ -1,5 +1,14 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- Analytics: add OI-weighted delta, daily charm and vomma exposure, per-strike and
+  expiry totals, signed walls and sticky-strike spot flips alongside GEX/VEX.
+- Analytics: expose positioning conventions and snapshot-date 0DTE/ex-0DTE slices
+  through the API, terminal, Python client/frames and MCP. Preserve the default
+  long-call/short-put convention; report customer flow as unavailable without
+  aggressor-side data. Document formulas, units, coverage and search limits.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

@@ -7,10 +7,11 @@
 Self-hosted options analytics and a trading simulator on your own market data. Plug in
 the provider you already pay for, or start with Cboe's free delayed quotes, and get a
 live web terminal: option chains with implied volatility and Greeks computed by OpenPort
-itself, smiles and term structure, gamma and vanna exposure maps, and paper accounts
-that trade those chains under prop-firm evaluation rules, with multi-leg strategies, a
-chart of the underlying and replays of recorded days. Trade stock and ETF shares
-for delta hedges, covered calls and collars, with buying-power and risk previews.
+itself, smiles and term structure, gamma, vanna, delta, charm and vomma exposure maps,
+and paper accounts that trade those chains under prop-firm evaluation rules, with
+multi-leg strategies, a chart of the underlying and replays of recorded days. Trade
+stock and ETF shares for delta hedges, covered calls and collars, with buying-power
+and risk previews.
 
 One C++20 binary runs the feed, the analytics engine, the simulator and the web
 terminal. Your data and trades stay on your machine unless you enable external
@@ -56,7 +57,8 @@ with generated prices labelled as simulated on every page:
 
 - **Analytics**: the chain with bid/mid/ask IV, Greeks, volume and liquidity; SVI
   smiles and term structure; model-free IV, skew, realized volatility and IV rank;
-  gamma and vanna exposure with the gamma flip and walls.
+  gamma, vanna, delta, daily charm and vomma exposure with flips, signed walls,
+  positioning conventions and 0DTE/ex-0DTE slices.
 - **Evaluations**: daily loss bases, static or trailing floors, best-day and
   per-trade consistency, minimum days and trades, flat time, news and holding
   restrictions, instrument and opening-hour limits, and two-step evaluations.

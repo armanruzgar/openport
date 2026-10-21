@@ -24,9 +24,13 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   percentile, labelled index proxies and ex-post variance risk premium for SPX
   (SPY by proxy). Missing, truncated and proxy estimates are marked.
   [Definitions](volatility.md).
-- **Exposure**: gamma and vanna by strike and expiry, total gamma profile, gamma
-  flip, call and put walls. Dealer exposure assumes dealers are long calls and
-  short puts; it does not reveal their actual positions. [Methods](methods.md).
+- **Exposure**: gamma (GEX), vanna (VEX), delta (DEX), daily charm (CEX), and
+  vomma (VOMEX) by strike and expiry, with totals, signed walls and spot flip
+  levels. Select the existing long-call/short-put OI convention or dealers short
+  all options, and all / 0DTE-only / ex-0DTE slices at snapshot New York time.
+  Customer-flow mode explicitly reports unavailable because unsigned volume has
+  no aggressor direction. The terminal, API, Python frames and MCP expose the
+  same choices. These are derived positioning assumptions; [formulas and units](methods.md#dealer-exposure).
 - Pricing includes Black-76, Black-Scholes-Merton, a safeguarded IV solver,
   Cox-Ross-Rubinstein and Leisen-Reimer trees. [Architecture](architecture.md).
 
