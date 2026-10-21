@@ -108,8 +108,28 @@ struct VarianceRiskPremium {
 [[nodiscard]] ConstantVol session_implied_vol(const VolatilityMetrics& volatility,
                                               md::Timestamp as_of, int sessions);
 
-struct EventLabel { md::Date date; std::string label; };
+struct EventLabel {
+  md::Date date;
+  std::string label;
+  std::string timing = "session";  ///< session, before_open, after_close, or exact.
+  md::Timestamp time = 0;  ///< Only for an explicitly timed event; never an inferred print.
+};
 [[nodiscard]] std::vector<EventLabel> parse_events(std::istream& input);
+[[nodiscard]] md::Date event_session(const EventLabel& event);
+struct EventVolatility {
+  EventLabel event;
+  md::Date session;
+  std::size_t near = 0, next = 0;
+  bool bracketed = false;
+  double baseline_variance = kNaN;  ///< Per full business session.
+  double variance_premium = kNaN;
+  double percent = kNaN, points = kNaN, forward = kNaN;
+  bool proxy = false, truncated = false, calendar_arbitrage = false;
+  std::string reason;
+};
+/// Wnear = baseline * sessionsNear; Wnext = baseline * sessionsNext + event premium.
+[[nodiscard]] std::vector<EventVolatility> event_volatility(const UnderlyingMetrics& metrics,
+    const VolatilityMetrics& volatility, std::span<const EventLabel> events);
 
 struct ImpliedMove {
   md::Date date;

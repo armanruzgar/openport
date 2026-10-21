@@ -11,6 +11,7 @@ import { Badge, Meter, toneOf, toneText } from "./ui"
 
 export const viewLabels: Record<View, string> = {
   chart: "Chart",
+  "vol-scanner": "Vol scanner",
   backtest: "Backtest", brief: "Brief", dashboard: "Dashboard", chain: "Trade", positions: "Positions", orders: "Orders", journal: "Journal",
   playbooks: "Playbooks", rules: "Rules", payouts: "Payouts", smile: "Volatility", exposure: "Exposure", replay: "Replay", engine: "Status",
 }
@@ -106,7 +107,7 @@ export function AccountSummary() {
 export function Sidebar({ view, onView, open, onClose }: { view: View; onView: (view: View) => void; open: boolean; onClose: () => void }) {
   const { trading } = useLive()
   const account = useAccount().data
-  const current = view === "smile" || view === "exposure" ? "chain" : view
+  const current = view === "smile" || view === "exposure" || view === "vol-scanner" ? "chain" : view
   const items = navigableViews(trading != null, payoutsVisible(account))
   useEffect(() => {
     if (!open) return

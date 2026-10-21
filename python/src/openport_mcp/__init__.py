@@ -191,10 +191,30 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, read)
 
     @server.tool()
-    def volatility(symbol: str, replay: bool = False) -> dict:
-        """Model-free IV, skew and realized volatility; missing values remain null."""
-        target = selected(replay=replay)
+    def volatility(symbol: str, replay: bool = False, account: str | None = None) -> dict:
+        """IV, skew, history ranks and derived event premiums from the selected account's calendar."""
+        target = selected(account, replay)
         return result(target, lambda: target.volatility(symbol))
+
+    @server.tool()
+    def volatility_history(symbol: str, fields: list[str] | None = None, interval: Literal["1m", "1d"] = "1d",
+                           from_: str | None = None, to: str | None = None, replay: bool = False) -> dict:
+        """Stored volatility observations; missing sessions stay missing. Dates or ISO times bound the range."""
+        target = selected(replay=replay)
+        return result(target, lambda: target.volatility_history(symbol, fields=fields, interval=interval, from_=from_, to=to))
+
+    @server.tool()
+    def surface_history(symbol: str, compare: bool = True, from_: str | None = None,
+                        to: str | None = None, replay: bool = False) -> dict:
+        """Recorded SVI parameters, by default only prior-close, week and month comparisons. Missing captures remain null."""
+        target = selected(replay=replay)
+        return result(target, lambda: target.surface_history(symbol, compare=compare, from_=from_, to=to))
+
+    @server.tool()
+    def volatility_scanner(replay: bool = False) -> dict:
+        """IV, rank, VRP, skew, term and today's implied move for all subscriptions; each row has its own market time."""
+        target = selected(replay=replay)
+        return result(target, target.volatility_scanner)
 
     @server.tool()
     def probability(symbol: str, days: list[float] | None = None, prices: list[float] | None = None,

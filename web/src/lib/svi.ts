@@ -1,4 +1,4 @@
-import type { SurfaceExpiry, SviFit, SsviFit } from "../api/types"
+import type { SurfaceExpiry, SviFit, SsviFit, SurfaceHistory } from "../api/types"
 import type { Series } from "../charts/LineChart"
 import { days, expiryLabel, isNum } from "./format"
 
@@ -47,9 +47,9 @@ export function sampleSvi(e: SurfaceExpiry, axis: "strike" | "moneyness", displa
   if (!e.svi || e.svi.status !== "ok" || !isNum(e.forward) || e.forward <= 0) return []
   const ks = e.points.map((p) => p.k).filter(isNum)
   const hasWindow = isNum(display?.spot) && display.spot > 0 && display.window > 0 && display.window < 1
-  if (!hasWindow && ks.length < 2) return []
-  const windowLo = hasWindow ? Math.log(display.spot! * (1 - display.window) / e.forward) : Math.min(...ks)
-  const windowHi = hasWindow ? Math.log(display.spot! * (1 + display.window) / e.forward) : Math.max(...ks)
+  if (!hasWindow && ks.length < 2 && (!isNum(e.svi_min_k) || !isNum(e.svi_max_k))) return []
+  const windowLo = hasWindow ? Math.log(display.spot! * (1 - display.window) / e.forward) : ks.length >= 2 ? Math.min(...ks) : e.svi_min_k!
+  const windowHi = hasWindow ? Math.log(display.spot! * (1 + display.window) / e.forward) : ks.length >= 2 ? Math.max(...ks) : e.svi_max_k!
   const lo = Math.max(windowLo, e.svi_min_k ?? -Infinity)
   const hi = Math.min(windowHi, e.svi_max_k ?? Infinity)
   if (!(hi > lo)) return []
@@ -59,6 +59,21 @@ export function sampleSvi(e: SurfaceExpiry, axis: "strike" | "moneyness", displa
     const k = lo + (hi - lo) * i / 240
     return { x: axis === "strike" ? e.forward! * Math.exp(k) : k, y: sviVol(e.svi!, k, years) }
   })
+}
+
+export const comparisonLabels = { prior_close: "Prior close", week: "1 week ago", month: "1 month ago" }
+/** Same listed expiry, evaluated at each snapshot's own tenor and forward. */
+export function comparisonSeries(current: SurfaceExpiry | undefined, history: SurfaceHistory | undefined,
+  axis: "strike" | "moneyness", display?: DisplayRange): Series[] {
+  if (!current) return []
+  const curves: Series[] = [{ id: "comparison-today", label: "Current · SVI", color: smileColor(0), points: sampleSvi(current, axis, display) }]
+  for (const [i, comparison] of (history?.comparisons ?? []).entries()) {
+    const expiry = comparison.snapshot?.expiries.find(e => e.id === current.id)
+    if (!expiry) continue
+    const points = sampleSvi(expiry, axis, display)
+    if (points.length) curves.push({ id: `comparison-${comparison.label}`, label: `${comparisonLabels[comparison.label]} · ${comparison.date}${!expiry.calendar_ok || !expiry.svi?.butterfly_ok ? " · grid violation" : ""}`, color: smileColor(i + 1), dashed: true, points })
+  }
+  return curves
 }
 
 export function smileSeries(expiries: SurfaceExpiry[], axis: "strike" | "moneyness", mode: SmileMode, display?: DisplayRange, ssvi?: SsviFit): Series[] {

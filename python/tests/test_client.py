@@ -196,6 +196,9 @@ def test_base_url_rejects_ambiguous_credentials(url):
     ("exposure", ("SPX",), "GET", "/api/underlyings/SPX/exposure", "ExposureMatrix"),
     ("surface", ("SPX",), "GET", "/api/underlyings/SPX/surface", "Surface"),
     ("volatility", ("SPX",), "GET", "/api/underlyings/SPX/volatility", "Volatility"),
+    ("surface_history", ("SPX",), "GET", "/api/underlyings/SPX/surface-history", "SurfaceHistory"),
+    ("volatility_history", ("SPX",), "GET", "/api/underlyings/SPX/series", "VolatilitySeries"),
+    ("volatility_scanner", (), "GET", "/api/volatility/scanner", "VolatilityScanner"),
     ("candles", ("SPX",), "GET", "/api/underlyings/SPX/candles", "Candles"),
     ("account", (), "GET", "/api/account", "Account"),
     ("portfolio", (), "GET", "/api/portfolio", "Portfolio"),
@@ -246,7 +249,7 @@ def test_each_route_uses_the_terminal_method_and_path(stub, method, arguments, v
     assert request_method == verb
     assert urlsplit(target).path == path
     assert headers["Authorization"] == "Bearer secret"
-    scoped = not path.startswith("/api/underlyings/") and path not in {"/api/plans", "/api/accounts"} and not path.startswith("/api/replay")
+    scoped = path.endswith("/volatility") or (not path.startswith("/api/underlyings/") and path not in {"/api/plans", "/api/accounts", "/api/volatility/scanner"} and not path.startswith("/api/replay"))
     assert ("account" in parse_qs(urlsplit(target).query)) == scoped
 
 
@@ -483,3 +486,18 @@ def test_joint_backtests_use_global_routes_and_array_selectors(stub):
         client.start_backtest(["beta@2", "alpha"], "eod-50k", scenarios=2, seed="1")
         assert stub.requests[-1][0:2] == ("POST", "/api/backtests")
         assert stub.requests[-1][3] == {"playbooks": ["beta@2", "alpha"], "plan": "eod-50k", "scenarios": 2, "seed": "1"}
+
+
+def test_volatility_history_queries_and_account_calendar_scope(stub):
+    client = Client(stub.url, account="practice")
+    client.surface_history("SPX", compare=True, from_="2026-09-01", to="2026-09-22")
+    target = stub.requests[-1][1]
+    assert "compare=true" in target and "from=2026-09-01" in target
+    client.surface_history("SPX")
+    assert "compare=true" in stub.requests[-1][1]
+    client.surface_history("SPX", compare=False)
+    assert "compare=false" in stub.requests[-1][1]
+    client.volatility_history("SPX", fields=["rr25", "bf25"], interval="1d")
+    assert "fields=rr25%2Cbf25" in stub.requests[-1][1]
+    client.volatility("SPX")
+    assert "account=practice" in stub.requests[-1][1]

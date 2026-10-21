@@ -2,6 +2,7 @@
 #include "openport/server/sandboxes.hpp"
 #include "metric_cache.hpp"
 #include "series_api.hpp"
+#include "openport/trading/events.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -16,6 +17,7 @@
 #include <set>
 #include <string>
 #include <type_traits>
+#include <tuple>
 
 #include "openport/analytics/svi.hpp"
 #include "openport/analytics/realized.hpp"
@@ -619,7 +621,8 @@ json volatility_json(const std::shared_ptr<const UnderlyingMetrics>& metrics, co
   for (const auto& day : r.intraday) intraday.push_back({{"date", md::format_date(day.date)}, {"vol", sig(day.vol)},
       {"returns", day.returns}, {"observed_minutes", day.observed_minutes}, {"session_minutes", day.session_minutes},
       {"partial", day.partial}, {"reason", reason_json(day.reason)}});
-  const auto moves = analytics::implied_moves(m, v, source.events());
+  cache->events[&source] = source.events();
+  const auto moves = analytics::implied_moves(m, v, cache->events[&source]);
   json sessions = json::array();
   for (const auto& move : moves.sessions) sessions.push_back({{"date", md::format_date(move.date)},
       {"points", sig(move.points)}, {"percent", sig(move.percent)}, {"forward", price(move.forward)},
@@ -657,6 +660,59 @@ json volatility_json(const std::shared_ptr<const UnderlyingMetrics>& metrics, co
           {"implied_moves", "Consecutive-expiry total-variance increments, MFIV else ATM; equal business sessions with fractional remaining regular hours; AM overnight assigned to settlement session"}}}};
   cache->volatility_responses[&source] = response;
   return response;
+}
+
+void add_event_volatility(json& response, const std::shared_ptr<const UnderlyingMetrics>& metrics,
+                          const MetricsSource& source, const std::string& account) {
+  const auto cache = surface_cache(metrics);
+  std::vector<analytics::EventLabel> events;
+  { const std::lock_guard lock(cache->mutex); events = cache->events[&source]; }
+  auto calendar = source.event_calendar();
+  if (const auto view = source.trading_view(account))
+    calendar.insert(calendar.end(), view->config.rules.events.begin(), view->config.rules.events.end());
+  for (const auto& e : calendar) {
+    if ((!e.symbol.empty() && e.symbol != metrics->symbol) || (e.kind != "news" && e.kind != "earnings")) continue;
+    const auto time = trading::event_time(e);
+    const auto date = e.kind == "news" ? md::new_york_time(time).date : md::date_from_days(time / md::kNanosPerDay);
+    events.push_back({date, e.label.empty() ? e.kind : e.label,
+        e.kind == "news" ? "exact" : e.session.empty() ? "before_open" : e.session, e.kind == "news" ? time : 0});
+  }
+  // One event can arrive from several sources (a calendar entry imported into the plan,
+  // or labelled differently by two feeds). Events on one date that resolve to one
+  // session are one move to the solve, so they are kept once with their labels joined.
+  std::stable_sort(events.begin(), events.end(), [](const auto& a, const auto& b) {
+    return std::tuple(a.date, analytics::event_session(a), a.time, a.timing, a.label) <
+        std::tuple(b.date, analytics::event_session(b), b.time, b.timing, b.label);
+  });
+  std::vector<analytics::EventLabel> unique;
+  for (auto& e : events) {
+    if (unique.empty() || unique.back().date != e.date || analytics::event_session(unique.back()) != analytics::event_session(e)) {
+      unique.push_back(std::move(e)); continue;
+    }
+    auto& kept = unique.back().label;
+    if (("; " + kept + "; ").find("; " + e.label + "; ") == std::string::npos) kept += "; " + e.label;
+  }
+  events = std::move(unique);
+  auto label = [](const analytics::EventLabel& e) {
+    return e.label + (e.timing == "before_open" ? " · BMO" : e.timing == "after_close" ? " · AMC" : "");
+  };
+  for (auto& session : response["implied_moves"]["sessions"]) {
+    std::string labels;
+    for (const auto& e : events) if (md::format_date(analytics::event_session(e)) == session["date"].get<std::string>())
+      labels += (labels.empty() ? "" : "; ") + label(e);
+    session["label"] = reason_json(labels);
+  }
+  json estimates = json::array();
+  for (const auto& e : analytics::event_volatility(*metrics, cached_volatility(metrics), events))
+    estimates.push_back({{"date", md::format_date(e.event.date)}, {"session", md::format_date(e.session)},
+        {"label", label(e.event)}, {"timing", e.event.timing},
+        {"time", e.event.time > 0 ? json(md::format_timestamp(e.event.time)) : json(nullptr)},
+        {"near", e.bracketed ? json(expiry_id(metrics->slices[e.near])) : json(nullptr)},
+        {"next", e.bracketed ? json(expiry_id(metrics->slices[e.next])) : json(nullptr)},
+        {"baseline_variance", sig(e.baseline_variance, 12)}, {"variance_premium", sig(e.variance_premium, 12)},
+        {"percent", sig(e.percent)}, {"points", sig(e.points)}, {"forward", price(e.forward)},
+        {"proxy", e.proxy}, {"truncated", e.truncated}, {"calendar_arbitrage", e.calendar_arbitrage}, {"reason", reason_json(e.reason)}});
+  response["event_volatility"] = estimates;
 }
 
 /// Where the market's implied volatility says the underlying can be by each horizon:
@@ -770,6 +826,10 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
     if (source.sandboxes()) status["sandboxes"] = {{"enabled", true}, {"idle_seconds", source.sandboxes()->idle().count()}};
     return {200, sandbox_tick(status.dump(), request.access)};
   }
+  if (path == "/api/volatility/scanner") {
+    if (!query.empty()) return error(400, "volatility scanner takes no query parameters");
+    return volatility_scanner_response(source);
+  }
 
   constexpr std::string_view prefix = "/api/underlyings/";
   if (!path.starts_with(prefix)) return error(404, "unknown endpoint");
@@ -782,14 +842,20 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   // History can arrive before the first analysis.
   if (view == "candles") return candles_response(source, symbol, query);
   if (view == "series") return series_response(source, symbol, query);
+  if (view == "surface-history") return surface_history_response(source, symbol, query);
   const auto metrics = source.metrics(symbol);
   if (!metrics) return error(404, "no data for " + symbol + " yet");
 
   if (view == "summary") return ok(summary_json(*metrics));
   if (view == "probability") return probability_response(*metrics, query);
   if (view == "volatility") {
+    const auto account = query_account(request.target, request.access.sandbox);
+    if (!account) return error(400, "invalid account");
+    if (!request.access.sandbox.empty() && *account != request.access.sandbox)
+      return api_error(403, "SCOPE_REQUIRED", "Event volatility may read only this sandbox's plan calendar");
     auto response = volatility_json(metrics, source);
     add_volatility_history(response, source, metrics);
+    add_event_volatility(response, metrics, source, *account);
     return ok(response);
   }
   if (view == "chain") {

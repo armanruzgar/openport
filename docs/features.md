@@ -26,9 +26,17 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   checks, ATM term structure on a square-root-of-time axis, and each expiry's
   forward, rate and source. Forwards come from put-call parity; equity-option IV
   accounts for American exercise.
+- **Surface history**: recorded per-expiry SVI parameters at three intraday slots
+  and the close, with same-expiry comparisons to the prior close, week and month.
+  Actual sample times, unavailable dates and fit checks remain visible. [Details](svi.md).
+- **Vol scanner**: sortable IV30, IV rank/percentile, IV−RV, RR25/rank, term ratio
+  and today’s implied move across all subscribed symbols, with symbol drill-through.
 - **Volatility metrics**: model-free IV, delta risk reversals and butterflies,
   realized volatility and cones, variance risk premium and implied session moves
-  with optional event labels. Local minute and close history adds IV rank and
+  with optional event labels and derived two-expiry event premiums from supplied
+  labels and BMO/AMC plan calendars. Signed skew and term history include ranks, percentiles
+  and z-scores; a same-session VIX-minus-MFIV tracking line uses available observations.
+  Local minute and close history adds IV rank and
   percentile, labelled index proxies and ex-post variance risk premium for SPX
   (SPY by proxy). Missing, truncated and proxy estimates are marked.
   [Definitions](volatility.md).

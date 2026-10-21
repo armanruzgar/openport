@@ -15,7 +15,10 @@ from openport import Client, ApiError
 
 client = Client("http://127.0.0.1:8080", token="YOUR_TOKEN", account="practice", timeout=30)
 print(client.status())                 # provider, delay and per-symbol market times
-print(client.volatility("SPX"))        # includes missing-value reasons
+print(client.volatility("SPX"))        # signed history ranks, selected plan events, missing-value reasons
+print(client.volatility_scanner())      # all subscriptions, per-symbol market timestamps
+print(client.surface_history("SPX", compare=True))  # actual stored prior/week/month SVI fits
+print(client.volatility_history("SPX", fields=["rr25", "bf25", "ratio9_30"]))
 print(client.portfolio())
 print(client.preview_order(symbol="SPXW  261022P05000000", side="buy",
     type="limit", time_in_force="day", quantity=1, limit_price="0.05"))
@@ -101,10 +104,14 @@ can launch the same stdio process:
 Store the actual secret in your client's protected environment configuration. It
 is never a tool argument. The installed SDK is MCP 2.x: `MCPServer`, not `FastMCP`.
 
-Tools include status, symbols, summary, chain, volatility, exposure, account,
+Tools include status, symbols, summary, chain, volatility, volatility history,
+surface history, the volatility scanner, exposure, account,
 positions, orders, risk, risk profile, probability cones, order preview/place/cancel, flatten, scenario listing and
 replay start/step/stop (scenarios or recordings). Chain results default to a 3% strike window and at most 80
 strikes; a capped response says `truncated: true`. Windows must be in `(0, 0.1]`.
+Volatility accepts an account for plan event estimates. Surface history defaults
+to prior-close, week and month comparisons; set `compare=false` for the range list.
+Scanner rows retain individual market timestamps inside the shared source envelope.
 
 Every tool result includes `as_of` from market data, `feed` with provider and delay,
 and `simulated`. Unavailable source metadata is null. Source timestamps precede a

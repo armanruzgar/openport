@@ -47,4 +47,11 @@ describe("volatility history", () => {
     expect(html).toContain("History unavailable")
     expect(html).not.toContain("Ex-post variance risk premium")
   })
+  it("shows signed skew ranks and a measured-only tracking line", () => {
+    const ranked = { ...data, symbol: "SPX", history_ranks: { rr25: { current: -3, rank: -.5, percentile: 0, z_score: -2, sessions: 5, window: 252 } } }
+    const measured = { ...history, rows: [{ ...history.rows[1]!, vix: 24, vix_minus_mfiv: 2 }] }
+    const html = renderToStaticMarkup(<VolatilityHistory data={ranked} history={measured} />)
+    for (const text of ["Skew and term history ranks", "-50.0%", "-2.00", "z-score", "VIX − SPX", "quotes need not be simultaneous"]) expect(html).toContain(text)
+    expect(renderToStaticMarkup(<VolatilityHistory data={data} history={history} />)).not.toContain("VIX − SPX")
+  })
 })

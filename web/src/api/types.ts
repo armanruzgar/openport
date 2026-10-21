@@ -342,6 +342,24 @@ export interface Surface {
   ssvi?: SsviFit
   calendar_violations?: { earlier: string; later: string; k: number; vol_points?: number; tolerance_vol_points?: number }[]
 }
+export interface SurfaceSnapshot {
+  as_of: string
+  date: string
+  slot: string
+  spot: Num
+  model: "svi"
+  expiries: (SurfaceExpiry & { calendar_ok: boolean })[]
+}
+export interface SurfaceHistory {
+  symbol: string
+  enabled: boolean
+  snapshots: SurfaceSnapshot[]
+  /** Most range snapshots returned; the newest are kept. */
+  limit: number
+  /** Older snapshots in the range were left out. */
+  truncated: boolean
+  comparisons: { label: "prior_close" | "week" | "month"; date: string; snapshot: SurfaceSnapshot | null }[]
+}
 
 /** The replay running beside the live feed: its recording, speed and clock. */
 export interface ReplayState {
@@ -549,14 +567,55 @@ export interface VolCone {
   implied_proxy: boolean
   implied_reason: string | null
 }
+export interface HistoryRank {
+  current: Num
+  rank: Num
+  percentile: Num
+  z_score: Num
+  sessions: number
+  window: number
+}
+export interface VolatilityScannerRow {
+  symbol: string
+  as_of: string | null
+  realized_as_of: string | null
+  version: number
+  feed_state: string
+  iv30: Num
+  iv_basis: string
+  iv_rank: Num
+  iv_percentile: Num
+  history_sessions: number
+  proxy_sessions: number
+  proxy_name: string | null
+  vrp: Num
+  rr25: Num
+  rr25_rank: Num
+  rr25_sessions: number
+  term_ratio: Num
+  today_percent: Num
+  today_points: Num
+  truncated: boolean
+  proxy: boolean
+  reason: string | null
+}
+export interface VolatilityScanner {
+  rows: VolatilityScannerRow[]
+  simulated: boolean
+  provider: string
+  units: "vol_points"
+}
 export interface Volatility {
   iv_rank?: Num
   iv_percentile?: Num
+  iv_z_score?: Num
+  history_ranks?: Record<string, HistoryRank>
   history_sessions?: number
   history_basis?: { current: "own_mfiv" | "own_atm" | "missing"; own_sessions: number; proxy_sessions: number; window: number }
   proxy?: { name: string | null; used: boolean; start: string | null }
   history_values?: { date: string; value: number; source: string }[]
   ex_post_vrp?: ExPostVrp | null
+  event_volatility?: EventVolatility[]
   symbol: string
   as_of: string
   version: number
@@ -611,6 +670,24 @@ export interface Volatility {
   }
   sources: Record<"mfiv" | "atm" | "skew" | "term" | "realized" | "vrp" | "implied_moves", string>
 }
+export interface EventVolatility {
+  date: string
+  session: string
+  label: string
+  timing: string
+  time: string | null
+  near: string | null
+  next: string | null
+  baseline_variance: Num
+  variance_premium: Num
+  percent: Num
+  points: Num
+  forward: Num
+  proxy: boolean
+  truncated: boolean
+  calendar_arbitrage: boolean
+  reason: string | null
+}
 
 export interface VolatilitySeriesRow {
   t: number
@@ -618,6 +695,12 @@ export interface VolatilitySeriesRow {
   mfiv30?: Num
   atm30?: Num
   rr25?: Num
+  bf25?: Num
+  ratio9_30?: Num
+  ratio30_93?: Num
+  vix?: Num
+  vix_minus_mfiv?: Num
+  vix_sample_time?: number
   rv21?: Num
   proxy_iv30?: Num
   sources: Record<string, string | null>

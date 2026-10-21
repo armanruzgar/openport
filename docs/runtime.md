@@ -1307,6 +1307,15 @@ A forced backfill correction appends the same minute again; the last record for
 that minute wins on reload. Normal sampling and backfill keep existing rows.
 Daily close rows are cached separately for all sessions, rebuilt on reload.
 
+Per-expiry SVI snapshots use separate append-only `SYMBOL-YYYY-MM.surfaces`
+JSON-lines files in the same directory, at three intraday slots and near the
+scheduled close. They retain actual sample timestamps and full-precision fitted
+parameters, not quote arrays. All retained surface slots are currently indexed
+in memory; their cost grows with sessions and expiries and is additional to the
+minute-cache estimates below. They have no automatic disk retention. See
+[historical surface snapshots](svi.md#historical-surface-snapshots) for capture
+windows, backfill, API bounds and recovery rules.
+
 The minute cache retains 45 elapsed days per underlying, measured from that
 underlying's newest market minute, not wall time. `kSeriesMinuteRetention`
 defines the window: minute starts after `newest - 45 days` through `newest`.

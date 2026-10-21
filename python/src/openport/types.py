@@ -509,7 +509,29 @@ class Exposure(TypedDict):
     exposure: JSON
 
 
-class Volatility(TypedDict):
+class HistoryRank(TypedDict):
+    current: float | None
+    rank: float | None
+    percentile: float | None
+    z_score: float | None
+    sessions: int
+    window: int
+
+
+class VolatilityHistoryFields(TypedDict, total=False):
+    iv_rank: float | None
+    iv_percentile: float | None
+    iv_z_score: float | None
+    history_ranks: dict[str, HistoryRank]
+    history_sessions: int
+    history_basis: JSON
+    proxy: JSON
+    history_values: list[JSON]
+    ex_post_vrp: JSON | None
+    event_volatility: list[JSON]
+
+
+class Volatility(VolatilityHistoryFields):
     symbol: str
     as_of: str
     units: str

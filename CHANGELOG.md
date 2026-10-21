@@ -63,6 +63,23 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   instead of stopping recording, and counts stale staging folders toward the size cap.
 - **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
   duration and cover multiple pauses/resumes before the pacing loop observes them.
+- **Surface history:** persist per-expiry SVI parameters at scheduled intraday slots
+  and the close; compare the same expiry against the prior close, week and month.
+- **Event volatility:** derive an event variance premium from adjacent straddling
+  expiries using supplied labels and earnings/news calendars, including BMO/AMC.
+  Missing brackets and confounded solves remain explicit.
+- **Vol scanner:** batch API and sortable terminal view for every subscribed symbol,
+  with history coverage, feed timestamps, simulation labels and symbol navigation.
+- **Python/MCP:** read stored volatility/surface history and the batch scanner,
+  and select the account calendar for event estimates.
+- **Volatility history:** ranks, percentiles and population z-scores for signed skew
+  and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
+  Live comparison measurements remain pending.
+- **Volatility fixes:** surface history keeps one close per session on disk, loads
+  13 months and keeps 400 days in memory; range lists return at most 400 snapshots
+  with a `truncated` flag, and Python defaults to comparisons. Scanner rows are cached
+  per publication. Event estimates count one event per date and session, and an
+  event at a settlement instant now solves after that expiry.
 
 ## 0.4.0 (2026-10-06)
 

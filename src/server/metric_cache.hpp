@@ -21,6 +21,8 @@ struct SurfaceFits {
   std::optional<analytics::VolatilityMetrics> volatility;
   std::map<const CandleStore*, analytics::RealizedMetrics> realized;
   std::map<const MetricsSource*, nlohmann::json> volatility_responses;
+  std::map<const MetricsSource*, nlohmann::json> scanner_rows;  ///< Metric fields only; feed state is per request.
+  std::map<const MetricsSource*, std::vector<analytics::EventLabel>> events;
 };
 std::shared_ptr<SurfaceFits> surface_cache(const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics);
 analytics::VolatilityMetrics cached_volatility(const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics);

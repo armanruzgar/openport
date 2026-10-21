@@ -40,30 +40,50 @@ std::vector<HistoricalIv> historical_iv(std::span<const VolatilityDay> own,
   for (const auto& [date, value] : values) { (void)date; out.push_back(value); }
   return out;
 }
-IvRank iv_rank(std::span<const HistoricalIv> history, double current, md::Timestamp as_of) {
-  IvRank out;
+HistoryRank history_rank(std::span<const HistoricalValue> history, double current, md::Timestamp as_of) {
+  HistoryRank out;
   auto last = md::new_york_time(as_of).date;
   if (!completed(last, as_of)) last = md::previous_business_day(last);
   auto first = last;
   for (int i = 1; i < 252; ++i) first = md::previous_business_day(first);
   std::vector<double> values;
   std::size_t below = 0;
-  for (const auto& row : history) {
-    if (row.date < first || row.date > last || !usable(row.vol)) continue;
-    values.push_back(row.vol);
-    if (row.vol < current) ++below;
-    if (row.source.starts_with("own_")) ++out.own_sessions;
+  std::map<md::Date, HistoricalValue> sessions;
+  for (const auto& row : history)
+    if (row.date >= first && row.date <= last && completed(row.date, as_of))
+      sessions[row.date] = row;
+  for (const auto& [date, row] : sessions) {
+    (void)date;
+    if (!std::isfinite(row.value)) continue;
+    values.push_back(row.value);
+    if (row.value < current) ++below;
+    if (row.source == "own" || row.source.starts_with("own_")) ++out.own_sessions;
     else {
       ++out.proxy_sessions;
       if (out.proxy_start.empty()) out.proxy_start = md::format_date(row.date);
     }
   }
   out.sessions = values.size();
-  if (values.empty() || !usable(current)) return out;
+  if (values.empty() || !std::isfinite(current)) return out;
   const auto [low, high] = std::minmax_element(values.begin(), values.end());
-  if (*high > *low) out.rank = (current - *low) / (*high - *low);
   out.percentile = static_cast<double>(below) / static_cast<double>(values.size());
+  if (*high > *low) {
+    out.rank = (current - *low) / (*high - *low);
+    double mean = 0, squares = 0, count = 0;
+    for (const double value : values) {
+      const double delta = value - mean;
+      mean += delta / ++count;
+      squares += delta * (value - mean);
+    }
+    if (squares > 0) out.z_score = (current - mean) / std::sqrt(squares / count);
+  }
   return out;
+}
+IvRank iv_rank(std::span<const HistoricalIv> history, double current, md::Timestamp as_of) {
+  std::vector<HistoricalValue> values;
+  for (const auto& row : history)
+    if (usable(row.vol)) values.push_back({row.date, row.vol, row.source});
+  return history_rank(values, usable(current) ? current : kNaN, as_of);
 }
 ExPostVrp ex_post_vrp(std::span<const HistoricalIv> history, std::span<const md::Bar> days, md::Timestamp as_of) {
   ExPostVrp out;

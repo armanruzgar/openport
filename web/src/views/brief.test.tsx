@@ -33,7 +33,7 @@ function seed(scope = 0) {
   client.setQueryData(queries.trades("current").queryKey, { account_version: "17", trades: [], attempt: 2, day_notes: notes })
   client.setQueryData(["playbooks", scope, "17"], { definitions: {}, modes: {}, staged: [], reasons: {}, auto_allowed: false })
   client.setQueryData(["summary", "SPX", 1], briefSummary)
-  client.setQueryData(["volatility", "SPX", 1], briefVolatility)
+  client.setQueryData(["volatility", "SPX", 1, "main"], briefVolatility)
   client.setQueryData(["brief-series", "SPX", "live/", minute], { symbol: "SPX", interval: "1d", fields: [], rows: [{ t: Date.parse("2026-09-22T20:00Z") / 1000, mfiv30: 18, atm30: 20, rr25: -3, sources: {} }] })
   client.setQueryData(["brief-candles", "SPX", "live/", "1d", minute], daily)
   client.setQueryData(["brief-candles", "SPX", "live/", "1m", minute], intraday)
@@ -93,7 +93,7 @@ describe("morning brief", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
   it("shows event labels as escaped text and pending limits and guardrails", async () => {
-    client.setQueryData(["volatility", "SPX", 1], { ...briefVolatility, implied_moves: { ...briefVolatility.implied_moves, sessions: [{ ...sessionMove(day), label: "<Event> at 14:00" }] } })
+    client.setQueryData(["volatility", "SPX", 1, "main"], { ...briefVolatility, implied_moves: { ...briefVolatility.implied_moves, sessions: [{ ...sessionMove(day), label: "<Event> at 14:00" }] } })
     client.setQueryData(tradingQueries(0, "17", true).risk.queryKey, { ...briefRisk, pending_limits: { ...briefRisk.limits, max_daily_loss: "6000" }, pending_guardrails: { ...briefRisk.guardrails, max_opening_trades: 10 } })
     await render()
     expect(host.textContent).toContain("<Event> at 14:00")
@@ -122,7 +122,7 @@ describe("morning brief", () => {
   })
   it("uses session rows to switch to review on an early close", async () => {
     vi.mocked(useLive).mockReturnValue(liveState({ ...currentStatus, underlyings: [{ ...currentStatus.underlyings[0]!, as_of: "2026-11-27T18:00:00Z" }] }, null, "open"))
-    client.setQueryData(["volatility", "SPX", 1], { ...briefVolatility, as_of: "2026-11-27T18:00:00Z", implied_moves: { ...briefVolatility.implied_moves, sessions: [sessionMove("2026-11-30")] } })
+    client.setQueryData(["volatility", "SPX", 1, "main"], { ...briefVolatility, as_of: "2026-11-27T18:00:00Z", implied_moves: { ...briefVolatility.implied_moves, sessions: [sessionMove("2026-11-30")] } })
     await render()
     expect(host.textContent).toContain("Review after the close · 2026-11-27")
   })

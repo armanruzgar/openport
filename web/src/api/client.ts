@@ -240,9 +240,11 @@ export const api = {
   resetAccount: (request: ResetRequest, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/reset"), "POST", mode, request),
   requestPayout: (amount: Money, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/payout"), "POST", mode, { amount }),
   status: (signal?: AbortSignal) => get<Status>("/api/status", signal),
-  series: (symbol: string, signal?: AbortSignal) => get<VolatilitySeries>(`${underlying(symbol)}/series?interval=1d&fields=mfiv30,atm30,rr25,rv21,proxy_iv30`, signal),
+  series: (symbol: string, signal?: AbortSignal) => get<VolatilitySeries>(`${underlying(symbol)}/series?interval=1d&fields=mfiv30,atm30,rr25,bf25,ratio9_30,ratio30_93,rv21,proxy_iv30,vix,vix_minus_mfiv`, signal),
   briefSeries: (symbol: string, now: number, signal?: AbortSignal) => get<VolatilitySeries>(`${underlying(symbol)}/series?interval=1d&fields=mfiv30,atm30,rr25&from=${Math.floor(now / 1000) - 21 * 86400}&to=${Math.floor(now / 1000)}`, signal),
-  volatility: (symbol: string, signal?: AbortSignal) => get<Volatility>(`${underlying(symbol)}/volatility`, signal),
+  volatility: (symbol: string, signal?: AbortSignal) => get<Volatility>(scoped(`${underlying(symbol)}/volatility`), signal),
+  surfaceHistory: (symbol: string, signal?: AbortSignal) => get<import("./types").SurfaceHistory>(`${underlying(symbol)}/surface-history?compare=true`, signal),
+  volatilityScanner: (signal?: AbortSignal) => get<import("./types").VolatilityScanner>("/api/volatility/scanner", signal),
   calendarEvents: (signal?: AbortSignal) => request<{ events: import("./trading-types").PlanEvent[] }>("/api/calendar/events", { signal, headers: readHeaders() }),
   summary: (symbol: string, signal?: AbortSignal) => get<Summary>(`${underlying(symbol)}/summary`, signal),
   chain: (symbol: string, expiry: string, window: number, signal?: AbortSignal) =>

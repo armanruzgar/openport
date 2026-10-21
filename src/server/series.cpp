@@ -41,8 +41,12 @@ SeriesStore::SeriesStore(std::filesystem::path directory)
   if (directory_.empty()) return;
   try {
     std::filesystem::create_directories(directory_);
-    for (const auto& entry : std::filesystem::directory_iterator(directory_))
+    std::vector<std::filesystem::path> surfaces;
+    for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
       if (entry.path().extension() == ".csv") load(entry.path());
+      else if (entry.path().extension() == ".surfaces") surfaces.push_back(entry.path());
+    }
+    load_surfaces(surfaces);
   } catch (const std::exception& e) { error_ = "series: " + std::string(e.what()); }
 }
 
@@ -306,6 +310,7 @@ void SeriesWorker::sample() {
     if (minute <= sampled_[symbol]) continue;
     sampled_[symbol] = minute;
     if (!store_.contains(symbol, minute)) store_.insert(symbol, series_row(metrics));
+    if (!surface_slot(metrics->as_of).empty()) store_.insert_surface(symbol, surface_snapshot(metrics));
   }
 }
 
@@ -350,7 +355,9 @@ std::size_t backfill_series(const std::filesystem::path& recording, SeriesStore&
       if (curves.contains("SPX")) curve = curves.at("SPX");
       else if (!curve && !curves.empty()) curve = curves.begin()->second;
     }
-    if (!seen.emplace(complete->underlying, minute).second || (!force && store.contains(complete->underlying, minute))) continue;
+    if (!seen.emplace(complete->underlying, minute).second) continue;
+    if (!surface_slot(metrics->as_of).empty()) store.insert_surface(complete->underlying, surface_snapshot(metrics), force);
+    if (!force && store.contains(complete->underlying, minute)) continue;
     if (store.insert(complete->underlying, series_row(metrics), force)) ++written;
   }
   if (!reader.diagnostic().empty()) throw std::runtime_error(reader.diagnostic());

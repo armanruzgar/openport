@@ -88,6 +88,7 @@ class MetricsSource {
   }
   /// Supplied labels for the volatility view; they do not affect trading.
   [[nodiscard]] virtual std::vector<analytics::EventLabel> events() const { return {}; }
+  [[nodiscard]] virtual std::vector<trading::PlanEvent> event_calendar() const { return {}; }
   /// Price history for charts and realized volatility; nullptr when absent.
   [[nodiscard]] virtual const CandleStore* candles() const { return nullptr; }
   [[nodiscard]] virtual const SeriesStore* series() const { return nullptr; }
@@ -103,6 +104,7 @@ class MetricsSource {
 class Engine final : public MetricsSource {
  public:
   struct Options : Desk::Options {
+    std::vector<trading::PlanEvent> event_calendar;
     std::shared_ptr<Notifications> notifications;
     std::chrono::milliseconds analytics_interval{1000};
     std::size_t command_capacity = 256;
@@ -152,6 +154,7 @@ class Engine final : public MetricsSource {
   [[nodiscard]] std::shared_ptr<const TradingView> trading_view() const override;
   [[nodiscard]] std::shared_ptr<const TradingView> trading_view(std::string_view account) const override;
   [[nodiscard]] std::vector<analytics::EventLabel> events() const override { return options_.events; }
+  [[nodiscard]] std::vector<trading::PlanEvent> event_calendar() const override { return options_.event_calendar; }
   [[nodiscard]] const CandleStore* candles() const override { return options_.candles.get(); }
   [[nodiscard]] const SeriesStore* series() const override { return options_.series.get(); }
   bool post_trading(TradingCommand command, TradingCompletion completion) override;

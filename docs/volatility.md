@@ -13,7 +13,8 @@ These calculations normally run on the requesting API worker. Enabled playbook
 conditions also read them on the Desk thread, using the shared snapshot cache. They share the lazy SVI fits and per-snapshot lock used by the
 surface route. Successes and missing results are cached by snapshot ownership,
 so independent engines cannot share results even if symbol and version match.
-History and event labels are read for that snapshot's first volatility request.
+Candle estimates and static `--events` labels are read for that snapshot's first
+volatility request; plan and daemon calendars are read for each event estimate.
 The next snapshot refreshes the current results. The history worker shares the
 same fits and metric cache. Rank and ex-post results read current history on each
 request, so a backfill is visible even before the next analytics snapshot. The
@@ -291,7 +292,8 @@ ranges, malformed or duplicate parameters, unknown fields and results over
 Fields are `spot`, `forward`, `mfiv9`, `mfiv30`, `mfiv93`, `mfiv182`, `mfiv365`,
 `atm7`, `atm30`, `atm60`, `atm90`, `atm180`, `rr25`, `bf25`, `rr10`, `bf10`,
 `ratio9_30`, `ratio30_93`, `gex`, `gamma_flip`, `call_wall`, `put_wall`. Daily
-queries also support `proxy_iv30` and `rv21` (trailing 21-session close RV).
+queries also support `proxy_iv30`, `rv21` (trailing 21-session close RV),
+`vix` and `vix_minus_mfiv` (SPX/SPY session comparisons).
 Omitting fields returns all applicable fields. Rows are oldest first, each with
 `t`, selected fields and a `sources` map per value (`own`, the named index,
 `daily_closes`, or null). Missing sessions between daily observations have null
@@ -387,3 +389,115 @@ the chart is visible and enabled, and does not fetch IV history.
 or an inverted 9d/30d model-free term ratio. They use the calculations and history
 rules above. Missing values fail a required condition; no default IV or realized
 history is supplied. Replays and scenarios use only their own available history.
+
+### Skew and term ranks
+
+`history_ranks` reports current value, rank, percentile, population z-score,
+session count and a 252-session window for every stored field, including signed
+RR25/BF25 and both MFIV term ratios. Only finite local completed-session values
+enter these ranks; missing days do not extend the window and no index proxy is
+used. Rank is `(current − min)/(max − min)` and is not clamped; percentile is the
+fraction strictly below current. Z-score is `(current − mean)/population_sd`.
+A flat or one-observation window has null rank and z-score; no history or missing
+current gives null statistics. IV's proxy-aware rank also reports `iv_z_score`.
+
+Daily series can request `vix` and `vix_minus_mfiv` for SPX/SPY. The difference
+is VIX's daily close minus the same session's locally stored MFIV30, in vol
+points. Unlike `proxy_iv30`, this reference remains available after local history
+begins. Both observations must exist; there is no ATM substitution or gap filling.
+`t` is the session close, `sample_time` is the actual local minute and
+`vix_sample_time` is the VIX daily bar's start. These are session-aligned, not
+simultaneous quotes. SPY is a cross-product comparison to the SPX-based VIX.
+The UI only shows the tracking panel when VIX observations exist. Live measured
+differences remain pending; synthetic tests establish arithmetic, not accuracy.
+
+## Event variance extraction
+
+`event_volatility` supplements the allocated session moves with a **derived**
+event premium. It reads `--events` labels, earnings/news in `--event-calendar`,
+and the requested account's plan calendar (`?account=...`, normally the selected
+terminal account). Entries on the same date that resolve to the same session
+count once, with their labels joined, so an earnings date imported into the plan or
+listed by two sources is one event. Symbol-specific entries only apply to that
+underlying. Dividends and splits are excluded: their mechanical
+price adjustments are not event uncertainty. Plan changes are read on each
+request even when the market snapshot has not advanced.
+
+A date-only `--events` label assumes the event occurs at that session's open.
+BMO earnings enter an opening settlement on the stated date. AMC earnings occur
+after the stated date's closing settlement and belong to the next business
+session, including across weekends/holidays. News uses its supplied exact time.
+The response's `time` is null for date-only/BMO/AMC events; these timing conventions
+do not fabricate a release or market timestamp.
+
+Choose the **adjacent listed expiries** immediately before and after the event.
+An event exactly at a settlement instant (news timed at the close) falls after that
+expiry, matching the next-session assignment above; a BMO event still falls inside
+the same morning's AM settlement.
+Do not skip an unusable expiry. Both must still be unexpired at market `as_of`.
+Let W₁ and W₂ be their total variances. N₁ is the business-session weight from
+`as_of` to the earlier settlement; N₂ is N₁ plus the weight of the interval
+between the two settlements. This uses the same fractional regular-hours and AM
+overnight convention as session moves above: an AM overnight interval and a
+subsequent full PM interval each count as one unit. Solve:
+
+```
+W₁ = b × N₁
+W₂ = b × N₂ + E
+b = W₁ / N₁
+E = W₂ − b × N₂
+implied event move (%) = 100 × sqrt(E)
+implied event move (points) = later-expiry forward × sqrt(E)
+```
+
+`baseline_variance` is b per full session; `variance_premium` is E, in decimal
+return variance (not annualized). The move describes the **extra event component**,
+not ordinary session variance plus event variance. Use MFIV for both expiries;
+if either is unavailable, use ATM for both and mark `proxy`. Do not mix their
+levels in the solve. Strip truncation and EEP quality propagate.
+
+This assumes constant ordinary variance per session and an additive one-off event
+variance. It requires expiries on both sides, positive pre-event business time,
+and exactly one known upcoming event through the later expiry. Otherwise return
+null moves with `event_not_bracketed`, `no_baseline_sessions`,
+`multiple_events_in_solve`, or `unusable_variance`. A negative premium remains
+reported but has a null move (`negative_event_premium`); a decreasing total
+variance flags `negative_forward_variance`. Roundoff within 1e-12 is zero.
+
+News entries without a symbol, and every `--events` label, apply to **every**
+underlying, so they count against each symbol's solve. A single stock usually lists
+only weekly or monthly expiries; a macro release (CPI, payrolls, FOMC) almost always
+falls between its earnings date and the later expiry, so its earnings estimate is
+often `multiple_events_in_solve`. Index products with daily expiries are affected
+far less. Give macro news a symbol, or keep separate calendars, when single-stock
+earnings estimates matter more than macro labels on those symbols.
+Unknown events, changing background volatility, coarse AM/PM allocation,
+wide expiry spacing, risk premiums and illiquid/truncated strips can all distort
+this estimate. It is not a uniquely identified event forecast or observed return.
+
+## Cross-underlying scanner
+
+`GET /api/volatility/scanner` returns one row per subscribed symbol, including
+subscriptions without a snapshot. It takes no query parameters. The terminal's
+Trade → Vol scanner tab sorts every metric (missing values always last) and opens
+a symbol's Volatility view on click. Each row reports its own `as_of`, feed state,
+history count, proxy provenance and `realized_as_of` (last available completed RV
+bar date); the batch does not imply synchronized quotes or current daily history.
+The response identifies its provider and whether the data is simulated.
+
+Columns are IV30 (MFIV, otherwise explicitly labelled ATM), IV rank/percentile,
+IV30 minus trailing 21 completed-session close RV, RR25 and its local-history rank,
+MFIV 9d/30d term ratio, and today's implied move in percent and points. The IV/RV
+spread uses the same IV basis as the displayed IV30. The individual volatility
+endpoint's existing VRP remains MFIV-only. IV history can use the named index
+proxy before local observations; RR history never does. Today's move requires an
+unexpired same-day settlement; absence is null, not zero. Values retain the same
+finite-strip, smile, coverage and staleness limits as the individual endpoints.
+
+Scanner rows are cached per symbol publication: polling tabs reuse a row until that
+symbol publishes a new snapshot, while feed state is read on every request. History
+stored meanwhile enters the ranks with the next publication.
+
+The Python client and MCP server expose `volatility_history`, `surface_history` and
+`volatility_scanner`. Both default `surface_history` to the comparisons only. Python's
+`series(symbol)` continues to mean listed expiry series for compatibility. Surface history storage and comparison details are in [SVI](svi.md#historical-surface-snapshots).

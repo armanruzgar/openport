@@ -313,6 +313,9 @@ TEST_F(Sandboxes, TradeScopeAllowsOwnOrdersPreviewsExitsAndNotes) {
     EXPECT_FALSE(server::check_api_write(request(method, path, token(own)), policy)) << path;
   }
   EXPECT_FALSE(server::check_api_write(request("GET", "/api/underlyings/SPX/chain", token(own)), policy));
+  EXPECT_FALSE(server::check_api_write(request("GET", "/api/volatility/scanner", token(own)), policy));
+  EXPECT_FALSE(server::check_api_write(request("GET", "/api/underlyings/SPX/volatility", token(own)), policy));
+  EXPECT_TRUE(server::check_api_write(request("GET", "/api/underlyings/SPX/volatility?account=main", token(own)), policy));
   EXPECT_FALSE(server::check_api_write(request("GET", "/ws", token(own)), policy));
 }
 TEST_F(Sandboxes, ListingsStatusTicksAndGuessedIdsRespectVisibility) {
