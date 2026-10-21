@@ -143,6 +143,8 @@ recording and hosting a public demo.
 Every provider but Cboe, Demo and Replay is tested against sample responses and has
 not yet been run live with a key; an [issue](https://github.com/38st/openport/issues)
 saying how it went is welcome. The broker adapters read market data only.
+`--fallback-provider NAME` keeps a second feed ready to take over an underlying while
+the main one is stale or failing.
 [Configuration](docs/configuration.md) has each provider's details and every flag.
 
 ## Documentation

@@ -370,6 +370,50 @@ documentation, not live accounts. Empty response shapes, index symbols,
 entitlement and the noted units still need account validation. No new journal or
 recording fields are added for them.
 
+## Feed failover
+
+`--fallback-provider NAME` keeps a second live provider in reserve:
+
+```sh
+./build/apps/openportd --provider tradier --symbols SPX,SPY --expiries 2 --window 0.05 \
+  --fallback-provider cboe --fallback-seconds 45
+```
+
+The backup takes its own options from `--fallback-option KEY=VALUE` and its key from
+the environment, as `--provider` would. Neither feed may be `demo` or `replay`, and
+the two must differ. Both must accept the subscription's filters.
+
+Each underlying is routed on its own. The main feed keeps it until its status has
+been `Stale`, `Error` or `Stopped` for `--fallback-seconds` (default 30), or it has
+sent no healthy update for that long beyond the engine's stale window (three poll
+intervals, at least a minute). A provider-wide error counts for every underlying. A
+streaming feed that does not report its own health, such as Databento, proves itself
+with quotes, as it does to the engine. The backup starts at the first switch and then
+keeps running. The underlying returns to the main feed at its first healthy status
+after the switch.
+
+The two feeds' contracts share one id space, mapped by OSI symbol as the demo feed
+maps its days; only the feed in charge of an underlying reaches the engine. A switch
+first reports the underlying's status naming the new feed, then sends that feed's
+latest quote, open interest, Greeks and spot. Contracts it does not price keep their
+previous, aging quotes until its first complete snapshot (or, for a stream, its first
+healthy status) vouches for its chain; then they are cleared without a market time.
+
+While the backup supplies an underlying, its health is `delayed` at best, never
+`live`, with a message such as `fallback cboe: Cboe delayed; primary tradier error`.
+`GET /api/status` lists the fallback under `provider.fallback` and each underlying's
+`feed` and `fallback` flag; the terminal's header shows a `fallback · cboe` badge and
+Status lists the feed per underlying. Paper trading keeps every freshness check: quotes
+keep their own market times, so a delayed backup behind a real-time main feed leaves
+orders waiting, and every fill records the feed that priced it (`feed` in
+`GET /api/fills`, the order views and the journal).
+
+Adapters that report `Stale` while healthy count as failing: Tradier's index
+subscriptions (timing unconfirmed), a Schwab response without `isDelayed`, and
+Interactive Brokers' frozen values. Pair such a feed with a backup only if that is the
+intent. Recordings name both feeds in their provider (`tradier+cboe`) and keep the
+status messages, but not the per-quote feed. `openport-probe` takes one provider.
+
 ## Chain volume and liquidity
 
 `md::OptionVolume` carries cumulative traded contracts for the trading date of its
