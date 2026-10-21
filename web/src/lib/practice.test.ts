@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import type { ReplayDemo, ReplayHistory } from "../api/types"
 import { shareTrades, trades } from "../test/trading-fixtures"
 import { coachFlags, mistakeCosts, tradeBuckets } from "./journal"
-import { practiceQueue, practiceStreak, scenarioMarkers } from "./practice"
+import { personalBestLabel, practiceQueue, practiceStreak, scenarioMarkers } from "./practice"
 
 const trade = { ...trades[0]!, opened: "2026-09-22T14:30:00Z", closed: "2026-09-22T15:00:00Z", status: "closed" as const,
   net: "100", entry_context: { spot: 6000, spot_source: "quote", iv: .25, delta: -.4, years: 8 / 365, equity: "25000", floor_room: "1000", buying_power: "500" },
@@ -62,4 +62,11 @@ it("brings a drill back sooner when its underlying matches a weak edge group", (
   const weak = tradeBuckets([trade, { ...trade, net: "-200" }, { ...trade, net: "-200" }], "underlying")
   expect(practiceQueue(demos, history, "2026-10-21", () => "9")).toHaveLength(0)
   expect(practiceQueue(demos, history, "2026-10-21", () => "9", weak)[0]).toMatchObject({ scenario: "crush", interval: 1, weak: [trade.underlying] })
+})
+
+it("labels a sidecar personal best unverified until a verification recomputes it", () => {
+  expect(personalBestLabel({})).toBe("")
+  expect(personalBestLabel({ personal_best: 85 })).toBe(" · personal best 85/100 (unverified)")
+  expect(personalBestLabel({ personal_best: 85, personal_best_verified: false })).toContain("(unverified)")
+  expect(personalBestLabel({ personal_best: 85, personal_best_verified: true })).toBe(" · personal best 85/100 (verified)")
 })

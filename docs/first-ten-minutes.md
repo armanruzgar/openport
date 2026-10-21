@@ -114,7 +114,7 @@ the authored move happened on the trade and equity charts.
 
 For a scored full-session drill, clear **Start at**, choose **Morning crush**, and
 play to the end. Finished runs show the machine objectives, score and personal
-best. The partial-session walk-through above is intentionally unscored. **Today's
+best, which stays labelled unverified until you verify that run. The partial-session walk-through above is intentionally unscored. **Today's
 practice** returns weaker recent scores sooner with fresh seeds. Export a scenario
 pack to share the drill; add a challenge to fix its seed and plan. All results are
 paper practice, not evidence of live performance.

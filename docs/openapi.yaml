@@ -7571,7 +7571,12 @@
             "$ref": "#/components/schemas/DrillGrade"
           },
           "personal_best": {
-            "type": "number"
+            "type": "number",
+            "description": "Best complete drill score for this scenario among retained history, read from editable playback sidecars."
+          },
+          "personal_best_verified": {
+            "type": "boolean",
+            "description": "True only when a passed verification of the best run, against its current journal, recomputed the same score."
           },
           "completed_at": {
             "type": "string",

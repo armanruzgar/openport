@@ -440,11 +440,13 @@ identity, purchase, historical-journal and illustrative-pricing semantics.
   `paused` may accompany the pack ID. See [scenario packs](scenarios.md#scenario-packs-and-challenges).
 
 Replay listings/states include resolved scenario `events` and `objectives`.
-Finished history can include `drill`, `personal_best` and real-wall-time
+Finished history can include `drill`, `personal_best`, `personal_best_verified` and real-wall-time
 `completed_at`; these are separate from market `time`. Scores are derived practice
 metrics, absent on older runs and null for incomplete runs/evidence. Verification
 receipts retain challenge definitions under `run.inputs[].challenge`, embed their
 exact `scenario_source` for portable verification, and recompute
-`run.drill` from the committed journal. Share the journal, playback `.json` sidecar
-and source as well as the receipt to run `--verify-run`; the sidecar establishes
-full-run eligibility, and a receipt is not a signed credential.
+`run.drill` from the committed journal. Share the journal and source as well as
+the receipt to run `--verify-run`. Full-run eligibility comes from the journal's
+start input and any `restart` input, not the sidecar; a receipt is not a signed
+credential. `personal_best` is read from sidecar scores, and `personal_best_verified`
+is true only when a passed verification of that run recomputed the same score.

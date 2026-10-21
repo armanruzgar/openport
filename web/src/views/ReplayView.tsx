@@ -8,6 +8,7 @@ import { type ReplaySource, type ReplayStart } from "../api/client"
 import { usePlans } from "../api/trading"
 import { Dialog } from "../components/Dialog"
 import { formatMoney } from "../lib/trading"
+import { personalBestLabel } from "../lib/practice"
 import type { View } from "../lib/route"
 import { useLive } from "../api/live"
 import type { ReplayRecording, ReplaySession, ReplayState } from "../api/types"
@@ -293,7 +294,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
           <span>{run.date} · {run.start_at || "open"} · {run.plan_name ?? run.plan}{run.plan_id ? ` · ${run.plan_id}` : ""}</span>
           <Badge tone={run.result === "pass" ? "positive" : run.result === "fail" ? "warn" : "neutral"}>{run.result}</Badge>
           <span>P&amp;L {run.pnl === null ? "—" : formatMoney(run.pnl)}{run.valuation_complete === false ? " (incomplete marks)" : ""}</span>
-          {run.drill && <details className="w-full"><summary>Drill score {run.drill.score == null ? "Not graded (incomplete run or evidence)" : `${run.drill.score.toFixed(0)}/100`}{run.personal_best == null ? "" : ` · personal best ${run.personal_best.toFixed(0)}/100`}</summary>
+          {run.drill && <details className="w-full"><summary>Drill score {run.drill.score == null ? "Not graded (incomplete run or evidence)" : `${run.drill.score.toFixed(0)}/100`}{personalBestLabel(run)}</summary>
             <ul>{run.drill.objectives.map(o => <li key={o.id}>{o.id}: {o.passed == null ? "Unknown" : o.passed ? "Passed" : "Missed"}{o.observed == null ? "" : ` · observed ${o.observed.toFixed(2)}`}</li>)}</ul><p>{run.drill.basis}</p></details>}
           {run.journal_size && <span>{size(run.journal_size.bytes)} journal · {run.journal_size.records.toLocaleString()} records</span>}
           {run.journal_size?.warning && <p className="w-full text-warn">{run.journal_size.warning}</p>}

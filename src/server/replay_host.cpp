@@ -100,6 +100,10 @@ json demos_json(const std::vector<providers::Scenario>& scenarios) {
   for (const auto& d : scenarios) list.push_back(demo_json(d));
   return list;
 }
+bool builtin_id(const std::string& id) {
+  const auto& builtins = providers::builtin_scenarios();
+  return std::any_of(builtins.begin(), builtins.end(), [&](const auto& s) { return s.id == id; });
+}
 std::uint64_t seed_field(const json& value, const providers::Scenario& scenario) {
   if (value == "scenario") return scenario.seed;
   if (value.is_string()) {
@@ -509,8 +513,9 @@ class ReplayHost::History {
     auto value = session.state();
     value["finished"] = finalized;
     if (finalized && !session.objectives.empty()) {
-      auto grade = grade_drill(trading::FileJournal::read(journal(session.id).string()), session.objectives);
-      const bool full = !session.windows.empty() && session.provider->settled_through() >= session.windows.back().last && session.start_at.empty() && session.restarted_from.is_null();
+      const auto recovery = trading::FileJournal::read(journal(session.id).string());
+      auto grade = grade_drill(recovery, session.objectives);
+      const bool full = !session.windows.empty() && session.provider->settled_through() >= session.windows.back().last && run_from_open(recovery);
       grade["complete_run"] = full;
       if (!full) grade["score"] = nullptr;
       value["drill"] = std::move(grade);
@@ -641,13 +646,24 @@ class ReplayHost::History {
       item["read_only"] = true;
       out.push_back(std::move(item));
     }
-    std::map<std::string, double> best;
+    // Scores come from editable sidecars. A best counts as verified only when a passed
+    // verification of its run, against the current journal, recomputed that same score.
+    std::map<std::string, std::pair<double, bool>> best;
     for (const auto& run : out) if (run.contains("drill") && run.at("drill").at("score").is_number()) {
       const auto scenario = run.value("scenario", std::string());
-      best[scenario] = std::max(best[scenario], run.at("drill").at("score").get<double>());
+      const auto score = run.at("drill").at("score").get<double>();
+      const auto& verified = run.value("verification", json::object());
+      const bool rechecked = verified.value("status", "") == "passed" && verified.contains("run") && verified.at("run").contains("drill") &&
+          verified.at("run").at("drill").value("score", json(nullptr)) == score;
+      auto [entry, added] = best.try_emplace(scenario, score, rechecked);
+      if (!added && score > entry->second.first) entry->second = {score, rechecked};
+      else if (!added && score == entry->second.first) entry->second.second = entry->second.second || rechecked;
     }
-    for (auto& run : out) if (run.contains("scenario") && run.at("scenario").is_string() && best.contains(run.at("scenario").get<std::string>()))
-      run["personal_best"] = best.at(run.at("scenario").get<std::string>());
+    for (auto& run : out) if (run.contains("scenario") && run.at("scenario").is_string() && best.contains(run.at("scenario").get<std::string>())) {
+      const auto& [score, verified] = best.at(run.at("scenario").get<std::string>());
+      run["personal_best"] = score;
+      run["personal_best_verified"] = verified;
+    }
     return out;
   }
   json stamp(const std::string& id) const {
@@ -831,7 +847,11 @@ ReplayHost::ReplayHost(Options options)
       try {
         std::ifstream file(entry.path());
         const auto pack = json::parse(file);
-        auto scenario = providers::read_scenario(directory / (pack.at("scenario").at("id").get<std::string>() + ".json"));
+        const auto id = pack.at("scenario").at("id").get<std::string>();
+        // The id names a file; check it before building a path from it.
+        if (!providers::valid_scenario_id(id)) throw std::invalid_argument(entry.path().filename().string() + ": invalid scenario id");
+        if (builtin_id(id)) throw std::invalid_argument(id + ": a pack cannot replace a built-in scenario");
+        auto scenario = providers::read_scenario(directory / (id + ".json"));
         if (json::parse(scenario.source) != pack.at("scenario")) throw std::invalid_argument("Pack definition disagrees with its saved source");
         const auto existing = std::find_if(scenarios_.begin(), scenarios_.end(), [&](const auto& s) { return s.id == scenario.id; });
         if (existing != scenarios_.end() && json::parse(existing->source) != json::parse(scenario.source)) throw std::invalid_argument("Scenario id conflicts with catalogue");
@@ -1428,6 +1448,10 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     if (sandbox) { identity.erase("challenge"); identity.erase("scenario_source"); }
     engine.run_input = identity.dump();
     engine.run_id = session->id;
+    // A sandbox starts its own journal at the reviewed trade. A resumed or restarted run
+    // keeps its source's start input, so its start_at; a restart journals where it continues.
+    engine.run_start_at = sandbox ? std::optional(target) : std::nullopt;
+    engine.run_restart = restart && !sandbox ? json{{"kind", "restart"}, {"from", id}, {"at", target}}.dump() : std::string();
     engine.paper_accounts.clear();
     engine.paper_sink.reset();
     engine.record_file.clear();
@@ -1495,6 +1519,8 @@ void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete)
       throw std::invalid_argument("Scenario pack version must be 1");
     const auto directory = options_.engine.paper_journal.parent_path() / "scenario-packs";
     auto scenario = providers::parse_scenario(pack.at("scenario").dump(), directory / "import.json");
+    if (builtin_id(scenario.id))
+      throw std::invalid_argument("Scenario id " + scenario.id + " is a built-in scenario; packs cannot replace built-ins, so use a new id");
     pack["seed"] = std::to_string(seed_field(pack.at("seed"), scenario));
     const auto* plan = find_plan(pack.at("plan").get<std::string>());
     if (!plan || !plan->unlocked_by.empty()) throw std::invalid_argument("Pack plan must be an unlocked plan id");
@@ -1761,6 +1787,7 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
           engine.run_input = identity.dump();
         }
         engine.run_id = session->id;
+        engine.run_start_at = session->target;
         engine.paper_accounts.clear();
         engine.paper_sink.reset();
         engine.record_file.clear();

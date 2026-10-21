@@ -17,6 +17,10 @@ namespace openport::server {
 
 /// Every input a run recorded, in order, as its JSON text: its start first.
 [[nodiscard]] std::vector<std::string> run_inputs(const trading::JournalRecovery& journal);
+/// Whether the run played from its session's open without a later start time or a
+/// restart, read from its hash-chained inputs rather than an editable sidecar. Runs
+/// whose start input predates the recorded start time are not.
+[[nodiscard]] bool run_from_open(const trading::JournalRecovery& journal);
 /// The journal of a saved run that is re-executed to continue it (POST /api/replay
 /// {"resume"}): the transactions `expected` already holds are only compared, through
 /// their hashes, and the first that differs throws without writing anything; the ones

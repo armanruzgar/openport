@@ -7,6 +7,11 @@ export function scenarioMarkers(events: ScenarioMark[], from: number, to: number
     ...(e.end ? [{ x: Date.parse(e.end), label: `${e.type} ends`, color: "var(--warn)" }] : []),
   ]).filter(e => e.x >= from && e.x <= to).map(e => ({ ...e, x: e.x / unit }))
 }
+/** Sidecar scores are editable: a best is verified only once a verification recomputed it. */
+export function personalBestLabel(run: Pick<ReplayHistory, "personal_best" | "personal_best_verified">) {
+  if (run.personal_best == null) return ""
+  return ` · personal best ${run.personal_best.toFixed(0)}/100 (${run.personal_best_verified ? "verified" : "unverified"})`
+}
 export function freshPracticeSeed() {
   const values = crypto.getRandomValues(new Uint32Array(2))
   return ((BigInt(values[0]!) << 32n) | BigInt(values[1]!)).toString()

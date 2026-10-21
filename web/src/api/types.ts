@@ -442,6 +442,8 @@ export interface RunJournal {
 export interface ReplayHistory extends ReplayState {
   drill?: DrillGrade
   personal_best?: number
+  /** False until a passed verification of the best run recomputes its score. */
+  personal_best_verified?: boolean
   completed_at?: string
   journal_size?: import("./trading-types").JournalSize
   verification_cost?: VerificationCost

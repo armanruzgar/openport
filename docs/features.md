@@ -15,7 +15,8 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 - Replay from a reviewed entry preserves source, seed, date and plan in a fresh
   paused account. Scenario events mark review and intraday equity charts.
 - Machine objectives grade full scenario runs from committed journal states;
-  retained history supplies personal bests, a spaced practice queue and streaks.
+  retained history supplies personal bests (unverified until re-verified), a
+  spaced practice queue and streaks.
 - Import/export scenario packs in the API and terminal. Fixed challenges retain
   their inputs in the journal and existing replay verification receipts.
   [Practice scenarios](scenarios.md#scored-drills), [trade review](paper-trading.md#trade-review).

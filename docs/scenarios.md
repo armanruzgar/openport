@@ -566,13 +566,24 @@ fraction of objectives passed, with equal weights. A stopped, interrupted,
 start-at or restarted run has no headline score. Resetting the account or changing
 its plan during the run also withholds the score. These are risk constraints;
 staying out of the market can satisfy them. A high score does not establish an
-edge or profitability. Morning crush, Afternoon waterfall and Range bleed include
-objectives. Their source hashes changed; older runs need their original build or
-source for verification.
+edge or profitability. Morning crush, Afternoon waterfall and Range bleed have
+objectives. Built-ins keep theirs in `scenarios/objectives/builtin.json`, keyed by
+scenario id, rather than in their source files: run receipts hash a scenario's
+source, so runs recorded before objectives existed still verify. A built-in source
+file with inline `objectives` fails the build; your own scenarios and packs may
+declare them inline.
+
+Full-run eligibility comes from the journal's hash chain, not the playback sidecar.
+Each replay run records where play began in its start input (`start_at`: 0 for
+the open), and a restarted run records a `restart` input after the source run's
+retained prefix. Runs recorded before this have no full-run score.
 
 Finished replay history stores the derived score, individual observations and
 actual completion wall time. The UI shows the best complete score per scenario
-among retained history. Deleting history can lower that best. Scores across
+among retained history. That best comes from the playback sidecars, which can be
+edited, so it is labelled unverified (`personal_best_verified: false`) until a
+passed verification of the best run against its current journal recomputes the
+same score. Deleting history can lower that best. Scores across
 seeds and plans are practice feedback, not a fair competitive ranking.
 
 **Today's practice** returns low recent scores after one day (below 60), three
@@ -608,7 +619,8 @@ any objectives. `challenge` is optional. Seed strings preserve the full uint64
 range. The plan must be an unlocked evaluation or practice plan. Imports require
 replay/admin access, demo mode and writable replay storage; they persist under
 `scenario-packs/` beside the account journals and appear immediately. A scenario
-ID with different existing content is refused: choose a new ID. There are no URLs,
+ID with different existing content is refused: choose a new ID. A pack cannot use a
+built-in scenario's ID, so it cannot replace that scenario's default seed or plan. There are no URLs,
 remote includes or executable hooks in a pack. `--scenario-dir` still works.
 
 In **Replay → Scenario packs**, load a JSON file or paste a pack, import it, then
@@ -621,10 +633,11 @@ with the actual source, seed, date and initial plan, and recomputes drill result
 Challenge inputs also embed the exact scenario source text under `scenario_source`;
 verification checks its SHA-256 and uses it without needing the original file path.
 
-Share the pack, journal, its `.json` playback sidecar and verification receipt. Others can run
+Share the pack, journal and verification receipt. Others can run
 `openportd --verify-run RUN.jsonl` with the matching build/calendar. A receipt alone
-is not a signed attestation and cannot replace the journal or source. Without the
-playback sidecar, verification still checks transactions but withholds a full-run
-drill score because start-at/restart eligibility is unknown. Ordinary custom runs
+is not a signed attestation and cannot replace the journal or source. Verification
+reads start-at and restart status from the journal itself, so the sidecar is not
+needed for a full-run drill score. A challenge input labelled built-in must embed
+the shipped built-in source byte for byte. Ordinary custom runs
 and older challenges without embedded source still need their original source file. See
 [replay history](api.md#journal-practice-additions) for verification and source availability.

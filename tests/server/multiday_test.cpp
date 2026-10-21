@@ -21,6 +21,14 @@ using namespace openport;
 using nlohmann::json;
 using trading::Money;
 
+/// A restarted run journals one restart input after its source's retained prefix.
+std::string without_restart(const std::string& journal) {
+  const auto end = journal.rfind('\n', journal.size() - 2);
+  const auto last = json::parse(journal.substr(end + 1));
+  EXPECT_EQ(last.at("payload").at("events").at(0).at("payload").at("kind"), "restart");
+  return journal.substr(0, end + 1);
+}
+
 /// Wednesday's regular and curb sessions, then Thursday's overnight session, in a quiet
 /// market: SPY goes ex-dividend on Thursday.
 constexpr const char* kCarry = R"({"id":"carry","title":"Carry","description":"A day, its curb and the night after.",
@@ -562,13 +570,16 @@ TEST_P(ScenarioCommandRestart, InclusiveBoundaryAndGapCommandsRestartAndResumeBy
     const auto replay = json::parse(restarted.body).at("replay");
     const auto journal = file.directory / "replays" / (replay.at("id").get<std::string>() + ".jsonl");
     const auto phase = std::string(at) == "09:30:32" ? 1U : 0U;
-    EXPECT_EQ(bytes(journal), prefixes[phase]);
+    EXPECT_EQ(without_restart(bytes(journal)), prefixes[phase]);
     EXPECT_EQ(json::parse(call(host, "GET", "/api/replay/orders").body).at("orders"), books[phase]);
     EXPECT_EQ(bytes(source), original);
     ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
     const auto verified = server::verify_run(journal);
     EXPECT_TRUE(verified.matched) << verified.message;
+    // The restart is in the hash chain, whatever the playback sidecar says.
+    EXPECT_FALSE(server::run_from_open(trading::FileJournal::read(journal.string())));
   }
+  EXPECT_TRUE(server::run_from_open(trading::FileJournal::read(source.string())));
   options.paper_journal = crashed / "paper.jsonl";
   server::ReplayHost resumed({file.directory, options, true, scenarios});
   const auto response = call(resumed, "POST", "/api/replay", {{"resume", id}, {"speed", 0}});
@@ -627,8 +638,9 @@ TEST(MultiDayReplay, ScenarioSecondsAndRestartKeepTheSeedPlanSettingsAndCommandP
   EXPECT_EQ(state.at("settled_through"), at(30, 30));
   const auto journal = file.directory / "replays" / (state.at("id").get<std::string>() + ".jsonl");
   const auto recovered = trading::FileJournal::read(journal.string());
-  EXPECT_EQ(recovered.head, prefix.head);
-  EXPECT_EQ(recovered.records.size(), prefix.records.size());
+  ASSERT_EQ(recovered.records.size(), prefix.records.size() + 1);
+  EXPECT_EQ(recovered.records[prefix.records.size() - 1].hash, prefix.head);
+  EXPECT_EQ(recovered.records.back().type, "run_input");
   EXPECT_EQ(json::parse(call(host, "GET", "/api/replay/risk").body).at("limits").at("max_order_contracts"), 7);
   ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
   const auto verified = server::verify_run(journal);
@@ -663,7 +675,8 @@ TEST(MultiDayReplay, ScenarioSecondsAndRestartKeepTheSeedPlanSettingsAndCommandP
   ASSERT_EQ(legacy_restart.status, 201) << legacy_restart.body;
   const auto legacy_id = json::parse(legacy_restart.body).at("replay").at("id").get<std::string>();
   const auto copied = file.directory / "replays" / (legacy_id + ".jsonl");
-  EXPECT_EQ(trading::FileJournal::read(legacy_journal.string()).head, trading::FileJournal::read(copied.string()).head);
+  const auto legacy_records = trading::FileJournal::read(legacy_journal.string());
+  EXPECT_EQ(legacy_records.head, trading::FileJournal::read(copied.string()).records.at(legacy_records.records.size() - 1).hash);
   ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
   EXPECT_TRUE(server::verify_run(copied).matched);
   { std::ofstream changed(scenarios / "seconds.json", std::ios::app); changed << "\n"; }
@@ -672,6 +685,109 @@ TEST(MultiDayReplay, ScenarioSecondsAndRestartKeepTheSeedPlanSettingsAndCommandP
   EXPECT_EQ(json::parse(changed.body).at("error").at("code"), "REPLAY_NOT_RESTARTABLE");
 }
 
+
+/// Plays a scenario's recording through a desk, as a run that began at `start_at` (0 for
+/// the open, unset for a run from before that was recorded), up to `until` (0 for all of
+/// it), and leaves a sidecar claiming a run from the open beside its journal.
+std::filesystem::path record_whole_run(const test::RecordingFile& file, const providers::Scenario& scenario,
+                                       const std::string& name, std::optional<md::Timestamp> start_at, std::string run_input = {},
+                                       md::Timestamp until = 0) {
+  const auto journal = file.directory / (name + ".jsonl");
+  md::RecordingReader reader(file.path);
+  server::Desk::Options options;
+  options.replay = true;
+  options.run_input = run_input.empty() ? server::scenario_input(scenario, scenario.date, scenario.seed) : std::move(run_input);
+  options.run_start_at = start_at;
+  options.paper_journal = journal;
+  options.analytics.deamericanize = false;
+  {
+    server::Desk desk("replay (demo)", reader.header().capabilities, reader.header().subscription, options);
+    desk.start_trading();
+    providers::ReplayBatches batches(reader, reader.header().subscription);
+    while (const auto batch = batches.next()) {
+      if (until > 0 && batch->time > until) break;
+      desk.replay_batch(batch->events, batch->received, batch->time);
+    }
+    desk.stop();
+  }
+  std::ofstream sidecar(std::filesystem::path(journal).replace_extension(".json"));
+  sidecar << json{{"id", name}, {"start_at", ""}, {"finished", true}};
+  return journal;
+}
+
+TEST(ScenarioDrills, FullRunEligibilityComesFromTheHashChainNotTheSidecar) {
+  test::RecordingFile file;
+  auto source = json::parse(providers::builtin_scenarios().front().source);
+  source["id"] = "chained";
+  source["symbols"] = {"SPX"};
+  source["strike_window"] = .03;
+  source["objectives"] = {{{"id", "loss"}, {"type", "max_loss"}, {"limit", 500}}};
+  { std::ofstream out(file.directory / "chained.json"); out << source.dump(); }
+  const auto scenario = providers::read_scenario(file.directory / "chained.json");
+  providers::write_scenario_recording(file.path, scenario, scenario.date, scenario.seed);
+  const auto later = providers::scenario_open(scenario, scenario.date) + 60 * md::kNanosPerMinute;
+  const auto open = server::verify_run(record_whole_run(file, scenario, "open", 0));
+  ASSERT_TRUE(open.matched) << open.message;
+  EXPECT_TRUE(open.run["drill"]["complete_run"].get<bool>());
+  EXPECT_EQ(open.run["drill"]["score"], 100);
+  // The sidecar says it started at the open; its start input says an hour later.
+  const auto journal = record_whole_run(file, scenario, "later", later);
+  const auto recovery = trading::FileJournal::read(journal.string());
+  EXPECT_EQ(json::parse(server::run_inputs(recovery).front())["start_at"], later);
+  EXPECT_FALSE(server::run_from_open(recovery));
+  const auto verified = server::verify_run(journal);
+  ASSERT_TRUE(verified.matched) << verified.message;
+  EXPECT_FALSE(verified.run["drill"]["complete_run"].get<bool>());
+  EXPECT_TRUE(verified.run["drill"]["score"].is_null());
+  // A start input from before start times were recorded cannot show a start at the open.
+  const auto legacy = record_whole_run(file, scenario, "legacy", std::nullopt, {}, later);
+  EXPECT_FALSE(json::parse(server::run_inputs(trading::FileJournal::read(legacy.string())).front()).contains("start_at"));
+  EXPECT_FALSE(server::run_from_open(trading::FileJournal::read(legacy.string())));
+  EXPECT_TRUE(server::verify_run(legacy).matched);
+}
+
+TEST(ScenarioDrills, BuiltInSourcesStayAsShippedSoEarlierRunsStillVerify) {
+  // SHA-256 of scenarios/08-morning-crush.json as released before drill objectives;
+  // runs recorded then hash these bytes into their start input.
+  constexpr const char* kShipped = "6952c88b44960d7ec291f8bd3f9167ec81003fabd0dc92ac855fb631bbbdde98";
+  const auto& builtins = providers::builtin_scenarios();
+  const auto crush = std::find_if(builtins.begin(), builtins.end(), [](const auto& s) { return s.id == "morning-crush"; });
+  ASSERT_NE(crush, builtins.end());
+  EXPECT_EQ(crush->objectives.size(), 3U);
+  EXPECT_EQ(json::parse(crush->source).count("objectives"), 0U);
+  const auto identity = json::parse(server::scenario_input(*crush, crush->date, crush->seed));
+  ASSERT_EQ(identity["sha256"], kShipped);
+  test::RecordingFile file;
+  providers::write_scenario_recording(file.path, *crush, crush->date, crush->seed);
+  const auto until = providers::scenario_open(*crush, crush->date) + 10 * md::kNanosPerMinute;
+  const auto verified = server::verify_run(record_whole_run(file, *crush, "shipped", 0, {}, until));
+  ASSERT_TRUE(verified.matched) << verified.message;
+  EXPECT_EQ(verified.run["inputs"][0]["sha256"], kShipped);
+  // The separate objectives file still grades the run, which stopped early.
+  EXPECT_EQ(verified.run["drill"]["objectives"].size(), 3U);
+  EXPECT_FALSE(verified.run["drill"]["complete_run"].get<bool>());
+}
+
+TEST(ScenarioDrills, AChallengeLabelledBuiltInMustEmbedTheShippedSource) {
+  const auto& builtins = providers::builtin_scenarios();
+  const auto& shipped = builtins.front();
+  auto easier = json::parse(shipped.source);
+  easier["description"] = "The same name, a calmer market.";
+  easier["symbols"] = {"SPX"};
+  easier["strike_window"] = .03;
+  test::RecordingFile file;
+  auto scenario = providers::parse_scenario(easier.dump(), file.directory / "easier.json");
+  providers::write_scenario_recording(file.path, scenario, scenario.date, scenario.seed);
+  auto identity = json::parse(server::scenario_input(scenario, scenario.date, scenario.seed));
+  identity["builtin"] = true;
+  identity["challenge"] = {{"version", 1}, {"scenario", easier}, {"seed", std::to_string(scenario.seed)}, {"plan", "practice"},
+      {"challenge", {{"id", "forged"}, {"title", "Forged"}}}};
+  identity["scenario_source"] = easier.dump();
+  const auto until = providers::scenario_open(scenario, scenario.date) + 10 * md::kNanosPerMinute;
+  const auto verified = server::verify_run(record_whole_run(file, scenario, "forged", 0, identity.dump(), until));
+  EXPECT_FALSE(verified.matched);
+  EXPECT_NE(verified.message.find("differs from built-in scenario " + shipped.id), std::string::npos) << verified.message;
+}
 }  // namespace
 
 TEST(MultiDayReplay, WaterfallStartsAndStepsOnAnEarlyCloseDate) {

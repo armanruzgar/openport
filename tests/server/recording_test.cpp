@@ -1478,12 +1478,20 @@ TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs)
   ASSERT_EQ(history.size(), 2U);
   for (const auto& run : history) {
     EXPECT_EQ(run["personal_best"], 100);
+    // Sidecar scores are not verified until a verification recomputes them.
+    EXPECT_FALSE(run["personal_best_verified"].get<bool>());
     if (run["id"] == completed_id) {
       EXPECT_EQ(run["drill"]["score"], 100);
       EXPECT_TRUE(run["drill"]["complete_run"].get<bool>());
       EXPECT_TRUE(run["completed_at"].is_string());
     }
   }
+  ASSERT_EQ(call(restored, "DELETE", "/api/replay").status, 200);
+  ASSERT_EQ(call(restored, "POST", "/api/replay/history/" + completed_id + "/verify", "").status, 202);
+  ASSERT_TRUE(test::recording_eventually([&] {
+    return json::parse(call(restored, "GET", "/api/replay/history/" + completed_id + "/verify").body)["status"] != "running"; }));
+  for (const auto& run : json::parse(call(restored, "GET", "/api/replay").body)["history"])
+    EXPECT_TRUE(run["personal_best_verified"].get<bool>()) << run["verification"];
   std::filesystem::remove(file.directory / "scenario-packs" / "test-challenge.json");
   const auto full = server::verify_run(file.directory / "replays" / (completed_id + ".jsonl"));
   ASSERT_TRUE(full.matched) << full.message;
@@ -1533,5 +1541,35 @@ TEST(ReplayHost, ReplayFromTradeKeepsGeneratedInputsAndRefusesMissingScenarioSou
   EXPECT_TRUE(state["paused"].get<bool>());
   EXPECT_FALSE(state.contains("challenge"));
   EXPECT_TRUE(json::parse(call(host, "GET", "/api/replay/fills").body)["fills"].empty());
+}
+TEST(ReplayHost, ScenarioPacksCannotReplaceBuiltInsOrNameAPathOutsideTheirDirectory) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  server::Engine::Options base;
+  base.paper_journal = file.directory / "main.jsonl";
+  const auto& builtin = providers::builtin_scenarios().front();
+  const json shadow{{"version", 1}, {"scenario", json::parse(builtin.source)}, {"seed", "1"}, {"plan", "practice"}};
+  auto escape = json::parse(builtin.source);
+  escape["id"] = "escaped";
+  {
+    server::ReplayHost host({file.directory, base});
+    const auto refused = call(host, "POST", "/api/replay/packs", shadow.dump());
+    EXPECT_EQ(refused.status, 400);
+    EXPECT_NE(json::parse(refused.body)["error"]["message"].get<std::string>().find("is a built-in scenario"), std::string::npos) << refused.body;
+  }
+  // Saved packs that name a built-in, or an id that is not a file name, are skipped.
+  const auto packs = file.directory / "scenario-packs";
+  std::filesystem::create_directories(packs);
+  { std::ofstream out(packs / (builtin.id + ".json")); out << builtin.source; }
+  { std::ofstream out(packs / (builtin.id + ".pack")); out << shadow.dump(); }
+  { std::ofstream out(file.directory / "escaped.json"); out << escape.dump(); }
+  escape["id"] = "../escaped";
+  { std::ofstream out(packs / "escaped.pack"); out << json{{"version", 1}, {"scenario", escape}, {"seed", "1"}, {"plan", "practice"}}.dump(); }
+  server::ReplayHost restored({file.directory, base});
+  for (const auto& pack : json::parse(call(restored, "GET", "/api/replay/packs").body)["packs"]) {
+    EXPECT_NE(pack["scenario"]["id"], "escaped");
+    EXPECT_NE(pack["scenario"]["id"], "../escaped");
+    if (pack["scenario"]["id"] == builtin.id) EXPECT_EQ(pack["seed"], std::to_string(builtin.seed));
+  }
 }
 }

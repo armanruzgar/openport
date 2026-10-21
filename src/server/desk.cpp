@@ -641,10 +641,12 @@ void Desk::start_trading() {
         {"calendar", md::scheduled_days()}, {"analytics", options_.analytics}, {"dividends", dividends_}, {"symbols", subscription_.underlyings}};
     if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? 6 : 5) : 4) : 3;
     if (options_.exact_margin) start["exact_margin"] = true;
+    if (options_.run_start_at) start["start_at"] = *options_.run_start_at;
     if (options_.opening_rule_checks) start["opening_rule_checks"] = true;
     if (options_.opening_rule_checks && options_.compact_opening_rule_inputs) start["compact_opening_rule_inputs"] = true;
     if (playbooks_ && (!options_.initial_playbooks.empty() || !playbooks_->catalogue().at("definitions").empty())) start["playbooks"] = playbooks_->catalogue();
     record_input(start.dump(), options_.initial_actor);
+    pending_restart_ = options_.run_restart;
     if (options_.resume) {
       const auto inputs = run_inputs(*options_.resume);
       resume_inputs_.assign(inputs.begin() + (inputs.empty() ? 0 : 1), inputs.end());
@@ -1950,6 +1952,7 @@ Desk::Desk(std::string provider, md::Capabilities capabilities, md::Subscription
       options_.exact_margin = start.value("exact_margin", false);
       options_.opening_rule_checks = start.value("opening_rule_checks", false);
       options_.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);
+      options_.run_start_at = start.contains("start_at") ? std::optional(start.at("start_at").get<md::Timestamp>()) : std::nullopt;
     }
   }
   if (!options_.run_input.empty() && options_.analytics.discount_curve)
@@ -2037,10 +2040,19 @@ void Desk::replay_recorded() {
               input.at("driver_time").get<md::Timestamp>());
     } else if (kind == "dividends") {
       set_dividends(input.at("dividends").get<std::vector<trading::Dividend>>());
+    } else if (kind == "restart") {
+      replay_restart(input.dump());
     } else {
       resume_failed("its " + kind + " input cannot be replayed");
     }
   }
+  if (!pending_restart_.empty()) {
+    replay_restart(pending_restart_);
+    pending_restart_.clear();
+  }
+}
+void Desk::replay_restart(const std::string& input) {
+  record_input(input);
 }
 void Desk::resume_failed(const std::string& reason) {
   resume_inputs_.clear();
