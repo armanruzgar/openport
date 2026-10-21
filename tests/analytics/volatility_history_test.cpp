@@ -115,4 +115,29 @@ TEST(VolatilityHistory, RankUsesExactly252CompletedSessionSlots) {
   EXPECT_EQ(rank.rank, .5);
   EXPECT_EQ(rank.percentile, .5);
 }
+TEST(VolatilityHistory, SignedSeriesRanksUseCompletedUniqueSessionsAndPopulationDeviation) {
+  const std::vector<analytics::HistoricalValue> values{{{2026, 9, 21}, -9, "own"},
+      {{2026, 9, 21}, -4, "own"}, {{2026, 9, 22}, -2, "own"},
+      {{2026, 9, 23}, 8, "own"}, {{2026, 9, 20}, 500, "own"},
+      {{2026, 9, 18}, analytics::kNaN, "own"}};
+  const auto rank = analytics::history_rank(values, -2, close({2026, 9, 23}) - 1);
+  EXPECT_EQ(rank.sessions, 2u);
+  EXPECT_EQ(rank.own_sessions, 2u);
+  EXPECT_EQ(rank.proxy_sessions, 0u);
+  EXPECT_DOUBLE_EQ(rank.rank, 1);
+  EXPECT_DOUBLE_EQ(rank.percentile, .5);
+  EXPECT_DOUBLE_EQ(rank.z_score, 1);
+  EXPECT_TRUE(std::isnan(analytics::history_rank({}, -2, close({2026, 9, 23})).z_score));
+  EXPECT_TRUE(std::isnan(analytics::history_rank(std::span(values).subspan(2, 1), -2, close({2026, 9, 23})).z_score));
+}
+TEST(VolatilityHistory, FlatFractionalSeriesHasNoZScoreAndMissingCorrectionsStayMissing) {
+  std::vector<analytics::HistoricalValue> values{{{2026, 9, 21}, .1, "own"},
+      {{2026, 9, 22}, .1, "own"}, {{2026, 9, 23}, .1, "own"}};
+  const auto flat = analytics::history_rank(values, .1, close({2026, 9, 23}));
+  EXPECT_TRUE(std::isnan(flat.rank));
+  EXPECT_TRUE(std::isnan(flat.z_score));
+  EXPECT_EQ(flat.percentile, 0);
+  values.push_back({{2026, 9, 23}, analytics::kNaN, "own"});
+  EXPECT_EQ(analytics::history_rank(values, .1, close({2026, 9, 23})).sessions, 2u);
+}
 }  // namespace

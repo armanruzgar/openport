@@ -264,6 +264,83 @@ TEST(ImpliedMoves, AtmProxyAndUnusableIntervalsRemainVisible) {
   EXPECT_EQ(moves.sessions[0].reason, "unusable_variance");
 }
 
+
+TEST(EventVolatility, SolvesTwoExpiriesAndKeepsEventPremiumSeparateFromSessionMove) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 9, 21}, 16, 0);
+  add_expiry(m, v, {2026, 9, 22}, .0001);
+  add_expiry(m, v, {2026, 9, 24}, .0007);
+  const std::vector<EventLabel> events{{{2026, 9, 23}, "Earnings", "before_open"}};
+  const auto result = event_volatility(m, v, events);
+  ASSERT_EQ(result.size(), 1u);
+  EXPECT_TRUE(result[0].bracketed);
+  EXPECT_EQ(result[0].near, 0u); EXPECT_EQ(result[0].next, 1u);
+  EXPECT_NEAR(result[0].baseline_variance, .0001, 1e-12);
+  EXPECT_NEAR(result[0].variance_premium, .0004, 1e-12);
+  EXPECT_NEAR(result[0].percent, 2, 1e-12); EXPECT_NEAR(result[0].points, 2, 1e-12);
+  EXPECT_TRUE(result[0].reason.empty());
+  EXPECT_FALSE(result[0].proxy);
+}
+TEST(EventVolatility, AmcMovesToNextSessionAndDoesNotEnterSameDayPmExpiry) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 9, 24}, 16, 0);
+  add_expiry(m, v, {2026, 9, 25}, .0001);
+  add_expiry(m, v, {2026, 9, 28}, .0006, 9);
+  const std::vector<EventLabel> events{{{2026, 9, 25}, "Earnings", "after_close"}};
+  const auto result = event_volatility(m, v, events);
+  ASSERT_EQ(result.size(), 1u);
+  EXPECT_EQ(result[0].session, (md::Date{2026, 9, 28}));
+  EXPECT_NEAR(result[0].percent, 2, 1e-12);
+  EXPECT_EQ(implied_moves(m, v, events).sessions[1].label, "Earnings");
+  auto bmo = events; bmo[0].timing = "before_open";
+  EXPECT_EQ(event_volatility(m, v, bmo)[0].reason, "event_not_bracketed");
+}
+TEST(EventVolatility, EarlyCloseHolidayAndFractionalBaselineUseSessionAllocation) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 11, 25}, 12, 45);
+  add_expiry(m, v, {2026, 11, 25}, .00005);
+  add_expiry(m, v, {2026, 11, 27}, .00055, 13);
+  const std::vector<EventLabel> events{{{2026, 11, 27}, "News", "before_open"}};
+  const auto result = event_volatility(m, v, events);
+  EXPECT_NEAR(result[0].baseline_variance, .0001, 1e-12);
+  EXPECT_NEAR(result[0].percent, 2, 1e-12);
+}
+TEST(EventVolatility, ExactIntradayEventBetweenAmAndPmKeepsOrdinaryIntervalVariance) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 9, 25}, 8, 0);
+  add_expiry(m, v, {2026, 9, 25}, .0001, 9);
+  add_expiry(m, v, {2026, 9, 25}, .0006);
+  const std::vector<EventLabel> events{{{2026, 9, 25}, "News", "exact", md::new_york_to_utc({2026, 9, 25}, 14, 0)}};
+  const auto result = event_volatility(m, v, events);
+  ASSERT_EQ(result.size(), 1u);
+  EXPECT_NEAR(result[0].variance_premium, .0004, 1e-12);
+  EXPECT_NEAR(result[0].percent, 2, 1e-12);
+}
+TEST(EventVolatility, MissingBracketsCompetingEventsAndNegativePremiumsStayUnavailable) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 9, 21}, 16, 0);
+  add_expiry(m, v, {2026, 9, 22}, .0002);
+  add_expiry(m, v, {2026, 9, 24}, .0003);
+  std::vector<EventLabel> events{{{2026, 9, 23}, "Event"}};
+  auto result = event_volatility(m, v, events);
+  EXPECT_EQ(result[0].reason, "negative_event_premium");
+  EXPECT_TRUE(std::isnan(result[0].percent));
+  EXPECT_LT(result[0].variance_premium, 0);
+  events.push_back({{2026, 9, 24}, "Other"});
+  EXPECT_EQ(event_volatility(m, v, events)[0].reason, "multiple_events_in_solve");
+  events.resize(1);
+  v.expiries[1].mfiv.variance /= 2;
+  EXPECT_TRUE(event_volatility(m, v, events)[0].calendar_arbitrage);
+  v.expiries[0].mfiv.variance = kNaN;
+  EXPECT_EQ(event_volatility(m, v, events)[0].reason, "unusable_variance");
+  for (std::size_t i = 0; i < 2; ++i) v.expiries[i].smile.atm = 100 * std::sqrt((i == 0 ? .0001 : .0007) / m.slices[i].years);
+  result = event_volatility(m, v, events);
+  EXPECT_TRUE(result[0].proxy); EXPECT_NEAR(result[0].percent, 2, 1e-12);
+  events[0].date = {2026, 9, 25};
+  EXPECT_EQ(event_volatility(m, v, events)[0].reason, "event_not_bracketed");
+  events[0].date = {2026, 9, 21};
+  EXPECT_TRUE(event_volatility(m, v, events).empty());
+}
 TEST(VolEvents, ValidatesLabelsDatesAndDuplicateDates) {
   std::istringstream good("# user supplied\nDate,Label\n2026-10-02, Payrolls \n2026-09-30,Quarter end, rebalance\n");
   const auto events = parse_events(good);

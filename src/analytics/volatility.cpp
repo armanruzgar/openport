@@ -15,6 +15,24 @@ double vol_of(double variance) {
 }
 double variance_of(double vol) { return std::isfinite(vol) ? vol * vol / 10000 : kNaN; }
 
+std::vector<std::pair<md::Date, double>> session_weights(md::Timestamp from, md::Timestamp to) {
+  std::vector<std::pair<md::Date, double>> weights;
+  const auto begin_day = md::days_since_epoch(md::new_york_time(from).date);
+  const auto end_day = md::days_since_epoch(md::new_york_time(to).date);
+  for (auto day = begin_day; day <= end_day; ++day) {
+    const auto date = md::date_from_days(day);
+    const auto open = md::new_york_to_utc(date, 9, 30);
+    const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
+    if (!md::market_session(open).open || from >= close || to < open) continue;
+    const auto overlap = std::min(close, to) - std::max(open, from);
+    // An AM settlement assigns the overnight increment to that coming session.
+    const double weight = overlap > 0 ? static_cast<double>(overlap) / static_cast<double>(close - open)
+        : to == open && from < open ? 1.0 : 0.0;
+    if (weight > 0) weights.emplace_back(date, weight);
+  }
+  return weights;
+}
+
 class Smile {
  public:
   Smile(const SliceMetrics& slice, const SviFit* fit, bool vendor) : years_(slice.years) {
@@ -341,6 +359,81 @@ std::vector<EventLabel> parse_events(std::istream& input) {
   return out;
 }
 
+namespace {
+md::Timestamp event_boundary(const EventLabel& event) {
+  if (event.timing == "exact") return event.time;
+  if (event.timing == "after_close") return md::new_york_to_utc(event.date, md::regular_close_hour(event.date), 0) + 1;
+  return md::new_york_to_utc(event.date, 9, 30);
+}
+double business_weight(md::Timestamp from, md::Timestamp to) {
+  double result = 0;
+  for (const auto& [date, weight] : session_weights(from, to)) { (void)date; result += weight; }
+  return result;
+}
+}
+md::Date event_session(const EventLabel& event) {
+  auto date = event.timing == "exact" ? md::new_york_time(event.time).date : event.date;
+  if (event.timing == "after_close" || (event.timing == "exact" && event.time >= md::new_york_to_utc(date, md::regular_close_hour(date), 0)))
+    date = md::date_from_days(md::days_since_epoch(date) + 1);
+  while (!md::market_session(md::new_york_to_utc(date, 9, 30)).open)
+    date = md::date_from_days(md::days_since_epoch(date) + 1);
+  return date;
+}
+std::vector<EventVolatility> event_volatility(const UnderlyingMetrics& metrics,
+    const VolatilityMetrics& volatility, std::span<const EventLabel> events) {
+  std::vector<EventVolatility> out;
+  std::vector<std::size_t> order;
+  for (std::size_t i = 0; i < metrics.slices.size() && i < volatility.expiries.size(); ++i)
+    if (metrics.slices[i].expiry_time > metrics.as_of) order.push_back(i);
+  std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return metrics.slices[a].expiry_time < metrics.slices[b].expiry_time; });
+  for (const auto& event : events) {
+    const auto boundary = event_boundary(event);
+    if (boundary <= metrics.as_of) continue;
+    EventVolatility result;
+    result.event = event; result.session = event_session(event);
+    const auto next = std::lower_bound(order.begin(), order.end(), boundary,
+        [&](auto i, auto time) { return metrics.slices[i].expiry_time < time; });
+    if (next == order.begin() || next == order.end()) {
+      result.reason = "event_not_bracketed"; out.push_back(result); continue;
+    }
+    result.bracketed = true; result.near = *std::prev(next); result.next = *next;
+    const auto& near = metrics.slices[result.near];
+    const auto& far = metrics.slices[result.next];
+    const auto& a = volatility.expiries[result.near];
+    const auto& b = volatility.expiries[result.next];
+    // Use one variance basis on both sides; mixed MFIV/ATM levels cannot isolate a jump.
+    const bool fallback = !std::isfinite(a.mfiv.variance) || !std::isfinite(b.mfiv.variance);
+    const double wa = (fallback ? variance_of(a.smile.atm) : a.mfiv.variance) * md::years_between(metrics.as_of, near.expiry_time);
+    const double wb = (fallback ? variance_of(b.smile.atm) : b.mfiv.variance) * md::years_between(metrics.as_of, far.expiry_time);
+    result.proxy = fallback || a.mfiv.proxy || b.mfiv.proxy;
+    result.truncated = !fallback && (a.mfiv.truncated || b.mfiv.truncated);
+    result.forward = far.forward.forward;
+    const auto na = business_weight(metrics.as_of, near.expiry_time);
+    const auto nb = na + business_weight(near.expiry_time, far.expiry_time);
+    const auto competing = std::count_if(events.begin(), events.end(), [&](const auto& other) {
+      const auto time = event_boundary(other);
+      return time > metrics.as_of && time <= far.expiry_time;
+    });
+    if (competing > 1) result.reason = "multiple_events_in_solve";
+    else if (!std::isfinite(wa) || !std::isfinite(wb) || wa < 0 || wb < 0) result.reason = "unusable_variance";
+    else if (na <= 0 || nb <= na) result.reason = "no_baseline_sessions";
+    else {
+      result.baseline_variance = wa / na;
+      result.variance_premium = wb - result.baseline_variance * nb;
+      result.calendar_arbitrage = wb < wa - 1e-12;
+      if (result.calendar_arbitrage) result.reason = "negative_forward_variance";
+      else if (result.variance_premium < -1e-12) result.reason = "negative_event_premium";
+      else {
+        result.variance_premium = std::max(0.0, result.variance_premium);
+        result.percent = vol_of(result.variance_premium);
+        result.points = positive(result.forward) ? result.forward * result.percent / 100 : kNaN;
+      }
+    }
+    out.push_back(std::move(result));
+  }
+  return out;
+}
+
 ImpliedMoves implied_moves(const UnderlyingMetrics& metrics, const VolatilityMetrics& volatility,
                            std::span<const EventLabel> events) {
   ImpliedMoves out;
@@ -354,7 +447,8 @@ ImpliedMoves implied_moves(const UnderlyingMetrics& metrics, const VolatilityMet
     ImpliedMove move;
     move.date = date;
     move.reason = "no_covering_expiry";
-    for (const auto& event : events) if (event.date == date) move.label = event.label;
+    for (const auto& event : events) if (event_session(event) == date)
+      move.label += (move.label.empty() ? "" : "; ") + event.label;
     out.sessions.push_back(std::move(move));
   }
   std::vector<std::size_t> order;
@@ -377,21 +471,7 @@ ImpliedMoves implied_moves(const UnderlyingMetrics& metrics, const VolatilityMet
     const bool negative = std::isfinite(increment) && increment < -1e-12;
     const bool proxy = fallback || expiry.mfiv.proxy || previous_proxy;
     const bool truncated = (!fallback && expiry.mfiv.truncated) || previous_truncated;
-    std::vector<std::pair<md::Date, double>> weights;
-    // Count the entire interval, even when it extends beyond the displayed 15 sessions.
-    const auto begin_day = md::days_since_epoch(md::new_york_time(previous_time).date);
-    const auto end_day = md::days_since_epoch(slice.expiry);
-    for (auto day = begin_day; day <= end_day; ++day) {
-      const auto date = md::date_from_days(day);
-      const auto open = md::new_york_to_utc(date, 9, 30);
-      const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
-      if (!md::market_session(open).open || previous_time >= close || slice.expiry_time < open) continue;
-      const auto overlap = std::min(close, slice.expiry_time) - std::max(open, previous_time);
-      // An AM settlement assigns the overnight increment to that coming session.
-      const double weight = overlap > 0 ? static_cast<double>(overlap) / static_cast<double>(close - open)
-          : slice.expiry_time == open && previous_time < open ? 1.0 : 0.0;
-      if (weight > 0) weights.emplace_back(date, weight);
-    }
+    const auto weights = session_weights(previous_time, slice.expiry_time);
     out.intervals.push_back({previous_time, slice.expiry_time, increment, weights.size(), negative, proxy, truncated,
         negative ? "negative_forward_variance" : !std::isfinite(increment) ? "unusable_variance"
         : weights.empty() ? "no_business_sessions" : ""});

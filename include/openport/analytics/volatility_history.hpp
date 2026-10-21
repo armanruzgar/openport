@@ -17,14 +17,23 @@ struct HistoricalIv {
 /// Proxies only precede the first local row. Local gaps are not silently filled.
 [[nodiscard]] std::vector<HistoricalIv> historical_iv(std::span<const VolatilityDay> own,
     std::span<const md::Bar> proxy, std::string_view proxy_name, md::Timestamp as_of, bool atm_fallback = true);
-struct IvRank {
+struct HistoricalValue {
+  md::Date date;
+  double value = kNaN;
+  std::string source = "own";
+};
+struct HistoryRank {
   double rank = kNaN;
   double percentile = kNaN;  ///< Fraction strictly below current.
+  double z_score = kNaN;  ///< Population standard deviation; null for a flat window.
   std::size_t sessions = 0;
   std::size_t own_sessions = 0;
   std::size_t proxy_sessions = 0;
   std::string proxy_start;
 };
+using IvRank = HistoryRank;
+/// Any finite stored value, including negative skew. One observation per completed session.
+[[nodiscard]] HistoryRank history_rank(std::span<const HistoricalValue> history, double current, md::Timestamp as_of);
 /// The last 252 scheduled completed sessions, including missing days in the window.
 [[nodiscard]] IvRank iv_rank(std::span<const HistoricalIv> history, double current, md::Timestamp as_of);
 struct ExPostPoint {
