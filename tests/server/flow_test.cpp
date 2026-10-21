@@ -165,6 +165,7 @@ TEST(FlowDesk, FeedTradesReachTheTapeAndOnlyTheDemoSimulatesThem) {
   ASSERT_EQ(demo.prints.size(), 3u);  // the volume rise, plus the trades a test fed it
   EXPECT_TRUE(demo.prints[1].simulated);
   EXPECT_DOUBLE_EQ(demo.prints[1].size, 4);
+  EXPECT_EQ(demo.prints[1].group, 0u);  // simulated prints are never grouped into spreads
   EXPECT_TRUE(demo.simulated);
 }
 

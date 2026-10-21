@@ -65,6 +65,7 @@ struct FlowPrint {
 /// - a multi-leg group is prints of different contracts of one underlying, on
 ///   the same venue (or none known), within `leg_window`, whose sizes are in a
 ///   whole ratio of at most 4:1. It can join unrelated prints and miss real spreads.
+///   Simulated prints are never grouped.
 class FlowTape {
  public:
   struct Options {

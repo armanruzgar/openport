@@ -109,9 +109,11 @@ void FlowTape::mark_sweep(Tape& tape) {
 
 void FlowTape::mark_legs(Tape& tape) {
   auto& last = tape.prints.back();
+  // A demo snapshot stamps all its simulated prints with one time: they are not spreads.
+  if (last.simulated) return;
   for (auto it = std::next(tape.prints.rbegin()); it != tape.prints.rend(); ++it) {
     if (it->time < last.time - options_.leg_window) break;
-    if (it->symbol == last.symbol || it->venue != last.venue || std::abs(it->time - last.time) > options_.leg_window ||
+    if (it->simulated || it->symbol == last.symbol || it->venue != last.venue || std::abs(it->time - last.time) > options_.leg_window ||
         !whole_ratio(it->size, last.size)) continue;
     if (!it->group) it->group = ++groups_;
     last.group = it->group;
