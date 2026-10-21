@@ -2,6 +2,9 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 
 ## Unreleased
 
+- Opt-in seeded expiry pin risk models contrary exercise near the strike and warns before expiry; existing plans remain unchanged.
+- Practice cash transfers, rollover credit/debit interest and stock-borrow fees are journaled and visible in Dashboard. Financing counts in equity and daily loss without adjusting its opening base.
+- Single-name scenario/replay halts pause one underlying; the replay API and Dashboard support halt drills with recorded, verifiable commands.
 - What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
 
 ## 0.4.0 (2026-10-06)

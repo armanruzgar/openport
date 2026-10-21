@@ -293,13 +293,17 @@ an overnight session, 20:15–23:59 belongs to the evening before the trading da
 | Pin | `{"type":"pin","at":"14:30","strike":6000}` | Progressively pulls the SPX level to the strike at the regular close; strike 5400–6600; regular sessions only |
 | Book | `{"type":"book","at":"11:00","minutes":5,"state":"crossed","symbols":["SPX"],"expiry":"2026-09-18"}` | Changes option books for the window; state is `crossed`, `locked`, `one_sided`, `zero_size` or `wide`. Optional symbols select a nonempty unique subset of the scenario; default all. Optional expiry selects an exact date (it does not shift when replay date changes) |
 | Stall | `{"type":"stall","at":"13:00","minutes":4,"symbols":["SPX"]}` | Freezes underlying and option quotes, volume and snapshot confirmations for the selected symbols (default all); heartbeats advance market time without refreshing marks |
-| Halt | `{"type":"halt","at":"11:30","minutes":15}` | Market-wide, regular session only; freezes all quotes and refuses orders with `MARKET_HALTED` until the exclusive end, independently of the price-triggered circuit breaker |
+| Halt | `{"type":"halt","at":"11:30","minutes":15}` | Regular session only; optional `symbols` selects underlyings, otherwise market-wide; freezes affected quotes and refuses orders with `MARKET_HALTED` until the exclusive end, independently of the price-triggered circuit breaker |
 
 Window `minutes` must be an integer 1–790 and its end must be within the authored
 session. The window includes its start and excludes its end. At its end, the
 market rejoins the underlying scripted path. Stalls and halts take precedence over
 books; overlapping books apply in file order, with the last applicable book winning.
-No expiry or symbol filter on a halt: it always affects the entire market.
+A halt may name `symbols`, e.g. `["SPY"]`, for a single-name pause; omit it to
+halt the entire market. No expiry filter applies: the stock and all its options
+share the pause. Single-name pauses model a LULD-style drill, without calculating
+exchange price bands or a reopening auction. They publish `MARKET_HALTED` only
+for affected symbols. Use `POST /api/replay/market/halt` to start one at replay time.
 
 Crossed books set bid one upper-tier tick above ask; locked books set bid equal to
 ask and remain executable. One-sided books remove the bid and its size, keeping
@@ -527,3 +531,7 @@ or analytics book.
 write policy is disabled permits listing and reading history but refuses replay
 starts, controls and deletions. Loopback without a token uses the existing open
 write policy; a non-loopback server without a token is read-only.
+
+Single-name recording halt tag 11 adds an underlying string after its interval;
+old market-wide records retain their bytes. Reading scoped halts requires a build
+that supports this extension; older readers reject the trailing field.

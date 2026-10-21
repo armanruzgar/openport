@@ -125,6 +125,9 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   shares on exercise or assignment. In-the-money expiry exercise, requested early
   exercise and simulated partial overnight assignment are supported. Assignment
   can follow low extrinsic value or an approaching ex-dividend date.
+- Optional seeded expiry pin risk gives near-the-money physical shorts a replayable
+  chance of contrary exercise, with `PIN_RISK` warnings before expiry. Existing
+  plans leave it disabled. [Pin-risk model](paper-trading.md#simulated-expiry-pin-risk).
 - Dividends come from a supplied file or Massive's API, independently of the quote
   provider. Current scenarios include simulated quarterly SPY/QQQ dividends; the
   demo feed uses them without an explicit dividend source.
@@ -156,6 +159,11 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 - Orders reserve buying power. Orders that free it remain available when it is
   exhausted, subject to other rules; closing a covering long may need to include
   the shorts it protects. [Account rules and margin](paper-trading.md#account-rules-and-evaluations).
+
+- Configurable cash credit interest, portfolio margin debit interest and short-stock
+  borrow fees post at rollover into cash, realised P&L and Greek P&L **other**.
+  Rates default to zero. Financing counts in equity and daily loss without changing
+  the opening loss base. [Financing](paper-trading.md#cash-transfers-and-financing).
 
 ## Evaluation rules
 
@@ -255,7 +263,9 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   room, tonight's floor ratchet, ETF delivery, early assignment and ex-dates.
   [Warnings](paper-trading.md#risk-warnings).
 - What-if compares adjustments of up to four orders against the current book for
-  buying power, Greeks, grid loss and floor room before submission.
+  buying power, Greeks, grid loss and floor room before submission. OTO/OCO chains
+  use the submission reducer on a private account copy, including partial fills,
+  child checks, cancellations and reservations.
   [What-if](paper-trading.md#what-if).
 - Breach estimates show spot moves that could reach the plan or personal soft floor
   and modelled touch probabilities. Risk profiles plot P&L today, on later dates
@@ -315,6 +325,10 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   closes, halts and all three circuit-breaker levels, with wider strikes for large
   moves and early-close timing. They are practice sessions, not reconstructions of
   historical events. [Scenario events](scenarios.md#events).
+- Single-name halts can target selected underlyings in scenarios or be authored
+  through the replay API and Dashboard. They block execution until the pause ends
+  and fresh quotes arrive, with scoped status banners and recorded commands for
+  verification. [Halt drills](paper-trading.md#single-name-halt-drills).
 
 ## Playbooks and backtests
 
@@ -349,6 +363,9 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   retained. Preset IDs accompany names. Copy limits/guardrails to accounts or replays,
   with notices when queued settings need a reset. Per-underlying limits are editable.
   [Accounts](paper-trading.md#accounts).
+- Practice deposits and withdrawals have retry-safe IDs and appear in Dashboard
+  cash-flow history. Transfers stay out of P&L; evaluation, verification and funded
+  accounts refuse them. [Cash transfers](paper-trading.md#cash-transfers-and-financing).
 - Public demo visitors get private simulated sandboxes, removed after 24 hours idle
   or restart, with capacity/rate limits. Scoped tokens default to their own account;
   replay tokens configure isolated accounts. Named tokens can be revoked without
@@ -417,6 +434,3 @@ A confirmation names the new destination (for example, **Send to live account
 Practice**); cancelling sends nothing. Closing and reopening the action also
 selects the current destination. This applies to order changes, cancellations,
 flattening, exits, stock/strategy actions, and settings writes as well as tickets.
-
-What-if candidates support OTO/OCO chains using the submission reducer on a private
-account copy, including partial fills, child checks, cancellations and reservations.
