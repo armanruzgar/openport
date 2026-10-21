@@ -3044,6 +3044,7 @@ void flatten(State& s, const std::string& symbol, std::string_view why, Events& 
 /// the underlying's fresh price.
 Decision share_close_check(const State& s, const std::string& symbol) {
   if (!md::market_session(s.time).open) return failure(Reason::SESSION_CLOSED, "Stock trades in the regular session");
+  if (s.time < halt_end(s, symbol)) return failure(Reason::MARKET_HALTED, "Trading is halted for " + symbol);
   if (!stock_price(s, symbol)) return failure(Reason::STALE_QUOTE, "Needs a fresh price for " + symbol);
   return {};
 }
@@ -4895,12 +4896,14 @@ struct TradingSession::Impl {
 
   CommandResult transact(Timestamp time, std::string_view type,
                          const std::function<CommandResult(State&, Events&)>& action,
-                         const std::optional<SettlementSource>& source = {}) {
+                         const std::optional<SettlementSource>& source = {},
+                         const std::function<void(State&)>& prepare = {}) {
     if (stopped) throw TradingError(Reason::JOURNAL_IO, "Trading stopped after journal failure; recover first");
     State next = state;
     next.opening_rule_inputs = opening_rule_inputs;
     next.compact_opening_rule_inputs = compact_opening_rule_inputs;
     Events events;
+    if (prepare) prepare(next);
     advance(next, time, events);
     // Quote batches install their new book before monitor_rules closes positions.
     // Other commands must close against the current book before matching orders.
@@ -5953,9 +5956,9 @@ Money nearest_cent(Money amount) {
 }
 /// Actual/365 simple accrual on the last closing balance and marks, including
 /// skipped calendar days. Each posting rounds once to cents; no fabricated prices.
-void accrue_financing(State& s, std::int64_t days, Events& events) {
+void accrue_financing(State& s, const State& closing, std::int64_t days, Events& events) {
   const auto& rules = s.config.rules;
-  const auto cash = s.ledger.account().cash;
+  const auto cash = closing.ledger.account().cash;
   const auto post = [&](std::string kind, std::string symbol, Money basis, std::int64_t rate, bool charge) {
     if (rate == 0 || basis == Money{}) return;
     auto amount = nearest_cent(basis.prorate(rate * days, 365 * 10000));
@@ -5971,10 +5974,10 @@ void accrue_financing(State& s, std::int64_t days, Events& events) {
   if (cash > Money{}) post("credit_interest", {}, cash, rules.cash_credit_rate_bps, false);
   else if (cash < Money{} && rules.margin == MarginMode::Portfolio && rules.account_type == AccountType::Margin)
     post("debit_interest", {}, -cash, rules.margin_debit_rate_bps, true);
-  for (const auto& [symbol, stock] : s.ledger.stocks()) {
+  for (const auto& [symbol, stock] : closing.ledger.stocks()) {
     if (stock.shares >= 0) continue;
-    const auto mark = s.stock_marks.find(symbol);
-    if (mark != s.stock_marks.end()) post("borrow_fee", symbol, mark->second.price * -stock.shares, rules.stock_borrow_rate_bps, true);
+    const auto mark = closing.stock_marks.find(symbol);
+    if (mark != closing.stock_marks.end()) post("borrow_fee", symbol, mark->second.price * -stock.shares, rules.stock_borrow_rate_bps, true);
   }
 }
 /// On an ex-date the shares held into it are paid the dividend, and short shares
@@ -6110,7 +6113,7 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     // ex-date's dividends pay the shares held into it.
     // Financing is new-day P&L. Its opening daily-loss base stays unchanged;
     // charges can consume loss room and interest changes marked equity.
-    accrue_financing(s, days, events);
+    accrue_financing(s, impl_->state, days, events);
     assign_early(s, dividends, closing_time, events);
     pay_dividends(s, dividends, events);
     return CommandResult{};
@@ -6122,10 +6125,12 @@ CommandResult TradingSession::halt_underlying(const std::string& symbol, Timesta
     return {{}, {}, s.version};
   if (symbol.empty() || time <= 0 || end <= time || end - time > md::kNanosPerDay)
     throw TradingError(Reason::INVALID_TIME, "A market halt needs an underlying and an end within the next day");
-  return impl_->transact(time, "market_halt", [&](State& next, Events& events) {
-    next.market_halts[symbol] = end;
+  return impl_->transact(time, "market_halt", [&](State&, Events& events) {
     event(events, "market_halt", Json{{"underlying", symbol}, {"end", end}, {"simulated", true}});
     return CommandResult{};
+  }, {}, [&](State& next) {
+    // Install the pause before advancing the clock can trigger a protective close.
+    next.market_halts[symbol] = end;
   });
 }
 CommandResult TradingSession::transfer_cash(std::string client_id, Money amount, Timestamp time) {

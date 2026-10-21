@@ -45,6 +45,20 @@ TEST(TradingSessions, SingleNamePausesBlockCachedBooksAndWaitForReopeningQuotes)
   EXPECT_EQ(order(s, 1).status, OrderStatus::Filled);
 }
 
+TEST(TradingSessions, ANewPausePrecedesScheduledProtectiveCloses) {
+  ScriptedMarket f;
+  f.time = at(kTuesday, 14, 59) + 59 * md::kNanosPerSecond;
+  AccountRules rules; rules.flat_time = 15 * 60;
+  TradingSession s(roomy(rules), f.time); f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
+  const auto start = at(kTuesday, 15, 0), end = start + 5 * md::kNanosPerSecond;
+  ASSERT_TRUE(s.halt_underlying("SPX", end, start).decision.ok());
+  ASSERT_EQ(s.snapshot()->positions.size(), 1);
+  EXPECT_EQ(s.snapshot()->recent_fills.size(), 1);
+  tick(s, f, end);
+  EXPECT_TRUE(s.snapshot()->positions.empty());
+}
+
 TEST(TradingSessions, ExpiringEtfOptionsTradeAQuarterHourAfterTheClose) {
   constexpr md::Date expiry{2026, 10, 22};
   ScriptedMarket f;
