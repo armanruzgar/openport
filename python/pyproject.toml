@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openport"
 version = "0.1.0"
+readme = "README.md"
 description = "Client for the openport options analytics and paper simulator API"
 requires-python = ">=3.10"
 license = "MIT"
@@ -12,6 +13,8 @@ dependencies = []
 
 [project.optional-dependencies]
 pandas = ["pandas>=2"]
+arrow = ["pyarrow>=16"]
+dev = ["pytest", "jsonschema", "pyyaml", "pandas>=2", "pyarrow>=16", "websockets>=14", "mcp>=2.2,<3"]
 ws = ["websockets>=14"]
 mcp = ["mcp>=2.2,<3"]
 
