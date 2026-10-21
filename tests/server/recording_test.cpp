@@ -11,6 +11,7 @@
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <tuple>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
 
@@ -1390,6 +1391,38 @@ TEST(ReplayHost, ImportedHeaderIsListedAndRetainedInActiveReplay) {
   EXPECT_FALSE(std::filesystem::exists(base.record_dir));
 }
 
+}  // namespace
+
+namespace {
+TEST(ReplayHost, ListsEveryImportedAndRecordedDateAcrossSourcesNewestFirst) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  for (const auto& [name, provider, date, imported] : std::vector<std::tuple<std::string, std::string, md::Date, bool>>{
+      {"z-theta.oprec", "thetadata", {2026, 9, 21}, true},
+      {"a-massive.oprec", "massive", {2026, 9, 23}, true},
+      {"live.oprec", "cboe", {2026, 9, 22}, false}}) {
+    auto header = test::recording_header();
+    header.provider = provider;
+    header.imported = imported;
+    header.started = md::new_york_to_utc(md::previous_business_day(date), 20, 15);
+    header.subscription.underlyings = {"SPX"};
+    test::record_events(file.directory / name, {md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000}}, header);
+  }
+  std::filesystem::create_directories(file.directory / ".record-active");
+  std::ofstream(file.directory / ".record-active/day.oprec") << "partial";
+  std::filesystem::create_symlink(file.directory / "live.oprec", file.directory / "alias.oprec");
+  server::ReplayHost host({file.directory, {}});
+  const auto list = json::parse(call(host, "GET", "/api/replay").body)["recordings"];
+  ASSERT_EQ(list.size(), 3U);
+  EXPECT_EQ(list[0]["file"], "a-massive.oprec");
+  EXPECT_EQ(list[0]["date"], "2026-09-23");
+  EXPECT_EQ(list[0]["provider"], "massive");
+  EXPECT_EQ(list[0]["symbols"], json::array({"SPX"}));
+  EXPECT_EQ(list[0]["imported"], true);
+  EXPECT_EQ(list[1]["date"], "2026-09-22");
+  EXPECT_EQ(list[1]["imported"], false);
+  EXPECT_EQ(list[2]["date"], "2026-09-21");
+}
 }  // namespace
 
 namespace {

@@ -377,6 +377,8 @@ export interface ReplayState {
 /** One session of a scenario run: its kind, trading date, and first and last snapshot. */
 export interface ReplaySession { session: "regular" | "curb" | "overnight"; date: string; open: string; end: string }
 export interface ReplayRecording {
+  /** Trading date at the recording start, including the preceding evening's GTH. */
+  date?: string | null
   imported?: boolean
   simulated?: boolean
   file: string

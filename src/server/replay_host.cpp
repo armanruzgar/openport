@@ -44,20 +44,25 @@ json recordings_json(const std::filesystem::path& directory) {
   if (directory.empty() || !std::filesystem::is_directory(directory, ec)) return list;
   std::vector<std::filesystem::path> files;
   for (const auto& entry : std::filesystem::directory_iterator(directory, ec))
-    if (entry.is_regular_file(ec) && plain_name(entry.path().filename().string()) &&
+    if (std::filesystem::is_regular_file(entry.symlink_status(ec)) && plain_name(entry.path().filename().string()) &&
         entry.path().extension() != ".end" && !entry.path().string().ends_with(".end.tmp")) files.push_back(entry.path());
-  // Recordings are named by when they started: newest first.
-  std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.filename() > b.filename(); });
   for (const auto& file : files) {
     json item{{"file", file.filename().string()}, {"bytes", std::filesystem::file_size(file, ec)}};
     try {
       const md::RecordingReader reader(file);
       item.update(header_json(reader.header()));
+      item["date"] = reader.header().started > 0 ? json(md::format_date(md::trading_date(reader.header().started))) : json(nullptr);
     } catch (const std::exception& error) {
       item["error"] = error.what();
     }
     list.push_back(std::move(item));
   }
+  // Provider prefixes and arbitrary filenames must not group dates by source.
+  std::sort(list.begin(), list.end(), [](const json& a, const json& b) {
+    const auto start = [](const json& item) { return item.contains("started") && item["started"].is_string() ? item["started"].get<std::string>() : std::string{}; };
+    const auto left = start(a), right = start(b);
+    return left != right ? left > right : a["file"].get<std::string>() > b["file"].get<std::string>();
+  });
   return list;
 }
 
