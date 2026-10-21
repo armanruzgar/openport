@@ -42,7 +42,7 @@ bool ReplayBatches::include(const md::Event& event) {
     } else if constexpr (std::is_same_v<T, md::SnapshotComplete> || std::is_same_v<T, md::SnapshotHeartbeat>) {
       return symbols_.contains(value.underlying);
     } else if constexpr (std::is_same_v<T, md::TradingHalt>) {
-      return true;
+      return value.underlying.empty() || symbols_.contains(value.underlying);
     } else {
       const auto it = admitted_.find(value.id);
       if (it == admitted_.end()) throw std::runtime_error("replay: event references undefined contract " + std::to_string(value.id));

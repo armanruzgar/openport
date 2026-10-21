@@ -104,6 +104,7 @@ class Decoder {
     bytes_ = bytes_.subspan(length);
     return value;
   }
+  bool empty() const { return bytes_.empty(); }
   void finish() const {
     if (!bytes_.empty()) invalid("unexpected trailing fields");
   }
@@ -215,6 +216,7 @@ void encode_event(Bytes& bytes, Timestamp received, const Event& event) {
         } else if constexpr (std::is_same_v<T, TradingHalt>) {
           e.number(v.ts);
           e.number(v.end);
+          if (!v.underlying.empty()) e.string(v.underlying);
         } else {
           e.number(v.id);
           e.number(v.ts);
@@ -312,7 +314,11 @@ RecordedEvent decode_event(std::span<const char> bytes, std::uint32_t version) {
       const auto start = d.number<Timestamp>();
       const auto end = d.number<Timestamp>();
       if (start <= 0 || end <= start || end - start > kNanosPerDay) invalid("invalid trading halt interval");
-      out.event = TradingHalt{start, end};
+      const auto underlying = d.empty() ? std::string{} : d.string();
+      if (underlying.size() > 12 || !std::all_of(underlying.begin(), underlying.end(), [](unsigned char c) {
+            return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.';
+          })) invalid("invalid halt underlying");
+      out.event = TradingHalt{start, end, underlying};
       break;
     }
     case 9:

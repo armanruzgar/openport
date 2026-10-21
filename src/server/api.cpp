@@ -308,10 +308,15 @@ json underlyings_json(const MetricsSource& source, const EngineStatus& status, b
 
 json circuit_breaker_json(const CircuitBreakerStatus& breaker) {
   json halts = json::array();
-  for (const auto& halt : breaker.halts)
+  for (const auto& halt : breaker.halts) {
     halts.push_back({{"level", halt.level}, {"start", md::format_timestamp(halt.start)},
                      {"end", md::format_timestamp(halt.end)}, {"reference", halt.reference}, {"price", halt.price},
                      {"active", halt.start <= breaker.market_time && breaker.market_time < halt.end}});
+    if (!halt.underlying.empty()) {
+      halts.back()["underlying"] = halt.underlying;
+      halts.back()["simulated"] = true;
+    }
+  }
   const auto& close = breaker.previous_close;
   return {{"symbol", breaker.symbol}, {"day", breaker.market_time > 0 ? json(md::format_date(breaker.day)) : json(nullptr)},
           {"previous_close", close ? json{{"date", md::format_date(close->date)}, {"price", close->price}} : json(nullptr)},

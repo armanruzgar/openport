@@ -639,6 +639,7 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
       }
       std::set<std::string> stalled;
       md::Timestamp halted_until = 0;
+      std::set<std::string> halted;
       std::vector<const ScenarioEvent*> books;
       for (const auto& event : play.events) {
         if (event.minutes == 0) continue;
@@ -646,14 +647,19 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
         const auto end = event_time(event, w, true);
         if (now < at || now >= end) continue;
         if (event.type == "halt") {
-          halted_until = std::max(halted_until, end);
-          if (now == at) sink.publish(md::TradingHalt{now, end});
+          if (event.symbols.empty()) {
+            halted_until = std::max(halted_until, end);
+            if (now == at) sink.publish(md::TradingHalt{now, end});
+          } else for (const auto& symbol : event.symbols) {
+            halted.insert(symbol);
+            if (now == at) sink.publish(md::TradingHalt{now, end, symbol});
+          }
         } else if (event.type == "stall") {
           const auto& selected = event.symbols.empty() ? script.symbols : event.symbols;
           stalled.insert(selected.begin(), selected.end());
         } else if (event.type == "book") books.push_back(&event);
       }
-      const auto frozen = [&](const std::string& symbol) { return halted_until > now || stalled.contains(symbol); };
+      const auto frozen = [&](const std::string& symbol) { return halted_until > now || halted.contains(symbol) || stalled.contains(symbol); };
       const double level = std::exp(log_level);
       if (!after_close) close_level = level;
       const double ratio = level / kOpen;
@@ -711,7 +717,7 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
       for (auto& [underlying, chain] : chains) {
         if (frozen(underlying)) {
           sink.publish(md::ProviderStatus{now, md::FeedState::Stale,
-              halted_until > now ? "scenario market halt" : "scenario feed stall", underlying});
+              halted_until > now ? "scenario market halt" : halted.contains(underlying) ? "scenario trading halt" : "scenario feed stall", underlying});
           sink.publish(md::SnapshotHeartbeat{underlying, now});
           continue;
         }

@@ -412,6 +412,34 @@ TEST_F(PaperEngine, AChangePreviewAnswersLikeTheChangeWithoutMakingIt) {
   expect_error(write(*engine, "POST", "/api/orders/" + id + "/preview", {{"limit_price", "4.20"}, {"floor_share", 2}}), 400, "INVALID_REQUEST");
 }
 
+TEST_F(PaperEngine, CashTransfersArePracticeOnlyAndIdempotentOverHttp) {
+  seed();
+  const auto before = read(*engine, "/api/account");
+  const auto response = write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "deposit"}, {"amount", "500.00"}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto result = json::parse(response.body);
+  ASSERT_EQ(result["cash_flows"].size(), 1U);
+  EXPECT_EQ(result["cash_flows"][0]["kind"], "deposit");
+  EXPECT_EQ(result["cash_flows"][0]["amount"], "500.00");
+  EXPECT_EQ(result["evaluation"]["profit"], before["evaluation"]["profit"]);
+  EXPECT_EQ(json::parse(write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "deposit"}, {"amount", "500.00"}}).body), result);
+  expect_error(write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "deposit"}, {"amount", "501.00"}}), 409, "DUPLICATE_CLIENT_ID");
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"plan", "intraday-100k"}, {"reason", "evaluation"}}).status, 200);
+  expect_error(write(*engine, "POST", "/api/account/cash-flows", {{"client_id", "no"}, {"amount", "500.00"}}), 422, "PLAN_LOCKED");
+}
+
+TEST_F(PaperEngine, SimulationSettingsRoundTripAndLiveHaltDrillsAreRefused) {
+  seed();
+  const auto response = write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", "financing drill"},
+      {"pin_risk", true}, {"pin_risk_seed", 42}, {"cash_credit_rate_bps", 365}, {"margin_debit_rate_bps", 1200}, {"stock_borrow_rate_bps", 500}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto rules = json::parse(response.body)["rules"];
+  EXPECT_EQ(rules["pin_risk"], true); EXPECT_EQ(rules["pin_risk_seed"], 42);
+  EXPECT_EQ(rules["cash_credit_rate_bps"], 365); EXPECT_EQ(rules["margin_debit_rate_bps"], 1200);
+  EXPECT_EQ(rules["stock_borrow_rate_bps"], 500);
+  expect_error(write(*engine, "POST", "/api/market/halt", {{"symbol", "SPY"}, {"minutes", 5}}), 422, "PLAN_LOCKED");
+}
+
 TEST_F(PaperEngine, WhatIfComparesCandidatesWithoutTrading) {
   seed();
   const auto before = read(*engine, "/api/account");
