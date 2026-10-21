@@ -105,12 +105,14 @@ class Stub:
             return 200, {"names": ["operator"], "count": 1, "loaded_at": TIME}
         if path == "/api/status":
             return 200, self.status
+        if path == "/api/volatility/scanner":
+            return 200, shaped("VolatilityScanner", simulated=True, provider="demo (synthetic test)")
         if "/underlyings/" in path:
             view = path.rsplit("/", 1)[-1]
             if view == "chain":
                 return 200, self.chain
             name = {"surface": "Surface", "exposure": "ExposureMatrix", "volatility": "Volatility", "candles": "Candles",
-                    "probability": "Probability"}.get(view, "Summary")
+                    "probability": "Probability", "surface-history": "SurfaceHistory", "series": "VolatilitySeries"}.get(view, "Summary")
             value = shaped(name, symbol="SPX", as_of=TIME)
             if name == "Summary":
                 value["expiries"] = [self.expiry]

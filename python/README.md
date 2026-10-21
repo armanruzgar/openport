@@ -15,7 +15,10 @@ from openport import Client, ApiError
 
 client = Client("http://127.0.0.1:8080", token="YOUR_TOKEN", account="practice", timeout=30)
 print(client.status())                 # provider, delay and per-symbol market times
-print(client.volatility("SPX"))        # includes missing-value reasons
+print(client.volatility("SPX"))        # signed history ranks, selected plan events, missing-value reasons
+print(client.volatility_scanner())      # all subscriptions, per-symbol market timestamps
+print(client.surface_history("SPX", compare=True))  # actual stored prior/week/month SVI fits
+print(client.volatility_history("SPX", fields=["rr25", "bf25", "ratio9_30"]))
 print(client.portfolio())
 print(client.preview_order(symbol="SPXW  261022P05000000", side="buy",
     type="limit", time_in_force="day", quantity=1, limit_price="0.05"))

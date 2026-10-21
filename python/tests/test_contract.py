@@ -20,6 +20,17 @@ def test_schema_references_and_required_types():
     walk(SPEC)
 
 
+def test_signed_volatility_history_and_tracking_contract():
+    contract = Contract("", None, SPEC)
+    validator = jsonschema.Draft202012Validator(
+        {"$ref": "urn:openport#/components/schemas/HistoryRank"}, registry=contract.registry)
+    validator.validate({"current": -3, "rank": -0.5, "percentile": 0, "z_score": -2, "sessions": 5, "window": 252})
+    validator.validate({"current": None, "rank": None, "percentile": None, "z_score": None, "sessions": 0, "window": 252})
+    with pytest.raises(jsonschema.ValidationError):
+        validator.validate({"current": -3, "rank": "missing", "percentile": 0, "z_score": -2, "sessions": 5, "window": 252})
+    assert "/api/underlyings/{symbol}/series" in SPEC["paths"]
+
+
 def test_guardrail_input_rejects_100_but_stored_settings_remain_readable():
     contract = Contract("", None, SPEC)
     def validator(name):
@@ -98,7 +109,7 @@ def test_real_cpp_handler_responses_without_network(tmp_path):
     binary = ROOT / "build/tests/openport_tests"
     if not binary.exists():
         pytest.skip("Build the C++ test executable to check its real handler responses")
-    result = subprocess.run([str(binary), "--gtest_filter=Api.ContractFixture:PaperEngine.ContractFixture:PaperEngine.SizeScalingAccountViewReportsTheCapitalCreditAndNewReview:PaperEngine.TwoStepProgressionAndProgramCosts:PaperEngine.ProgramCostOverridesAndCustomVerification:PaperEngine.DirectionRulesRoundTripAndHedgingPreviewEvidence:PaperEngine.VolumeRuleRoundTripsAndExplainsUnknownVolumeInPreview:PaperEngine.VolumeFillCancellationReportsRuleEvidenceAndPreservesEarlierFills:ReplayRun.ContractFixture:BacktestApi.ContractFixture:Backtest.AttemptsCarryBalancesDecidePassAndFailureAndLeaveOpenTail:PlaybookApi.LiveForwardPublicationIncludesWindowsAndJournalStats:BacktestApi.ListingSummarizesSavedReportIdentityWithoutCopyingTrades:BacktestApi.ComparisonAcceptsLegacyReportsAndRejectsInvalidSelection:Backtest.JointOpenTradeAttributionUsesOptionMarksAndFees:BacktestApi.JointPostRunsPinnedDefinitionsAndListsEveryMember"],
+    result = subprocess.run([str(binary), "--gtest_filter=Api.ContractFixture:Api.EventVolatilityReadsCurrentAccountCalendarsAndDeduplicatesImports:SurfaceHistory.ComparisonsUseExactTargetSessionsAndNeverFutureCloses:PaperEngine.ContractFixture:PaperEngine.SizeScalingAccountViewReportsTheCapitalCreditAndNewReview:PaperEngine.TwoStepProgressionAndProgramCosts:PaperEngine.ProgramCostOverridesAndCustomVerification:PaperEngine.DirectionRulesRoundTripAndHedgingPreviewEvidence:PaperEngine.VolumeRuleRoundTripsAndExplainsUnknownVolumeInPreview:PaperEngine.VolumeFillCancellationReportsRuleEvidenceAndPreservesEarlierFills:ReplayRun.ContractFixture:BacktestApi.ContractFixture:Backtest.AttemptsCarryBalancesDecidePassAndFailureAndLeaveOpenTail:PlaybookApi.LiveForwardPublicationIncludesWindowsAndJournalStats:BacktestApi.ListingSummarizesSavedReportIdentityWithoutCopyingTrades:BacktestApi.ComparisonAcceptsLegacyReportsAndRejectsInvalidSelection:Backtest.JointOpenTradeAttributionUsesOptionMarksAndFees:BacktestApi.JointPostRunsPinnedDefinitionsAndListsEveryMember"],
                             env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr

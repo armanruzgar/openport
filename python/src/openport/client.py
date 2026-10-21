@@ -131,7 +131,7 @@ class Client:
         return self._market(symbol, "summary")
 
     def series(self, symbol: str) -> list[JSON]:
-        """The expiry series in summary; openportd has no separate series route."""
+        """The expiry series in summary. Use volatility_history for stored observations."""
         return self.summary(symbol)["expiries"]
 
     def chain(self, symbol: str, expiry: str | None = None, window: float = 0) -> Chain:
@@ -144,7 +144,21 @@ class Client:
         return self._market(symbol, "surface", expiries=expiries, window=window)
 
     def volatility(self, symbol: str) -> Volatility:
-        return self._market(symbol, "volatility")
+        return self._request("GET", "/underlyings/" + quote(symbol, safe="") + "/volatility", scoped=True)
+
+    def volatility_history(self, symbol: str, *, fields: list[str] | None = None,
+                           interval: str = "1d", from_: str | None = None, to: str | None = None) -> JSON:
+        """Stored observations; signed skew ranks are returned by volatility()."""
+        return self._market(symbol, "series", fields=_list(fields), interval=interval, **{"from": from_, "to": to})
+
+    def surface_history(self, symbol: str, *, compare: bool = False,
+                        from_: str | None = None, to: str | None = None) -> JSON:
+        """Recorded SVI parameters; compare selects prior-close, week and month snapshots."""
+        return self._market(symbol, "surface-history", compare="true" if compare else "false", **{"from": from_, "to": to})
+
+    def volatility_scanner(self) -> JSON:
+        """One batch of volatility metrics for every subscribed underlying."""
+        return self._request("GET", "/volatility/scanner")
 
     def candles(self, symbol: str, interval: str = "5m", limit: int = 500) -> Candles:
         return self._market(symbol, "candles", interval=interval, limit=limit)
