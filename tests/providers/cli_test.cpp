@@ -512,6 +512,15 @@ TEST(Cli, RepairDryRunAndSingleFileModePreserveOtherJournals) {
   rejects("openportd", "--dry-run", "require --repair-journals");
 }
 
+TEST(Cli, RecordingRetentionRequiresDirectoryAndValidLimits) {
+  for (const auto* value : {"-1", "nan", "inf", "1x", "1000001"})
+    rejects("openportd", std::string("--record-max-gb ") + value, "--record-max-gb");
+  for (const auto* value : {"-1", "1.5", "36501"})
+    rejects("openportd", std::string("--record-keep-days ") + value, "--record-keep-days");
+  rejects("openportd", "--record-max-gb 1", "requires --record-dir");
+  rejects("openportd", "--record-keep-days 5 --record-dir recordings --record explicit.oprec", "without --record");
+}
+
 TEST(Cli, ClosedDateRangesExitSuccessfullyWithoutCredentialsOrDaemonStartup) {
   const std::string command = "MASSIVE_API_KEY='' " + isolated_home() + "\"" + OPENPORT_APPS_DIR +
       "/openportd\" --import-day massive --import-days 2026-09-05..2026-09-07 --date 2026-09-05 --symbols SPY 2>&1";

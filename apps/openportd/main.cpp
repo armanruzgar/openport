@@ -77,6 +77,8 @@ struct Settings {
   unsigned backtest_keep = 20;
   std::filesystem::path record_file;
   std::filesystem::path record_dir;
+  unsigned record_keep_days = 0;
+  std::uint64_t record_max_bytes = 0;
   std::optional<std::filesystem::path> candle_dir;
   bool history = true;
   bool series = true;
@@ -122,6 +124,7 @@ int usage(const char* error = nullptr) {
       out,
       "usage: openportd [--provider NAME] [--symbols SPX,SPY,QQQ,IWM,DIA] [--address ADDR] [--port N]\n"
       "                 [--scenario-dir DIR] [--web-root DIR] [--expiries N] [--window F] [--poll-seconds N]\n"
+      "                 [--record-keep-days N] [--record-max-gb X]\n"
       "                 [--record FILE] [--record-dir DIR] [--rate R] [--option KEY=VALUE]... [--allowed-origin ORIGIN]...\n"
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
@@ -174,7 +177,8 @@ int usage(const char* error = nullptr) {
       "tastytrade: production OAuth only; DXLink time units unknown unless confirmed with\n"
       "            --option dxlink_time_unit=milliseconds\n"
       "record: create a new compressed event file (existing files are never overwritten);\n"
-      "        --record-dir names one per run by provider and start time there, and the\n"
+      "        --record-dir rolls at each trading-date boundary; retention defaults off\n"
+      "        --record-keep-days N (calendar days), --record-max-gb X (decimal GB); the\n"
       "        web terminal replays recordings from it (default ~/.openport/recordings)\n"
       "charts: one-minute bars persist in --candle-dir (default ~/.openport/candles; replay/demo\n"
       "        keeps them in memory); Cboe's free delayed chart history backfills them\n"
@@ -470,6 +474,17 @@ int run(int argc, char** argv) {
     } else if (arg == "--record-dir") {
       if (value.empty()) return usage("--record-dir requires a nonempty path");
       settings.record_dir = value;
+    } else if (arg == "--record-keep-days") {
+      settings.record_keep_days = providers::parse_integer(value, "--record-keep-days", 0, 36500);
+    } else if (arg == "--record-max-gb") {
+      double gb = 0;
+      std::istringstream input(value);
+      input.imbue(std::locale::classic());
+      input >> std::noskipws >> gb;
+      if (!input || input.peek() != std::char_traits<char>::eof() || !std::isfinite(gb) || gb < 0 || gb > 1'000'000)
+        return usage("--record-max-gb must be a finite number in [0, 1000000]");
+      settings.record_max_bytes = static_cast<std::uint64_t>(gb * 1'000'000'000);
+      if (gb > 0 && settings.record_max_bytes == 0) return usage("--record-max-gb must be at least one byte");
     } else if (arg == "--series-dir") {
       if (value.empty()) return usage("--series-dir requires a nonempty path");
       settings.series_dir = value;
@@ -575,6 +590,8 @@ int run(int argc, char** argv) {
   }
   if (settings.require_token && settings.tokens.empty() && settings.write_token.empty() && settings.write_token_file.empty())
     return usage("--require-token needs a configured token");
+  if ((settings.record_keep_days || settings.record_max_bytes) && (settings.record_dir.empty() || !settings.record_file.empty()))
+    return usage("recording retention requires --record-dir without --record");
   const bool token_from_file = settings.write_token.empty() && !settings.write_token_file.empty();
   if (token_from_file) settings.write_token = load_write_token(settings.write_token_file);
   for (const auto& token : settings.tokens)
@@ -595,13 +612,6 @@ int run(int argc, char** argv) {
     feed->validate(settings.subscription);
   }
 
-  // Each run records to its own file, named by provider and UTC start time.
-  if (!settings.record_dir.empty() && settings.record_file.empty()) {
-    std::filesystem::create_directories(settings.record_dir);
-    auto stamp = md::format_timestamp(md::now()).substr(0, 19);  // 2026-09-23T20:15:30
-    stamp.erase(std::remove(stamp.begin(), stamp.end(), ':'), stamp.end());
-    settings.record_file = settings.record_dir / (settings.provider.name + "-" + stamp + "Z.oprec");
-  }
   server::CandleStore::Options candle_options;
   if (settings.candle_dir)
     candle_options.directory = *settings.candle_dir;
@@ -625,6 +635,9 @@ int run(int argc, char** argv) {
     engine_options.series = std::make_shared<server::SeriesStore>(series_directory);
   engine_options.analytics.fallback_rate = settings.rate;
   engine_options.record_file = settings.record_file;
+  engine_options.record_dir = settings.record_dir;
+  engine_options.record_keep_days = settings.record_keep_days;
+  engine_options.record_max_bytes = settings.record_max_bytes;
   engine_options.paper_enabled = settings.paper_enabled;
   engine_options.paper_journal = settings.paper_journal;
   engine_options.paper_accounts = paper_accounts;
@@ -773,6 +786,7 @@ int run(int argc, char** argv) {
     if (token_file) (void)token_file->snapshot();
     web.broadcast(server::tick_message(engine, {true, {}}));
     if (auto tick = replays.tick(); !tick.empty()) web.broadcast(tick);
+    engine.roll_recording();
     report(engine.recording_error(), recording_error);
     report(engine.status().circuit_breaker.error, breaker_error);
     if (history) report(history->error(), history_error);
@@ -791,7 +805,7 @@ int run(int argc, char** argv) {
   if (dividends) dividends->stop();
   engine.stop();
   candles->flush();
-  if (!settings.record_file.empty()) {
+  if (!settings.record_file.empty() || !settings.record_dir.empty()) {
     const auto stats = engine.recording_stats();
     const double count = static_cast<double>(stats.events);
     std::printf("recording: %llu events, %llu bytes, %.1f ns/event publish, %.2f bytes/event\n",

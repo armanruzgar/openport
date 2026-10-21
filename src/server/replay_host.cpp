@@ -1358,6 +1358,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     engine.paper_accounts.clear();
     engine.paper_sink.reset();
     engine.record_file.clear();
+    engine.record_dir.clear();
     engine.candles = std::make_shared<CandleStore>();
     auto* provider = session->provider.get();
     engine.clock = [provider] { return provider->time(); };
@@ -1605,6 +1606,7 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
         engine.paper_accounts.clear();
         engine.paper_sink.reset();
         engine.record_file.clear();
+        engine.record_dir.clear();
         engine.candles = std::make_shared<CandleStore>();
         // The replay's clock is the recording's: sessions and feed checks see that day.
         auto* provider = session->provider.get();

@@ -1,5 +1,7 @@
 #include "support/recording.hpp"
+#include "openport/md/recording_directory.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <fstream>
@@ -447,4 +449,168 @@ TEST(Recording, VersionOneRejectsTheNewVolumeTag) {
   EXPECT_THROW((void)reader.next(), std::runtime_error);
 }
 
+}  // namespace
+
+namespace {
+std::vector<std::filesystem::path> published(const std::filesystem::path& directory) {
+  std::vector<std::filesystem::path> files;
+  for (const auto& entry : std::filesystem::directory_iterator(directory))
+    if (entry.path().extension() == ".oprec") files.push_back(entry.path());
+  std::sort(files.begin(), files.end());
+  return files;
+}
+TEST(RecordingDirectory, RolloverPublishesCompleteIndependentDaysAndKeepsMarketClocks) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.provider = "massive";
+  std::atomic<md::Timestamp> time{md::new_york_to_utc({2026, 9, 4}, 16, 59)};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  test::EventCollector sink;
+  md::RecordingDirectory recording(file.directory, header, sink, options);
+  const auto contract = *md::parse_osi("SPXW261022C05000000");
+  recording.publish(md::ContractDefinition{5, contract});
+  const auto original = time.load() - 900 * md::kNanosPerSecond;
+  recording.publish(md::OptionQuote{5, original, 5, 6, 1, 2});
+  EXPECT_TRUE(published(file.directory).empty());
+  // Friday 17:00 advances to Tuesday after Labor Day, without waiting for a tick.
+  time = md::new_york_to_utc({2026, 9, 4}, 17, 0);
+  recording.rollover();
+  auto files = published(file.directory);
+  ASSERT_EQ(files.size(), 1U);
+  EXPECT_NE(files[0].filename().string().find("2026-09-04"), std::string::npos);
+  md::RecordingReader first(files[0]);
+  ASSERT_TRUE(first.next());
+  const auto quote = first.next();
+  ASSERT_TRUE(quote);
+  EXPECT_EQ(std::get<md::OptionQuote>(quote->event).ts, original);
+  EXPECT_FALSE(first.next());
+  EXPECT_TRUE(first.diagnostic().empty());
+  recording.publish(md::OptionQuote{5, time, 6, 7, 2, 3});
+  EXPECT_EQ(sink.snapshot().size(), 3U) << "rollover definitions must not be delivered twice downstream";
+  recording.close();
+  EXPECT_TRUE(recording.error().empty());
+  files = published(file.directory);
+  ASSERT_EQ(files.size(), 2U);
+  EXPECT_NE(files[1].filename().string().find("2026-09-08"), std::string::npos);
+  md::RecordingReader second(files[1]);
+  const auto definition = second.next();
+  ASSERT_TRUE(definition);
+  EXPECT_EQ(std::get<md::ContractDefinition>(definition->event).id, 5U);
+  ASSERT_TRUE(second.next());
+  EXPECT_FALSE(second.next());
+  EXPECT_TRUE(second.diagnostic().empty());
+  EXPECT_EQ(recording.stats().events, 4U);
+  EXPECT_TRUE(second.indexed_end(header.subscription).has_value());
+}
+TEST(RecordingDirectory, DstAndBackwardClocksDoNotSplitOrReopenDays) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  md::Timestamp time = md::new_york_to_utc({2026, 10, 30}, 17, 0);
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time; };
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  time = md::new_york_to_utc({2026, 11, 2}, 9, 30);
+  recording.rollover();
+  EXPECT_TRUE(published(file.directory).empty());
+  time = md::new_york_to_utc({2026, 10, 30}, 16, 0);
+  recording.rollover();
+  EXPECT_TRUE(published(file.directory).empty());
+  time = md::new_york_to_utc({2026, 11, 2}, 17, 0);
+  recording.rollover();
+  EXPECT_EQ(published(file.directory).size(), 1U);
+  recording.close();
+  EXPECT_EQ(published(file.directory).size(), 2U);
+}
+TEST(RecordingDirectory, RetentionPrunesOldestCompleteFilesAndTheirIndexesOnly) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  std::vector<std::filesystem::path> old;
+  for (int day : {21, 22, 23}) {
+    header.started = md::new_york_to_utc({2026, 9, day}, 9, 30);
+    old.push_back(file.directory / (std::to_string(24 - day) + ".oprec"));
+    test::record_events(old.back(), {md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000}}, header);
+  }
+  const auto active = file.directory / "active.oprec";
+  test::DiscardEvents discard;
+  md::RecordingSink writing(active, header, discard, {});
+  const auto broken = file.directory / "broken.oprec";
+  replace(broken, "not a recording");
+  const auto link = file.directory / "linked.oprec";
+  std::filesystem::create_symlink(old[2], link);
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [] { return md::new_york_to_utc({2026, 9, 24}, 9, 30); };
+  options.keep_days = 2;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  EXPECT_FALSE(std::filesystem::exists(old[0]));
+  EXPECT_FALSE(std::filesystem::exists(old[1]));
+  EXPECT_FALSE(std::filesystem::exists(old[0].string() + ".end"));
+  EXPECT_TRUE(std::filesystem::exists(old[2]));
+  EXPECT_TRUE(std::filesystem::exists(active));
+  EXPECT_TRUE(std::filesystem::exists(broken));
+  EXPECT_TRUE(std::filesystem::is_symlink(link));
+  recording.close();
+  writing.close();
+}
+TEST(RecordingDirectory, ByteLimitProtectsTheWriterEvenWhenItAloneExceedsTheLimit) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.started = md::new_york_to_utc({2026, 9, 22}, 9, 30);
+  test::record_events(file.path, {md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000}}, header);
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [] { return md::new_york_to_utc({2026, 9, 24}, 9, 30); };
+  options.max_bytes = 1;
+  test::EventCollector sink;
+  md::RecordingDirectory recording(file.directory, header, sink, options);
+  EXPECT_FALSE(std::filesystem::exists(file.path));
+  recording.publish(md::UnderlyingQuote{"SPX", options.recording.clock(), 0, 0, 5001});
+  EXPECT_TRUE(recording.error().empty());
+  EXPECT_EQ(sink.snapshot().size(), 1U);
+  EXPECT_FALSE(std::filesystem::is_empty(file.directory));
+  recording.close();
+  EXPECT_TRUE(recording.error().empty());
+  EXPECT_TRUE(std::filesystem::is_empty(file.directory));
+}
+TEST(RecordingDirectory, StorageFailureNeverPublishesPartialFilesOrStopsDownstream) {
+  test::RecordingFile file;
+  test::EventCollector sink;
+  md::RecordingDirectory::Options options;
+  options.recording.write = [](int fd, std::span<const char> bytes) {
+    if (bytes.size() >= 8 && std::string_view(bytes.data(), 5) == "OPREC") {
+      if (::write(fd, bytes.data(), bytes.size()) != static_cast<ssize_t>(bytes.size())) throw std::runtime_error("test header write");
+    } else throw std::runtime_error("test disk full");
+  };
+  md::RecordingDirectory recording(file.directory, test::recording_header(), sink, options);
+  recording.publish(md::UnderlyingQuote{"SPX", md::now(), 0, 0, 5000});
+  recording.close();
+  EXPECT_NE(recording.error().find("test disk full"), std::string::npos);
+  EXPECT_TRUE(published(file.directory).empty());
+  EXPECT_TRUE(std::filesystem::is_empty(file.directory));
+  EXPECT_EQ(sink.snapshot().size(), 2U);
+}
+}  // namespace
+
+namespace {
+TEST(RecordingDirectory, ByteRetentionUsesHeaderAgeRatherThanFilenameOrder) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  std::mt19937 random(42);
+  std::string payload(100'000, ' ');
+  for (auto& ch : payload) ch = static_cast<char>('a' + random() % 26);
+  const auto older = file.directory / "z-old.oprec", newer = file.directory / "a-new.oprec";
+  for (const auto& path : {older, newer}) {
+    header.started = md::new_york_to_utc({2026, 9, path == older ? 22 : 23}, 9, 30);
+    test::record_events(path, {md::ProviderStatus{header.started, md::FeedState::Live, payload, "SPX"}}, header);
+  }
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [] { return md::new_york_to_utc({2026, 9, 24}, 9, 30); };
+  options.max_bytes = std::filesystem::file_size(newer) + std::filesystem::file_size(newer.string() + ".end") + 1024;
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  EXPECT_FALSE(std::filesystem::exists(older));
+  EXPECT_TRUE(std::filesystem::exists(newer));
+  recording.close();
+  EXPECT_TRUE(std::filesystem::exists(newer));
+}
 }  // namespace

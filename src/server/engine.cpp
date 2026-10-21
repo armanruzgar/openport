@@ -112,8 +112,17 @@ void Engine::start() {
           options_.record_file, md::RecordingHeader{std::string(provider_.name()),
           provider_.capabilities(), subscription_, status_.started, false, provider_.market_controls()}, queue_, std::move(recording));
     }
+    if (!options_.record_dir.empty() && options_.record_file.empty()) {
+      auto recording = options_.recording;
+      recording.clock = options_.clock;
+      daily_recorder_ = std::make_unique<md::RecordingDirectory>(options_.record_dir,
+          md::RecordingHeader{std::string(provider_.name()), provider_.capabilities(), subscription_,
+                              status_.started, false, provider_.market_controls()}, queue_,
+          md::RecordingDirectory::Options{std::move(recording), options_.record_keep_days, options_.record_max_bytes});
+    }
     provider_started_ = true;
-    provider_.start(subscription_, recorder_ ? static_cast<md::EventSink&>(*recorder_) : queue_);
+    provider_.start(subscription_, daily_recorder_ ? static_cast<md::EventSink&>(*daily_recorder_) :
+        recorder_ ? static_cast<md::EventSink&>(*recorder_) : queue_);
     // Complete journal startup before returning so the daemon can report failures
     // even if constructing or binding its web server subsequently fails.
     if (!demo_) desk_.start_trading();
@@ -132,6 +141,7 @@ void Engine::start() {
     if (thread_.joinable()) thread_.join();
     provider_started_ = false;
     if (recorder_) recorder_->close();
+    if (daily_recorder_) daily_recorder_->close();
     desk_.stop();
     {
       const std::lock_guard lock(command_mutex_);
@@ -148,6 +158,7 @@ void Engine::stop() {
     provider_started_ = false;
   }
   if (recorder_) recorder_->close();
+  if (daily_recorder_) daily_recorder_->close();
   stopping_ = true;
   if (thread_.joinable()) thread_.join();
   if (options_.notifications) {
@@ -160,11 +171,15 @@ void Engine::stop() {
 }
 
 md::RecordingStats Engine::recording_stats() const {
-  return recorder_ ? recorder_->stats() : md::RecordingStats{};
+  return daily_recorder_ ? daily_recorder_->stats() : recorder_ ? recorder_->stats() : md::RecordingStats{};
 }
 
 std::string Engine::recording_error() const {
-  return recorder_ ? recorder_->error() : std::string{};
+  return daily_recorder_ ? daily_recorder_->error() : recorder_ ? recorder_->error() : std::string{};
+}
+
+void Engine::roll_recording() {
+  if (daily_recorder_) daily_recorder_->rollover();
 }
 
 std::vector<std::string> Engine::symbols() const {

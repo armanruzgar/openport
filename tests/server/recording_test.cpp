@@ -10,6 +10,7 @@
 #include <future>
 #include <fstream>
 #include <sstream>
+#include <set>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
 
@@ -1375,6 +1376,7 @@ TEST(ReplayHost, ImportedHeaderIsListedAndRetainedInActiveReplay) {
       {.clock = [&] { return header.started; }});
   server::Engine::Options base;
   base.paper_enabled = false;
+  base.record_dir = file.directory / "do-not-record-replays";
   server::ReplayHost host({file.directory, base, false});
   auto listing = json::parse(call(host, "GET", "/api/replay").body);
   ASSERT_EQ(listing["recordings"].size(), 1U);
@@ -1385,6 +1387,35 @@ TEST(ReplayHost, ImportedHeaderIsListedAndRetainedInActiveReplay) {
   ASSERT_EQ(started.status, 201) << started.body;
   EXPECT_EQ(json::parse(started.body)["replay"]["imported"], true);
   host.stop();
+  EXPECT_FALSE(std::filesystem::exists(base.record_dir));
 }
 
+}  // namespace
+
+namespace {
+TEST(EngineRecording, DirectoryRecordingRollsFromTheEngineReceiptClock) {
+  test::RecordingFile file;
+  SyntheticProvider provider;
+  server::Engine::Options options;
+  options.record_dir = file.directory;
+  options.paper_enabled = false;
+  std::atomic<md::Timestamp> receipt{md::new_york_to_utc({2026, 9, 22}, 16, 59)};
+  options.clock = [&] { return receipt.load(); };
+  server::Engine engine(provider, {{"SPX"}}, options);
+  engine.start();
+  receipt = md::new_york_to_utc({2026, 9, 22}, 17, 0);
+  engine.roll_recording();
+  engine.stop();
+  EXPECT_TRUE(engine.recording_error().empty());
+  std::set<md::Date> dates;
+  for (const auto& entry : std::filesystem::directory_iterator(file.directory)) {
+    if (entry.path().extension() != ".oprec") continue;
+    md::RecordingReader reader(entry.path());
+    dates.insert(md::trading_date(reader.header().started));
+    while (reader.next()) {}
+    EXPECT_TRUE(reader.diagnostic().empty());
+  }
+  EXPECT_EQ(dates, (std::set<md::Date>{{2026, 9, 22}, {2026, 9, 23}}));
+  EXPECT_GT(engine.recording_stats().events, 0U);
+}
 }  // namespace
