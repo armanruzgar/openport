@@ -1,6 +1,6 @@
 services:
   openport:
-    image: ghcr.io/38st/openport:latest
+    image: ${OPENPORT_IMAGE:-ghcr.io/38st/openport:latest}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -33,4 +33,4 @@ services:
 
 volumes:
   openport:
-    name: openport
+    name: ${OPENPORT_VOLUME:-openport}

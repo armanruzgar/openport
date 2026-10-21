@@ -40,7 +40,8 @@ class UpdateFormulaTest(unittest.TestCase):
         formula = self.formula.read_text()
         self.assertIn(f'  sha256 "{DIGEST}"\n', formula)
         self.assertIn(f'/v0.3.0/{ASSET}"', formula)
-        self.assertEqual(formula.split("  license", 1)[1], self.original.split("  license", 1)[1])
+        self.assertEqual(formula.split("  def install", 1)[1], self.original.split("  def install", 1)[1])
+        self.assertIn('openport.git", tag: "v0.3.0"', formula)
 
     def test_binary_marker_uppercase_digest_and_crlf(self):
         self.sums.write_bytes(f"{DIGEST.upper()} *{ASSET}\r\n".encode())

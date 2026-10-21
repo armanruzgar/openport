@@ -15,6 +15,7 @@ RUN npm run build
 
 FROM ubuntu:24.04 AS build
 ARG DEBIAN_FRONTEND=noninteractive
+ARG OPENPORT_BUILD_REVISION=unknown
 # Ubuntu's mirrors can list a package for a while after it stops serving it (a 404),
 # so each apt step retries from a fresh index.
 RUN for attempt in 1 2 3; do \
@@ -34,8 +35,9 @@ COPY scenarios scenarios
 COPY tests tests
 COPY bench bench
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DOPENPORT_BUILD_REVISION="$OPENPORT_BUILD_REVISION" \
       -DOPENPORT_BUILD_TESTS=OFF -DOPENPORT_BUILD_BENCHMARKS=OFF \
-    && cmake --build build --target openportd openport-probe
+    && cmake --build build --target openportd openport-probe -j3
 
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive

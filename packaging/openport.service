@@ -1,0 +1,27 @@
+[Unit]
+Description=OpenPort options analytics and paper trading
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=openport
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/openport
+Environment=HOME=/var/lib/openport
+ExecStart=/usr/bin/openportd --address 127.0.0.1 --write-token-file /var/lib/openport/write-token --paper-journal /var/lib/openport/paper-journal.jsonl --candle-dir /var/lib/openport/candles --series-dir /var/lib/openport/series --web-root /usr/share/openport/web
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target
