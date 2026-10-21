@@ -484,8 +484,12 @@ std::vector<std::pair<json, BacktestRequest>> expand_backtest_grid(const Backtes
         auto selected = parameters;
         selected[path] = value;
         auto& definition = job.playbooks["definitions"][job.playbook]["versions"].back();
-        // Never grow an array or create arbitrary keys from a caller's pointer.
-        definition.at(json::json_pointer(path)) = value;
+        // Optional object fields may be added, then validated. Never grow an
+        // array or create intermediate containers from a caller's pointer.
+        const json::json_pointer pointer(path);
+        auto& parent = definition.at(pointer.parent_pointer());
+        if (parent.is_object()) parent[pointer.back()] = value;
+        else definition.at(pointer) = value;
         next.emplace_back(std::move(selected), std::move(job));
       }
     }
@@ -510,7 +514,9 @@ json run_backtest_sweep(const BacktestRequest& request, const json& grid, const 
   if (progress) progress(0, "variants");
   for (std::size_t index = 0; index < variants.size(); ++index) {
     if (cancel) { report["status"] = "cancelled"; break; }
-    const auto id = "variant-" + std::to_string(index + 1);
+    std::ostringstream name;
+    name << std::setfill('0') << std::setw(6) << index + 1;
+    const auto id = name.str();
     const auto& [parameters, job] = variants[index];
     json result;
     try {
