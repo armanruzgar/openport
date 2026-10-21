@@ -17,7 +17,7 @@ def call(server, name, **arguments):
 def test_tool_schemas_name_accounts_and_typed_orders(stub):
     server = create_server(Client(stub.url, "secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"}
+    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "volatility_history", "surface_history", "volatility_scanner", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"}
     for name in ["start_replay", "step_replay", "stop_replay"]:
         assert "account" in tools[name].input_schema["required"]
     schema = tools["place_order"].input_schema
@@ -59,6 +59,29 @@ def test_results_have_market_time_delay_simulation_and_agent_tag(stub):
     order["trigger"] = {"source": "underlying", "symbol": "VIX", "direction": "at_or_above", "level": "20"}
     call(server, "place_order", account="practice", order=order)
     assert stub.requests[-1][3]["trigger"] == order["trigger"]
+
+
+@pytest.mark.parametrize("replay", [False, True])
+def test_volatility_tools_preserve_source_ranges_and_account_calendars(stub, replay):
+    from urllib.parse import parse_qs, urlsplit
+    server = create_server(Client(stub.url, "secret"))
+    prefix = "/api/replay" if replay else "/api"
+    calls = [
+        ("volatility", {"symbol": "SPX", "account": "main"}, "/underlyings/SPX/volatility", {"account": ["main"]}),
+        ("volatility_history", {"symbol": "SPX", "fields": ["rr25", "bf25"], "from_": "2026-09-01"},
+         "/underlyings/SPX/series", {"fields": ["rr25,bf25"], "interval": ["1d"], "from": ["2026-09-01"]}),
+        ("surface_history", {"symbol": "SPX"}, "/underlyings/SPX/surface-history", {"compare": ["true"]}),
+        ("volatility_scanner", {}, "/volatility/scanner", {}),
+    ]
+    for name, arguments, path, query in calls:
+        response = call(server, name, replay=replay, **arguments)
+        assert "error" not in response
+        assert response["as_of"] == TIME
+        assert response["simulated"] is True
+        request = urlsplit(stub.requests[-1][1])
+        assert request.path == prefix + path
+        assert parse_qs(request.query) == query
+    assert all(request[0] == "GET" for request in stub.requests)
 
 
 def test_orders_chain_and_trail(stub):
