@@ -6,6 +6,7 @@ import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
 import type { NotificationChannel, NotificationStatus, TokenReloadResponse } from "./types"
 import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, Summary, Surface, RunVerification } from "./types"
+import type { RulePack, RulePackValidation, RulesCompareRequest, RulesCompareResponse } from "./trading-types"
 import type { Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
 import { activeAccount, MAIN_ACCOUNT } from "../lib/active-account"
 import { dataSource } from "../lib/data-source"
@@ -78,6 +79,10 @@ export function readHeaders(): Record<string, string> {
   return { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
 }
 const get = <T,>(path: string, signal?: AbortSignal) => request<T>(routed(path), { signal, headers: readHeaders() })
+/** A POST that computes from its body and changes nothing, so read access suffices. */
+const compute = <T,>(path: string, body: unknown, signal?: AbortSignal) => request<T>(path, {
+  method: "POST", signal, headers: { ...readHeaders(), "Content-Type": "application/json" }, body: JSON.stringify(body),
+})
 
 export async function downloadFile(path: string, filename: string) {
   const response = await fetch(path, { headers: readHeaders() })
@@ -160,6 +165,16 @@ export const api = {
   playbookMode: (id: string, value: "off" | "stage" | "auto", mode: WriteMode) => accountWrite<PlaybooksResponse>(scoped(`/api/playbooks/${encodeURIComponent(id)}/mode`), "PUT", mode, { mode: value }),
   stagedAction: (id: string, action: "send" | "dismiss", mode: WriteMode) => accountWrite<PlaybooksResponse>(scoped(`/api/playbooks/staged/${encodeURIComponent(id)}/${action}`), "POST", mode, {}),
   passOdds: (days: number, samples: number, playbook = "", signal?: AbortSignal) => get<PassOdds>(scoped(`/api/account/pass-odds?days=${days}&samples=${samples}${playbook ? `&playbook=${encodeURIComponent(playbook)}` : ""}`), signal),
+  /** Pass odds with challenge economics; payout odds and amount replace the simulated first payout. */
+  passEconomics: (days: number, samples: number, override: { payout_odds?: number; payout?: Money }, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ days: String(days), samples: String(samples), economics: "true" })
+    if (override.payout_odds != null) query.set("payout_odds", String(override.payout_odds))
+    if (override.payout != null) query.set("payout", override.payout)
+    return get<PassOdds>(scoped(`/api/account/pass-odds?${query}`), signal)
+  },
+  /** Live accounts only: replays need their own recorded attempt. */
+  rulesCompare: (body: RulesCompareRequest, signal?: AbortSignal) => compute<RulesCompareResponse>(scoped("/api/account/rules-compare"), body, signal),
+  validateRulePack: (pack: RulePack | unknown, signal?: AbortSignal) => compute<RulePackValidation>("/api/rule-packs/validate", pack, signal),
   buildTemplate: (template: StrategyTemplate, near: Chain, signal?: AbortSignal) => {
     const strikes = near.strikes.map((row) => row.strike).filter(Number.isFinite)
     const query = new URLSearchParams({ symbol: near.symbol, expiry: near.expiry.id, template: JSON.stringify(template) })

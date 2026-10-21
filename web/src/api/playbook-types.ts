@@ -63,4 +63,31 @@ export interface PlaybooksResponse {
 export interface PassOdds {
   pass: number; fail: number; neither: number; median_days_to_pass: number | null; historical_days: number; seed: string
   days: number; samples: number; label: string; history_basis: string; path_assumption: string; simulated: true
+  /** With economics=true; absent on older servers. */
+  economics?: ChallengeEconomics | null
+}
+export interface EconomicsStep {
+  plan: string
+  /** One attempt's pass odds, from a fresh attempt. */
+  pass: number
+  /** Within the attempts its resets allow. */
+  eventual_pass: number
+  expected_cost: number
+  expected_attempts: number
+}
+/** Illustrative expected value of buying the account's program; not a prediction. */
+export interface ChallengeEconomics {
+  available: boolean
+  reason?: string
+  steps?: EconomicsStep[]
+  payout_odds?: number
+  payout?: number
+  payout_odds_source?: "query" | "simulated"
+  payout_source?: string
+  expected_cost?: number
+  expected_payout?: number
+  expected_value?: number
+  break_even_pass?: number | null
+  assumption?: string
+  label?: string
 }

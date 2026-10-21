@@ -38,6 +38,39 @@ export interface PayoutRules {
   buffer?: Money
   /** First N payouts; zero means every payout. */
   buffer_payouts?: number
+  /** Reviews offending trades at each payout; null or absent reviews none. */
+  review?: PayoutReview | null
+  /** The floor after a payout; absent on older servers (keep). */
+  after_payout?: "keep" | "reset" | "starting_balance"
+  /** reset: the share of the starting balance the account restarts at. */
+  reset_percent?: number
+}
+export type ReviewStep = "warning" | "forfeit" | "cap"
+export type PayoutFloor = "keep" | "reset" | "starting_balance"
+export type ReviewOffence = "short_hold" | "oversized" | "open_loss"
+/** Positive closed trades of the cycle a payout review reads; the nth review that finds any takes the nth ladder step. */
+export interface PayoutReview {
+  min_hold_seconds: number
+  max_trade_percent: number
+  open_loss: boolean
+  ladder: ReviewStep[]
+  /** A cap step's payout maximum. */
+  cap: Money | null
+}
+export interface ReviewTrade { id: string; pnl: Money; held_seconds: number; closed: string; offences: ReviewOffence[] }
+/** warning records only; forfeit removes the offending profit with the payout, unpaid; cap also caps the payout. */
+export interface PayoutReviewOutcome {
+  step: "cap" | "forfeit" | "warning"
+  trades: ReviewTrade[]
+  forfeited: Money
+}
+/** A cap on one position's marked open loss. */
+export interface OpenLossCap {
+  basis: "amount" | "day_profit" | "drawdown_room"
+  amount: Money | null
+  /** 1-100 for the percentage bases. */
+  percent: number
+  action: "block_adds" | "fail" | "flatten"
 }
 export type AccountType = "margin" | "cash" | "ira"
 export interface SizeScaling {
@@ -163,6 +196,13 @@ export interface AccountRules {
   buying_power: boolean
   expiry_cutoff_seconds: number
   payouts: PayoutRules | null
+  /** What the floor follows: fully marked equity, or the closed balance. Absent on older servers. */
+  drawdown_basis?: "equity" | "balance"
+  open_loss_cap?: OpenLossCap | null
+  /** Opening contracts per leg at most this percent of the last minute's volume; 0 disables. */
+  minute_volume_percent?: number
+  /** One trade's profit above this percent of the target does not count; 0 disables. */
+  best_position_percent?: number
   /** Gross option contracts held; next session uses closed-balance profit. Empty disables. */
   scaling?: ScalingStep[]
   size_scaling?: SizeScaling | null
@@ -171,6 +211,7 @@ export type ProfitBasis = "equity" | "balance"
 export type DailyLossBasis = "equity" | "balance" | "higher" | "peak"
 /** Plan objectives, decisions and trading restrictions in evaluation and verification. */
 export type PlanReason = "PROFIT_TARGET" | "DRAWDOWN_FLOOR" | "DAILY_LOSS_LIMIT" | "MIN_TRADING_DAYS" | "MIN_PROFITABLE_DAYS" | "CONSISTENCY" | "MAX_CONTRACTS_HELD" | "STOP_REQUIRED" | "MAX_TRADE_RISK" | "TIME_LIMIT" | "INACTIVITY" | "INSTRUMENT_NOT_ALLOWED" | "OUTSIDE_PLAN_HOURS" | "FLAT_TIME" | "OVERNIGHT_HOLD" | "SCALING_LIMIT" | "TRADE_CONSISTENCY" | "MIN_TRADES" | "MIN_HOLD" | "MICROSCALPING" | "HEDGING" | "COUNTER_POSITION" | "MAX_VOLUME_SHARE" | "NEWS_BLACKOUT" | "HOLD_RESTRICTED"
+  | "OPEN_LOSS_CAP" | "MINUTE_VOLUME" | "BEST_POSITION"
 /** Compatibility name for the complete plan-reason set. */
 export type PlanRuleReason = PlanReason
 /** held_dollar_delta is the compared held book or working entry for COUNTER_POSITION. */
@@ -233,7 +274,7 @@ export interface EvaluationDay {
 }
 /** One condition a pass needs; `actual` and `required` are dollars, days or percent by code. */
 export interface Objective {
-  code: "PROFIT_TARGET" | "MIN_TRADING_DAYS" | "MIN_PROFITABLE_DAYS" | "CONSISTENCY" | "TRADE_CONSISTENCY" | "MIN_TRADES" | "MICROSCALPING" | string
+  code: "PROFIT_TARGET" | "MIN_TRADING_DAYS" | "MIN_PROFITABLE_DAYS" | "CONSISTENCY" | "TRADE_CONSISTENCY" | "MIN_TRADES" | "MICROSCALPING" | "BEST_POSITION" | string
   met: boolean
   actual: number | null
   required: number
@@ -258,6 +299,10 @@ export interface Payout {
   trader_share: Money
   /** Equity when requested, before the withdrawal. */
   balance: Money
+  /** Only when the payout review found offending trades. */
+  review?: PayoutReviewOutcome | null
+  /** after_payout reset: what the account dropped to restart at its reset balance. */
+  removed?: Money | null
 }
 export interface PayoutBestDay {
   day: string
@@ -289,8 +334,19 @@ export interface PayoutStatus {
   trader_share: Money
   withdrawal_percent: number
   split_percent: number
+  /** What a review finds now, with the step a request now takes; absent on older servers. */
+  review?: PayoutReviewOutcome | null
+  /** Profit a request now forfeits with the payout. */
+  forfeit?: Money
+  after_payout?: "keep" | "reset" | "starting_balance"
+  /** after_payout reset: the balance the account restarts at. */
+  reset_balance?: Money | null
 }
+export interface OpenLossStatus { limit: Money | null; positions: string[]; trades: string[] }
+export interface BestPositionStatus { cap: Money; excess: Money; counted_profit: Money; trade: { id: string; pnl: Money } | null }
 export interface Evaluation {
+  open_loss?: OpenLossStatus | null
+  best_position?: BestPositionStatus | null
   next_event?: EventWindow | null
   active_events?: EventWindow[]
   time_limit_days?: number | null
@@ -685,8 +741,78 @@ export interface Plan {
   rules: AccountRules
   /** Funded plans: the evaluation plan ID whose pass unlocks them. */
   unlocked_by: string | null
+  /** Built-in presets are this project's own illustrative terms, not any firm's. */
+  illustrative?: true
 }
 export interface PlansResponse { plans: Plan[] }
+export interface RuleReplayDay {
+  day: string
+  outcome: "active" | "after" | "failed" | "locked" | "passed"
+  /** The rule set's equity at the close. */
+  close: Money
+  floor: Money | null
+}
+/** One rule set replayed on the account's recorded path. */
+export interface RuleReplaySet {
+  name: string
+  plan_id: string | null
+  initial_cash: Money
+  rules: AccountRules
+  status: "active" | "failed" | "passed"
+  code: string | null
+  message: string | null
+  decided_day: string | null
+  /** The recorded extreme's time; null when it was a day's open or close. */
+  decided_at: string | null
+  decided_equity: Money | null
+  locked_days: string[]
+  closest_floor: Money | null
+  days: RuleReplayDay[]
+  /** Rules on orders, positions or the clock that a replay of recorded equity cannot evaluate. */
+  not_replayed: string[]
+}
+export interface RulesCompareResponse {
+  account: string
+  attempt: number
+  days: string[]
+  sets: RuleReplaySet[]
+  basis: string
+  label: string
+  simulated: true
+}
+export interface RulesCompareRequest {
+  plans?: string[]
+  rules?: { name: string; initial_cash: Money; rules: AccountRulesInput }[]
+  include_current?: boolean
+}
+export interface RulePackPlan {
+  id: string
+  name: string
+  summary?: string
+  initial_cash: Money
+  rules: AccountRules
+  unlocked_by?: string | null
+}
+/** A versioned, importable plan file; its terms are the author's. */
+export interface RulePack {
+  format: "openport.rule-pack"
+  version: 1
+  id: string
+  name: string
+  effective_from: string
+  source: string
+  verify: string
+  notes?: string
+  plans: RulePackPlan[]
+}
+export interface RulePackError { where: string; message: string }
+export interface RulePackValidation {
+  valid: boolean
+  errors: RulePackError[]
+  warnings: string[]
+  pack: RulePack | null
+  label: string
+}
 export type FillModel = "as_displayed" | "conservative" | "midpoint"
 export type FeeModel = "flat" | "itemized"
 export type AccountRulesInput = Pick<AccountRules, "profit_target" | "max_drawdown" | "drawdown_mode" | "buy_only" | "buying_power" | "expiry_cutoff_seconds">
@@ -1176,6 +1302,19 @@ export interface Guardrails {
   /** Market minutes after an adverse-direction closing trigger, trailing stop or bracket stop-loss fills. */
   cooldown_minutes: number
   profit_lock: Money
+  /** Losing closes in a row that start the cooldown; 0 disables. */
+  loss_streak?: number
+  /** Opening orders above this percent of the recent median are size creep; 0 disables. */
+  size_creep_percent?: number
+  /** Opening orders in the median, 3-100; 0 is 20. */
+  size_creep_window?: number
+  /** Refuse size creep instead of only flagging it. */
+  size_creep_block?: boolean
+}
+export interface TiltFlag {
+  time: string
+  code: "LOSS_STREAK" | "SIZE_CREEP"
+  message: string
 }
 export interface GuardrailState {
   opening_trades: number
@@ -1183,6 +1322,10 @@ export interface GuardrailState {
   cooldown_until: string | null
   cooldown_seconds: number
   soft_floor: Money | null
+  losing_closes?: number
+  recent_opening_sizes?: number[]
+  /** Today's discipline flags, journaled as tilt_flag events. */
+  tilt?: TiltFlag[]
 }
 export interface BreachLevel { points: number; percent: number; touch_probability: number | null }
 export interface Breach {

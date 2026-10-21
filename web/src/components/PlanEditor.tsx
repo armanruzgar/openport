@@ -4,9 +4,10 @@ import { useLive } from "../api/live"
 import type { AccountRules, DailyLossBasis, Money, Plan, PlanEvent, HoldRestriction } from "../api/trading-types"
 import { dailyLossBasisText, dayEnd, sizeScalingRule, type SizeScalingForm } from "../lib/plan-rules"
 import { compareMoney, validMoney } from "../lib/trading"
+import { propForm, propRules, type PropRulesForm } from "../lib/prop-rules"
 
 /** The custom plan form: text fields as typed, choices as their API words. */
-export interface PlanForm extends SizeScalingForm {
+export interface PlanForm extends SizeScalingForm, PropRulesForm {
   events: PlanEvent[]
   news_before_minutes: string
   news_after_minutes: string
@@ -72,6 +73,7 @@ export function planForm(plan: Pick<Plan, "initial_cash" | "rules">): PlanForm {
   const r = plan.rules
   const p = r.payouts
   return {
+    ...propForm(r),
     events: r.events?.map((e) => ({ ...e })) ?? [],
     news_before_minutes: String(r.news_before_minutes ?? 0), news_after_minutes: String(r.news_after_minutes ?? 0),
     news_action: r.news_action ?? "block", hold_restrictions: [...(r.hold_restrictions ?? [])], hold_cutoff: r.hold_cutoff ?? "15:45",
@@ -208,6 +210,9 @@ export function customPlan(form: PlanForm, base: AccountRules): { initial_cash: 
   }
   const sizeScaling = sizeScalingRule(form, form.phase, form.initial_cash)
   if ("error" in sizeScaling) return sizeScaling
+  const prop = propRules(form, form.phase, form.phase === "funded" ? null : amount(form.profit_target), drawdown, form.drawdown_mode)
+  if ("error" in prop) return prop
+  if (payouts) payouts = { ...payouts, ...prop.payouts }
   const rules: AccountRules = {
     ...base, plan: name, plan_id: null, phase: form.phase, payouts, size_scaling: sizeScaling.value,
     scaling: form.scaling.map((step) => ({ profit: step.profit.trim(), contracts: count(step.contracts) })),
@@ -236,6 +241,7 @@ export function customPlan(form: PlanForm, base: AccountRules): { initial_cash: 
     trading_start: form.trading_start || null, trading_end: form.trading_end || null,
     flat_time: form.flat_time || null, no_overnight: form.no_overnight === "yes",
     buy_only: form.strategies === "buy_only", defined_risk: form.strategies === "defined_risk",
+    ...prop.rules,
   }
   return { initial_cash: form.initial_cash.trim(), rules }
 }
@@ -271,7 +277,7 @@ export function PlanEditor({ form, onChange, disabled }: { form: PlanForm; onCha
   const changeEvent = (index: number, patch: Partial<PlanEvent>) => onChange({ ...form, events: form.events.map((e, i) => i === index ? { ...e, ...patch } : e) })
   const set = <K extends keyof PlanForm>(key: K) => (value: PlanForm[K]) => onChange({ ...form, [key]: value })
   const text = (key: Exclude<keyof PlanForm, "scaling" | "events" | "hold_restrictions">, placeholder = "") => <input className="trade-input w-full" value={form[key] as string} placeholder={placeholder}
-    disabled={disabled} inputMode={["name", "day_end", "payout_caps", "payout_consistency_percents", "underlyings", "trading_start", "trading_end", "flat_time", "hold_cutoff"].includes(key) ? "text" : "decimal"}
+    disabled={disabled} inputMode={["name", "day_end", "payout_caps", "payout_consistency_percents", "underlyings", "trading_start", "trading_end", "flat_time", "hold_cutoff", "review_ladder"].includes(key) ? "text" : "decimal"}
     onChange={(event) => set(key)(event.target.value as never)} />
   const choice = <K extends Exclude<keyof PlanForm, "scaling" | "events" | "hold_restrictions">>(key: K, options: [PlanForm[K], string][]) => <select className="trade-input w-full"
     value={form[key] as string} disabled={disabled} onChange={(event) => set(key)(event.target.value as PlanForm[K])}>
@@ -394,6 +400,29 @@ export function PlanEditor({ form, onChange, disabled }: { form: PlanForm; onCha
         </div>)}
       </div>
       <Field label="Strategies">{choice("strategies", [["buy_only", "Buy only, single leg"], ["defined_risk", "Defined risk"], ["any", "Any"]])}</Field>
+      <div className="grid gap-3 border-t border-border pt-3 sm:col-span-2 sm:grid-cols-2" aria-label="Prop rules">
+        <h3 className="text-sm font-medium sm:col-span-2">Prop rules <span className="text-[11px] font-normal text-faint">· all off unless set; illustrative rule types, not any firm's terms</span></h3>
+        <Field label="Floor follows" hint="The closed balance leaves open losses out of the floor; pair it with an open-loss cap">{choice("drawdown_basis", [["equity", "Marked equity"], ["balance", "Closed balance"]])}</Field>
+        <Field label="Open-loss cap" hint="One position's marked open loss">{choice("open_loss_basis", [["off", "Off"], ["amount", "Fixed amount"], ["day_profit", "% of start-of-day profit"], ["drawdown_room", "% of drawdown room"]])}</Field>
+        {form.open_loss_basis !== "off" && <>
+          <Field label={form.open_loss_basis === "amount" ? "Cap (dollars)" : "Cap (percent)"} hint={form.open_loss_basis === "day_profit" ? "Without profit at the day's open, the drawdown room stands in" : undefined}>{text("open_loss_value")}</Field>
+          <Field label="Reaching it">{choice("open_loss_action", [["flatten", "Closes the position"], ["block_adds", "Blocks adding to it"], ["fail", "Fails the attempt"]])}</Field>
+        </>}
+        <Field label="Opening order at most % of the last minute's volume" hint="Per contract, at acceptance. Without a minute of reported volume the order is refused. Blank for none.">{text("minute_volume_percent", "none")}</Field>
+        {form.phase !== "funded" && <Field label="One trade counts at most % of the target" hint="Profit above it is left out of the target. Blank for none.">{text("best_position_percent", "none")}</Field>}
+        {form.phase === "funded" && <>
+          <Field label="Payout review">{choice("review", [["no", "Off"], ["yes", "Review trades at each payout"]])}</Field>
+          {form.review === "yes" && <>
+            <Field label="Offending: held under (seconds)" hint="Blank for none">{text("review_min_hold_seconds", "none")}</Field>
+            <Field label="Offending: one trade over % of cycle profit" hint="Blank for none">{text("review_max_trade_percent", "none")}</Field>
+            <Field label="Offending: breached the open-loss cap">{choice("review_open_loss", [["no", "No"], ["yes", "Yes"]])}</Field>
+            <Field label="Ladder" hint="Comma-separated: warning, forfeit, cap; the last repeats">{text("review_ladder")}</Field>
+            <Field label="Cap step's payout maximum" hint="Needed when the ladder caps">{text("review_cap", "none")}</Field>
+          </>}
+          <Field label="Floor after a payout">{choice("after_payout", [["keep", "Stays as it is"], ["reset", "Account resets to a share of its start"], ["starting_balance", "Moves up to the starting balance"]])}</Field>
+          {form.after_payout === "reset" && <Field label="Resets to % of the starting balance">{text("reset_percent")}</Field>}
+        </>}
+      </div>
     </fieldset>
   )
 }

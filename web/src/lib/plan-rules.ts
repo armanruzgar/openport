@@ -9,7 +9,7 @@ export function phaseFact(rules: AccountRules): string {
   // Match AccountRules::evaluation() on the server.
   const evaluation = [rules.profit_target, rules.max_drawdown, rules.daily_loss_limit].some((amount) => compareMoney(amount, "0") === 1)
     || (rules.time_limit_days ?? 0) > 0 || (rules.inactivity_days ?? 0) > 0
-    || rules.no_overnight || (rules.hold_restrictions?.length ?? 0) > 0
+    || rules.no_overnight || (rules.hold_restrictions?.length ?? 0) > 0 || rules.open_loss_cap != null
   return evaluation ? "Evaluation" : "Practice"
 }
 
@@ -125,11 +125,12 @@ export const objectiveLabels: Record<string, string> = {
   MICROSCALPING: "Microscalping",
   MIN_TRADES: "Closed trades",
   TRADE_CONSISTENCY: "Trade consistency",
+  BEST_POSITION: "Best-position cap",
 }
 /** An objective's standing in a few characters: dollars, days or percent. */
 export function objectiveValue(o: Objective): string {
   if (o.code === "PROFIT_TARGET") return `${formatMoney(o.actual?.toFixed(2))} of ${ruleMoney(o.required.toFixed(2))}`
-  if (o.code === "CONSISTENCY" || o.code === "TRADE_CONSISTENCY" || o.code === "MICROSCALPING") return `${o.actual == null ? "—" : `${Math.round(o.actual)}%`} of ${o.required}% max`
+  if (o.code === "CONSISTENCY" || o.code === "TRADE_CONSISTENCY" || o.code === "MICROSCALPING" || o.code === "BEST_POSITION") return `${o.actual == null ? "—" : `${Math.round(o.actual)}%`} of ${o.required}% max`
   return `${o.actual ?? 0} of ${o.required}`
 }
 export const decisionLabels: Record<string, string> = {
@@ -140,6 +141,7 @@ export const decisionLabels: Record<string, string> = {
   NEWS_BLACKOUT: "news blackout", HOLD_RESTRICTED: "holding restriction",
   TIME_LIMIT: "evaluation time limit", INACTIVITY: "inactivity limit",
   INSTRUMENT_NOT_ALLOWED: "underlying not allowed", OUTSIDE_PLAN_HOURS: "outside plan trading hours",
+  OPEN_LOSS_CAP: "open-loss cap", MINUTE_VOLUME: "minute-volume cap", BEST_POSITION: "best-position cap",
 }
 /** Why an attempt ended, as a short label: "daily loss limit". */
 export function decisionLabel(code: string | null | undefined): string | null {

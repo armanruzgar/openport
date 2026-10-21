@@ -3,7 +3,7 @@ import { useId, useRef, useState } from "react"
 
 import { useLive } from "../api/live"
 import { useAccount, usePlans, useRefreshTrading, useTradingSession } from "../api/trading"
-import type { Account, SizeScalingStatus, Payout, PayoutStatus, Plan, TradingStatus } from "../api/trading-types"
+import type { Account, Money, SizeScalingStatus, Payout, PayoutReviewOutcome, PayoutStatus, Plan, TradingStatus } from "../api/trading-types"
 import { ResetDialog } from "../components/ResetDialog"
 import { evaluationBadge } from "../components/Sidebar"
 import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
@@ -62,6 +62,11 @@ function Funded({ trading, account, status }: { trading: TradingStatus; account:
         detail={e.payouts.length ? `${e.payouts.length} payout${e.payouts.length === 1 ? "" : "s"} · ${formatMoney(withdrawn)} withdrawn` : "No payouts yet"} />
     </div>
     {e.size_scaling && <SizeScalingProgress status={e.size_scaling} />}
+    {status.review && <PayoutReviewPanel review={status.review} forfeit={status.forfeit} />}
+    {status.after_payout && status.after_payout !== "keep" && <p role="note" className="text-xs text-muted">
+      {status.after_payout === "reset"
+        ? <>After this payout the account resets to {formatMoney(status.reset_balance)}: profit above it that the payout does not take is removed, not paid, and the floor restarts below it.</>
+        : <>After this payout the floor moves up to the starting balance and locks there.</>}</p>}
     {(status.consistency_percent != null || status.buffer_balance != null) && <Panel title="Payout standing">
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
         {status.consistency_percent != null && <>
@@ -121,6 +126,19 @@ function Funded({ trading, account, status }: { trading: TradingStatus; account:
       </dl>
     </Panel>}
   </>
+}
+
+const offenceText: Record<string, string> = { short_hold: "held too briefly", oversized: "too large a share of the cycle", open_loss: "breached the open-loss cap" }
+/** What the payout review finds now, and what this request's step does with it. */
+export function PayoutReviewPanel({ review, forfeit }: { review: PayoutReviewOutcome; forfeit?: Money }) {
+  return <Panel title={`Payout review · ${review.step}`}>
+    <p className="text-sm">{review.step === "warning"
+      ? "These trades offend the plan's payout review. This payout records a warning; the next review that finds offending trades forfeits their profit."
+      : <>Their profit, {formatMoney(forfeit ?? review.forfeited)}, is forfeited: it leaves the account with this payout and is not paid{review.step === "cap" ? ", and the payout is capped" : ""}.</>}</p>
+    <ul className="mt-2 space-y-1 text-xs tabular">{review.trades.map((t) => <li key={t.id}>
+      Trade {t.id}: {formatMoney(t.pnl)} net, held {t.held_seconds}s · {t.offences.map((o) => offenceText[o] ?? o).join(", ")}
+    </li>)}</ul>
+  </Panel>
 }
 
 function RequestForm({ trading, status }: { trading: TradingStatus; status: PayoutStatus }) {
