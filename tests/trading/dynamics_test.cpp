@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <optional>
 
 #include "openport/analytics/ssvi.hpp"
 #include "openport/trading/risk.hpp"
@@ -82,6 +83,27 @@ TEST(SmileDynamics, StickyDeltaKeepsTheSmileInDeltaSpace) {
   }
   // A shock that drives the vol to zero or below has no delta; the caller floors it.
   EXPECT_LT(*scenario_vol(delta, &surface, smile_iv, k, f, t, f * 0.92, t, -0.5), 0);
+}
+
+TEST(SmileDynamics, RootSearchStopsOnAnExactZero) {
+  // Roots at -0.04 and +0.08 are exact probes (0.01 doubled); a probe hitting zero
+  // is the answer, not a bracket end to bisect away from.
+  for (const double root : {-0.04, 0.08}) {
+    const auto line = [root](double k) -> std::optional<double> { return root - k; };
+    const auto found = detail::decreasing_root(line, 0, line(0).value());
+    ASSERT_TRUE(found) << root;
+    EXPECT_EQ(*found, root);
+  }
+  // Otherwise bisection converges on the root from either side.
+  const auto cubic = [](double k) -> std::optional<double> { return 0.3 - k * k * k - k; };
+  EXPECT_NEAR(*detail::decreasing_root(cubic, 1, *cubic(1)), 0.27841799032, 1e-10);
+  EXPECT_NEAR(*detail::decreasing_root(cubic, -1, *cubic(-1)), 0.27841799032, 1e-10);
+  // No sign change within the reach, or an undefined value on the way, is no root.
+  EXPECT_FALSE(detail::decreasing_root([](double) -> std::optional<double> { return 1.0; }, 0, 1));
+  EXPECT_FALSE(detail::decreasing_root([](double k) -> std::optional<double> {
+    if (k > 0.05) return std::nullopt;
+    return 1 - k;
+  }, 0, 1));
 }
 
 TEST(SmileDynamics, FlatSurfacesMakeEveryDynamicsStickyStrike) {

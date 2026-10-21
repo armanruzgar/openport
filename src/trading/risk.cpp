@@ -144,6 +144,37 @@ double SmileSurface::iv(double k, double years) const {
   if (!(years > 0)) return std::numeric_limits<double>::quiet_NaN();
   return analytics::ssvi_iv(parameters, k, theta(years), years);
 }
+namespace detail {
+std::optional<double> decreasing_root(const std::function<std::optional<double>(double)>& f, double start, double at) {
+  double lo = start, hi = start, at_lo = at;
+  bool bracketed = false;
+  for (double width = 0.01; !bracketed && width <= 8; width *= 2) {
+    // A positive value lies left of the root.
+    const double probe = at > 0 ? start + width : start - width;
+    const auto value = f(probe);
+    if (!value) return std::nullopt;
+    // An exact zero is the root; bisecting toward it would take the wrong side.
+    if (*value == 0) return probe;
+    if ((*value > 0) != (at > 0)) {
+      (at > 0 ? hi : lo) = probe;
+      if (at <= 0) at_lo = *value;
+      bracketed = true;
+    } else {
+      (at > 0 ? lo : hi) = probe;
+    }
+  }
+  if (!bracketed) return std::nullopt;
+  for (int i = 0; i < 200 && hi - lo > 1e-13 * (1 + std::abs(lo)); ++i) {
+    const double middle = (lo + hi) / 2;
+    const auto value = f(middle);
+    if (!value) return std::nullopt;
+    if (*value == 0) return middle;
+    if ((*value > 0) == (at_lo > 0)) lo = middle;
+    else hi = middle;
+  }
+  return (lo + hi) / 2;
+}
+}  // namespace detail
 std::optional<double> scenario_vol(const SmileModel& model, const SmileSurface* surface,
     double smile_iv, double strike, double forward, double years, double shocked_forward,
     double shocked_years, double shift) {
@@ -177,30 +208,9 @@ std::optional<double> scenario_vol(const SmileModel& model, const SmileSurface* 
     return std::isfinite(b) ? std::optional<double>(b + shift) : std::nullopt;
   }
   if (*at == 0) return smile(moved_k) + shift;
-  double lo = moved_k, hi = moved_k, at_lo = *at;
-  bool bracketed = false;
-  for (double width = 0.01; !bracketed && width <= 8; width *= 2) {
-    // d1 falls as k rises, so a positive gap lies left of the root.
-    const double probe = *at > 0 ? moved_k + width : moved_k - width;
-    const auto value = gap(probe);
-    if (!value) return std::nullopt;
-    if ((*value > 0) != (*at > 0) || *value == 0) {
-      (*at > 0 ? hi : lo) = probe;
-      if (*at <= 0) at_lo = *value;
-      bracketed = true;
-    } else {
-      (*at > 0 ? lo : hi) = probe;
-    }
-  }
-  if (!bracketed) return std::nullopt;
-  for (int i = 0; i < 200 && hi - lo > 1e-13 * (1 + std::abs(lo)); ++i) {
-    const double middle = (lo + hi) / 2;
-    const auto value = gap(middle);
-    if (!value) return std::nullopt;
-    if ((*value > 0) == (at_lo > 0)) lo = middle;
-    else hi = middle;
-  }
-  const double moved = smile((lo + hi) / 2);
+  const auto root = detail::decreasing_root(gap, moved_k, *at);
+  if (!root) return std::nullopt;
+  const double moved = smile(*root);
   if (!std::isfinite(moved)) return std::nullopt;
   return moved + shift;
 }

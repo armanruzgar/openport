@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string_view>
 
@@ -51,6 +52,15 @@ struct SmileModel {
 [[nodiscard]] std::optional<double> scenario_vol(const SmileModel& model, const SmileSurface* surface,
     double smile_iv, double strike, double forward, double years, double shocked_forward,
     double shocked_years, double shift);
+
+namespace detail {
+/// The root of a decreasing `f` near `start`, where f(start) = `at` is nonzero:
+/// bracketed outward in doubling steps of 0.01 up to 8, then bisected; an exact
+/// zero met on the way is returned as is. nullopt when f is undefined on the way
+/// or does not change sign. Sticky delta's k* search.
+[[nodiscard]] std::optional<double> decreasing_root(const std::function<std::optional<double>(double)>& f,
+                                                    double start, double at);
+}  // namespace detail
 
 struct ExposureRange {
   double delta_low = 0;
