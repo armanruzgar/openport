@@ -18,6 +18,8 @@ export function tradingQueries(scope: number, version: string | undefined, enabl
     trades: (attempt: "current" | "all") => queryOptions({ ...common, queryKey: ["trading", scope, "trades", attempt, version],
       queryFn: ({ signal }) => api.trades("all", attempt, signal) }),
     alerts: queryOptions({ ...common, queryKey: ["trading", scope, "alerts", version], queryFn: ({ signal }) => api.alerts(signal) }),
+    fillQuality: (attempt: "current" | "all") => queryOptions({ ...common, queryKey: ["trading", scope, "fill-quality", attempt, version],
+      queryFn: ({ signal }) => api.fillQuality(attempt, signal) }),
   }
 }
 export function sameAccountPlaceholder<T>(data: T | undefined, key: readonly unknown[] | undefined, scope: number) {
@@ -40,6 +42,7 @@ export const useFills = () => useQuery(useOptions().fills)
 export const useRisk = () => useQuery(useOptions().risk)
 export const useTrades = (attempt: "current" | "all" = "current") => useQuery(useOptions().trades(attempt))
 export const useServerAlerts = () => useQuery(useOptions().alerts)
+export const useFillQuality = (attempt: "current" | "all" = "current") => useQuery(useOptions().fillQuality(attempt))
 /** Presets never change while the server runs. */
 export function usePlans(enabled = true) {
   return useQuery({ queryKey: ["plans"], queryFn: ({ signal }) => api.plans(signal), enabled, staleTime: Infinity })

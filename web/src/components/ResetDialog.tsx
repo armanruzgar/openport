@@ -3,7 +3,7 @@ import { useRef, useState } from "react"
 
 import { useAccount, useRefreshTrading, usePlans, useRisk, useTradingSession } from "../api/trading"
 import type { FeeModel, FillModel, Plan, TradingStatus } from "../api/trading-types"
-import { FillModelPicker } from "./FillModelPicker"
+import { FillModelPicker, fillProgramRules } from "./FillModelPicker"
 import { FeeModelPicker } from "./FeeModelPicker"
 import { lockReason, offeredPlans, payoutRuleFacts } from "../lib/payouts"
 import { resetQuote } from "../lib/program-costs"
@@ -41,6 +41,8 @@ export function planFacts(plan: Pick<Plan, "initial_cash" | "rules">): string[] 
     ...(r.slippage_ticks ? [`${r.slippage_ticks} ${r.slippage_ticks === 1 ? "tick" : "ticks"} of slippage`] : []),
     ...(r.fill_latency_ms ? [`${r.fill_latency_ms} ms fill latency on market time`] : []),
     ...(r.inside_fill_percent ? [`Inside fills at ${r.inside_fill_percent}% across the spread`] : []),
+    ...(r.queue_fills ? ["Resting limits wait in a simulated queue"] : []),
+    ...(r.stop_stress_ticks ? [`Stops slip ${r.stop_stress_ticks} extra ${r.stop_stress_ticks === 1 ? "tick" : "ticks"} in fast markets`] : []),
     ...(r.impact_ticks ? [`${r.impact_ticks} extra ${r.impact_ticks === 1 ? "tick" : "ticks"} per displayed-size block`] : []),
     ...(r.expiry_cutoff_seconds > 0 ? [`Auto-close ${Math.round(r.expiry_cutoff_seconds / 60)} min before expiry`] : []),
     ...(dayEnd ? [dayEnd] : []),
@@ -63,6 +65,7 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
   const sameSession = useTradingSession()
   const [choice, setChoice] = useState(initial ?? "")
   const [fillModel, setFillModel] = useState<FillModel>("as_displayed")
+  const [stress, setStress] = useState(0)
   const [feeModel, setFeeModel] = useState<FeeModel>("flat")
   const [margin, setMargin] = useState<MarginChoice>()
   const [pending, setPending] = useState(false)
@@ -76,7 +79,9 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
   const [form, setForm] = useState<PlanForm | null>(null)
   const base = bases.find((p) => p.id === baseId) ?? bases.find((p) => p.rules.profit_target) ?? bases[0] ?? null
   const custom = choice === CUSTOM && base && form ? customPlan(form, base.rules) : null
-  const terms = custom && !("error" in custom) ? custom : selected
+  const chosen = custom && !("error" in custom) ? custom : selected
+  // Queue fills and stop stress are program rules, so they decide whether this is the same plan.
+  const terms = chosen && { ...chosen, rules: { ...chosen.rules, ...fillProgramRules(fillModel, stress) } }
   const quote = account && terms ? resetQuote(terms, account, selected?.id) : null
   const ready = !!risk.data && !!account && (custom ? !("error" in custom) : selected != null) && !quote?.blocked
   const balance = custom && !("error" in custom) ? custom.initial_cash : selected?.initial_cash
@@ -105,6 +110,7 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
     try {
       const fill = {
         ...(fillModel !== "as_displayed" ? { fill_model: fillModel } : {}),
+        ...(stress > 0 ? { stop_stress_ticks: stress } : {}),
         ...(feeModel === "itemized" ? { fee_model: feeModel } : {}),
       }
       const marginSettings = marginRequest(margin ?? planDefaults, planDefaults)
@@ -191,7 +197,7 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
           <p>{quote.left == null ? "Unlimited resets" : `${quote.left} resets left after this start`}</p>
           {quote.blocked && <p className="text-warn">Reset limit reached. Choose a different plan to start a new purchase.</p>}
         </div>}
-        <FillModelPicker value={fillModel} onChange={setFillModel} disabled={pending} />
+        <FillModelPicker value={fillModel} onChange={setFillModel} disabled={pending} stress={stress} onStress={setStress} />
         <FeeModelPicker value={feeModel} onChange={setFeeModel} disabled={pending} flat={trading.fee_per_contract} />
         <MarginSettings value={margin ?? planDefaults} onChange={setMargin} disabled={pending} />
         {plans.isLoading && <p className="text-sm text-muted">Loading plans…</p>}

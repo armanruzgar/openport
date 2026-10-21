@@ -8,6 +8,7 @@ import { formatMoney } from "../lib/trading"
 const timeFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit",
 })
+const queueSource = { joined: "as displayed when it joined", prints: "from trade prints", volume: "from volume increases", rate: "from the five-minute turnover heuristic" } as const
 const when = (iso: string) => Number.isFinite(Date.parse(iso)) ? `${timeFormat.format(Date.parse(iso))} ET` : iso
 
 /**
@@ -33,6 +34,11 @@ export function OrderDetailDialog({ order, onClose }: { order: Order; onClose: (
         <div className="text-xs uppercase tracking-wide text-muted">Waiting for</div>
         <div>{order.waiting.message}</div>
       </div>}
+      {order.queue && order.status !== "filled" && <p className="text-sm" aria-label="Queue estimate">
+        Simulated queue at {formatMoney(order.queue.price)}: about {order.queue.ahead} {order.queue.ahead === 1 ? "contract" : "contracts"} ahead
+        {order.queue.earned > 0 && <>, {order.queue.earned} traded past it</>} · {queueSource[order.queue.source]}, updated {when(order.queue.updated_at)}.
+      </p>}
+      {!!order.stress_ticks && <p className="text-sm">Triggered in a fast market: its fills slip {order.stress_ticks} extra {order.stress_ticks === 1 ? "tick" : "ticks"} (stop stress).</p>}
       {order.reason && <div className="text-sm">
         <div className="text-xs uppercase tracking-wide text-muted">Reason</div>
         <div><Badge tone={order.status === "rejected" ? "negative" : "neutral"}>{order.reason.code}</Badge> {order.reason.message}</div>

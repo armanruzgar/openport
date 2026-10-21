@@ -189,6 +189,12 @@ export const api = {
   orders: (status: "open" | "all" = "all", signal?: AbortSignal) => get<OrdersResponse>(scoped(`/api/orders?status=${status}`), signal),
   settlements: (signal?: AbortSignal) => get<SettlementsResponse>(scoped("/api/settlements"), signal),
   fills: (signal?: AbortSignal) => get<FillsResponse>(scoped("/api/fills"), signal),
+  fillQuality: (attempt: "current" | "all", signal?: AbortSignal) =>
+    get<import("./trading-types").FillQuality>(scoped(`/api/fills/quality?attempt=${attempt}`), signal),
+  /** Read-only analysis of a broker export: never routed to a replay, nothing stored. */
+  calibrateFills: (csv: string, format: import("./trading-types").CalibrationFormat, signal?: AbortSignal) =>
+    request<import("./trading-types").Calibration>("/api/fills/calibration", { method: "POST", signal,
+      headers: { ...readHeaders(), "Content-Type": "application/json" }, body: JSON.stringify({ csv, format }) }),
   riskHistory: (signal?: AbortSignal) => get<import("./trading-types").HistoricalRisk>(scoped("/api/risk/history"), signal),
   scenarios: (query: string, signal?: AbortSignal) => get<import("./trading-types").ScenarioAnalysis>(scoped(`/api/risk/scenarios?${query}`), signal),
   risk: (signal?: AbortSignal) => get<Risk>(scoped("/api/risk"), signal),

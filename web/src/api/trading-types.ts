@@ -134,6 +134,12 @@ export interface AccountRules {
   fill_latency_ms?: number
   impact_ticks?: number
   inside_fill_percent?: number
+  /** Queue fills (a program rule): resting limits wait behind a seeded estimate of the queue at their price. Absent when off. */
+  queue_fills?: boolean
+  queue_seed?: number
+  /** Stop stress (a program rule): extra adverse ticks for stops reached in a fast market. Absent when off. */
+  stop_stress_ticks?: number
+  stop_stress_percent?: number
   /** Absent under the flat fee and on older servers. */
   fees?: FeeSchedule
   margin?: "strategy" | "portfolio"
@@ -687,7 +693,13 @@ export interface Plan {
   unlocked_by: string | null
 }
 export interface PlansResponse { plans: Plan[] }
-export type FillModel = "as_displayed" | "conservative" | "midpoint"
+export type FillModel = "as_displayed" | "conservative" | "midpoint" | "queue"
+/** The queue model's seed and stop stress, beside a plan or custom rules. */
+export interface FillModelSettings {
+  queue_seed?: number
+  stop_stress_ticks?: number
+  stop_stress_percent?: number
+}
 export type FeeModel = "flat" | "itemized"
 export type AccountRulesInput = Pick<AccountRules, "profit_target" | "max_drawdown" | "drawdown_mode" | "buy_only" | "buying_power" | "expiry_cutoff_seconds">
   & Partial<Omit<AccountRules, "fees">> & { fees?: Partial<FeeSchedule> | null }
@@ -703,7 +715,7 @@ export interface MarginModel {
   margin_debit_rate_bps?: number
   stock_borrow_rate_bps?: number
 }
-export type ResetRequest = { reason: string; fill_model?: FillModel; fee_model?: FeeModel } & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
+export type ResetRequest = { reason: string; fill_model?: FillModel; fee_model?: FeeModel } & FillModelSettings & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
 export type Side = "buy" | "sell"
 /**
  * Option triggers compare the order's executable side, or its mid or mark; underlying ones
@@ -814,7 +826,7 @@ export interface PendingOrder {
 }
 /** What keeps an open order from filling now. */
 export interface OrderWait {
-  code: "MARKET_HALTED" | "SESSION_CLOSED" | "TRIGGER" | "REGULAR_SESSION" | "INVALID_QUOTE" | "STALE_QUOTE" | "FILL_LATENCY" | "NEWER_QUOTE" | "LIMIT" | "DISPLAYED_SIZE" | "STALE_DATA"
+  code: "MARKET_HALTED" | "SESSION_CLOSED" | "TRIGGER" | "REGULAR_SESSION" | "INVALID_QUOTE" | "STALE_QUOTE" | "FILL_LATENCY" | "NEWER_QUOTE" | "LIMIT" | "QUEUE" | "DISPLAYED_SIZE" | "STALE_DATA"
   message: string
 }
 /** A change asked of a resting order: the terms requested (null where kept), those before it, and its outcome. */
@@ -889,6 +901,21 @@ export interface Order {
   /** The order its complete fill placed, and the order whose fill placed this one. */
   chained_order?: string | null
   chained_from?: string | null
+  /** Queue fills' estimate for a resting limit; null otherwise, absent from older servers. */
+  queue?: QueueEstimate | null
+  /** Stop stress's extra adverse ticks, once its trigger was reached in a fast market. */
+  stress_ticks?: number
+}
+/** Queue fills only: a simulated estimate of the queue ahead of a resting limit, not an exchange queue position. */
+export interface QueueEstimate {
+  price: Money
+  ahead: number
+  earned: number
+  displayed: number
+  joined_at: string
+  updated_at: string
+  source: "joined" | "prints" | "volume" | "rate"
+  simulated: true
 }
 /** The book a fill traded against: size_left is the taken side's displayed size still free for paper orders before it, quoted_at when the quote was first given. */
 export interface FillQuote {
@@ -932,6 +959,103 @@ export interface Fill {
   fee: Money
   quote_time: string
   time: string
+  /** Extra adverse ticks stop stress added; absent from older servers. */
+  stress_ticks?: number
+  /** A resting limit the queue model filled at its limit without the far side crossing. */
+  queued?: boolean
+}
+export type FillPlace = "mid_or_better" | "mid_plus_one_tick" | "inside" | "natural" | "beyond_natural"
+/** Contracts by place on the book, from the mid toward the natural. */
+export interface FillPlaces {
+  mid_or_better: number
+  mid_plus_one_tick: number
+  inside: number
+  natural: number
+  beyond_natural: number
+}
+/** Fills of one kind by place; ticks are the natural's tick tier, positive worse for the side. */
+export interface FillQualityGroup {
+  key: string
+  label: string
+  fills: number
+  contracts: number
+  places: FillPlaces
+  from_mid_ticks: number | null
+  vs_natural_ticks: number | null
+  cost_vs_mid: Money
+}
+/** Suggested fill-model settings: a heuristic from paper fills, or measured from real ones. */
+export interface FillCalibration {
+  basis: "heuristic" | "real_fills"
+  fill_model: "as_displayed" | "conservative" | "midpoint" | "custom"
+  fill_latency_ms: number | null
+  slippage_ticks: number
+  impact_ticks: number
+  inside_fill_percent: number
+  reasons: string[]
+}
+/** GET /api/fills/quality: the account's simulated fills by place on their book. */
+export interface FillQuality {
+  attempt: "current" | "all"
+  fills: number
+  measured: number
+  unmeasured: number
+  overall: FillQualityGroup
+  time_of_day: FillQualityGroup[]
+  spread: FillQualityGroup[]
+  dte: FillQualityGroup[]
+  suggestion: FillCalibration
+  simulated: true
+}
+export interface PaperOutcome {
+  fills: boolean
+  price: Money | null
+}
+export interface PaperFills {
+  as_displayed: number
+  conservative: number
+  midpoint: number
+}
+export interface CalibrationQuote {
+  bid: Money
+  ask: Money
+  bid_size: number
+  ask_size: number
+  time: string | null
+  source: "import" | "recording"
+}
+export interface CalibrationSkip {
+  row: number
+  reason: string
+}
+export interface CalibrationRow {
+  row: number
+  time: string | null
+  symbol: string
+  side: "buy" | "sell"
+  quantity: number
+  price: Money
+  quote: CalibrationQuote | null
+  place: "mid_or_better" | "mid_plus_one_tick" | "inside" | "natural" | "beyond_natural" | null
+  from_mid_ticks: number | null
+  vs_natural_ticks: number | null
+  as_displayed: PaperOutcome
+  conservative: PaperOutcome
+  midpoint: PaperOutcome
+  note: string | null
+}
+export type CalibrationFormat = "auto" | "generic" | "tastytrade" | "schwab" | "ibkr"
+/** POST /api/fills/calibration: real broker fills against the same-time books. Nothing is stored or traded. */
+export interface Calibration {
+  format: "generic" | "tastytrade" | "schwab" | "ibkr"
+  matched: number
+  unmatched: number
+  rows: CalibrationRow[]
+  real: FillQualityGroup
+  paper_fills: PaperFills
+  suggestion: FillCalibration
+  skipped: CalibrationSkip[]
+  stored: false
 }
 export interface Position {
   symbol: string
@@ -1135,7 +1259,7 @@ export interface CancelAllResponse { account_version: string; cancelled_orders: 
 export type CancelRequest = { underlying?: string; orders?: never } | { orders: string[]; underlying?: never }
 export interface AccountListItem { damaged?: AccountDamage | null; journal_size?: JournalSize; id: string; name: string; archived?: boolean; sandbox_idle_seconds?: number; trading: TradingStatus; equity: Money | null }
 export interface AccountsResponse { accounts: AccountListItem[] }
-export type CreateAccountRequest = { name: string; copy_settings_from?: string; fill_model?: FillModel; fee_model?: FeeModel } & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
+export type CreateAccountRequest = { name: string; copy_settings_from?: string; fill_model?: FillModel; fee_model?: FeeModel } & FillModelSettings & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
 export interface CreateAccountResponse { account: { id: string; name: string; account_version: string; plan: string | null; plan_id?: string | null; equity: Money } }
 /** Delivered shares a flatten could not close, as held after it, and why. */
 export interface KeptStock { symbol: string; shares: number; reason: Decision }
