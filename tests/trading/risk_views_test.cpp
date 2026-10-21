@@ -356,6 +356,31 @@ TEST(TradingWhatIf, CandidatesAreComparedOnAPrivateCopyAgainstTheBookAsItIs) {
   // Nothing was written.
   EXPECT_EQ(s.snapshot_json(), state);
 }
+TEST(TradingWhatIf, ChainsFollowSubmissionFillsReservationsAndChildRejections) {
+  ScriptedMarket f;
+  TradingSession s(config(), f.time); f.seed(s, "4", "4.20", 2);
+  const auto before = s.snapshot_json();
+  auto entry = f.market("entry", 1);
+  entry.then = {f.market("", 1, Side::Sell)};
+  auto resting = f.limit("resting", 1, "3.90");
+  resting.then = entry.then;
+  auto partial = f.limit("partial", 3, "4.20");
+  partial.then = entry.then;
+  auto refused = entry;
+  refused.then.front().quantity = 1000;
+  auto oco = entry;
+  oco.then.clear();
+  oco.oco = {f.limit("", 1, "3.90")};
+  const auto results = s.what_if({{entry}, {resting}, {partial}, {refused}, {oco}}, f.time);
+  EXPECT_DOUBLE_EQ(results.candidates[0].after.exposure->dollar_delta, 0);
+  EXPECT_EQ(results.candidates[0].after.equity, s.snapshot()->equity - m("21.30"));
+  EXPECT_EQ(results.candidates[1].after.equity, s.snapshot()->equity);
+  EXPECT_GT(results.candidates[2].after.exposure->dollar_delta, 0);
+  EXPECT_FALSE(results.candidates[3].decision.ok());
+  EXPECT_TRUE(results.candidates[4].decision.ok());
+  EXPECT_EQ(results.candidates[4].after.equity, s.snapshot()->equity - m("10.65"));
+  EXPECT_EQ(s.snapshot_json(), before);
+}
 TEST(TradingWhatIf, AnOrderWithoutAContractOrQuoteLeavesTheAccountUnprojected) {
   ScriptedMarket f, missing; missing.contract.strike = 6000;
   TradingSession s(config(), f.time); f.seed(s);

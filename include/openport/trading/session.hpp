@@ -424,12 +424,12 @@ class TradingSession {
   /// the units it could still work (its filled ones aside); exits have none.
   [[nodiscard]] OrderPreview preview_change(OrderId id, const OrderChange& change, Timestamp time, double floor_share = 0.5,
       Decision rejection = {}, const std::map<std::string, double>& close_variances = {}, const PreviewMarket& market = {}) const;
-  /// Candidate adjustments side by side, each a list of orders checked as
-  /// submission checks them and filled in full at the preview's projected prices
-  /// (slipped far sides for market orders, the limit for limit orders), each after
-  /// the ones before it, on a private copy of the account; beside it the account as
-  /// it is. Allocates no IDs and writes nothing. `rejections` holds the
-  /// integration's gate for each candidate's orders, as for submit.
+  /// Candidate adjustments on private copies, beside the unchanged account.
+  /// Unchained candidates assume full fills at preview prices (slipped far sides
+  /// for markets, the limit for limits). Chains run submit at current quotes and
+  /// available size, including children, cancellations and working reservations.
+  /// Allocates no live IDs and writes nothing. `rejections` holds the integration's
+  /// gate for each candidate's orders, as for submit.
   [[nodiscard]] WhatIf what_if(const std::vector<std::vector<OrderRequest>>& candidates, Timestamp time,
       const std::vector<std::vector<Decision>>& rejections = {}, const std::map<std::string, double>& close_variances = {},
       const PreviewMarket& market = {}) const;

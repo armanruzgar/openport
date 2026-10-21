@@ -5279,9 +5279,38 @@ WhatIf TradingSession::what_if(const std::vector<std::vector<OrderRequest>>& can
     WhatIfCandidate candidate;
     State state = before;
     bool projected = true;
+    const bool chained = std::any_of(candidates[c].begin(), candidates[c].end(), [](const auto& order) {
+      return !order.then.empty() || !order.oco.empty();
+    });
     for (std::size_t i = 0; i < candidates[c].size(); ++i) {
       const auto rejection = c < rejections.size() && i < rejections[c].size() ? rejections[c][i] : Decision{};
       const auto id = static_cast<OrderId>(state.orders.size() + 1);
+      if (chained) {
+        // Chains depend on actual fills: limits, partial fills and OCO cancellation
+        // decide which children exist. Run the same reducer on a journal-free copy.
+        auto copy = std::make_unique<Impl>();
+        copy->state = state;
+        copy->opening_rule_inputs = impl_->opening_rule_inputs;
+        copy->compact_opening_rule_inputs = impl_->compact_opening_rule_inputs;
+        copy->actor = impl_->actor;
+        copy->stopped = impl_->stopped;
+        copy->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(state));
+        TradingSession trial(std::move(copy));
+        Decision decision;
+        try {
+          decision = trial.submit(candidates[c][i], time, rejection).decision;
+          for (auto j = static_cast<std::size_t>(id - 1); j < trial.impl_->state.orders.size(); ++j) {
+            const auto& order = trial.impl_->state.orders[j];
+            if (decision.ok() && order.status == OrderStatus::Rejected) decision = order.reason;
+          }
+        } catch (const TradingError& error) {
+          decision = failure(error.code(), error.what());
+        }
+        if (!decision.ok() && candidate.decision.ok()) candidate.decision = decision;
+        candidate.orders.push_back(decision);
+        state = std::move(trial.impl_->state);
+        continue;
+      }
       PreviewProjection projection{{}, state};
       try {
         projection = project_order(state, candidates[c][i], rejection);

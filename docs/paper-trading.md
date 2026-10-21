@@ -1516,8 +1516,12 @@ and show an explicit failure without guessing when the endpoint is unavailable.
 `POST /api/orders/what-if` compares candidate adjustments against the held book before
 any is sent. It takes `candidates`, one to six, each with an optional `name` (at most 64
 UTF-8 bytes) and `orders`: one to four orders as `POST /api/orders` takes them, a client ID
-optional; `then` and `oco` are refused with 400 because chains are not modelled.
-A candidate's orders are checked in turn as submission checks them, each after the
+optional. Candidates containing `then` or `oco` run the real submission reducer on
+the private copy at current quotes and available size. Parent fills activate children;
+OCO fills cancel siblings. Resting limits, triggers and partial fills remain as they
+would after submission, with their buying-power reservations. Child rejections
+appear in the candidate and parent check. No future prices or trigger hits are assumed.
+Without chains, a candidate's orders are checked in turn as submission checks them, each after the
 ones before it have filled, and filled in full at the preview's projected prices:
 slipped far sides through the impact blocks for market orders, the limit for limit
 orders, fees included. Closing the tested side and opening a new spread is one candidate
@@ -1526,10 +1530,11 @@ journal, allocates no IDs, takes no displayed size, and the normal write protect
 
 The response has `current`, the account as it is, and `candidates`, each with its
 `name`, its `decision` (`ok`, or the first order's refusal, with `reason`), each order's
-`decision` and `reason` in `orders`, and `after`, the account once every order has
-filled, which is null when an order cannot be projected (an unknown contract, or no
-quote). A refused candidate is still projected, so its risk shows beside the reason it
-would be refused. Each account has `equity`, available `buying_power`, the book's
+`decision` and `reason` in `orders`, and `after`. For chains, `after` is the account
+following actual current-quote submission, including rejected or still-working
+orders. For candidates without chains it assumes every order fills; it is null
+when an order cannot be projected (an unknown contract, or no quote). A refused
+unchained candidate is still projected, so its risk shows beside its refusal. Each account has `equity`, available `buying_power`, the book's
 `exposure` (dollar delta, dollar gamma per 1%, vega and theta; null while risk is
 incomplete), `max_loss` (the worst cell of the configured spot × volatility grid, from
 today's equity, so a candidate's cost to trade counts), `equity_at_max_loss`,
@@ -3543,7 +3548,7 @@ focus at the top of the ticket.
 | `GET /api/orders?status=all` | All orders, newest first; `status=open` restricts to working, partially filled and armed orders |
 | `POST /api/orders` | `client_order_id`, canonical `symbol`, `side` (`buy`/`sell`), `type` (`limit`/`market`), integer `quantity`, decimal-string `limit_price` for limits, `time_in_force` (`day`/`gtc`/`ioc`/`exto`/`gtc_exto`/`gtd`), `good_till` timestamp required only for GTD, optional `tags`, `note` and `walk` (see [walking limits](#walking-limits-f46)), optional `trigger` following the OpenAPI `Trigger` schema and the [conditional-orders](#conditional-and-bracket-orders) rules: `source` is `option`, `combo`, `underlying`, `study` or `time`; non-time triggers take `direction` and `level`; underlying and study triggers may name another underlying with `symbol`; study triggers add `study` (`iv30`, `iv7` or `term_ratio`); time triggers take `at` as `HH:MM` New York time; option and combo triggers may set `reference` (`bid_ask`, `mid` or `mark`); option, combo and own-underlying triggers may set `trail` (`amount`, `percent`, or `ticks` for option/combo only). `bracket` is `{stop_loss?, take_profit?}` and each exit takes a `trigger`, a `limit_price`, or both for a stop-limit. A multi-leg order replaces `symbol` and `side` with `legs` (two to four `{symbol, side, ratio?}`, ratio default 1, or up to eight for a roll), allows an entry bracket or a reducing trigger (combo or underlying), counts units in `quantity` and sets a signed net `limit_price` (negative for a credit); `exits_only: true` attaches a bracket to a held contract (with `symbol` and the closing `side`) or to held closing legs as described above; optional `group` joins what the order opens to a [whole trade](#whole-trades); optional `then` and `oco` chain further orders (see [order chains](#order-chains-one-cancels-other-and-one-triggers-other)); 201 returns version, order and its fills. Orders report `legs` (null for single-leg), with null `symbol` and `side` for multi-leg orders. Retrying with a `client_order_id` already used and the same terms is safe: it returns the first answer (200 with the order as it now stands, also after `PUT /api/orders/{id}` changed it, or the original rejection) and records nothing, while other terms under that ID, the changed ones included, are refused with 409 `DUPLICATE_CLIENT_ID` and record nothing. Client IDs are scoped to an attempt: after an account reset, earlier attempts' IDs name new orders |
 | `POST /api/orders/preview` | The order body plus optional `floor_share` (default 0.5); 200 returns the dry-run decision, buying power, exposure change, labelled maximum loss, floor warnings, `max_units` with its buying-power and floor parts (null when unavailable), projected `breach`, and `execution`: what submitting now would fill at once and the full size's fill schedule, each leg's quote `liquidity`, and `warnings` about stops, targets and triggers already reached, a stop given only a limit price, or slippage that pushes a market order outside the band |
-| `POST /api/orders/what-if` | `candidates`: one to six, each an optional `name` and one to four `orders` as submission takes them (client ID optional; `then`/`oco` refused with 400 because chains are not modelled); 200 returns the account `current` and each candidate's `decision`, `reason`, per-order `orders` checks and the account `after` its orders fill in full (null when one cannot be projected): equity, buying power, exposure, grid max loss, floor flags, scenarios and breach ([what-if](#what-if)) |
+| `POST /api/orders/what-if` | `candidates`: one to six, each an optional `name` and one to four `orders` as submission takes them (client ID optional; `then`/`oco` use current-quote submission and contingent-child rules); 200 returns the account `current` and each candidate's `decision`, `reason`, per-order `orders` checks and the account `after` its orders fill in full (null when one cannot be projected): equity, buying power, exposure, grid max loss, floor flags, scenarios and breach ([what-if](#what-if)) |
 | `GET /api/account/equity?from=&to=` | Persisted equity samples with optional inclusive UTC ISO bounds, plus any storage error |
 | `DELETE /api/orders/{id}` | No body; 200 returns version and resulting order |
 | `PUT /api/orders/{id}` | Any of integer `quantity`, decimal-string `limit_price` and `trigger_level`, DAY/GTC `time_in_force`, and optional `walk` (null removes it); 200 returns version, the changed order and its fills (see [changing orders](#changing-cancelling-and-flattening)) |

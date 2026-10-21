@@ -12020,7 +12020,14 @@
         "properties": {
           "buying_power_after": {
             "description": "Exact buying power immediately after automatic share delivery on a plan enforcing buying power. Negative values trigger a delivery shortfall alert: openings consuming unavailable buying power are refused until resolved; closes that free buying power remain allowed. Null for older journal records, other fills or plans without buying-power checks.",
-            "anyOf": [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "string"
@@ -20250,6 +20257,14 @@
       "WhatIfOrder": {
         "type": "object",
         "properties": {
+          "then": {
+            "$ref": "#/components/schemas/ChainedOrder",
+            "description": "One-triggers-other: an order placed as `<client_order_id>:then` once this one fills completely, with every check a new order takes then (a refusal is recorded as its own rejected order). An order that ends any other way places nothing."
+          },
+          "oco": {
+            "$ref": "#/components/schemas/ChainedOrder",
+            "description": "One-cancels-other: an order accepted with this one as `<client_order_id>:oco`, both or neither (if it is refused, this order is recorded refused for its reason); the first fill of either cancels the other with OCO_FILLED. Each reserves in full. A chain, this order included, is at most four orders; held exits take neither."
+          },
           "client_order_id": {
             "type": "string",
             "minLength": 1,
@@ -20456,7 +20471,7 @@
           }
         ],
         "additionalProperties": false,
-        "description": "An order as POST /api/orders takes it, its client_order_id optional. Chains (then and oco) are not modelled and are refused with 400 INVALID_REQUEST."
+        "description": "An order as POST /api/orders takes it, its client_order_id optional. Candidates containing then or oco run the submission reducer against current quotes and available size, including contingent children and cancellations. Unfilled children remain working; no future prices are invented."
       },
       "WhatIfRequest": {
         "type": "object",

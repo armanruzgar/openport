@@ -1,5 +1,9 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

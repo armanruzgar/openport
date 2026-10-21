@@ -417,3 +417,6 @@ A confirmation names the new destination (for example, **Send to live account
 Practice**); cancelling sends nothing. Closing and reopening the action also
 selects the current destination. This applies to order changes, cancellations,
 flattening, exits, stock/strategy actions, and settings writes as well as tickets.
+
+What-if candidates support OTO/OCO chains using the submission reducer on a private
+account copy, including partial fills, child checks, cancellations and reservations.

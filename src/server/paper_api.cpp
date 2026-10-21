@@ -2056,8 +2056,6 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
         single.method = "POST";
         single.body = order.dump();
         try {
-          if (order.contains("then") || order.contains("oco"))
-            throw std::invalid_argument("What-if does not model order chains; then and oco are not supported");
           requests.push_back(parse_command(single, "/api/orders").order);
         } catch (const std::invalid_argument& error) {
           throw std::invalid_argument(where + ".orders[" + std::to_string(i) + "]: " + error.what());

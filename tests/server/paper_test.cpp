@@ -446,23 +446,26 @@ TEST_F(PaperEngine, WhatIfComparesCandidatesWithoutTrading) {
   EXPECT_NE(json::parse(refused.body)["error"]["message"].get<std::string>().find("candidates[0].orders[1]"), std::string::npos) << refused.body;
 }
 
-TEST_F(PaperEngine, WhatIfRefusesOrderChainsWithoutTrading) {
+TEST_F(PaperEngine, WhatIfModelsOrderChainsWithoutTrading) {
   seed();
   auto buy = order(market, "candidate", "4.20");
   auto next = order(market, "", "3.90");
   next.erase("client_order_id");
+  next["side"] = "sell";
   const auto before = read(*engine, "/api/account");
   for (const auto* key : {"then", "oco"}) {
-    for (const auto& terms : {next, json(nullptr)}) {
-      auto chained = buy;
-      chained[key] = terms;
-      const auto response = write(*engine, "POST", "/api/orders/what-if",
-          {{"candidates", json::array({{{"orders", json::array({buy, chained})}}})}});
-      expect_error(response, 400, "INVALID_REQUEST");
-      const auto message = json::parse(response.body)["error"]["message"].get<std::string>();
-      EXPECT_NE(message.find("candidates[0].orders[1]"), std::string::npos);
-      EXPECT_NE(message.find("What-if does not model order chains"), std::string::npos);
-    }
+    auto chained = buy;
+    chained[key] = next;
+    const auto response = write(*engine, "POST", "/api/orders/what-if",
+        {{"candidates", json::array({{{"orders", json::array({chained})}}})}});
+    ASSERT_EQ(response.status, 200) << response.body;
+    const auto candidate = json::parse(response.body)["candidates"][0];
+    EXPECT_EQ(candidate["decision"], "ok");
+    EXPECT_FALSE(candidate["after"].is_null());
+    if (std::string_view(key) == "then") EXPECT_EQ(candidate["after"]["exposure"]["dollar_delta"], 0);
+    chained[key] = nullptr;
+    expect_error(write(*engine, "POST", "/api/orders/what-if",
+        {{"candidates", json::array({{{"orders", json::array({chained})}}})}}), 400, "INVALID_REQUEST");
   }
   EXPECT_EQ(read(*engine, "/api/account"), before);
   EXPECT_TRUE(read(*engine, "/api/orders")["orders"].empty());
