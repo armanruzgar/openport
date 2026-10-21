@@ -428,8 +428,9 @@ remain paper trading and use the server’s token scopes. See [Python](../python
 
 A separate versioned WebSocket channel emits paper fills, order state changes,
 rejections, alert/rule trips and staged playbook orders. Python strategies combine
-it with REST reconciliation, polling fallback and recorded-history hooks. Signed
-inbound signals evaluate named playbooks without overriding their mode. Bounded
+it with REST reconciliation, polling fallback and recorded-history hooks. Inbound
+signals evaluate named playbooks without overriding their mode, authenticated by a
+bearer token or by a webhook secret scoped to one playbook and account. Bounded
 parameter sweeps preserve variant reports and rank historical simulated results.
 Optional Arrow/Parquet exports preserve decimal money strings, and a tag-triggered
 OIDC workflow prepares Python package releases without stored publishing tokens.

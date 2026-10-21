@@ -48,7 +48,7 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--notify-config FILE` | Owner-only JSON file for notification channels, filters and the `include_simulated` demo/replay opt-in (default false); alternatively `OPENPORT_NOTIFY_JSON` or channel environment variables ([setup](runtime.md#external-notifications)) |
 | `--sandboxes N` | Offer up to N visitor accounts; 0 (default) disables them. Requires `--provider demo` and paper trading |
 | `--sandbox-idle-seconds N` | Delete sandboxes after N seconds without authenticated use; default 86400 |
-| `--client-ip-header NAME` | Use this proxy header for sandbox creation limits; unset uses the connection address |
+| `--client-ip-header NAME` | Use this proxy header for sandbox creation limits; unset uses the connection address. Also declares a trusted proxy whose `X-Forwarded-Proto: https` permits [static webhook signals](api.md#static-mode-senders-that-cannot-set-headers) |
 | `--require-token` | Require a token for API reads, WebSocket ticks and writes, including loopback; static terminal files remain public |
 | `--paper-journal PATH`, `--plan ID`, `--paper-cash`, `--paper-fee`, `--no-paper` | The main paper account (demo defaults to `~/.openport/demo/paper-journal.jsonl`); plan, cash and fee seed a new journal only; the fee also seeds new named accounts and visitor sandboxes. Rules selects optional fill models and an itemized fee schedule for a new attempt. Equity history is kept beside each journal as `.equity.csv`; playbook definitions and modes are in `playbooks.json` beside the main journal |
 | `--scenario-dir DIR` | User JSON scenarios, listed after built-ins and overriding matching ids ([format](scenarios.md)) |

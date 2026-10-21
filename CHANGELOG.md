@@ -8,8 +8,12 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Outbound notification channels keep their previous default events; `order_state`
   is opt-in.
 - `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
-- Signed inbound playbook signals with account scopes, timestamp/nonce replay protection
-  and rate limits; saved manual/automatic modes remain authoritative.
+- Inbound playbook signals: webhook senders use a per-playbook, per-account secret
+  (issued, rotated and revoked by an admin, stored only as SHA-256) as an HMAC
+  signature with a ±300 s timestamp window, or in the body over HTTPS for senders
+  such as TradingView that cannot set headers; bearer clients use
+  `POST /api/playbooks/{id}/evaluate`. Nonces and rate limits are per secret, and
+  saved manual/automatic modes remain authoritative.
 - `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as for single runs.
 - Bounded backtest parameter sweeps with exact variant reports and historical ranking.
 - Optional Arrow/Parquet exports preserving money text, with an offline example notebook.

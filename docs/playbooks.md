@@ -748,9 +748,11 @@ At rollover, `OVERNIGHT_HOLD` precedes `HOLD_RESTRICTED`. See
 Signed inbound signals can request a fresh evaluation of a named live paper
 playbook. They cannot alter its definition, turn it on, bypass its conditions or
 promote a manually staged order to automatic execution. `stage` keeps manual
-review; `auto` uses the ordinary submission path. Use `Client.signal(id)` with a
-configured `trade:ACCOUNT` token. Nonces, signed timestamps and rate limits apply;
-see the [signal contract](api.md#signed-inbound-signals).
+review; `auto` uses the ordinary submission path. Scripts with a `trade:ACCOUNT`
+token use `Client.signal(id)`. Webhook senders such as TradingView use a secret an
+admin issues for one playbook and account, sent as an HMAC signature or, over
+HTTPS only, in the body; it authorises nothing else. Nonces, timestamps and rate
+limits apply; see the [signal contract](api.md#signed-inbound-signals).
 
 For historical parameter studies, `Client.start_sweep(id, plan, parameter_grid,
 **settings)` submits two to eight variants over scalar JSON-pointer fields, such

@@ -60,6 +60,9 @@ class WebServer {
   /// Attach the local event publisher before start; /ws/events is opt-in and account-scoped.
   void set_event_stream(std::shared_ptr<Notifications> events);
 
+  /// Replace the default memory-only signal secret store before start.
+  void set_signal_secrets(std::shared_ptr<SignalSecrets> secrets);
+
   /// The bound port (useful when constructed with port 0).
   [[nodiscard]] unsigned short port() const noexcept;
 

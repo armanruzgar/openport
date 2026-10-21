@@ -5162,7 +5162,8 @@
           "in": "path",
           "required": true,
           "schema": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,15}$"
           }
         },
         {
@@ -5175,8 +5176,8 @@
         }
       ],
       "post": {
-        "summary": "Evaluate a named live paper playbook from a signed signal",
-        "x-scope": "trade:ACCOUNT",
+        "summary": "Evaluate a named live paper playbook from a webhook signal",
+        "x-scope": "signal-secret",
         "responses": {
           "200": {
             "description": "Success",
@@ -5204,15 +5205,27 @@
         },
         "parameters": [
           {
+            "name": "X-OpenPort-Timestamp",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,12}$"
+            },
+            "description": "HMAC mode: Unix wall-clock seconds, within 300 seconds of the server clock in either direction and not before server startup."
+          },
+          {
             "name": "X-OpenPort-Signature",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string"
-            }
+              "type": "string",
+              "pattern": "^(sha256=)?[0-9a-fA-F]{64}$"
+            },
+            "description": "HMAC mode: hex HMAC-SHA256 keyed by the signal secret over TIMESTAMP + newline + METHOD + newline + exact request target + newline + raw body. The sha256= prefix is optional."
           }
         ],
-        "description": "Configured bearer token required, also used as the HMAC-SHA256 secret. Signature is sha256= plus lowercase hex over METHOD + newline + exact request target (including encoded query) + newline + raw body. Nonces are consumed per token secret before evaluation, including failed evaluations. Replay and sandbox signals are refused. Maximum 60 accepted signals per minute per token; 4096 active nonces total; 429 includes Retry-After. Restart invalidates timestamps signed before startup. Never automatically retry an uncertain signal. Evaluates only the named playbook/account through normal conditions, sizing and risk checks: off is refused, stage remains manual, auto may place paper orders. Does not bypass conditions or change mode."
+        "description": "Authenticated only by the per-playbook, per-account secret from POST /api/playbooks/{id}/signal-secret; an Authorization header is refused with 403 SIGNAL_BEARER_REJECTED (bearer clients use POST /api/playbooks/{id}/evaluate). HMAC mode sends X-OpenPort-Timestamp and X-OpenPort-Signature with body {action, nonce}. Static mode, for senders that cannot set headers, puts the secret in the body {action, nonce, secret} (never the URL); it is refused with 403 SIGNAL_TLS_REQUIRED unless the peer is loopback or the configured trusted proxy (--client-ip-header) reports X-Forwarded-Proto: https. A secret authorises only its own playbook and account; unknown pairs and wrong secrets both return 403 INVALID_SIGNAL_SIGNATURE. Nonces (dedupe IDs) are consumed per secret before evaluation, including failed evaluations: 409 SIGNAL_REPLAY on reuse, kept for the timestamp window (HMAC) or 24 hours (static). Old or future timestamps return 409 SIGNAL_EXPIRED. 60 accepted signals per rolling minute and 2048 retained nonces per secret; 429 SIGNAL_RATE_LIMIT includes Retry-After. Never automatically retry an uncertain signal. Evaluates only the named playbook/account through normal conditions, sizing and risk checks: off is refused, stage remains manual, auto may place paper orders. Does not bypass conditions or change mode."
       }
     },
     "/api/backtests/sweeps": {
@@ -5333,6 +5346,140 @@
             "description": "Omit to cancel; true to delete a saved sweep."
           }
         ]
+      }
+    },
+    "/api/playbooks/{id}/evaluate": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,15}$"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "post": {
+        "summary": "Evaluate a named live paper playbook with a bearer token",
+        "description": "The bearer-authenticated sibling of /api/signals/{playbook}, used by Client.signal and the MCP evaluate_playbook tool. Requires trade scope for the account (or admin) and no signal secret or signature. Replay and sandbox credentials are refused. Same evaluation semantics: off is refused, stage remains manual, auto may place paper orders; mode is never changed. Never automatically retry.",
+        "x-scope": "trade:ACCOUNT",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybooksResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/playbooks/{id}/signal-secret": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,15}$"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "summary": "Whether a webhook signal secret exists",
+        "description": "Admin. Reports only whether a secret exists and when it was issued; never the secret or its digest.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalSecretStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Issue or rotate a webhook signal secret",
+        "description": "Admin. Generates 32 random bytes and returns the secret (opsig_ plus 64 hex digits) once, with 201. Only its SHA-256 digest is stored, in signal-secrets.json beside the paper journal (owner-only). Issuing again rotates: the previous secret stops working at once. The secret authorises only evaluating this playbook on this account through /api/signals. Sandbox accounts are refused; at most 256 secrets (409 SIGNAL_SECRET_LIMIT). Because standard HMAC hashes keys longer than 64 bytes, the stored digest can verify signatures; protect the file like a credential.",
+        "x-scope": "admin",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalSecretIssued"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Revoke a webhook signal secret",
+        "description": "Admin. The secret stops working at once. 404 when none exists.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalSecretRevoked"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     }
   },
@@ -24695,27 +24842,47 @@
         "additionalProperties": false
       },
       "SignalRequest": {
-        "type": "object",
-        "properties": {
-          "action": {
-            "const": "evaluate"
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "HMAC mode, with signature headers.",
+            "properties": {
+              "action": {
+                "const": "evaluate"
+              },
+              "nonce": {
+                "$ref": "#/components/schemas/SignalNonce"
+              }
+            },
+            "required": [
+              "action",
+              "nonce"
+            ],
+            "additionalProperties": false
           },
-          "timestamp": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Unix wall-clock seconds, after server startup; at most 300 seconds old, never in the future."
-          },
-          "nonce": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]{1,128}$"
+          {
+            "type": "object",
+            "description": "Static mode, for senders that cannot set headers; requires HTTPS or loopback.",
+            "properties": {
+              "action": {
+                "const": "evaluate"
+              },
+              "nonce": {
+                "$ref": "#/components/schemas/SignalNonce"
+              },
+              "secret": {
+                "type": "string",
+                "description": "The signal secret, sent only in the body over TLS."
+              }
+            },
+            "required": [
+              "action",
+              "nonce",
+              "secret"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "action",
-          "timestamp",
-          "nonce"
-        ],
-        "additionalProperties": false
+        ]
       },
       "BacktestSweepRequest": {
         "type": "object",
@@ -25777,6 +25944,88 @@
           "active",
           "label"
         ]
+      },
+      "SignalNonce": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+        "description": "Unique per signal; reuse is refused as a replay. Use a stable alert ID such as TICKER-TIME as a dedupe ID."
+      },
+      "SignalSecretStatus": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "playbook",
+          "account",
+          "configured",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "SignalSecretIssued": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^opsig_[0-9a-f]{64}$",
+            "description": "Shown only in this response."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "rotated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "playbook",
+          "account",
+          "secret",
+          "created_at",
+          "rotated"
+        ],
+        "additionalProperties": false
+      },
+      "SignalSecretRevoked": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "revoked": {
+            "const": true
+          }
+        },
+        "required": [
+          "playbook",
+          "account",
+          "revoked"
+        ],
+        "additionalProperties": false
       }
     }
   }

@@ -858,57 +858,233 @@ TEST(WebServer, EventChannelIsVersionedFilteredAndDoesNotCoalesce) {
 }
 
 namespace {
-void sign_signal(server::ApiRequest& request, std::string secret = "signal-secret") {
-  request.authorization = "Bearer " + secret;
-  const auto message = request.method + "\n" + request.target + "\n" + request.body;
+std::string hmac_hex(std::string_view key, std::string_view message) {
   std::array<unsigned char, EVP_MAX_MD_SIZE> hash{};
   unsigned int length = 0;
-  ASSERT_NE(HMAC(EVP_sha256(), secret.data(), static_cast<int>(secret.size()),
-      reinterpret_cast<const unsigned char*>(message.data()), message.size(), hash.data(), &length), nullptr);
-  request.signal_signature = "sha256=";
+  HMAC(EVP_sha256(), key.data(), static_cast<int>(key.size()),
+       reinterpret_cast<const unsigned char*>(message.data()), message.size(), hash.data(), &length);
+  std::string text;
   constexpr char hex[] = "0123456789abcdef";
-  for (unsigned int i = 0; i < length; ++i) { request.signal_signature += hex[hash[i] >> 4]; request.signal_signature += hex[hash[i] & 15]; }
+  for (unsigned int i = 0; i < length; ++i) { text += hex[hash[i] >> 4]; text += hex[hash[i] & 15]; }
+  return text;
 }
+/// Signs as any sender would: standard HMAC-SHA256 keyed by the secret text itself.
+server::ApiRequest signed_signal(const std::string& secret, std::string target, std::int64_t timestamp, std::string nonce) {
+  server::ApiRequest request{"POST", std::move(target), nlohmann::json{{"action", "evaluate"}, {"nonce", std::move(nonce)}}.dump()};
+  request.signal_timestamp = std::to_string(timestamp);
+  request.signal_signature = "sha256=" + hmac_hex(secret, request.signal_timestamp + "\nPOST\n" + request.target + "\n" + request.body);
+  return request;
 }
-TEST(WebPolicy, SignalsRequireAccountScopeSignatureFreshnessNonceAndRateBudget) {
-  md::Timestamp now = 1000 * md::kNanosPerSecond;
-  server::SignalGuard guard([&] { return now; });
-  server::ApiRequest request{"POST", "/api/signals/morning?account=practice",
-      R"({"action":"evaluate","timestamp":1000,"nonce":"one"})"};
-  request.content_type = "application/json";
-  request.actor = "signal";
-  server::WritePolicy policy;
-  policy.require_token = true;
-  policy.tokens = {{"signal", {"read", "trade:practice"}, "signal-secret"}};
-  sign_signal(request);
-  EXPECT_FALSE(server::check_api_write(request, policy));
-  auto tampered = request;
-  tampered.target = "/api/signals/another?account=practice";
-  EXPECT_EQ(guard.check(tampered)->status, 403);
-  tampered = request; tampered.body += " "; EXPECT_EQ(guard.check(tampered)->status, 403);
-  tampered = request; tampered.target = "/api/signals/morning?account=main";
-  EXPECT_EQ(server::check_api_write(tampered, policy)->status, 403);
-  tampered = request;
-  tampered.body = R"({"action":"evaluate","timestamp":1001,"nonce":"future"})";
-  sign_signal(tampered); EXPECT_EQ(guard.check(tampered)->status, 409);
-  EXPECT_FALSE(guard.check(request));
-  request.actor = "renamed-token";  // Renaming the same secret must not reset nonce protection.
-  EXPECT_EQ(guard.check(request)->status, 409);
-  for (int i = 1; i < 60; ++i) {
-    request.body = nlohmann::json{{"action", "evaluate"}, {"timestamp", 1000}, {"nonce", std::to_string(i)}}.dump();
-    sign_signal(request); EXPECT_FALSE(guard.check(request));
+server::ApiRequest static_signal(const std::string& secret, std::string target, std::string nonce, bool secure = true) {
+  server::ApiRequest request{"POST", std::move(target),
+      nlohmann::json{{"action", "evaluate"}, {"nonce", std::move(nonce)}, {"secret", secret}}.dump()};
+  request.signal_secure = secure;
+  return request;
+}
+std::string issued(server::SignalSecrets& secrets, const std::string& playbook, const std::string& account) {
+  const auto response = secrets.issue(playbook, account);
+  EXPECT_EQ(response.status, 201) << response.body;
+  return nlohmann::json::parse(response.body).at("secret").get<std::string>();
+}
+struct TemporaryDirectory {
+  fs::path path = fs::temp_directory_path() / ("openport-signals-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  TemporaryDirectory() { fs::create_directories(path); }
+  ~TemporaryDirectory() { fs::remove_all(path); }
+};
+}  // namespace
+
+TEST(SignalSecrets, IssueRotateRevokeAndPersistOnlyDigests) {
+  TemporaryDirectory directory;
+  const auto file = directory.path / "signal-secrets.json";
+  md::Timestamp now = 1'800'000'000 * md::kNanosPerSecond;
+  std::string first;
+  {
+    server::SignalSecrets secrets(file, [&] { return now; });
+    EXPECT_EQ(nlohmann::json::parse(secrets.describe("morning", "main").body).at("configured"), false);
+    first = issued(secrets, "morning", "main");
+    EXPECT_TRUE(first.starts_with("opsig_"));
+    EXPECT_EQ(first.size(), 70U);  // 32 random bytes as hex, longer than the HMAC block
+    EXPECT_EQ(secrets.issue("Bad ID", "main").status, 400);
   }
-  request.body = R"({"action":"evaluate","timestamp":1000,"nonce":"over-limit"})";
-  sign_signal(request); EXPECT_EQ(guard.check(request)->status, 429);
+  std::string text((std::istreambuf_iterator<char>(std::ifstream(file).rdbuf())), {});
+  EXPECT_EQ(text.find(first), std::string::npos);
+  EXPECT_EQ(fs::status(file).permissions() & fs::perms::all, fs::perms::owner_read | fs::perms::owner_write);
+  server::SignalSecrets reloaded(file, [&] { return now + md::kNanosPerSecond; });
+  const auto described = nlohmann::json::parse(reloaded.describe("morning", "main").body);
+  EXPECT_EQ(described.at("configured"), true);
+  EXPECT_FALSE(described.contains("secret"));
+  EXPECT_FALSE(reloaded.check(static_signal(first, "/api/signals/morning", "loaded")));
+  const auto rotated = nlohmann::json::parse(reloaded.issue("morning", "main").body);
+  EXPECT_EQ(rotated.at("rotated"), true);
+  const auto second = rotated.at("secret").get<std::string>();
+  EXPECT_EQ(reloaded.check(static_signal(first, "/api/signals/morning?account=main", "old"))->status, 403);
+  EXPECT_FALSE(reloaded.check(static_signal(second, "/api/signals/morning?account=main", "new")));
+  EXPECT_EQ(reloaded.revoke("morning", "main").status, 200);
+  EXPECT_EQ(reloaded.revoke("morning", "main").status, 404);
+  EXPECT_EQ(reloaded.check(static_signal(second, "/api/signals/morning", "revoked"))->status, 403);
+  EXPECT_EQ(nlohmann::json::parse(server::SignalSecrets(file).describe("morning", "main").body).at("configured"), false);
+  std::ofstream(file) << "{\"schema\":2}";
+  EXPECT_THROW(server::SignalSecrets{file}, std::runtime_error);
+}
+
+TEST(SignalSecrets, HmacBindsOnePlaybookAccountTimestampAndBodyWithinFiveMinutes) {
+  md::Timestamp now = 1'800'000'000 * md::kNanosPerSecond;
+  const std::int64_t seconds = 1'800'000'000;
+  server::SignalSecrets secrets({}, [&] { return now; });
+  const auto secret = issued(secrets, "morning", "practice");
+  const auto other = issued(secrets, "morning", "main");
+  const std::string target = "/api/signals/morning?account=practice";
+  now += 10 * md::kNanosPerSecond;
+  EXPECT_FALSE(secrets.check(signed_signal(secret, target, seconds + 10, "one")));
+  EXPECT_EQ(secrets.check(signed_signal(secret, target, seconds + 10, "one"))->status, 409);  // replay
+  // Each secret authorises only its own playbook and account.
+  EXPECT_EQ(secrets.check(signed_signal(secret, "/api/signals/morning?account=main", seconds + 10, "two"))->status, 403);
+  EXPECT_EQ(secrets.check(signed_signal(secret, "/api/signals/evening?account=practice", seconds + 10, "two"))->status, 403);
+  EXPECT_EQ(secrets.check(signed_signal(other, target, seconds + 10, "two"))->status, 403);
+  auto tampered = signed_signal(secret, target, seconds + 10, "two");
+  tampered.body += " ";
+  EXPECT_EQ(tampered.signal_signature.size(), 71U);
+  EXPECT_EQ(secrets.check(tampered)->status, 403);
+  tampered = signed_signal(secret, target, seconds + 10, "two");
+  tampered.signal_timestamp = std::to_string(seconds + 11);
+  EXPECT_EQ(secrets.check(tampered)->status, 403);
+  tampered = signed_signal(secret, target, seconds + 10, "two");
+  tampered.method = "PUT";
+  EXPECT_EQ(secrets.check(tampered)->status, 405);
+  // A sender clock ahead or behind by up to 300 seconds is accepted.
+  EXPECT_FALSE(secrets.check(signed_signal(secret, target, seconds + 310, "ahead")));
+  EXPECT_EQ(secrets.check(signed_signal(secret, target, seconds + 311, "too-far-ahead"))->status, 409);
+  now += 300 * md::kNanosPerSecond;
+  EXPECT_FALSE(secrets.check(signed_signal(secret, target, seconds + 10, "behind")));
+  EXPECT_EQ(secrets.check(signed_signal(secret, target, seconds + 9, "too-old"))->status, 409);
+  auto bare = signed_signal(secret, target, seconds + 310, "bare-hex");
+  bare.signal_signature.erase(0, 7);
+  EXPECT_FALSE(secrets.check(bare));
+  auto missing = signed_signal(secret, target, seconds + 310, "missing");
+  missing.signal_timestamp.clear();
+  EXPECT_EQ(secrets.check(missing)->status, 400);
+  auto with_secret = signed_signal(secret, target, seconds + 310, "body");
+  with_secret.body = nlohmann::json{{"action", "evaluate"}, {"nonce", "body"}, {"secret", secret}}.dump();
+  with_secret.signal_signature = hmac_hex(secret, with_secret.signal_timestamp + "\nPOST\n" + target + "\n" + with_secret.body);
+  EXPECT_EQ(secrets.check(with_secret)->status, 400);
+  // Nonces are per secret, and a restart refuses timestamps from before it started.
+  EXPECT_FALSE(secrets.check(signed_signal(other, "/api/signals/morning?account=main", seconds + 310, "one")));
+  server::SignalSecrets restarted({}, [&] { return now; });
+  const auto fresh = issued(restarted, "morning", "practice");
+  EXPECT_EQ(restarted.check(signed_signal(fresh, target, seconds + 309, "before-start"))->status, 409);
+  EXPECT_FALSE(restarted.check(signed_signal(fresh, target, seconds + 310, "at-start")));
+}
+
+TEST(SignalSecrets, StaticBodySecretNeedsSecureTransportDedupeIdAndRateBudget) {
+  md::Timestamp now = 1'800'000'000 * md::kNanosPerSecond;
+  server::SignalSecrets secrets({}, [&] { return now; });
+  const auto secret = issued(secrets, "morning", "main");
+  const std::string target = "/api/signals/morning?account=main";
+  const auto insecure = secrets.check(static_signal(secret, target, "plain", false));
+  ASSERT_TRUE(insecure); EXPECT_EQ(insecure->status, 403);
+  EXPECT_NE(insecure->body.find("SIGNAL_TLS_REQUIRED"), std::string::npos);
+  EXPECT_EQ(secrets.check(static_signal(secret + "0", target, "wrong"))->status, 403);
+  EXPECT_EQ(secrets.check(static_signal(secret, target, ""))->status, 400);
+  auto no_id = static_signal(secret, target, "x");
+  no_id.body = nlohmann::json{{"action", "evaluate"}, {"secret", secret}}.dump();
+  EXPECT_EQ(secrets.check(no_id)->status, 400);
+  EXPECT_EQ(secrets.check(static_signal(secret, target + "&extra=1", "query"))->status, 400);
+  EXPECT_FALSE(secrets.check(static_signal(secret, target, "SPY-2026-10-21T14:30:00Z")));
+  EXPECT_EQ(secrets.check(static_signal(secret, target, "SPY-2026-10-21T14:30:00Z"))->status, 409);
+  for (int i = 1; i < 60; ++i) EXPECT_FALSE(secrets.check(static_signal(secret, target, std::to_string(i))));
+  const auto limited = secrets.check(static_signal(secret, target, "over"));
+  ASSERT_TRUE(limited); EXPECT_EQ(limited->status, 429); EXPECT_EQ(limited->retry_after, 60);
   now += 61 * md::kNanosPerSecond;
-  EXPECT_FALSE(guard.check(request));
-  now += 301 * md::kNanosPerSecond;
-  EXPECT_EQ(guard.check(request)->status, 409);
-  request.body = nlohmann::json{{"action", "evaluate"}, {"timestamp", 1400}, {"nonce", "future"}}.dump();
-  sign_signal(request); EXPECT_EQ(guard.check(request)->status, 409);
-  server::SignalGuard restarted([&] { return now; });
-  request.body = R"({"action":"evaluate","timestamp":1361,"nonce":"before-start"})";
-  sign_signal(request); EXPECT_EQ(restarted.check(request)->status, 409);
-  request.authorization.clear();
-  EXPECT_EQ(server::check_api_write(request, server::WritePolicy{})->status, 403);
+  EXPECT_FALSE(secrets.check(static_signal(secret, target, "over")));
+  // Static dedupe IDs outlive the HMAC window: a retried alert an hour later is refused.
+  now += 3600 * md::kNanosPerSecond;
+  EXPECT_EQ(secrets.check(static_signal(secret, target, "over"))->status, 409);
+}
+
+TEST(WebPolicy, SignalRoutesSeparateWebhookSecretsFromBearerEvaluation) {
+  server::WritePolicy policy{"0.0.0.0", "", {},
+      server::parse_token_file("agent trade:practice agent-secret\nreader read reader-secret\nowner admin owner-secret"), true};
+  const auto check = [&](std::string method, std::string target, const std::string& secret, std::string* actor = nullptr) {
+    server::ApiRequest request{method, std::move(target), method == "DELETE" ? "" : "{}"};
+    request.content_type = "application/json";
+    if (!secret.empty()) request.authorization = "Bearer " + secret;
+    return server::check_api_write(request, policy, actor);
+  };
+  std::string actor;
+  EXPECT_FALSE(check("POST", "/api/signals/morning?account=practice", "", &actor));
+  EXPECT_EQ(actor, "signal");
+  const auto bearer = check("POST", "/api/signals/morning?account=practice", "agent-secret");
+  ASSERT_TRUE(bearer); EXPECT_NE(bearer->body.find("SIGNAL_BEARER_REJECTED"), std::string::npos);
+  EXPECT_FALSE(check("POST", "/api/playbooks/morning/evaluate?account=practice", "agent-secret"));
+  EXPECT_EQ(check("POST", "/api/playbooks/morning/evaluate?account=main", "agent-secret")->status, 403);
+  EXPECT_EQ(check("POST", "/api/playbooks/morning/evaluate?account=practice", "")->status, 403);
+  EXPECT_EQ(check("POST", "/api/replay/playbooks/morning/evaluate", "owner-secret")->status, 403);
+  for (const auto* method : {"GET", "POST", "DELETE"}) {
+    EXPECT_EQ(check(method, "/api/playbooks/morning/signal-secret?account=practice", "agent-secret")->status, 403);
+    EXPECT_EQ(check(method, "/api/playbooks/morning/signal-secret?account=practice", "reader-secret")->status, 403);
+    EXPECT_FALSE(check(method, "/api/playbooks/morning/signal-secret?account=practice", "owner-secret"));
+  }
+  policy.require_token = false;  // Public reads are labelled admin but cannot see secret status.
+  EXPECT_EQ(check("GET", "/api/playbooks/morning/signal-secret", "")->status, 403);
+}
+
+TEST(WebServer, SignalSecretRoutesAndWebhookTransportHeaders) {
+  TemporaryDirectory directory;
+  std::mutex mutex;
+  std::vector<server::ApiRequest> received;
+  server::WebServer web("127.0.0.1", 0, {}, [&](const server::ApiRequest& request) {
+    const std::lock_guard lock(mutex);
+    received.push_back(request);
+    return server::ApiResponse{200, "{}"};
+  });
+  web.set_signal_secrets(std::make_shared<server::SignalSecrets>(directory.path / "signal-secrets.json"));
+  web.start();
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  const auto send = [&](http::verb method, const std::string& target, const std::string& body,
+                        std::vector<std::pair<std::string, std::string>> headers = {}) {
+    asio::io_context io;
+    beast::tcp_stream connection(io);
+    connection.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    http::request<http::string_body> request{method, target, 11};
+    request.set(http::field::host, host);
+    for (const auto& [name, value] : headers) request.set(name, value);
+    if (!body.empty()) request.set(http::field::content_type, "application/json");
+    request.body() = body;
+    request.prepare_payload();
+    http::write(connection, request);
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    http::read(connection, buffer, response);
+    return response;
+  };
+  auto created = send(http::verb::post, "/api/playbooks/morning/signal-secret?account=main", "{}");
+  ASSERT_EQ(created.result_int(), 201) << created.body();
+  const auto secret = nlohmann::json::parse(created.body()).at("secret").get<std::string>();
+  EXPECT_EQ(nlohmann::json::parse(send(http::verb::get, "/api/playbooks/morning/signal-secret?account=main", "").body()).at("configured"), true);
+  const auto now = md::now() / md::kNanosPerSecond + 1;  // never before this server's start
+  const std::string target = "/api/signals/morning?account=main";
+  const auto body = nlohmann::json{{"action", "evaluate"}, {"nonce", "http-1"}}.dump();
+  const auto stamp = std::to_string(now);
+  const auto signature = "sha256=" + hmac_hex(secret, stamp + "\nPOST\n" + target + "\n" + body);
+  EXPECT_EQ(send(http::verb::post, target, body, {{"X-OpenPort-Timestamp", stamp}, {"X-OpenPort-Signature", signature},
+                                                  {"Authorization", "Bearer " + secret}}).result_int(), 403);
+  const auto accepted = send(http::verb::post, target, body, {{"X-OpenPort-Timestamp", stamp}, {"X-OpenPort-Signature", signature}});
+  EXPECT_EQ(accepted.result_int(), 200) << accepted.body();
+  const auto plain = nlohmann::json{{"action", "evaluate"}, {"nonce", "http-2"}, {"secret", secret}}.dump();
+  const auto downgraded = send(http::verb::post, target, plain, {{"X-Forwarded-Proto", "http"}});
+  EXPECT_EQ(downgraded.result_int(), 403);
+  EXPECT_NE(downgraded.body().find("SIGNAL_TLS_REQUIRED"), std::string::npos);
+  EXPECT_EQ(send(http::verb::post, target, plain).result_int(), 200);  // loopback sender
+  {
+    const std::lock_guard lock(mutex);
+    ASSERT_EQ(received.size(), 2U);
+    for (const auto& request : received) {
+      EXPECT_TRUE(request.signal_verified);
+      EXPECT_EQ(request.actor, "signal");
+    }
+  }
+  EXPECT_EQ(send(http::verb::delete_, "/api/playbooks/morning/signal-secret?account=main", "").result_int(), 200);
+  const auto revoked = nlohmann::json{{"action", "evaluate"}, {"nonce", "http-3"}, {"secret", secret}}.dump();
+  EXPECT_EQ(send(http::verb::post, target, revoked).result_int(), 403);
+  web.stop();
 }

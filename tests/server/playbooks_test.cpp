@@ -1496,12 +1496,12 @@ TEST(PlaybookApi, SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode) {
   desk.start_trading(); desk.replay_batch(breadth_batch(time, 10), time, time);
   DeskSource source(desk);
   ASSERT_EQ(api(source, "POST", "/api/playbooks", breadth_setup()).status, 200);
-  server::ApiRequest signal{"POST", "/api/signals/morning", R"({"action":"evaluate","timestamp":1,"nonce":"test"})"};
+  server::ApiRequest signal{"POST", "/api/signals/morning", R"({"action":"evaluate","nonce":"test"})"};
   server::ApiResponse response;
   const auto evaluate = [&] { server::handle_api_async(signal, source, [&](server::ApiResponse reply) { response = std::move(reply); }); };
   evaluate(); EXPECT_EQ(response.status, 403);
   signal.signal_verified = true;  // Transport authentication is tested separately.
-  signal.actor = "signal-test";
+  signal.actor = "signal";
   evaluate(); EXPECT_EQ(response.status, 400); EXPECT_NE(response.body.find("off"), std::string::npos);
   ASSERT_EQ(api(source, "PUT", "/api/playbooks/morning/mode", {{"mode", "stage"}}).status, 200);
   evaluate(); ASSERT_EQ(response.status, 200) << response.body;
@@ -1516,4 +1516,14 @@ TEST(PlaybookApi, SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode) {
   EXPECT_EQ(desk.trading_view()->snapshot->recent_orders.size(), orders);
   EXPECT_EQ(json::parse(response.body).at("modes").at("morning"), "auto");
   test::capture_contract("signals", "POST", "/api/signals/morning", response);
+  // The bearer route evaluates the same way; transport scopes are tested in WebPolicy.
+  server::ApiRequest evaluate_request{"POST", "/api/playbooks/morning/evaluate", "{}"};
+  evaluate_request.actor = "agent";
+  server::handle_api_async(evaluate_request, source, [&](server::ApiResponse reply) { response = std::move(reply); });
+  ASSERT_EQ(response.status, 200) << response.body;
+  EXPECT_EQ(desk.trading_view()->snapshot->recent_orders.size(), orders);
+  test::capture_contract("signals", "POST", "/api/playbooks/morning/evaluate", response);
+  evaluate_request.body = R"({"force":true})";
+  server::handle_api_async(evaluate_request, source, [&](server::ApiResponse reply) { response = std::move(reply); });
+  EXPECT_EQ(response.status, 400);
 }

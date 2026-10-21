@@ -326,6 +326,14 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
           request.origin ? std::optional<std::string_view>(*request.origin) : std::nullopt,
           request.host, policy.allowed_origins)))
     return api_error(403, "ORIGIN_REJECTED", "Origin or security headers are ambiguous or not allowed");
+  // Webhook signals authenticate with their playbook's own secret in the transport
+  // (SignalSecrets::check). A bearer token there would widen what a sender holds.
+  if (request.target.starts_with("/api/signals/")) {
+    if (!request.authorization.empty())
+      return api_error(403, "SIGNAL_BEARER_REJECTED", "Webhook signals use the playbook's signal secret; bearer clients use POST /api/playbooks/{id}/evaluate");
+    if (actor) *actor = "signal";
+    return {};
+  }
   const bool create_sandbox = request.method == "POST" && request.target.substr(0, request.target.find('?')) == "/api/sandboxes";
   if (create_sandbox && !policy.sandboxes) return api_error(404, "NOT_FOUND", "Sandboxes are not offered");
   std::vector<std::string> scopes;
@@ -397,7 +405,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool trade = path == "/orders" || path == "/orders/preview" || path == "/orders/cancel" ||
       path.starts_with("/orders/") || path == "/positions/close" || path == "/positions/close/preview" || path == "/positions/exercise" || path == "/stocks/close" || path == "/stocks/trade" || path == "/stocks/trade/preview" ||
       path == "/positions/abandon" || path == "/positions/instruction" ||
-      path.starts_with("/playbooks/staged/") || path.starts_with("/signals/") || path == "/alerts" || path.starts_with("/alerts/") ||
+      path.starts_with("/playbooks/staged/") || (path.starts_with("/playbooks/") && path.ends_with("/evaluate")) || path == "/alerts" || path.starts_with("/alerts/") ||
       path == "/trades/group" || path == "/trades/ungroup" ||
       ((path.starts_with("/trades/") || path.starts_with("/days/")) && path.ends_with("/note"));
   const bool history_control = replay && path.starts_with("/history/") &&
@@ -410,8 +418,12 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       ((path == "/replay" || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
        (replay_settings && has("replay")) || (trade && (replay ? has("replay") : has("trade:*") || has("trade:" + account)))));
   if (!permitted) return api_error(403, "SCOPE_REQUIRED", "Token does not permit this operation");
-  if (path.starts_with("/signals/") && (read || replay || name.empty() || name == "loopback" || !sandbox.empty()))
-    return api_error(403, "SIGNAL_TOKEN_REQUIRED", "Signals require a configured bearer token with account trade scope");
+  if (replay && path.starts_with("/playbooks/") && path.ends_with("/evaluate"))
+    return api_error(403, "SIGNAL_LIVE_ONLY", "Playbook evaluation requests address live paper accounts");
+  // Reads are labelled admin for anonymous clients; secret management needs real admin.
+  if (path.starts_with("/playbooks/") && path.ends_with("/signal-secret") &&
+      (replay || !has("admin") || (request.authorization.empty() && !open_writes(policy))))
+    return api_error(403, "SCOPE_REQUIRED", "Signal secrets require admin scope");
   if (access) *access = {has("admin") && !request.authorization.empty(), sandbox};
   if (actor) *actor = name;
   const bool sandbox_account = !sandbox.empty() || (has("admin") && !request.authorization.empty() &&
@@ -446,58 +458,6 @@ std::unique_ptr<WebSocketSlots::Lease> WebSocketSlots::acquire() {
     --active_;
     throw;
   }
-}
-
-SignalGuard::SignalGuard(std::function<md::Timestamp()> clock) : clock_(std::move(clock)), started_(clock_()) {}
-std::optional<ApiResponse> SignalGuard::check(const ApiRequest& request) {
-  using nlohmann::json;
-  if (request.method != "POST" || !request.authorization.starts_with("Bearer "))
-    return api_error(403, "SIGNAL_SIGNATURE_REQUIRED", "Signed POST required");
-  const auto secret = request.authorization.substr(7);
-  const auto signed_text = request.method + "\n" + request.target + "\n" + request.body;
-  std::array<unsigned char, EVP_MAX_MD_SIZE> digest{};
-  unsigned int size = 0;
-  if (secret.empty() || secret.size() > 4096 || !HMAC(EVP_sha256(), secret.data(), static_cast<int>(secret.size()),
-      reinterpret_cast<const unsigned char*>(signed_text.data()), signed_text.size(), digest.data(), &size))
-    return api_error(403, "SIGNAL_SIGNATURE_REQUIRED", "Signed POST required");
-  std::string expected = "sha256=";
-  constexpr char hex[] = "0123456789abcdef";
-  for (unsigned int i = 0; i < size; ++i) { expected += hex[digest[i] >> 4]; expected += hex[digest[i] & 15]; }
-  if (request.signal_signature.size() != expected.size() ||
-      CRYPTO_memcmp(expected.data(), request.signal_signature.data(), expected.size()) != 0)
-    return api_error(403, "INVALID_SIGNAL_SIGNATURE", "Signal signature does not match");
-  const auto body = json::parse(request.body, nullptr, false);
-  if (!body.is_object() || body.size() != 3 || !body.contains("timestamp") || !body.at("timestamp").is_number_integer() ||
-      !body.contains("nonce") || !body.at("nonce").is_string() || body.value("action", json()) != "evaluate")
-    return api_error(400, "INVALID_SIGNAL", "Expected timestamp (Unix seconds), nonce and action=evaluate");
-  const auto timestamp = body.at("timestamp").get<std::int64_t>();
-  const auto nonce = body.at("nonce").get<std::string>();
-  const auto now = clock_();
-  const auto seconds = now / md::kNanosPerSecond;
-  if (timestamp < seconds - 300 || timestamp > seconds || timestamp < 0 ||
-      timestamp < started_ / md::kNanosPerSecond + (started_ % md::kNanosPerSecond != 0))
-    return api_error(409, "SIGNAL_EXPIRED", "Signal must be recent and signed after this server started");
-  if (nonce.empty() || nonce.size() > 128 || nonce.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != std::string::npos)
-    return api_error(400, "INVALID_SIGNAL", "nonce must be 1-128 letters, digits, underscores or hyphens");
-  std::array<unsigned char, 32> fingerprint{};
-  if (EVP_Digest(secret.data(), secret.size(), fingerprint.data(), &size, EVP_sha256(), nullptr) != 1)
-    return api_error(503, "SIGNAL_AUTH_UNAVAILABLE", "Cannot verify signal identity");
-  const std::string identity(reinterpret_cast<const char*>(fingerprint.data()), fingerprint.size());
-  const std::lock_guard lock(mutex_);
-  std::erase_if(nonces_, [&](const auto& item) { return item.second < seconds - 300; });
-  std::erase_if(rates_, [&](const auto& item) { return item.second.empty() || item.second.back() <= seconds - 60; });
-  const auto key = std::pair{identity, nonce};
-  if (nonces_.contains(key)) return api_error(409, "SIGNAL_REPLAY", "Signal nonce was already consumed");
-  auto& rate = rates_[identity];
-  while (!rate.empty() && rate.front() <= seconds - 60) rate.pop_front();
-  if (rate.size() >= 60 || nonces_.size() >= 4096) {
-    auto error = api_error(429, "SIGNAL_RATE_LIMIT", "Signal budget exhausted; retry later with a new nonce");
-    error.retry_after = 60;
-    return error;
-  }
-  rate.push_back(seconds);
-  nonces_[key] = timestamp;
-  return {};
 }
 
 namespace {
@@ -745,7 +705,7 @@ struct Shared {
   WritePolicy write_policy;
   Hub hub;
   std::shared_ptr<Notifications> events;
-  SignalGuard signals;
+  std::shared_ptr<SignalSecrets> signals = std::make_shared<SignalSecrets>();
   WebSocketSlots slots;
   Sessions sessions;
   std::vector<std::string> allowed_origins;
@@ -893,17 +853,45 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     respond(http::message_generator(std::move(response)));
   }
 
+  ApiResponse signal_secret(const ApiRequest& api, const std::string& playbook) {
+    const auto question = api.target.find('?');
+    const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(api.target).substr(question + 1));
+    const auto account = query_account(api.target);
+    if (!pairs || !account || std::any_of(pairs->begin(), pairs->end(), [](const auto& item) { return item.first != "account"; }))
+      return api_error(400, "INVALID_REQUEST", "Only account=ID is accepted");
+    if (shared_.write_policy.sandboxes && shared_.write_policy.sandboxes->active(*account))
+      return api_error(403, "SCOPE_REQUIRED", "Sandbox accounts do not take signal secrets");
+    if (api.method == "GET") return shared_.signals->describe(playbook, *account);
+    if (api.method == "DELETE" && api.body.empty()) return shared_.signals->revoke(playbook, *account);
+    if (api.method == "POST" && (api.body.empty() || api.body == "{}")) return shared_.signals->issue(playbook, *account);
+    return api_error(api.method == "GET" || api.method == "POST" || api.method == "DELETE" ? 400 : 405, "INVALID_REQUEST",
+        "Use POST (issue or rotate, empty body), GET or DELETE");
+  }
+
   void handle_api_request(const http::request<http::string_body>& request) {
     ApiRequest api{std::string(request.method_string()), std::string(request.target())};
     api.body = request.body();
     api.content_type = std::string(request[http::field::content_type]);
     api.host = std::string(request[http::field::host]);
     api.authorization = std::string(request[http::field::authorization]);
-    api.signal_signature = std::string(request["X-OpenPort-Signature"]);
     if (request.count(http::field::origin)) api.origin = std::string(request[http::field::origin]);
     api.ambiguous_headers = request.count(http::field::origin) > 1 || request.count(http::field::host) != 1 ||
-                            request.count(http::field::authorization) > 1 || request.count(http::field::content_type) > 1 ||
-                            request.count("X-OpenPort-Signature") > 1;
+                            request.count(http::field::authorization) > 1 || request.count(http::field::content_type) > 1;
+    if (api.target.starts_with("/api/signals/")) {
+      api.signal_timestamp = std::string(request["X-OpenPort-Timestamp"]);
+      api.signal_signature = std::string(request["X-OpenPort-Signature"]);
+      const auto forwarded = request.count("X-Forwarded-Proto") == 1 ? std::string(request["X-Forwarded-Proto"]) : std::string();
+      const bool https = beast::iequals(forwarded, "https");
+      beast::error_code peer_error;
+      const auto peer = stream_.socket().remote_endpoint(peer_error);
+      // openportd serves plain HTTP. With --client-ip-header the operator declared a
+      // trusted proxy, which must also set X-Forwarded-Proto; otherwise only a loopback
+      // peer that does not report a plain-HTTP original hop counts as secure.
+      api.signal_secure = request.count("X-Forwarded-Proto") <= 1 && (shared_.write_policy.client_ip_header.empty()
+          ? !peer_error && peer.address().is_loopback() && (forwarded.empty() || https) : https);
+      api.ambiguous_headers = api.ambiguous_headers || request.count("X-OpenPort-Signature") > 1 ||
+                              request.count("X-OpenPort-Timestamp") > 1 || request.count("X-Forwarded-Proto") > 1;
+    }
     if (shared_.write_policy.sandboxes) {
       const auto& header = shared_.write_policy.client_ip_header;
       beast::error_code peer_error;
@@ -915,10 +903,13 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (auto rejection = check_api_write(api, shared_.write_policy, &api.actor, &api.access))
       return send_api(std::move(*rejection), request.version(), request.keep_alive());
     if (api.target.starts_with("/api/signals/")) {
-      if (auto rejection = shared_.signals.check(api))
+      if (auto rejection = shared_.signals->check(api))
         return send_api(std::move(*rejection), request.version(), request.keep_alive());
       api.signal_verified = true;
     }
+    if (const auto path = api.target.substr(0, api.target.find('?'));
+        path.starts_with("/api/playbooks/") && path.ends_with("/signal-secret"))
+      return send_api(signal_secret(api, path.substr(15, path.size() - 15 - 14)), request.version(), request.keep_alive());
     if (api.method == "POST" && api.target.substr(0, api.target.find('?')) == "/api/tokens/reload") {
       if (api.target != "/api/tokens/reload")
         return send_api(api_error(400, "INVALID_REQUEST", "Unknown query parameter"), request.version(), request.keep_alive());
@@ -1153,6 +1144,10 @@ void WebServer::stop() {
 
 void WebServer::broadcast(std::string message) {
   impl_->shared.hub.broadcast(std::make_shared<const std::string>(std::move(message)));
+}
+void WebServer::set_signal_secrets(std::shared_ptr<SignalSecrets> secrets) {
+  if (impl_->started) throw std::logic_error("Attach signal secrets before starting the server");
+  if (secrets) impl_->shared.signals = std::move(secrets);
 }
 void WebServer::set_event_stream(std::shared_ptr<Notifications> events) {
   if (impl_->started) throw std::logic_error("Attach event stream before starting the server");

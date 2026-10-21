@@ -740,6 +740,10 @@ int run(int argc, char** argv) {
         server::handle_api_async(request, engine, std::move(complete));
       }, settings.allowed_origins, settings.write_token, settings.allowed_hosts, settings.tokens, settings.require_token, engine_options.sandboxes, settings.client_ip_header, token_file);
   web.set_event_stream(engine_options.event_stream);
+  // Digests of per-playbook webhook secrets live beside the journal and playbooks.json.
+  if (!settings.paper_journal.empty())
+    web.set_signal_secrets(std::make_shared<server::SignalSecrets>(
+        std::filesystem::absolute(settings.paper_journal).parent_path() / "signal-secrets.json"));
   web.start(settings.threads);
 
   std::string symbols;
