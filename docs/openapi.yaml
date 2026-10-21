@@ -14354,6 +14354,10 @@
           "fresh": {
             "type": "boolean"
           },
+          "halted": {
+            "type": "boolean",
+            "description": "Not fresh only because a simulated halt was in force at the regular close: mark is the last print before the halt, and day rollover closes on it. Absent from older servers."
+          },
           "attribution": {
             "anyOf": [
               {

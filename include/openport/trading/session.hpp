@@ -61,6 +61,9 @@ struct MarkedStock {
   std::optional<Money> market_value;
   std::optional<Money> unrealised;
   bool fresh = false;
+  /// Not fresh only because a simulated halt was still in force at the regular
+  /// close: the mark is the last print before the halt, and rollover closes on it.
+  bool halted = false;
 };
 /// What keeps an open order from filling now, read from the account's books,
 /// sessions and clocks as matching would read them. Derived for each snapshot,

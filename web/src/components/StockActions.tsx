@@ -61,7 +61,7 @@ export function SharesTable({ stocks, onClose, onTrade }: {
           <td><Badge tone={stock.shares > 0 ? "positive" : "negative"}>{stock.shares > 0 ? `+${stock.shares} long` : `${stock.shares} short`}</Badge></td>
           <td>{formatMoney(stock.average_price)}</td>
           <td><div>{formatMoney(stock.mark)}</div>
-            <div className={`mt-1 text-[11px] ${stock.fresh ? "text-muted" : "text-warn"}`}>{stock.mark_time ? stock.fresh ? "current" : "stale" : "no price yet"}</div></td>
+            <div className={`mt-1 text-[11px] ${stock.fresh ? "text-muted" : "text-warn"}`}>{stock.mark_time ? stock.fresh ? "current" : stock.halted ? "halted: last pre-halt print" : "stale" : "no price yet"}</div></td>
           <td>{formatMoney(stock.market_value)}</td>
           <td className={toneText[toneOf(stock.unrealised)]}>{signedMoney(stock.unrealised)}</td>
           <td className={toneText[toneOf(stock.attribution?.total)]} title={stock.attribution ? describeAttribution(stock.attribution) : undefined}>

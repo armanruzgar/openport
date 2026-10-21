@@ -976,6 +976,8 @@ export interface StockHolding {
   realised: Money
   fees: Money
   fresh: boolean
+  /** Not fresh only because a simulated halt ran through the close: marked at the last pre-halt print. Absent from older servers. */
+  halted?: boolean
   attribution: Attribution | null
   trade?: string | null
   lifetime?: Lifetime | null

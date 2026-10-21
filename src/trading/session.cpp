@@ -395,6 +395,17 @@ std::optional<Money> stock_price(const State& s, const std::string& symbol, Time
 }
 /// The underlying's price if fresh at the market time.
 std::optional<Money> stock_price(const State& s, const std::string& symbol) { return stock_price(s, symbol, s.time); }
+/// Whether a held stock's mark is its last print before a simulated halt still in
+/// force at the regular close the account is valued at, printed in that session.
+/// Prints during the halt are not taken, so the mark is the pre-halt print.
+bool halted_at_close(const State& s, const std::string& symbol) {
+  const auto it = s.stock_marks.find(symbol);
+  const auto session = md::stock_session(s.time);
+  if (it == s.stock_marks.end() || session.open || session.market_time == md::kInvalidTimestamp) return false;
+  const auto close = session.market_time;
+  const auto printed = md::stock_session(it->second.time);
+  return halt_end(s, symbol) >= close && it->second.time < close && printed.open && printed.end == close;
+}
 /// Shares' stretches are all delta: the price's move times the shares.
 Attribution explain_stock(const detail::Reference& r, Money value) {
   Attribution a;
@@ -1178,6 +1189,7 @@ Measures measure(const State& s) {
       m.market_value = it->second.price * stock.shares;
       m.unrealised = *m.market_value - stock.basis;
       m.fresh = stock_price(s, symbol).has_value();
+      m.halted = !m.fresh && halted_at_close(s, symbol);
       out.equity = out.equity + *m.market_value;
       out.unrealised = out.unrealised + *m.unrealised;
     }
@@ -5674,6 +5686,8 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (!seen.insert(price.symbol).second) throw TradingError(Reason::INVALID_QUOTE, "One price per underlying per batch is required");
       const auto prior = s.stock_marks.find(price.symbol);
       if (prior != s.stock_marks.end() && price.time < prior->second.time) continue;
+      // A simulated halt prints nothing: the mark stays the last pre-halt print.
+      if (price.time < halt_end(s, price.symbol)) continue;
       s.stock_marks[price.symbol] = {price.price, price.time};
     }
     seen.clear();
@@ -6035,7 +6049,11 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     check_rollover_positions(s, events, false);
     monitor_loss(s, events);
     const auto& snapshot = *closing;
-    if (!snapshot.valuation_complete) return CommandResult{failure(Reason::STALE_QUOTE, "Rollover requires complete marked equity"), {}, 0};
+    // Shares halted through the close close on their last pre-halt print.
+    const bool marked = snapshot.valuation_complete ||
+        (std::all_of(snapshot.positions.begin(), snapshot.positions.end(), [](const auto& p) { return p.fresh; }) &&
+         std::all_of(snapshot.stocks.begin(), snapshot.stocks.end(), [](const auto& m) { return m.fresh || m.halted; }));
+    if (!marked) return CommandResult{failure(Reason::STALE_QUOTE, "Rollover requires complete marked equity"), {}, 0};
     // Close the finished day. An end-of-day floor ratchets only here, from the
     // last fully marked equity observed on that date; breaches are still checked
     // on every transaction by monitor_rules.

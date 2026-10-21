@@ -724,7 +724,7 @@ json portfolio_json(const TradingView& view) {
         {"average_price", (p.shares < 0 ? -p.basis : p.basis).prorate(1, magnitude).str()}, {"basis", p.basis.str()},
         {"mark", money(held.mark)}, {"mark_time", held.mark ? json(md::format_timestamp(held.mark_time)) : json(nullptr)},
         {"market_value", money(held.market_value)}, {"unrealised", money(held.unrealised)},
-        {"realised", p.realised.str()}, {"fees", p.fees.str()}, {"fresh", held.fresh},
+        {"realised", p.realised.str()}, {"fees", p.fees.str()}, {"fresh", held.fresh}, {"halted", held.halted},
         {"attribution", s.attributions.contains(p.symbol) ? attribution_json(s.attributions.at(p.symbol)) : json(nullptr)},
         {"trade", trade_of(p.symbol)}, {"lifetime", lifetime_of(p.symbol)}});
   }

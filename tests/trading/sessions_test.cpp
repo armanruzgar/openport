@@ -59,6 +59,35 @@ TEST(TradingSessions, ANewPausePrecedesScheduledProtectiveCloses) {
   EXPECT_TRUE(s.snapshot()->positions.empty());
 }
 
+TEST(TradingSessions, ASingleNameHaltThroughTheCloseRollsOnItsLastPreHaltPrint) {
+  const auto bought = at(kTuesday, 15, 54), start = at(kTuesday, 15, 55);
+  for (const auto end : {at(kTuesday, 16, 0), at(kTuesday, 16, 5), at(kWednesday, 9, 35)}) {
+    TradingSession s(roomy(), bought);
+    ASSERT_TRUE(s.trade_stock("SPY", 100, bought, StockPrice{"SPY", bought, m("500")}).decision.ok());
+    ASSERT_TRUE(s.halt_underlying("SPY", end, start).decision.ok());
+    // The replay still prints through the simulated halt; those prints are not marks.
+    s.on_quotes({}, {}, at(kTuesday, 15, 59), {StockPrice{"SPY", at(kTuesday, 15, 59), m("450")}});
+    s.on_quotes({}, {}, at(kTuesday, 16, 30));
+    const auto closing = s.snapshot();
+    ASSERT_EQ(closing->stocks.size(), 1U);
+    EXPECT_FALSE(closing->stocks[0].fresh);
+    EXPECT_TRUE(closing->stocks[0].halted);
+    EXPECT_EQ(closing->stocks[0].mark, m("500"));
+    EXPECT_EQ(closing->stocks[0].mark_time, bought);
+    EXPECT_FALSE(closing->valuation_complete);
+    const auto equity = closing->equity;
+    ASSERT_TRUE(s.roll_day(at(kWednesday, 9, 0)).decision.ok());
+    EXPECT_EQ(s.snapshot()->start_of_day_equity, equity);
+  }
+  // A halt that ended before the close needs a print after it.
+  TradingSession s(roomy(), bought);
+  ASSERT_TRUE(s.trade_stock("SPY", 100, bought, StockPrice{"SPY", bought, m("500")}).decision.ok());
+  ASSERT_TRUE(s.halt_underlying("SPY", at(kTuesday, 15, 58), start).decision.ok());
+  s.on_quotes({}, {}, at(kTuesday, 16, 30));
+  EXPECT_FALSE(s.snapshot()->stocks[0].halted);
+  EXPECT_EQ(s.roll_day(at(kWednesday, 9, 0)).decision.code, Reason::STALE_QUOTE);
+}
+
 TEST(TradingSessions, ExpiringEtfOptionsTradeAQuarterHourAfterTheClose) {
   constexpr md::Date expiry{2026, 10, 22};
   ScriptedMarket f;

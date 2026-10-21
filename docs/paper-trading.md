@@ -1604,6 +1604,14 @@ New orders and stock trades on that underlying receive `MARKET_HALTED`; resting
 orders keep their usual deadlines and wait for usable quotes after the pause.
 Other underlyings are not halted; account risk checks and overlapping market-wide
 halts still apply.
+
+Stock prints stamped inside a halt are not taken as marks. When a halt is still in
+force at the regular close (a scenario halt that runs past 16:00, or one capped at
+it), held shares keep the last print before the halt, in that session, as their
+mark. They stay not `fresh`, so opening trades still wait, but the holding reports
+`halted: true` and day rollover closes on that pre-halt print (equity, borrow fees
+and the next day's base) instead of refusing for incomplete marks. A halt that
+ended before the close still needs a print after it.
 Status/ticks publish single-name pauses beside circuit breakers, with `underlying`
 and `simulated: true`. The terminal banner names the affected symbols. This is a
 LULD-style rehearsal, not an exchange price-band calculation or a prediction of a
