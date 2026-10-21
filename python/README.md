@@ -38,8 +38,8 @@ with zero. It does not coerce monetary strings into floats.
 | Methods | HTTP routes |
 | --- | --- |
 | `status`, `symbols` | `/api/status`; symbols are its underlying names |
-| `summary`, `series` | `/api/underlyings/{symbol}/summary`; series are its expiries |
-| `chain`, `exposure`, `surface`, `volatility`, `candles`, `probability` | The corresponding underlying views |
+| `summary` | `/api/underlyings/{symbol}/summary`, including its expiries |
+| `chain`, `exposure`, `surface`, `volatility`, `candles`, `series`, `probability` | The corresponding underlying views; `series` is metric history such as `mfiv30` ([fields](../docs/volatility.md#series-api)) |
 | `account`, `portfolio`, `orders`, `fills`, `trades`, `risk`, `risk_profile`, `plans`, `accounts`, `equity` | The terminal's paper reads |
 | `place_order`, `preview_order`, `modify_order`, `cancel_order`, `cancel_all`, `cancel_orders`, `flatten` | Paper orders and position closure |
 | `settlements` | Settlement references, proceeds and provenance, newest first (live, replay or history) |

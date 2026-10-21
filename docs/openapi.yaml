@@ -6,7 +6,7 @@
     "license": {
       "name": "MIT"
     },
-    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. symbols() is status.underlyings; series() is summary.expiries; neither has a separate route. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
+    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. symbols() is status.underlyings and has no separate route; series() is metric history from /api/underlyings/{symbol}/series. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
   },
   "servers": [
     {
@@ -332,6 +332,127 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Candles"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/underlyings/{symbol}/series": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "fields",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated, without repeats: spot, forward, mfiv9, mfiv30, mfiv93, mfiv182, mfiv365, atm7, atm30, atm60, atm90, atm180, rr25, bf25, rr10, bf10, ratio9_30, ratio30_93, gex, gamma_flip, call_wall, put_wall, and for 1d also proxy_iv30 and rv21. Default: all applicable fields.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "interval",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "1m",
+              "1d"
+            ],
+            "default": "1d"
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive start: Unix seconds, an ISO timestamp or a New York date (its midnight). Default: 1 day (1m) or 366 days (1d) before to.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive end: Unix seconds, an ISO timestamp or a New York date (its whole day). Default: the current snapshot's market time, or server time before any snapshot.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/series",
+        "description": "Metric history from the local series store, oldest first, at 1m or 1d; daily rows add proxy IV and realized volatility. Ranges are at most 7 days (1m) or 3,660 days (1d) and results at most 10,000 rows. Replays and demo engines have no series store, so their own-metric fields are null.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Series"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown, duplicate or daily-only field; bad interval, from or to; a reversed or too-long range; or over 10,000 rows. The body's error may be a message string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown underlying. The body's error may be a message string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
+                    }
+                  ]
                 }
               }
             }
@@ -2425,6 +2546,9 @@
           }
         }
       }
+    },
+    "/api/replay/underlyings/{symbol}/series": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
     },
     "/api/replay/underlyings/{symbol}/probability": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1probability"
@@ -7691,6 +7815,83 @@
           "symbol",
           "interval",
           "bars"
+        ]
+      },
+      "Series": {
+        "type": "object",
+        "description": "Selected metric history; volatility and skew in vol points.",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "interval": {
+            "enum": [
+              "1m",
+              "1d"
+            ]
+          },
+          "from": {
+            "type": "integer",
+            "description": "Unix seconds"
+          },
+          "to": {
+            "type": "integer",
+            "description": "Unix seconds"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SeriesRow"
+            }
+          }
+        },
+        "required": [
+          "symbol",
+          "interval",
+          "from",
+          "to",
+          "fields",
+          "rows"
+        ]
+      },
+      "SeriesRow": {
+        "type": "object",
+        "description": "One minute, or one session at its close (t). Each selected field is a number or null; null daily rows mark missing sessions.",
+        "properties": {
+          "t": {
+            "type": "integer",
+            "description": "Unix seconds"
+          },
+          "sample_time": {
+            "type": "integer",
+            "description": "Unix seconds of the local sample used, when there is one"
+          },
+          "sources": {
+            "type": "object",
+            "description": "Per field: own, the proxy index's name, daily_closes, or null",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "additionalProperties": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "required": [
+          "t",
+          "sources"
         ]
       },
       "ConstantVol": {

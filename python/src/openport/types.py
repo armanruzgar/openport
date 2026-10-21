@@ -527,6 +527,11 @@ class Candles(TypedDict):
     bars: list[JSON]
 
 
+# The functional form allows the "from" key.
+Series = TypedDict("Series", {"symbol": str, "interval": str, "from": int, "to": int,
+                              "fields": list[str], "rows": list[JSON]})
+
+
 class Risk(TypedDict):
     account_version: str
     limits_revision: str

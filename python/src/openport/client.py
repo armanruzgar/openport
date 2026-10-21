@@ -10,7 +10,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
-                    Exposure, Volatility, Candles, Risk, OrderPreview, SubmitResult,
+                    Exposure, Volatility, Candles, Series, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
                     WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability)
 
@@ -130,9 +130,12 @@ class Client:
     def summary(self, symbol: str) -> Summary:
         return self._market(symbol, "summary")
 
-    def series(self, symbol: str) -> list[JSON]:
-        """The expiry series in summary; openportd has no separate series route."""
-        return self.summary(symbol)["expiries"]
+    def series(self, symbol: str, fields: list[str] | None = None, interval: str | None = None,
+               start: int | str | None = None, end: int | str | None = None) -> Series:
+        """Metric history such as mfiv30, atm30 and rr25 at 1m or 1d, oldest first. start and end
+        are Unix seconds, ISO timestamps or New York dates; the server defaults to every field,
+        daily rows and the last 366 days. An underlying's expiries are in summary()."""
+        return self._market(symbol, "series", fields=_list(fields), interval=interval, **{"from": start, "to": end})
 
     def chain(self, symbol: str, expiry: str | None = None, window: float = 0) -> Chain:
         return self._market(symbol, "chain", expiry=expiry, window=window)
