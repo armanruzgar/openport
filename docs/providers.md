@@ -5,6 +5,69 @@ analytics and paper trading consume those events without knowing the vendor.
 Read the [architecture](architecture.md) for the data flow and the
 [runtime notes](runtime.md) for provider options and shutdown behaviour.
 
+## Live certification reports
+
+Run a provider locally and attach the redacted reports to a
+[provider report issue](https://github.com/38st/openport/issues/new?template=provider-report.yml).
+Set credentials in the usual environment variables; never put them in the command.
+
+```sh
+# Polling: one complete cycle for every requested underlying, at most 60 seconds.
+./build/apps/openport-probe --certify tradier SPY --expiries 2 --report-dir tradier-report
+# Streaming: observe 30 seconds, checking at least 100 quotes per underlying.
+./build/apps/openport-probe --certify tastytrade SPY --expiries 2 --seconds 30 --report-dir tastytrade-report
+# Polling with a longer cycle deadline (rather than a timed multi-cycle run).
+./build/apps/openport-probe --certify thetadata SPY --snapshot --seconds 120 --report-dir theta-report
+```
+
+The new directory (default `provider-report`) contains `conformance.json` and
+`conformance.md`. Existing directories are refused so earlier evidence is not
+overwritten. Without `--seconds`, polling stops after one cycle and streaming
+runs for 60 seconds. `--seconds N` observes a duration for either kind of provider;
+`--snapshot` selects one polling cycle with N as its deadline. A stream cannot
+use `--snapshot`. `--quotes N` sets streaming readiness (default 100 per
+underlying). Errors or end of replay can finish a run early. Stop joins provider
+threads; system DNS can still delay cancellation as described in the runtime notes.
+Demo recording preparation can consume a short observation window and delay
+shutdown, yielding an honest `incomplete` report; elapsed time includes shutdown.
+
+Reports count every publication before queue coalescing, list per-feed numeric
+contract IDs with expiry/strike/right/settlement and activity coverage, and check
+definitions before data. Underlying IDs follow the command-line subscription order. Market
+clocks are checked for unknown/nonpositive values, future values and nondecreasing
+order per event type and contract/underlying. Equal times and independent OI,
+Greek and quote clocks are allowed. Operational `ProviderStatus` times are excluded.
+Exact receipt-time matches are flagged for review. Timestamp values alone cannot
+prove their origin: the report explicitly leaves wall-clock provenance unverified.
+The ThetaData regression tests separately guard against the removed local-clock fallback.
+
+IV, vega, theta and rho include presence, missing/invalid counts, ranges, target
+units and scale flags. IV above 5 (500%) and negative vega are review hints.
+Where spot is within 60 seconds and expiry/IV are usable, Greek magnitudes are
+compared with BSM at zero rate/dividend; ratios outside [0.05, 20] are flagged.
+The reference is derived, not observed market data, and cannot certify a vendor's
+model. Missing comparison inputs never imply successful unit validation.
+
+`fail` means a provider/startup error, undefined instrument, invalid activity
+count/Greek, future timestamp or timestamp regression. `incomplete` means requested
+readiness or actual definitions/quotes were absent. Both exit 1. `review` means
+readiness was met but data is missing or a heuristic needs investigation;
+`observed_checks_passed` means no checked anomaly was seen. Both exit 0, and
+**neither proves live entitlement, timestamp provenance or unit correctness**.
+Bad CLI flags or report output failures exit 2. Startup failures after entering
+certification still produce reports when the directory is writable.
+
+Redaction uses a structured allowlist: no configuration values, environment,
+URLs, raw payloads, diagnostic text or symbol strings are exported. Keys, tokens
+and account identifiers in those strings cannot escape through status or error
+messages. Error counts/categories and degradation counts remain; contract and
+underlying identities use numeric IDs. The directory is owner-only. Review the
+files before sharing; do not attach raw recordings or licensed feed payloads.
+Certification cannot be combined with `--record`, `--analyze` or `--compare-mfiv`.
+Demo and replay are supported for offline checks and explicitly labelled simulated
+or replayed; they never count as live provider validation. The report format is
+local to the probe and adds no HTTP API, wire-event or recording fields.
+
 ## The interface
 
 Implement [`md::Provider`](../include/openport/md/provider.hpp) in
@@ -141,16 +204,54 @@ run live with credentials.
 | --- | --- |
 | [Cboe](../src/providers/cboe.cpp) | `parse_cboe_chain()` reads chain JSON; `cboe_page_chain()` extracts the embedded chain from quote pages when data files fall behind. Index file names use an underscore. OSI symbols become contract definitions, quote/OI/Greek fields become events, and the underlying retains `last_trade_time`. `publish_chain()` applies the delay and each product's sessions, publishes official closes and revisions, then completes the snapshot. |
 | [Massive](../src/providers/massive.cpp) | `parse_massive_chain_page()` reads `/v3/snapshot/options/{underlying}`, strips `O:` from option tickers and follows `next_url`. Index requests use `I:`. `publish_chain()` uses quote `last_updated` and the underlying's separate timestamp; quote `timeframe` determines entitlement. Published Greeks use the normalised units; rho is NaN because it is not supplied. All pages are collected before publication. |
-| [ThetaData](../src/providers/thetadata.cpp) | `parse_theta_rows()` reads v3 NDJSON. The adapter requests `quote`, `greeks/implied_volatility` and periodically `open_interest` for each option root, then joins by root, expiry, strike and right. Times without a zone are New York times. The latest timestamped IV row supplies spot. Only vendor IV is published; other Greek units are undocumented and remain NaN. Auxiliary failures appear in status. |
+| [ThetaData](../src/providers/thetadata.cpp) | `parse_theta_rows()` reads v3 NDJSON. The adapter requests `quote`, `greeks/first_order` (falling back to `greeks/implied_volatility` on failure) and periodically `open_interest` for each option root, then joins by root, expiry, strike and right. Times without a zone are New York times. The latest timestamped Greek row supplies spot. IV and delta are copied; vega/rho are divided by 100. Theta stays NaN because its time basis is unspecified; first_order supplies no gamma. Unknown row and snapshot clocks remain zero. Auxiliary failures appear in status. |
 | [Databento](../src/providers/databento.cpp) | OPRA parent symbols cover every root (`.OPT`). `DatabentoMapper::on_record()` maps definitions, CBBO/CMBP-1 quotes, trades and OI statistics. It converts fixed-point prices, handles undefined sentinels and ignores data for unknown instruments. OPRA provides neither underlying prices nor vendor Greeks here. Definitions and statistics are subscribed with replay before the current quote stream. |
-| [Tradier](../src/providers/tradier.cpp) | Expirations and lookup accept both documented shapes and object/array/null lists. Lookup resolves root/date pairs, including SPXW; every selected chain is fetched before publication. Compact OCC symbols become canonical padded OSI. Quotes retain millisecond clocks; underlying last keeps its own clock. OI, delta and gamma are mapped. Unknown option-size, IV and scaled-Greek units are not guessed; an operator can explicitly confirm contract size units. `TradierBudget` accounts for each request and rate-limit headers. Production index timing remains unconfirmed. |
-| [tastytrade](../src/providers/tastytrade.cpp) | OAuth refresh uses JSON and environment credentials. Nested chains supply canonical OSI definitions and streamer-symbol mappings; instrument responses supply index streamer names. `TastytradeMapper` applies filters and maps Quote, Greeks, Summary and underlying Trade events. `DxlinkProtocol` implements the handshake, accepted COMPACT field order, keepalive and paced add/remove subscriptions independently of `net::WebSocket`. Reconnect repeats the handshake with the retained subscription set. Unknown timestamps and Greek units stay unknown; an explicit operator option can select millisecond timestamps. No complete snapshots or inferred trades are emitted. |
+| [Tradier](../src/providers/tradier.cpp) | Expirations and lookup accept both documented shapes and object/array/null lists. Lookup resolves root/date pairs, including SPXW; every selected chain is fetched before publication. Compact OCC symbols become canonical padded OSI. Quotes retain millisecond clocks; underlying last keeps its own clock. OI and ORATS Greeks are mapped; chain volume uses its own `trade_date`. Greek update times without a zone stay unknown. Option sizes default to contracts with an explicit override. `TradierBudget` accounts for each request and rate-limit headers. Production index timing remains unconfirmed. |
+| [tastytrade](../src/providers/tastytrade.cpp) | OAuth refresh uses JSON and environment credentials. Nested chains supply canonical OSI definitions and streamer-symbol mappings; instrument responses supply index streamer names. `TastytradeMapper` applies filters and maps Quote, Greeks, Summary OI and Trade session volume/underlying prices. Unused Profile subscriptions are omitted. `DxlinkProtocol` implements the handshake, accepted COMPACT field order, keepalive and paced add/remove subscriptions independently of `net::WebSocket`. Reconnect repeats the handshake with the retained subscription set. Summary uses a supplied `eventTime`, otherwise zero. DXLink Greeks use the documented per-point/day units; the timestamp option can withhold clocks if their millisecond units are unconfirmed. No complete snapshots or inferred trades are emitted. |
 
 The broker adapters allowlist their REST paths and use non-redirecting HTTP calls.
 OAuth is the only POST. Error messages exclude server bodies and tokens. Broker
 rate timers use operational time, independently of market-event clocks. See
 [runtime limitations](runtime.md#broker-market-data) for unverified units and the
 consequences for paper fills.
+
+## Vendor units and source references
+
+The mappings below are **not yet validated live**. Public API definitions and
+sample-shaped tests establish the conversion, not entitlement or the correctness
+of a particular account's data. Every Greek is per unit of underlying, never
+multiplied by the contract multiplier. NaN remains missing downstream.
+
+| Provider | IV | Vega | Theta | Rho | Greek clock |
+| --- | --- | --- | --- | --- | --- |
+| Tradier / ORATS | `mid_iv`, decimal | `vega`, per vol point | `theta`, per day | `rho`, per rate percentage point | Unzoned `updated_at` remains unknown |
+| tastytrade / dxFeed | `volatility`, Black-Scholes decimal | `vega`, per vol point | `theta`, per day | `rho`, per rate percentage point | `time`, epoch milliseconds |
+| ThetaData | `implied_vol`, decimal | `vega / 100` | NaN: daily versus annual basis not specified by the endpoint | `rho / 100` | `timestamp`, New York when unzoned |
+
+Tradier documents [chain Greeks as ORATS data](https://docs.tradier.com/reference/brokerage-api-markets-get-options-chains).
+Its [quote reference](https://docs.tradier.com/docs/quotes) shows decimal IV fields;
+ORATS defines [theta, vega and rho](https://orats.com/near-eod-data) and
+[percentage-point vega](https://orats.com/university/option-scanning).
+dxFeed defines [Greek derivatives and time](https://docs.dxfeed.com/dxfeed/api/com/dxfeed/event/option/Greeks.html),
+including vega/rho against percentage volatility/rate and theta against days.
+ThetaData's [Greek calculation notes](https://thetadata.net/docs/Articles/Data-And-Requests/Option-Greeks.html)
+explicitly require dividing vega and rho by 100. Its
+[first-order snapshot](https://thetadata.net/docs/operations/option_snapshot_greeks_first_order.html)
+does not state theta's time basis, so OpenPort does not guess a conversion. If that
+route is unavailable, the IV route still supplies the previous IV-only coverage.
+
+Tradier [chain volume](https://docs.tradier.com/reference/brokerage-api-markets-get-options-chains)
+is a cumulative count, stamped with the option's `trade_date`, never the quote or
+request time. Missing trade clocks withhold volume. DXLink
+[Trade.dayVolume](https://docs.dxfeed.com/dxfeed/api/com/dxfeed/event/market/TradeBase.html)
+is cumulative, not an individual execution. Its `dayId`, when supplied, must match
+the timestamp's trading date. The standard
+[Summary](https://docs.dxfeed.com/dxfeed/api/com/dxfeed/event/market/Summary.html)
+has `prevDayVolume`, not `dayVolume`: OpenPort never substitutes yesterday's count.
+A negotiated Summary extension carrying `dayVolume` is accepted with `eventTime`.
+Summary OI uses [embedded event creation time](https://docs.dxfeed.com/dxfeed/api/com/dxfeed/event/market/MarketEvent.html#getEventTime--)
+when present; this is not an OI effective-date claim. Network events may supply
+zero; OpenPort keeps it unknown. All these volume mappings still need live validation.
 
 ## Historical day imports
 

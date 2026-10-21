@@ -1,0 +1,53 @@
+name: Provider conformance report
+description: Share a redacted certification report from a provider connection
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Run `openport-probe --certify PROVIDER SYMBOL --report-dir NEW_DIRECTORY`.
+        For a timed run add `--seconds 60`; polling otherwise stops after one cycle.
+        See [certification instructions](https://github.com/38st/openport/blob/main/docs/providers.md#live-certification-reports).
+        Review both reports before attaching them. Never attach credentials,
+        account identifiers, raw logs, recordings or licensed market payloads.
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      options: [Cboe, Databento, Massive, ThetaData, Tradier, tastytrade, Demo, Replay]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenPort version or commit
+      description: Include the OS and architecture if relevant.
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source of observations
+      options: [Live provider connection, Delayed provider connection, Broker sandbox, Replay or mock, Simulated demo]
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Plan and session context
+      description: Provider plan/entitlement, symbols, market hours or closed market, and flags without secrets or private paths. Do not include account numbers.
+    validations:
+      required: true
+  - type: textarea
+    id: reports
+    attributes:
+      label: Redacted conformance reports
+      description: Attach conformance.json and conformance.md here (zip the pair if the uploader requires it). If no report was written, describe the failure without copying raw diagnostics.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: What worked or differed from expectations
+      description: Include missing data, timing or unit concerns. A completed report is evidence for review, not automatic live certification.
+    validations:
+      required: true

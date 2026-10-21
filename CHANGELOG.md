@@ -1,5 +1,18 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- Providers: add `openport-probe --certify` with redacted JSON/Markdown reports
+  for timed observations or a snapshot cycle, including event/contract coverage,
+  clock checks, Greek scale hints and errors. Add a provider report issue template;
+  demo/replay reports are explicitly labelled and do not claim live validation.
+
+- Providers: preserve unknown ThetaData snapshot times; remove unused DXLink
+  Profile subscriptions and retain supplied Summary event times for open interest.
+- Providers: map Tradier chain and DXLink session volume without inventing trades
+  or timestamps. Map documented ORATS/DXLink Greeks and ThetaData vega/rho scales;
+  ThetaData theta remains unknown. Sample/mock tested, not yet validated live.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

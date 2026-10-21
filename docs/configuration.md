@@ -11,7 +11,7 @@ Providers, command-line flags, terminal settings and who may write.
 | Massive | `massive` | Option chain snapshots, real-time or delayed depending on your plan, polled every 5 s | `MASSIVE_API_KEY` |
 | ThetaData | `thetadata` | Snapshots from your local Theta Terminal (v3), polled every 2 s | Theta Terminal login |
 | Tradier | `tradier` | Option chain snapshots and underlying prices; production options are real-time, index timing is unconfirmed. Sandbox is 15-minute delayed. Polling follows the request budget. Not yet run live with an account; reports welcome | `TRADIER_ACCESS_TOKEN` |
-| tastytrade | `tastytrade` | Production DXLink option quotes, open interest, delta/gamma and underlying prices. Not yet run live with an account; reports welcome | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`; optional `TASTYTRADE_CLIENT_ID` |
+| tastytrade | `tastytrade` | Production DXLink option quotes, session volume, open interest, vendor Greeks and underlying prices. Not yet run live with an account; reports welcome | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`; optional `TASTYTRADE_CLIENT_ID` |
 | Demo | `demo` | Simulated SPX, SPY and QQQ regular sessions, rotating on successive trading dates; `--option days=trend,chop --option speed=60` | none |
 | Replay | `replay` | A recording played back as the whole feed, at 1×, 10×, 60× or full speed (`--option file=PATH --option speed=10`) | none |
 
@@ -23,8 +23,10 @@ Tradier and tastytrade adapters read market data only. They never send broker
 orders or read accounts. Credentials come from environment variables, never flags.
 tastytrade requires a funded production account; its sandbox has no market data.
 Tradier option sizes are read as contracts and DXLink times as milliseconds, each with
-an option to override; IV and Greek scalings the brokers' documents leave unclear stay
-missing rather than guessed.
+an option to override. Documented ORATS and DXLink IV/Greek units are mapped, with
+session volume when its source clock is known; these mappings are not yet validated
+live. ThetaData maps IV, delta and vega/rho (divided by 100), leaving its ambiguous
+theta time basis unknown. [Unit sources](providers.md#vendor-units-and-source-references).
 See [broker operation and limitations](runtime.md#broker-market-data) before
 using either feed for paper trading.
 
@@ -33,6 +35,10 @@ Greeks and no underlying price, while others ship their own Greeks. OpenPort nor
 all of them into the same contracts, quotes, volume and open interest, then computes
 everything itself, so the numbers mean the same thing whichever provider you use.
 
+To test a feed, run `openport-probe --certify PROVIDER SYMBOL... --report-dir DIR`.
+Polling defaults to one cycle; streaming defaults to 60 seconds. `--seconds N`
+selects a duration, or a polling deadline with `--snapshot`. The directory must
+be new. [Report contents and exit codes](providers.md#live-certification-reports).
 To add a feed, see [writing a provider adapter](providers.md).
 
 ## Command-line flags
