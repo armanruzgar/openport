@@ -852,6 +852,10 @@ void Desk::sample_equity(PaperAccount& account) {
     sample.time = market_time_;
     sample.attempt = e.attempt;
     sample.equity = snapshot.equity;
+    if (snapshot.risk.complete && snapshot.time == sample.time) sample.risk = EquityRisk{snapshot.risk.aggregate.position,
+        snapshot.risk.aggregate.delta_utilisation, snapshot.risk.aggregate.vega_utilisation,
+        snapshot.risk.aggregate.gamma_utilisation, snapshot.risk.aggregate.theta_utilisation,
+        snapshot.risk.aggregate.grid_utilisation, snapshot.risk.aggregate.short_vega_utilisation};
     sample.peak = e.peak;
     if (rules.max_drawdown > Money{}) {
       sample.floor = e.floor;
@@ -1369,6 +1373,10 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
       const auto watch_alert = [&](const AlertSpec& spec) {
         if (spec.condition.scope == AlertScope::Underlying)
           watched.emplace(spec.condition.symbol, spec.condition.metric == "price" ? "" : spec.condition.metric);
+        if (spec.condition.scope == AlertScope::Account && spec.condition.metric == "floor_touch_probability") {
+          for (const auto& p : session.snapshot()->positions) watched.emplace(p.position.contract.underlying, "close_sigma");
+          for (const auto& p : session.snapshot()->stocks) watched.emplace(p.position.symbol, "close_sigma");
+        }
       };
       for (const auto& alert : session.snapshot()->alerts)
         if (alert.armed || alert.spec.repeat) watch_alert(alert.spec);
@@ -1383,7 +1391,11 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         const auto m = metrics(symbol);
         if (!m || m->as_of <= 0 || m->as_of > market_time_) continue;
         double value = m->spot;
-        if (!study.empty()) {
+        if (study == "close_sigma") {
+          const auto variance = close_variance(m);
+          if (!variance) continue;
+          value = 100 * std::sqrt(*variance);
+        } else if (!study.empty()) {
           // As the Volatility page reports them: model-free 30-day volatility (at the money
           // when the strip cannot give it), 7-day at the money, and the 9/30-day ratio.
           const auto volatility = cached_volatility(m);

@@ -736,6 +736,14 @@
           "schema": {
             "type": "string"
           }
+        },
+        {
+          "name": "term_scaled",
+          "in": "query",
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
         }
       ],
       "get": {
@@ -5100,6 +5108,322 @@
           }
         },
         "x-scope": "read"
+      }
+    },
+    "/api/risk/scenarios": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "underlying",
+          "in": "query",
+          "required": false,
+          "description": "Limit analysis to one underlying's contracts and shares; omitted, analyze the whole book using the selected mode.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "benchmark",
+          "in": "query",
+          "required": false,
+          "description": "Benchmark for beta mode (default SPY); ignored for parallel moves.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "SPX"
+            ]
+          }
+        },
+        {
+          "name": "days",
+          "in": "query",
+          "required": false,
+          "description": "Up to eight comma-separated calendar days forward (0 to 366, fractions allowed), or expiry for the first held expiry; default 0.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "range",
+          "in": "query",
+          "required": false,
+          "description": "Moves span plus and minus this percent. Without range and steps, use the configured trading-rule spot axis.",
+          "schema": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "name": "steps",
+          "in": "query",
+          "required": false,
+          "description": "An odd number of moves, evenly spaced across the range (default 41).",
+          "schema": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 201
+          }
+        },
+        {
+          "name": "betas",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated SYMBOL:BETA overrides, each beta within 10 of zero.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "mode",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "parallel",
+              "beta"
+            ],
+            "default": "parallel"
+          }
+        },
+        {
+          "name": "vols",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "default": "-5,0,5,10"
+          }
+        },
+        {
+          "name": "term_scaled",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      ],
+      "get": {
+        "summary": "Read-only spot × vol × days scenario grid",
+        "description": "The held book's P&L across moves of a reference price on several dates, where each date's curve reaches the floors, and beta-weighted delta. Analytical; nothing is recorded.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioAnalysis"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/risk/history": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "summary": "Historical stress and one-day VaR / expected shortfall",
+        "description": "Read the current publication.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalRisk"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/risk/history": {
+      "$ref": "#/paths/~1api~1risk~1history"
+    },
+    "/api/replay/history/{run_id}/risk/history": {
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "summary": "Historical stress and one-day VaR / expected shortfall",
+        "description": "Read the current publication.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoricalRisk"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/risk/scenarios": {
+      "$ref": "#/paths/~1api~1risk~1scenarios"
+    },
+    "/api/replay/history/{run_id}/risk/scenarios": {
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "underlying",
+          "in": "query",
+          "required": false,
+          "description": "Limit analysis to one underlying's contracts and shares; omitted, analyze the whole book using the selected mode.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "benchmark",
+          "in": "query",
+          "required": false,
+          "description": "Benchmark for beta mode (default SPY); ignored for parallel moves.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "SPY",
+              "SPX"
+            ]
+          }
+        },
+        {
+          "name": "days",
+          "in": "query",
+          "required": false,
+          "description": "Up to eight comma-separated calendar days forward (0 to 366, fractions allowed), or expiry for the first held expiry; default 0.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "range",
+          "in": "query",
+          "required": false,
+          "description": "Moves span plus and minus this percent. Without range and steps, use the configured trading-rule spot axis.",
+          "schema": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "name": "steps",
+          "in": "query",
+          "required": false,
+          "description": "An odd number of moves, evenly spaced across the range (default 41).",
+          "schema": {
+            "type": "integer",
+            "minimum": 3,
+            "maximum": 201
+          }
+        },
+        {
+          "name": "betas",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated SYMBOL:BETA overrides, each beta within 10 of zero.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "mode",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "enum": [
+              "parallel",
+              "beta"
+            ],
+            "default": "parallel"
+          }
+        },
+        {
+          "name": "vols",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string",
+            "default": "-5,0,5,10"
+          }
+        },
+        {
+          "name": "term_scaled",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      ],
+      "get": {
+        "summary": "Read-only spot × vol × days scenario grid",
+        "description": "The held book's P&L across moves of a reference price on several dates, where each date's curve reaches the floors, and beta-weighted delta. Analytical; nothing is recorded.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioAnalysis"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
       }
     }
   },
@@ -12020,7 +12344,14 @@
         "properties": {
           "buying_power_after": {
             "description": "Exact buying power immediately after automatic share delivery on a plan enforcing buying power. Negative values trigger a delivery shortfall alert: openings consuming unavailable buying power are refused until resolved; closes that free buying power remain allowed. Null for older journal records, other fills or plans without buying-power checks.",
-            "anyOf": [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "string"
@@ -14368,6 +14699,46 @@
           },
           "vega": {
             "type": "number"
+          },
+          "dollar_gamma_1pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "theta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worst_grid_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "short_vega": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -14411,6 +14782,18 @@
               "$ref": "#/components/schemas/RiskCaps"
             },
             "description": "Optional full replacement map; omission or {} removes all overrides. Unsubscribed symbols are allowed. Each cap is finite and nonnegative. Tightening applies immediately in evaluations; loosening, including removal to a looser common cap, waits for rollover. GET includes active and pending maps. Replay stays on driver 6: older runs cannot contain overrides, so dropping redundant entries preserves their journal bytes and resumability."
+          },
+          "tag_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RiskCaps"
+            }
+          },
+          "playbook_overrides": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RiskCaps"
+            }
           }
         },
         "required": [
@@ -14453,6 +14836,18 @@
               },
               "vega_high": {
                 "$ref": "#/components/schemas/Num"
+              },
+              "gamma_low": {
+                "$ref": "#/components/schemas/Num"
+              },
+              "gamma_high": {
+                "$ref": "#/components/schemas/Num"
+              },
+              "theta_low": {
+                "$ref": "#/components/schemas/Num"
+              },
+              "theta_high": {
+                "$ref": "#/components/schemas/Num"
               }
             },
             "required": [
@@ -14469,6 +14864,24 @@
             "$ref": "#/components/schemas/Num"
           },
           "vega_utilisation": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "short_vega": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "worst_grid_loss": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "gamma_utilisation": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "theta_utilisation": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "grid_utilisation": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "short_vega_utilisation": {
             "$ref": "#/components/schemas/Num"
           }
         },
@@ -14722,6 +15135,12 @@
           "pending_requires_reset": {
             "type": "boolean",
             "description": "Pending limits or guardrails exist and this replay ends before a later plan trading day. Reset the replay account while it is writable to apply them now. False for live accounts, no pending settings, or a replay with a later trading day."
+          },
+          "scopes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Bucket"
+            }
           }
         },
         "required": [
@@ -16016,6 +16435,9 @@
           },
           "model": {
             "type": "string"
+          },
+          "term_scaled": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -16806,6 +17228,16 @@
             "anyOf": [
               {
                 "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EquityRisk"
               },
               {
                 "type": "null"
@@ -20847,7 +21279,11 @@
               "MAX_VOLUME_SHARE",
               "NEWS_BLACKOUT",
               "HOLD_RESTRICTED",
-              "RESET_LIMIT"
+              "RESET_LIMIT",
+              "GAMMA_LIMIT",
+              "THETA_LIMIT",
+              "GRID_LOSS_LIMIT",
+              "SHORT_VEGA_LIMIT"
             ]
           },
           "message": {
@@ -22436,7 +22872,7 @@
       },
       "AlertRequest": {
         "type": "object",
-        "description": "What to watch and when to fire. contract: bid, ask, mark, iv (vol points), delta, gamma, theta or vega of symbol, a registered OSI. spread: the net mark per unit of legs (buys add, sells subtract). underlying: price, iv30, iv7 or term_ratio of symbol. account: equity, day_pnl, unrealised, floor_room, buying_power, dollar_delta, vega or theta. level is inclusive and may be negative. A one-shot alert fires once; repeat fires again each time the condition returns after lapsing.",
+        "description": "What to watch and when to fire. contract: bid, ask, mark, iv (vol points), delta, gamma, theta or vega of symbol, a registered OSI. spread: the net mark per unit of legs (buys add, sells subtract). underlying: price, iv30, iv7 or term_ratio of symbol. account: equity, day_pnl, unrealised, floor_room, buying_power, dollar_delta, dollar_gamma_1pct, vega, theta, delta_utilisation, vega_utilisation, grid_loss or floor_touch_probability. Utilisation and odds use ratios. Grid loss is the held-book configured zero-day grid. Floor odds are the maximum individual underlying/barrier driftless touch probability to today's close, including the soft floor, not joint portfolio odds; missing valuations or observed variance do not fire. level is inclusive and may be negative. A one-shot alert fires once; repeat fires again each time the condition returns after lapsing.",
         "properties": {
           "label": {
             "type": "string",
@@ -24357,6 +24793,345 @@
           "marked_pnl",
           "entry_reasons",
           "rule_trips"
+        ]
+      },
+      "ScenarioSlice": {
+        "type": "object",
+        "properties": {
+          "spot_percent": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "vol_points": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "pnl": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Num"
+              }
+            }
+          },
+          "clamped": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "boolean"
+              }
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "days": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "spot_percent",
+          "vol_points",
+          "pnl",
+          "clamped",
+          "complete",
+          "days"
+        ]
+      },
+      "ScenarioAnalysis": {
+        "type": "object",
+        "properties": {
+          "account_version": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "parallel",
+              "beta"
+            ]
+          },
+          "benchmark": {
+            "type": "string"
+          },
+          "betas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileBeta"
+            }
+          },
+          "term_scaled": {
+            "type": "boolean"
+          },
+          "slices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScenarioSlice"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_version",
+          "time",
+          "mode",
+          "benchmark",
+          "betas",
+          "term_scaled",
+          "slices",
+          "complete",
+          "model"
+        ]
+      },
+      "EquityRisk": {
+        "type": "object",
+        "properties": {
+          "dollar_delta": {
+            "type": "number"
+          },
+          "dollar_gamma_1pct": {
+            "type": "number"
+          },
+          "vega": {
+            "type": "number"
+          },
+          "theta": {
+            "type": "number"
+          },
+          "delta_utilisation": {
+            "type": "number"
+          },
+          "vega_utilisation": {
+            "type": "number"
+          },
+          "gamma_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "theta_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grid_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "short_vega_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "dollar_delta",
+          "dollar_gamma_1pct",
+          "vega",
+          "theta",
+          "delta_utilisation",
+          "vega_utilisation"
+        ]
+      },
+      "TailRisk": {
+        "type": "object",
+        "properties": {
+          "complete": {
+            "type": "boolean"
+          },
+          "observations": {
+            "type": "integer"
+          },
+          "var95": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "es95": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "var99": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "es99": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "first": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "complete",
+          "observations",
+          "var95",
+          "es95",
+          "var99",
+          "es99",
+          "first",
+          "last"
+        ]
+      },
+      "StressResult": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "source_note": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "missing_underlyings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "floor_breach": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "margin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clamped": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "from",
+          "to",
+          "label",
+          "source_note",
+          "sources",
+          "complete",
+          "missing_underlyings",
+          "pnl",
+          "floor_breach",
+          "margin",
+          "clamped"
+        ]
+      },
+      "HistoricalRisk": {
+        "type": "object",
+        "properties": {
+          "account_version": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          },
+          "stress": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StressResult"
+            }
+          },
+          "sticky_strike": {
+            "$ref": "#/components/schemas/TailRisk"
+          },
+          "atm_vol_change": {
+            "$ref": "#/components/schemas/TailRisk"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_version",
+          "time",
+          "stress",
+          "sticky_strike",
+          "atm_vol_change",
+          "model"
         ]
       }
     }

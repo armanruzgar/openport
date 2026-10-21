@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <fstream>
+#include <cmath>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -10,9 +13,20 @@ namespace {
 using trading::Money;
 std::string amount(const std::optional<Money>& value) { return value ? std::to_string(value->micros()) : "null"; }
 std::string line(const EquitySample& s) {
+  std::ostringstream risk;
+  if (s.risk) {
+    const auto& r = *s.risk;
+    risk << std::setprecision(std::numeric_limits<double>::max_digits10) << "," << r.exposure.dollar_delta
+         << "," << r.exposure.dollar_gamma_1pct << "," << r.exposure.vega << "," << r.exposure.theta
+         << "," << r.delta_utilisation << "," << r.vega_utilisation;
+    for (const auto& cap : {r.gamma_utilisation, r.theta_utilisation, r.grid_utilisation, r.short_vega_utilisation}) {
+      risk << ",";
+      if (cap) risk << *cap; else risk << "null";
+    }
+  }
   return std::to_string(s.time) + "," + std::to_string(s.attempt) + "," + std::to_string(s.equity.micros()) + "," +
       amount(s.floor) + "," + std::to_string(s.peak.micros()) + "," + amount(s.target) + "," +
-      amount(s.tomorrow_floor) + "," + std::to_string(s.fill) + "," + std::to_string(s.stock_fill) + "\n";
+      amount(s.tomorrow_floor) + "," + std::to_string(s.fill) + "," + std::to_string(s.stock_fill) + risk.str() + "\n";
 }
 EquitySample parse(std::string text) {
   std::replace(text.begin(), text.end(), ',', ' ');
@@ -24,7 +38,30 @@ EquitySample parse(std::string text) {
       sample.time <= 0 || sample.attempt == 0) throw std::runtime_error("invalid equity sample");
   // The original eight-column format predates share-change samples.
   stream >> std::ws;
-  if (!stream.eof() && (!(stream >> sample.stock_fill) || stream >> extra)) throw std::runtime_error("invalid equity sample");
+  if (!stream.eof() && !(stream >> sample.stock_fill)) throw std::runtime_error("invalid equity sample");
+  stream >> std::ws;
+  if (!stream.eof()) {
+    EquityRisk risk;
+    if (!(stream >> risk.exposure.dollar_delta >> risk.exposure.dollar_gamma_1pct >> risk.exposure.vega >> risk.exposure.theta
+          >> risk.delta_utilisation >> risk.vega_utilisation))
+      throw std::runtime_error("invalid equity risk sample");
+    for (double value : {risk.exposure.dollar_delta, risk.exposure.dollar_gamma_1pct, risk.exposure.vega,
+                        risk.exposure.theta, risk.delta_utilisation, risk.vega_utilisation})
+      if (!std::isfinite(value)) throw std::runtime_error("nonfinite equity risk sample");
+    stream >> std::ws;
+    if (!stream.eof()) {
+      for (auto* value : {&risk.gamma_utilisation, &risk.theta_utilisation, &risk.grid_utilisation, &risk.short_vega_utilisation}) {
+        std::string field;
+        if (!(stream >> field)) throw std::runtime_error("invalid equity utilisation");
+        if (field == "null") continue;
+        std::size_t used = 0;
+        *value = std::stod(field, &used);
+        if (used != field.size() || !std::isfinite(**value) || **value < 0) throw std::runtime_error("invalid equity utilisation");
+      }
+      if (stream >> extra) throw std::runtime_error("invalid equity risk sample");
+    }
+    sample.risk = risk;
+  }
   sample.equity = Money::from_micros(equity);
   sample.peak = Money::from_micros(peak);
   const auto money = [](const std::string& value) -> std::optional<Money> {
@@ -209,7 +246,8 @@ void EquityStore::append(const EquitySample& sample) noexcept {
         return std::pair{s.target && s.equity >= *s.target, s.floor && s.equity <= *s.floor};
       };
       if (!sample.decision && sample.attempt == last.attempt && sample.fill == 0 && sample.stock_fill == 0 && last.time / md::kNanosPerMinute == sample.time / md::kNanosPerMinute &&
-          last.floor == sample.floor && last.target == sample.target && side(last) == side(sample)) return;
+          last.floor == sample.floor && last.target == sample.target && side(last) == side(sample) &&
+          (!sample.risk || last.risk)) return;
       if (sample.fill != 0 && std::any_of(samples_.rbegin(), samples_.rend(), [&](const EquitySample& s) { return s.fill == sample.fill; })) return;
       if (sample.stock_fill != 0 && std::any_of(samples_.rbegin(), samples_.rend(), [&](const EquitySample& s) { return s.stock_fill == sample.stock_fill; })) return;
     }
