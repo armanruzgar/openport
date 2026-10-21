@@ -252,9 +252,30 @@ job = client.start_sweep("morning@2", "eod-50k",
     {"/structure/template/width": [5, 10], "/management/take_profit_percent": [25, 50]},
     scenarios=5, seed="81723", workers=2)
 report = client.get_sweep(job["id"])
-# Signed evaluation, obeying the saved playbook mode; never automatically retried:
+client.purge_sweep(job["id"])  # once finished, removes the saved sweep and its files
+# Evaluate now with this bearer token's trade scope, obeying the saved playbook mode;
+# never automatically retried:
 result = client.signal("morning")
 ```
+
+Webhook senders do not get an API token. An admin issues a secret that authorises
+only one playbook on one account; it is returned once and stored by the server
+only as a SHA-256 digest:
+
+```python
+admin = Client("https://openport.example", ADMIN_TOKEN, "main")
+secret = admin.issue_signal_secret("morning")["secret"]  # again to rotate
+admin.signal_secret("morning")          # {"configured": true, "created_at": ...}
+# The sender signs timestamp, method, target and body (HMAC-SHA256) and sends no bearer token:
+Client("https://openport.example", account="main").send_signal("morning", secret)
+admin.revoke_signal_secret("morning")
+```
+
+`openport.sign_signal(secret, timestamp, method, target, body)` computes the
+`X-OpenPort-Signature` value for other senders. Senders that cannot set headers,
+such as TradingView alerts, may put the secret in the JSON body with a dedupe ID
+over HTTPS only; see the [signal contract](../docs/api.md#signed-inbound-signals).
+The MCP `evaluate_playbook` tool uses the bearer route and never handles secrets.
 
 ## Python releases
 

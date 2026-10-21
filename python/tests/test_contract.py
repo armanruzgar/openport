@@ -204,11 +204,19 @@ def test_signal_and_sweep_request_schemas():
     contract = Contract("", None, SPEC)
     def validate(name, body):
         jsonschema.Draft202012Validator({"$ref": f"urn:openport#/components/schemas/{name}"}, registry=contract.registry).validate(body)
-    validate("SignalRequest", {"action": "evaluate", "timestamp": 12345, "nonce": "test-1"})
-    for body in [{"action": "send", "timestamp": 12345, "nonce": "test-1"},
-                 {"action": "evaluate", "timestamp": True, "nonce": "test-1"},
-                 {"action": "evaluate", "timestamp": 12345, "nonce": "../unsafe"}]:
+    validate("SignalRequest", {"action": "evaluate", "nonce": "test-1"})
+    # TradingView-style static body: the dedupe ID uses placeholders such as {{ticker}}-{{timenow}}.
+    validate("SignalRequest", {"action": "evaluate", "nonce": "SPY-2026-10-21T14:30:00Z", "secret": "opsig_" + "0" * 64})
+    for body in [{"action": "send", "nonce": "test-1"},
+                 {"action": "evaluate", "timestamp": 12345, "nonce": "test-1"},
+                 {"action": "evaluate", "nonce": "../unsafe"},
+                 {"action": "evaluate", "secret": "opsig_" + "0" * 64}]:
         with pytest.raises(jsonschema.ValidationError): validate("SignalRequest", body)
+    validate("SignalSecretIssued", {"playbook": "morning", "account": "main", "secret": "opsig_" + "a" * 64,
+                                    "created_at": "2026-10-21T14:30:00.000000000Z", "rotated": False})
+    with pytest.raises(jsonschema.ValidationError):
+        validate("SignalSecretStatus", {"playbook": "morning", "account": "main", "configured": True,
+                                        "created_at": None, "secret": "opsig_" + "a" * 64})
     body = {"playbook": "morning", "plan": "practice", "scenarios": 2, "seed": "1",
             "parameter_grid": {"/structure/template/width": [5, 10]}}
     validate("BacktestSweepRequest", body)

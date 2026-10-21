@@ -46,15 +46,46 @@ def test_demo_daemon_signals_stream_and_strategy(tmp_path):
             definition = {**PLAYBOOK, "structure": {"template": {"kind": "vertical", "type": "put", "direction": "credit",
                           "target": {"mode": "delta", "value": 0.15}, "width": 5}, "expiry": {"min": 0, "max": 1}}}
             client.create_playbook(definition)
-            # The nonce guard rejects signatures from before process startup.
+            issued = client.issue_signal_secret("morning")
+            secret = issued["secret"]
+            assert secret.startswith("opsig_") and client.signal_secret("morning")["configured"] is True
+            stored = (tmp_path / "signal-secrets.json").read_text()
+            assert secret not in stored and oct((tmp_path / "signal-secrets.json").stat().st_mode & 0o777) == "0o600"
+            # Signatures from before process startup are refused; wait past it.
             time.sleep(1.1)
             stamp = int(time.time())
             with pytest.raises(ApiError) as off:
-                client.signal("morning", timestamp=stamp, nonce="integration")
+                client.send_signal("morning", secret, timestamp=stamp, nonce="integration")
             assert off.value.code == "INVALID_PLAYBOOK" and "off" in str(off.value)
             with pytest.raises(ApiError) as duplicate:
-                client.signal("morning", timestamp=stamp, nonce="integration")
+                client.send_signal("morning", secret, timestamp=stamp, nonce="integration")
             assert duplicate.value.code == "SIGNAL_REPLAY"
+            with pytest.raises(ApiError) as ahead:  # clocks may run ahead by up to 300 seconds
+                client.send_signal("morning", secret, timestamp=stamp + 250, nonce="ahead")
+            assert ahead.value.code == "INVALID_PLAYBOOK"
+            with pytest.raises(ApiError) as wrong:
+                client.send_signal("morning", token, nonce="api-token-is-not-a-signal-secret")
+            assert wrong.value.code == "INVALID_SIGNAL_SIGNATURE"
+            with pytest.raises(ApiError) as bearer:
+                client.signal("morning")
+            assert bearer.value.code == "INVALID_PLAYBOOK"
+            # A TradingView-style static body works from loopback and still dedupes.
+            import json
+            from urllib.request import Request, urlopen
+            from urllib.error import HTTPError
+            static = json.dumps({"action": "evaluate", "nonce": "SPX-2026-10-21T14:30:00Z", "secret": secret}).encode()
+            url = f"http://127.0.0.1:{port}/api/signals/morning?account=main"
+            codes = []
+            for _ in range(2):
+                try:
+                    urlopen(Request(url, static, method="POST", headers={"Content-Type": "application/json"}), timeout=10)
+                except HTTPError as error:
+                    codes.append(json.loads(error.read())["error"]["code"])
+            assert codes == ["INVALID_PLAYBOOK", "SIGNAL_REPLAY"]
+            client.revoke_signal_secret("morning")
+            with pytest.raises(ApiError) as revoked:
+                client.send_signal("morning", secret, nonce="revoked")
+            assert revoked.value.code == "INVALID_SIGNAL_SIGNATURE"
             async def exercise():
                 ready = asyncio.Event()
                 async def receive():

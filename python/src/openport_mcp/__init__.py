@@ -501,7 +501,8 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
 
     @server.tool()
     def evaluate_playbook(playbook_id: str, account: str) -> dict:
-        """Sign a live paper evaluation. Respects off/stage/auto; auto may trade. Never retries."""
+        """Evaluate a live paper playbook now with the bearer token's trade scope (not a webhook
+        secret, which this server never handles). Respects off/stage/auto; auto may trade. Never retries."""
         return write(account, False, lambda target: target.signal(playbook_id))
 
     return server

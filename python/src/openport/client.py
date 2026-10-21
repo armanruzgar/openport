@@ -38,6 +38,12 @@ class ApiError(Exception):
         super().__init__(f"{self.code}: {error.get('message', f'HTTP {status}')}")
 
 
+def sign_signal(secret: str, timestamp: str | int, method: str, target: str, body: bytes) -> str:
+    """Hex HMAC-SHA256 for X-OpenPort-Signature: TIMESTAMP, METHOD, exact target and raw body, newline-joined."""
+    message = f"{timestamp}\n{method}\n{target}\n".encode() + body
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         # Never forward credentials or repeat a paper command to another location.
@@ -72,7 +78,7 @@ class Client:
 
     def _request(self, method: str, path: str, body: JSON | None = None, *,
                  params: JSON | None = None, scoped: bool = False, control: bool = False, retry: bool = True,
-                 sign: bool = False):
+                 signal_secret: str | None = None, timestamp: int | None = None):
         query = {key: value for key, value in (params or {}).items() if value is not None}
         if scoped and self.account_id is not None:
             query["account"] = self.account_id
@@ -80,18 +86,18 @@ class Client:
         if query:
             url += "?" + urlencode(query)
         headers = {"Accept": "application/json"}
-        if self.token:
+        # Webhook signals carry only their own secret; the server refuses bearer tokens there.
+        if self.token and signal_secret is None:
             headers["Authorization"] = "Bearer " + self.token
         data = None if body is None else json.dumps(body, allow_nan=False).encode()
         if data is not None:
             headers["Content-Type"] = "application/json"
-        if sign:
-            if not self.token:
-                raise ValueError("Signed signals require a configured token")
-            target = urlsplit(url)
-            signed = method + "\n" + target.path + ("?" + target.query if target.query else "") + "\n"
-            headers["X-OpenPort-Signature"] = "sha256=" + hmac.new(
-                self.token.encode(), signed.encode() + (data or b""), hashlib.sha256).hexdigest()
+        if signal_secret is not None:
+            parts = urlsplit(url)
+            stamp = str(int(time.time()) if timestamp is None else timestamp)
+            headers["X-OpenPort-Timestamp"] = stamp
+            headers["X-OpenPort-Signature"] = "sha256=" + sign_signal(
+                signal_secret, stamp, method, parts.path + ("?" + parts.query if parts.query else ""), data or b"")
         request = Request(url, data=data, method=method, headers=headers)
         retries = self.retries if retry else 0
         for attempt in range(retries + 1):
@@ -378,13 +384,39 @@ class Client:
     def cancel_sweep(self, run_id: str) -> JSON:
         return self._request("DELETE", "/backtests/sweeps/" + quote(run_id, safe=""), control=True)
 
-    def signal(self, playbook_id: str, *, timestamp: int | None = None, nonce: str | None = None) -> JSON:
-        """Sign a live paper evaluation using this token. Never automatically retry a signal."""
+    def purge_sweep(self, run_id: str) -> JSON:
+        """Permanently remove a finished sweep and its variant files."""
+        return self._request("DELETE", "/backtests/sweeps/" + quote(run_id, safe=""), params={"purge": "true"}, control=True)
+
+    def signal(self, playbook_id: str) -> JSON:
+        """Evaluate a live paper playbook now with this bearer token (trade scope). Never automatically retried."""
+        if self._prefix != "/api":
+            raise ValueError("Signals address live paper accounts; use replay controls for replay")
+        return self._request("POST", "/playbooks/" + quote(playbook_id, safe="") + "/evaluate", {}, scoped=True, retry=False)
+
+    def send_signal(self, playbook_id: str, secret: str, *, nonce: str | None = None,
+                    timestamp: int | None = None) -> JSON:
+        """Send a webhook signal signed with the playbook's signal secret, without the bearer token.
+
+        The secret authorises only this playbook on this client's account. Never automatically retried."""
         if self._prefix != "/api":
             raise ValueError("Signals address live paper accounts; use replay controls for replay")
         return self._request("POST", "/signals/" + quote(playbook_id, safe=""),
-                             {"action": "evaluate", "timestamp": int(time.time()) if timestamp is None else timestamp,
-                              "nonce": str(uuid.uuid4()) if nonce is None else nonce}, scoped=True, retry=False, sign=True)
+                             {"action": "evaluate", "nonce": str(uuid.uuid4()) if nonce is None else nonce},
+                             scoped=True, retry=False, signal_secret=secret, timestamp=timestamp)
+
+    def issue_signal_secret(self, playbook_id: str) -> JSON:
+        """Admin: create or rotate the webhook secret for this playbook and account. Returned only once."""
+        return self._request("POST", "/playbooks/" + quote(playbook_id, safe="") + "/signal-secret", {},
+                             scoped=True, control=True, retry=False)
+
+    def signal_secret(self, playbook_id: str) -> JSON:
+        """Admin: whether a webhook secret exists and when it was issued; never the secret."""
+        return self._request("GET", "/playbooks/" + quote(playbook_id, safe="") + "/signal-secret", scoped=True, control=True)
+
+    def revoke_signal_secret(self, playbook_id: str) -> JSON:
+        """Admin: revoke the webhook secret for this playbook and account."""
+        return self._request("DELETE", "/playbooks/" + quote(playbook_id, safe="") + "/signal-secret", scoped=True, control=True)
 
     def keep_backtest(self, run_id: str, keep: bool = True) -> JSON:
         return self._request("PUT", "/backtests/" + quote(run_id, safe=""), {"keep": keep}, control=True)

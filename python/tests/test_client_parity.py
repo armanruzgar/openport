@@ -16,8 +16,10 @@ EXCLUSIONS = {
 
 # Arguments are synthetic. Calls run through the public methods into _request.
 CALLS = [
-    ("signal", "{playbook}"), ("start_sweep", "test", "practice", {}), ("list_sweeps",),
-    ("get_sweep", "{id}"), ("cancel_sweep", "{id}"),
+    ("signal", "{id}"), ("send_signal", "{playbook}", "opsig_test"), ("issue_signal_secret", "{id}"),
+    ("signal_secret", "{id}"), ("revoke_signal_secret", "{id}"),
+    ("start_sweep", "test", "practice", {}), ("list_sweeps",),
+    ("get_sweep", "{id}"), ("cancel_sweep", "{id}"), ("purge_sweep", "{id}"),
     ("status",), ("summary", "{symbol}"), ("chain", "{symbol}"), ("exposure", "{symbol}"),
     ("surface", "{symbol}"), ("volatility", "{symbol}"), ("candles", "{symbol}"), ("probability", "{symbol}"),
     ("account",), ("portfolio",), ("orders",), ("get_order", "{id}"), ("fills",), ("trades",), ("risk",),
@@ -66,7 +68,7 @@ def test_every_openapi_operation_has_an_exercised_client_method(monkeypatch):
     client = Client()
     for target in (client, client.for_replay(), client.for_history("{run_id}")):
         for name, *args in CALLS:
-            if name == "signal" and target._prefix != "/api":
+            if name in {"signal", "send_signal"} and target._prefix != "/api":
                 continue
             getattr(target, name)(*args)
     documented = {(m, p) for m, p, _ in operations()}
@@ -92,20 +94,47 @@ def test_parity_methods_scope_encode_and_do_not_retry_staging(monkeypatch):
     assert '"kind": "vertical"' in calls[-1][2]["params"]["template"]
 
 
-def test_signal_signs_the_exact_encoded_target_and_body(stub):
-    import hashlib
-    import hmac
+def test_webhook_signal_signs_timestamp_method_target_and_body_without_bearer(stub):
     import json
-    from openport import ApiError
+    from openport import ApiError, sign_signal
     import pytest
-    client = Client(stub.url, "secret", "practice")
+    client = Client(stub.url, "api-token", "practice")
     # The HTTP stub does not evaluate playbooks; inspect its received signed request.
     with pytest.raises(ApiError):
-        client.signal("morning", timestamp=1234, nonce="fixed-nonce")
+        client.send_signal("morning", "opsig_secret", timestamp=1234, nonce="fixed-nonce")
     method, target, headers, body = stub.requests[-1]
-    raw = json.dumps(body, allow_nan=False)
-    expected = hmac.new(b"secret", (method + "\n" + target + "\n" + raw).encode(), hashlib.sha256).hexdigest()
-    assert headers["X-Openport-Signature"] == "sha256=" + expected
+    raw = json.dumps(body, allow_nan=False).encode()
+    assert "Authorization" not in headers
+    assert headers["X-Openport-Timestamp"] == "1234"
+    assert headers["X-Openport-Signature"] == "sha256=" + sign_signal("opsig_secret", 1234, method, target, raw)
     assert target == "/api/signals/morning?account=practice"
+    assert body == {"action": "evaluate", "nonce": "fixed-nonce"}
+    # Independent check against the documented message layout.
+    import hashlib
+    import hmac
+    expected = hmac.new(b"opsig_secret", b"1234\nPOST\n" + target.encode() + b"\n" + raw, hashlib.sha256).hexdigest()
+    assert headers["X-Openport-Signature"] == "sha256=" + expected
+    with pytest.raises(ValueError, match="live"):
+        client.for_replay().send_signal("morning", "opsig_secret")
+
+
+def test_bearer_signal_and_secret_management_use_their_own_routes(stub):
+    from openport import ApiError
+    import pytest
+    client = Client(stub.url, "api-token", "practice")
+    for call, expected in [(lambda: client.signal("morning"), ("POST", "/api/playbooks/morning/evaluate?account=practice")),
+                           (lambda: client.for_replay("practice").issue_signal_secret("morning"),
+                            ("POST", "/api/playbooks/morning/signal-secret?account=practice")),
+                           (lambda: client.revoke_signal_secret("morning"),
+                            ("DELETE", "/api/playbooks/morning/signal-secret?account=practice")),
+                           (lambda: client.purge_sweep("000001"), ("DELETE", "/api/backtests/sweeps/000001?purge=true"))]:
+        try:
+            call()
+        except ApiError:
+            pass  # The stub does not implement every route; the request is what matters.
+        method, target, headers, _ = stub.requests[-1]
+        assert (method, target) == expected
+        assert headers["Authorization"] == "Bearer api-token"
+        assert "X-Openport-Signature" not in headers
     with pytest.raises(ValueError, match="live"):
         client.for_replay().signal("morning")
