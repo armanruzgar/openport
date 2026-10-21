@@ -1451,6 +1451,49 @@ TEST(EngineRecording, DirectoryRecordingRollsFromTheEngineReceiptClock) {
   EXPECT_EQ(dates, (std::set<md::Date>{{2026, 9, 22}, {2026, 9, 23}}));
   EXPECT_GT(engine.recording_stats().events, 0U);
 }
+
+// Directory recording rolls each day into a new file from the engine's header, so the
+// venue flag must reach it as it reaches --record: a venued print needs a v5 header.
+TEST(EngineRecording, DirectoryRecordingKeepsTradeVenuesAcrossRollover) {
+  class VenueProvider final : public md::Provider {
+   public:
+    std::string_view name() const noexcept override { return "venue-engine"; }
+    md::Capabilities capabilities() const noexcept override {
+      md::Capabilities capabilities;
+      capabilities.trades = true;
+      return capabilities;
+    }
+    bool trade_venues() const noexcept override { return true; }
+    void start(const md::Subscription&, md::EventSink& out) override {
+      out.publish(md::ContractDefinition{1, *md::parse_osi("SPXW261022C05000000")});
+      out.publish(md::OptionTrade{1, md::new_york_to_utc({2026, 9, 22}, 15, 0), 5, 2, 7});
+    }
+    void stop() override {}
+  } provider;
+  test::RecordingFile file;
+  server::Engine::Options options;
+  options.record_dir = file.directory;
+  options.paper_enabled = false;
+  std::atomic<md::Timestamp> receipt{md::new_york_to_utc({2026, 9, 22}, 16, 59)};
+  options.clock = [&] { return receipt.load(); };
+  server::Engine engine(provider, {{"SPX"}}, options);
+  engine.start();
+  ASSERT_TRUE(test::recording_eventually([&] { return engine.recording_stats().events >= 2; }));
+  receipt = md::new_york_to_utc({2026, 9, 22}, 17, 0);
+  engine.roll_recording();
+  engine.stop();
+  EXPECT_TRUE(engine.recording_error().empty()) << engine.recording_error();
+  std::vector<std::uint16_t> venues;
+  for (const auto& entry : std::filesystem::directory_iterator(file.directory)) {
+    if (entry.path().extension() != ".oprec") continue;
+    md::RecordingReader reader(entry.path());
+    EXPECT_TRUE(reader.header().trade_venues);
+    while (auto record = reader.next())
+      if (const auto* trade = std::get_if<md::OptionTrade>(&record->event)) venues.push_back(trade->venue);
+    EXPECT_TRUE(reader.diagnostic().empty());
+  }
+  EXPECT_EQ(venues, (std::vector<std::uint16_t>{7}));
+}
 }  // namespace
 
 namespace {

@@ -122,7 +122,7 @@ void Engine::start() {
       recording.clock = options_.clock;
       daily_recorder_ = std::make_unique<md::RecordingDirectory>(options_.record_dir,
           md::RecordingHeader{std::string(provider_.name()), provider_.capabilities(), subscription_,
-                              status_.started, false, provider_.market_controls()}, queue_,
+                              status_.started, false, provider_.market_controls(), provider_.trade_venues()}, queue_,
           md::RecordingDirectory::Options{std::move(recording), options_.record_keep_days, options_.record_max_bytes});
     }
     provider_started_ = true;

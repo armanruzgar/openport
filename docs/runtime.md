@@ -530,7 +530,8 @@ a sink without `market_controls` stops recording with a visible error instead of
 writing an unsupported tag; downstream delivery continues.
 
 **Format v5.** Providers whose option trades carry a venue (Databento with trades,
-and ThetaData and Databento imports) write version 5; so does re-recording a v5
+and ThetaData and Databento imports) write version 5, in `--record` files and in
+every day `--record-dir` rolls over to; so does re-recording a v5
 replay. Every other provider writes the version it wrote before, byte for byte.
 Version 5 appends a `u8` `market_controls` boolean after `imported`, so venues do
 not imply heartbeats or halts, and lets an option trade (tag 2) end with a `u16`
