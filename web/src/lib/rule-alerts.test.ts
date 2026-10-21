@@ -56,3 +56,9 @@ describe("rule alerts", () => {
       }, risk).map((alert) => alert.id)).not.toContain("target-near")
   })
 })
+
+it("records the server's evaluation failure without inferring a breach from prices", () => {
+  const alerts = ruleAlerts({ ...account, evaluation: { ...account.evaluation, status: "failed", decision: "Maximum drawdown reached", decided_at: "2026-10-16T15:30:00Z" } }, risk)
+  expect(alerts).toContainEqual(expect.objectContaining({ title: "Evaluation rule breached", body: "Maximum drawdown reached" }))
+  expect(ruleAlerts(account, risk).some((a) => a.title === "Evaluation rule breached")).toBe(false)
+})

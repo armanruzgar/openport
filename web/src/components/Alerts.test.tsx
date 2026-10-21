@@ -7,6 +7,7 @@ import { liveState, useLive } from "../api/live"
 import { useFills, useTrades } from "../api/trading"
 import type { DividendPaid, Fill, StockFill } from "../api/trading-types"
 import { alertStore, noAlerts } from "../lib/alerts"
+import { notificationHistory } from "../lib/notification-history"
 import { toasts } from "../lib/notify"
 import { fill, status } from "../test/trading-fixtures"
 import { AlertsDialog, AlertWatcher, Toasts } from "./Alerts"
@@ -50,6 +51,7 @@ beforeEach(() => {
   host = document.createElement("div")
   document.body.append(host)
   root = createRoot(host)
+  notificationHistory.clear()
   alertStore.set(noAlerts)
   fills(undefined)
   deliveries(undefined)
@@ -158,4 +160,14 @@ describe("the alerts dialog", () => {
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Remove alert: SPX rises to 5,010.00"]')!.click())
     expect(alertStore.get().prices).toEqual([])
   })
+})
+
+it("retains all newly observed fills even when toast notifications are off", async () => {
+  live(5000)
+  fills([{ ...fill, id: "1" }])
+  await render(<AlertWatcher />)
+  fills(Array.from({ length: 6 }, (_, index) => ({ ...fill, id: String(index + 1) })))
+  await render(<AlertWatcher />)
+  expect(notificationHistory.get().filter((entry) => entry.kind === "fill")).toHaveLength(5)
+  expect(titles()).toEqual([])
 })

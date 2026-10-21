@@ -95,7 +95,7 @@ describe("account alerts", () => {
     live("2")
     await render(<ServerAlertWatcher sound={false} />)
     expect(notify).toHaveBeenCalledTimes(1)
-    expect(notify).toHaveBeenCalledWith("Account alert", "account equity ≥ 25.00; now 99000.00.", false)
+    expect(notify).toHaveBeenCalledWith("Account alert", "account equity ≥ 25.00; now 99000.00.", false, expect.objectContaining({ kind: "alert", scope: "live:main", id: "server-alert:2:1" }))
   })
   it("sets a contract Greek alert and an unheld spread with exact signed levels", async () => {
     await render(<ServerAlerts />)
