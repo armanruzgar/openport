@@ -159,6 +159,8 @@ class Desk {
   [[nodiscard]] std::optional<std::int64_t> option_volume(const std::string& symbol, md::Timestamp time) const;
   [[nodiscard]] std::optional<trading::OpeningRuleInputs> opening_rule_inputs(const PaperAccount& account,
       md::Timestamp time) const;
+  /// What traded in `batch`, for an account with queue fills; empty otherwise.
+  [[nodiscard]] trading::MarketActivity market_activity(const PaperAccount& account, const std::vector<md::Event>& batch) const;
   [[nodiscard]] trading::Decision opening_gate(const PaperAccount& account, const trading::OrderRequest& order,
       md::Timestamp time, const trading::PreviewMarket& market = {},
       const std::map<std::string, trading::Quantity>& preceding = {}) const;

@@ -18,6 +18,7 @@
 #include "server/paper_json.hpp"
 #include "server/event_calendar.hpp"
 #include "support/scripted_market.hpp"
+#include "support/recording.hpp"
 
 namespace {
 using namespace openport;
@@ -270,6 +271,109 @@ TEST_F(PaperEngine, InsideFillRulesAndWalkingOrdersRoundTrip) {
   EXPECT_EQ(read(*engine, "/api/account?account=inside")["rules"]["inside_fill_percent"], 50);
   engine->stop();
   std::filesystem::remove_all(directory);
+}
+
+TEST_F(PaperEngine, QueueFillsAndStopStressRulesRoundTripAndLeaveThePreset) {
+  seed();
+  auto reset = write(*engine, "POST", "/api/account/reset", {{"reason", "queue"}, {"plan", "practice"}, {"fill_model", "queue"},
+      {"queue_seed", 9}, {"stop_stress_ticks", 2}});
+  ASSERT_EQ(reset.status, 200) << reset.body;
+  test::capture_contract("paper", "POST", "/api/account/reset", reset);
+  auto rules = read(*engine, "/api/account")["rules"];
+  EXPECT_EQ(rules["queue_fills"], true);
+  EXPECT_EQ(rules["queue_seed"], 9);
+  EXPECT_EQ(rules["stop_stress_ticks"], 2);
+  EXPECT_EQ(rules["stop_stress_percent"], 200);
+  EXPECT_TRUE(rules["plan_id"].is_null() || rules["plan_id"] == "") << "Queue fills and stop stress are program rules";
+  const auto placed = write(*engine, "POST", "/api/orders", order(market, "queued", "4.00"));
+  ASSERT_EQ(placed.status, 201) << placed.body;
+  const auto resting = json::parse(placed.body)["order"];
+  EXPECT_EQ(resting["queue"]["ahead"], 10);
+  EXPECT_EQ(resting["queue"]["price"], "4.00");
+  EXPECT_EQ(resting["queue"]["simulated"], true);
+  EXPECT_EQ(resting["waiting"]["code"], "QUEUE");
+  EXPECT_EQ(resting["stress_ticks"], 0);
+  const auto orders = server::handle_api({"GET", "/api/orders"}, *engine);
+  test::capture_contract("paper", "GET", "/api/orders", orders);
+  const auto filled = write(*engine, "POST", "/api/orders", order(market, "taker", "4.20"));
+  ASSERT_EQ(filled.status, 201) << filled.body;
+  const auto fill = json::parse(filled.body)["fills"].at(0);
+  EXPECT_EQ(fill["queued"], false);
+  EXPECT_EQ(fill["stress_ticks"], 0);
+  // Without the queue, the same plan names its preset again.
+  reset = write(*engine, "POST", "/api/account/reset", {{"reason", "plain"}, {"plan", "practice"}, {"fill_model", "as_displayed"}});
+  ASSERT_EQ(reset.status, 200) << reset.body;
+  rules = read(*engine, "/api/account")["rules"];
+  EXPECT_FALSE(rules.contains("queue_fills"));
+  EXPECT_EQ(rules["plan_id"], "practice");
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"plan", "practice"}, {"stop_stress_percent", 100}}),
+               400, "INVALID_RULES");
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"plan", "practice"}, {"queue_seed", -1}}),
+               400, "INVALID_RULES");
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"plan", "practice"}, {"fill_model", "queues"}}),
+               400, "INVALID_REQUEST");
+  rules["plan"] = "Custom queue";
+  rules["queue_fills"] = "yes";
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"initial_cash", "100000.00"}, {"rules", rules}}),
+               400, "INVALID_REQUEST");
+  rules["queue_fills"] = true;
+  const auto custom = write(*engine, "POST", "/api/account/reset", {{"reason", "custom"}, {"initial_cash", "100000.00"}, {"rules", rules}});
+  ASSERT_EQ(custom.status, 200) << custom.body;
+  EXPECT_EQ(read(*engine, "/api/account")["rules"]["queue_fills"], true);
+}
+
+TEST_F(PaperEngine, FillQualityAndRealFillCalibrationReadWithoutTrading) {
+  // Calibration looks quotes up in the recorded days the replay picker lists.
+  test::RecordingFile recorded;
+  auto header = test::recording_header();
+  header.started = market.time - md::kNanosPerMinute;
+  test::record_events(recorded.directory / "day.oprec",
+      {md::ContractDefinition{4, market.contract}, md::OptionQuote{4, market.time - 2 * md::kNanosPerSecond, 3.9, 4.3, 5, 5}}, header);
+  engine->stop();
+  auto options = paper_options();
+  options.recordings = recorded.directory;
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "natural", "4.20")).status, 201);
+  const auto quality = server::handle_api({"GET", "/api/fills/quality"}, *engine);
+  ASSERT_EQ(quality.status, 200) << quality.body;
+  test::capture_contract("paper", "GET", "/api/fills/quality", quality);
+  const auto report = json::parse(quality.body);
+  EXPECT_EQ(report["fills"], 1);
+  EXPECT_EQ(report["overall"]["places"]["natural"], 1);
+  EXPECT_EQ(report["overall"]["cost_vs_mid"], "10.00");
+  EXPECT_EQ(report["suggestion"]["fill_model"], "conservative");
+  EXPECT_EQ(report["simulated"], true);
+  EXPECT_EQ(read(*engine, "/api/fills/quality?attempt=all")["attempt"], "all");
+  EXPECT_EQ(server::handle_api({"GET", "/api/fills/quality?attempt=some"}, *engine).status, 400);
+  const auto version = read(*engine, "/api/account")["account_version"];
+  const auto time = md::format_timestamp(market.time);
+  const std::string csv = "time,symbol,side,quantity,price,bid,ask\n" + time + "," + market.symbol() + ",buy,1,4.10,4.00,4.20\n" +
+      time + "," + market.symbol() + ",buy,1,4.10,,\n" + time + ",SPY,buy,1,1.00,,\n";
+  const auto calibrated = write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"format", "generic"}});
+  ASSERT_EQ(calibrated.status, 200) << calibrated.body;
+  test::capture_contract("paper", "POST", "/api/fills/calibration", calibrated);
+  const auto result = json::parse(calibrated.body);
+  EXPECT_EQ(result["matched"], 2);
+  EXPECT_EQ(result["stored"], false);
+  EXPECT_EQ(result["rows"][0]["quote"]["source"], "import");
+  EXPECT_EQ(result["rows"][1]["quote"]["source"], "recording");
+  EXPECT_EQ(result["rows"][1]["quote"]["bid"], "3.90");
+  EXPECT_EQ(result["rows"][1]["place"], "mid_or_better");
+  EXPECT_EQ(result["skipped"].size(), 1U);
+  EXPECT_EQ(result["suggestion"]["basis"], "real_fills");
+  EXPECT_TRUE(result["suggestion"]["fill_latency_ms"].is_null());
+  EXPECT_EQ(read(*engine, "/api/account")["account_version"], version) << "Calibration never reaches the account";
+  // Older than the age limit allows, the recorded quote is not used.
+  const auto strict = json::parse(write(*engine, "POST", "/api/fills/calibration",
+      {{"csv", csv}, {"max_quote_age_seconds", 1}}).body);
+  EXPECT_EQ(strict["matched"], 1);
+  EXPECT_EQ(strict["format"], "generic");
+  expect_error(write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"format", "robinhood"}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"max_quote_age_seconds", 0}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/fills/calibration", {{"format", "generic"}}), 400, "INVALID_REQUEST");
 }
 
 TEST_F(PaperEngine, AlertsWatchUntradedContractsAndUnderlyingStudiesAndKeepAccountScope) {

@@ -2849,6 +2849,86 @@ TEST(ReproducibleRun, WalkingChangesAndInsideFillsVerifyWithIdenticalBytes) {
   }
 }
 
+/// A steady 100.00/100.20 book, twenty a side, with seven contracts printing at
+/// the bid every second: the queue model's input in a recording.
+void write_prints(const std::filesystem::path& file) {
+  test::ScriptedMarket market;
+  auto header = test::recording_header();
+  header.started = market.time;
+  header.capabilities.delay = 0s;
+  header.capabilities.poll_interval = 1s;
+  md::Timestamp receipt = market.time;
+  md::RecordingSink::Options options;
+  options.clock = [&] { return receipt; };
+  test::DiscardEvents discard;
+  md::RecordingSink sink(file, header, discard, options);
+  sink.publish(md::ContractDefinition{0, market.contract});
+  for (int second = 0; second <= 8; ++second) {
+    const auto time = market.time + second * md::kNanosPerSecond;
+    receipt = time;
+    sink.publish(md::UnderlyingQuote{"SPX", time, 5000, 5000, 5000});
+    sink.publish(md::OptionQuote{0, time, 100.0, 100.2, 20, 20});
+    if (second > 0) sink.publish(md::OptionTrade{0, time, 100.0, 7});
+    sink.publish(md::SnapshotComplete{"SPX", time});
+  }
+  sink.close();
+}
+
+TEST(ReproducibleRun, QueueFillsFromRecordedPrintsVerifyWithIdenticalBytes) {
+  test::RecordingFile file;
+  write_prints(file.path);
+  const test::ScriptedMarket market;
+  for (const bool queue : {false, true}) {
+    SCOPED_TRACE(queue ? "queue fills" : "as displayed");
+    std::string golden;
+    for (int repeat = 0; repeat < 2; ++repeat) {
+      const auto journal = file.directory / ((queue ? "queue-" : "plain-") + std::to_string(repeat) + ".jsonl");
+      {
+        md::RecordingReader reader(file.path);
+        server::Desk::Options options;
+        options.run_input = server::recording_input(file.path);
+        options.replay = true;
+        options.paper_journal = journal;
+        options.paper.rules.queue_fills = queue;
+        options.paper.rules.queue_seed = queue ? 11 : 0;
+        server::Desk desk("replay (synthetic)", reader.header().capabilities, reader.header().subscription, options);
+        desk.start_trading();
+        providers::ReplayBatches batches(reader, reader.header().subscription);
+        bool placed = false;
+        while (const auto batch = batches.next()) {
+          desk.replay_batch(batch->events, batch->received, batch->time);
+          if (!placed) {
+            server::TradingCommand request;
+            request.order = market.limit("bid", 2, "100.00");
+            const auto reply = command(desk, request, batch->time, batch->received);
+            ASSERT_TRUE(reply.decision.ok()) << reply.decision.message;
+            placed = true;
+          }
+        }
+        const auto snapshot = desk.trading_view()->snapshot;
+        const auto& order = snapshot->recent_orders.front();
+        if (queue) {
+          // Twenty ahead: the third second's print passes the queue by one, the fourth's finishes the order.
+          ASSERT_EQ(snapshot->recent_fills.size(), 2U);
+          EXPECT_TRUE(snapshot->recent_fills.front().queued);
+          EXPECT_EQ(snapshot->recent_fills.front().price, Money::parse("100.00"));
+          EXPECT_EQ(snapshot->recent_fills.front().time, market.time + 3 * md::kNanosPerSecond);
+          EXPECT_EQ(order.status, trading::OrderStatus::Filled);
+          EXPECT_EQ(order.queue->source, "prints");
+        } else {
+          EXPECT_TRUE(snapshot->recent_fills.empty());
+          EXPECT_FALSE(order.queue);
+        }
+        desk.stop();
+      }
+      if (repeat == 0) { golden = read_file(journal); } else { EXPECT_EQ(read_file(journal), golden); }
+      if (!queue) EXPECT_EQ(golden.find("queue"), std::string::npos);
+      const auto verified = server::verify_run(journal);
+      EXPECT_TRUE(verified.matched) << verified.message;
+    }
+  }
+}
+
 TEST(ReproducibleRun, OverrideRemovalVerifiesWithDriverSix) {
   test::RecordingFile file;
   write_stream(file.path, true);

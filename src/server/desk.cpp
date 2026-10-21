@@ -1420,7 +1420,7 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         if (price) indicators.push_back({symbol, study, current(symbol) ? market_time_ : m->as_of, *price});
       }
       session.set_opening_rule_inputs(opening_rule_inputs(account, market_time_), options_.compact_opening_rule_inputs);
-      session.on_quotes(quotes, valuations, market_time_, stocks, indicators);
+      session.on_quotes(quotes, valuations, market_time_, stocks, indicators, market_activity(account, batch));
       sample_equity(account);
       // Each account keeps the closing print its PM positions will settle on, so
       // a restart before they expire (16:15 for ETF options) still uses it. When
@@ -1553,6 +1553,27 @@ std::optional<std::int64_t> Desk::option_volume(const std::string& symbol, md::T
       option->volume >= 0 && option->volume <= 9'007'199'254'740'991.0 && std::trunc(option->volume) == option->volume)
     return static_cast<std::int64_t>(option->volume);
   return std::nullopt;
+}
+MarketActivity Desk::market_activity(const PaperAccount& account, const std::vector<md::Event>& batch) const {
+  MarketActivity activity;
+  const auto& session = *account.session;
+  // Only the queue model reads trades; every other account's batches stay as they were.
+  if (!session.config().rules.queue_fills) return activity;
+  activity.prints_supplied = capabilities_.trades;
+  for (const auto& event : batch) {
+    const auto* trade = std::get_if<md::OptionTrade>(&event);
+    const auto* option = trade ? book_.option(trade->id) : nullptr;
+    if (!option || trade->ts <= 0 || trade->ts > market_time_) continue;
+    const auto symbol = option->contract.osi_symbol();
+    const auto price = quote_price(trade->price);
+    const auto size = whole_size(trade->size);
+    if (!price || size <= 0 || !session.contracts().contains(symbol)) continue;
+    activity.prints.push_back({symbol, trade->ts, *price, size});
+  }
+  for (const auto& [symbol, contract] : session.contracts())
+    if (const auto volume = option_volume(symbol, market_time_)) activity.volumes[symbol] = *volume;
+  activity.volumes_supplied = !activity.volumes.empty();
+  return activity;
 }
 std::optional<OpeningRuleInputs> Desk::opening_rule_inputs(const PaperAccount& account, md::Timestamp time) const {
   const auto& rules = account.session->config().rules;

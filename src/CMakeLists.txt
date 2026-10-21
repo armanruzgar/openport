@@ -168,6 +168,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/notifications.cpp
     server/paper_engine.cpp
     server/paper_api.cpp
+    server/fill_calibration.cpp
     server/plans.cpp
     server/api.cpp
     server/replay_host.cpp

@@ -107,6 +107,7 @@ struct Settings {
   std::optional<trading::Money> paper_cash;
   std::string paper_fill_model = "as_displayed";
   std::optional<int> paper_slippage_ticks, paper_fill_latency_ms, paper_impact_ticks;
+  int paper_queue_seed = 0, paper_stop_stress_ticks = 0, paper_stop_stress_percent = 200;
   std::string write_token;
   std::filesystem::path write_token_file;
   std::filesystem::path notify_config;
@@ -134,8 +135,9 @@ int usage(const char* error = nullptr) {
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
       "                 [--paper-journal PATH] [--plan ID] [--paper-cash DECIMAL] [--paper-fee DECIMAL]\n"
-      "                 [--paper-fill-model as_displayed|conservative|midpoint]\n"
+      "                 [--paper-fill-model as_displayed|conservative|midpoint|queue] [--paper-queue-seed N]\n"
       "                 [--paper-slippage-ticks N] [--paper-fill-latency-ms N] [--paper-impact-ticks N]\n"
+      "                 [--paper-stop-stress-ticks N] [--paper-stop-stress-percent N]\n"
       "                 [--sandboxes N] [--sandbox-idle-seconds N] [--client-ip-header NAME]\n"
       "                 [--no-paper] [--write-token TOKEN] [--write-token-file PATH] [--candle-dir DIR] [--no-history]\n"
       "                 [--dividends FILE|massive] [--event-calendar FILE] [--events FILE] [--no-cboe-holidays]\n"
@@ -164,6 +166,9 @@ int usage(const char* error = nullptr) {
       "      --paper-cash then overrides its starting balance\n"
       "fill model: seeds only a new main journal; numeric execution flags override the model\n"
       "            slippage/impact: 0..10 ticks, latency: 0..60000 ms; saved rules win on restart\n"
+      "            queue: resting limits wait behind a seeded estimate of the queue at their price\n"
+      "            stop stress: 0..10 extra ticks on stops reached in a fast market, off at 0;\n"
+      "            fast is a spread or quote rate at --paper-stop-stress-percent (101..1000) of normal\n"
       "write token: --write-token overrides OPENPORT_WRITE_TOKEN; required for remote writes\n"
       "write token file: without either, the token kept in PATH, created at random if missing,\n"
       "                  with a link that saves it in a browser tab printed at startup\n"
@@ -466,8 +471,8 @@ int run(int argc, char** argv) {
       settings.paper.fee_per_contract = trading::Money::parse(value);
       if (settings.paper.fee_per_contract < trading::Money{}) return usage("--paper-fee must be nonnegative");
     } else if (arg == "--paper-fill-model") {
-      if (value != "as_displayed" && value != "conservative" && value != "midpoint")
-        return usage("--paper-fill-model must be as_displayed, conservative or midpoint");
+      if (value != "as_displayed" && value != "conservative" && value != "midpoint" && value != "queue")
+        return usage("--paper-fill-model must be as_displayed, conservative, midpoint or queue");
       settings.paper_fill_model = value;
     } else if (arg == "--paper-slippage-ticks") {
       settings.paper_slippage_ticks = providers::parse_integer(value, "--paper-slippage-ticks", 0, 10);
@@ -475,6 +480,12 @@ int run(int argc, char** argv) {
       settings.paper_fill_latency_ms = providers::parse_integer(value, "--paper-fill-latency-ms", 0, 60000);
     } else if (arg == "--paper-impact-ticks") {
       settings.paper_impact_ticks = providers::parse_integer(value, "--paper-impact-ticks", 0, 10);
+    } else if (arg == "--paper-queue-seed") {
+      settings.paper_queue_seed = providers::parse_integer(value, "--paper-queue-seed", 0, 2147483647);
+    } else if (arg == "--paper-stop-stress-ticks") {
+      settings.paper_stop_stress_ticks = providers::parse_integer(value, "--paper-stop-stress-ticks", 0, 10);
+    } else if (arg == "--paper-stop-stress-percent") {
+      settings.paper_stop_stress_percent = providers::parse_integer(value, "--paper-stop-stress-percent", 101, 1000);
     } else if (arg == "--write-token") {
       if (value.empty()) return usage("--write-token requires a nonempty token");
       settings.write_token = value;
@@ -689,6 +700,11 @@ int run(int argc, char** argv) {
   engine_options.analytics.fallback_rate = settings.rate;
   engine_options.record_file = settings.record_file;
   engine_options.record_dir = settings.record_dir;
+  // Fill calibration reads the recorded days the replay picker lists.
+  if (!settings.record_dir.empty())
+    engine_options.recordings = settings.record_dir;
+  else if (const auto* home = std::getenv("HOME"))
+    engine_options.recordings = std::filesystem::path(home) / ".openport/recordings";
   engine_options.record_keep_days = settings.record_keep_days;
   engine_options.record_max_bytes = settings.record_max_bytes;
   engine_options.paper_enabled = settings.paper_enabled;
@@ -702,6 +718,10 @@ int run(int argc, char** argv) {
   settings.paper.rules.fill_latency_ms = settings.paper_fill_latency_ms.value_or(conservative ? 1000 : 0);
   settings.paper.rules.impact_ticks = settings.paper_impact_ticks.value_or(conservative ? 1 : 0);
   settings.paper.rules.inside_fill_percent = settings.paper_fill_model == "midpoint" ? 50 : 0;
+  settings.paper.rules.queue_fills = settings.paper_fill_model == "queue";
+  settings.paper.rules.queue_seed = settings.paper_queue_seed;
+  settings.paper.rules.stop_stress_ticks = settings.paper_stop_stress_ticks;
+  settings.paper.rules.stop_stress_percent = settings.paper_stop_stress_percent;
   trading::validate_rules(settings.paper.rules);
   settings.paper.initial_cash = settings.paper_cash.value_or(settings.plan->initial_cash);
   if (settings.paper.initial_cash <= trading::Money{}) return usage("--paper-cash must be positive");
@@ -759,10 +779,7 @@ int run(int argc, char** argv) {
   replay_options.engine = engine_options;
   replay_options.settings_source = [&engine](std::string_view id) { return engine.trading_view(id); };
   replay_options.scenario_dir = settings.scenario_dir;
-  if (!settings.record_dir.empty())
-    replay_options.recordings = settings.record_dir;
-  else if (const auto* home = std::getenv("HOME"))
-    replay_options.recordings = std::filesystem::path(home) / ".openport/recordings";
+  replay_options.recordings = engine_options.recordings;
   server::ReplayHost replays(replay_options);
   server::BacktestHost backtests({settings.paper_journal.parent_path() / "backtests", replay_options.recordings,
       settings.scenario_dir, engine_options.analytics, engine_options.dividends,

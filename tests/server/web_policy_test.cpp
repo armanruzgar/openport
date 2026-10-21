@@ -679,6 +679,12 @@ TEST(WebPolicy, NamedTokensEnforceEveryRouteFamilyAndAccount) {
     EXPECT_TRUE(check(method, path, "agent-secret"));
   }
   EXPECT_FALSE(check("GET", "/api/replay/history/run/verify?format=receipt", "reader-secret"));
+  // Fill calibration posts a file to analyse but changes nothing: reading permits it.
+  EXPECT_FALSE(check("POST", "/api/fills/calibration", "reader-secret"));
+  EXPECT_FALSE(check("POST", "/api/fills/calibration", "owner-secret"));
+  EXPECT_TRUE(check("POST", "/api/fills/calibration", "agent-secret"));
+  EXPECT_TRUE(check("POST", "/api/fills/calibration?account=practice", "reader-secret"));
+  EXPECT_FALSE(check("GET", "/api/fills/quality?account=practice", "reader-secret"));
   for (const std::string method : {"POST", "PUT", "DELETE"}) {
     EXPECT_FALSE(check(method, "/api/replay", "replay-secret"));
     EXPECT_TRUE(check(method, "/api/replay", "agent-secret"));

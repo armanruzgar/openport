@@ -89,7 +89,13 @@ TEST(Cli, PaperFillFlagsValidateModelsAndExecutionRanges) {
   }
   rejects("openportd", "--paper-impact-ticks 11", "--paper-impact-ticks");
   rejects("openportd", "--paper-slippage-ticks 11", "--paper-slippage-ticks");
-  for (const auto* model : {"as_displayed", "conservative", "midpoint"})
+  rejects("openportd", "--paper-queue-seed -1", "--paper-queue-seed");
+  rejects("openportd", "--paper-stop-stress-ticks 11", "--paper-stop-stress-ticks");
+  for (const auto* value : {"100", "1001"})
+    rejects("openportd", std::string("--paper-stop-stress-percent ") + value, "--paper-stop-stress-percent");
+  rejects("openportd", "--paper-fill-model queue --paper-queue-seed 7 --paper-stop-stress-ticks 2 "
+          "--paper-stop-stress-percent 300 --provider missing", "unknown provider");
+  for (const auto* model : {"as_displayed", "conservative", "midpoint", "queue"})
     rejects("openportd", std::string("--paper-fill-model ") + model +
         " --paper-fill-latency-ms 60000 --paper-impact-ticks 10 --paper-slippage-ticks 0 --provider missing", "unknown provider");
 }
