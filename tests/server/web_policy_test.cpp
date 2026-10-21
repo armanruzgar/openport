@@ -246,6 +246,14 @@ TEST(WebPolicy, SlowClientKeepsActiveWriteAndOnlyNewestPendingTick) {
   EXPECT_TRUE(queue.empty());
 }
 
+TEST(WebPolicy, TheStartupLinkEncodesItsTokenAsTheTerminalDecodesIt) {
+  EXPECT_EQ(server::url_component("0123abcdef"), "0123abcdef");
+  // decodeURIComponent restores each: & and # no longer end the fragment, % stays literal.
+  EXPECT_EQ(server::url_component("p&ss#1"), "p%26ss%231");
+  EXPECT_EQ(server::url_component("50%off"), "50%25off");
+  EXPECT_EQ(server::url_component("%41 caf\xc3\xa9"), "%2541%20caf%C3%A9");
+}
+
 TEST(WebPolicy, SlowClientKeepsTheNewestTickOfEachStream) {
   server::TickQueue queue;
   queue.push(std::make_shared<const std::string>("active"), "tick");
@@ -581,6 +589,10 @@ TEST(WebPolicy, NamedTokenFilesAreStrictAndDiagnosticsHideSecrets) {
   ASSERT_EQ(tokens.size(), 3U);
   EXPECT_EQ(tokens[1].name, "agent");
   EXPECT_EQ(tokens[1].scopes, (std::vector<std::string>{"read", "trade:practice", "replay"}));
+  // A '#' inside a secret is part of it; a comment starts a field.
+  const auto hashed = server::parse_token_file("ops admin x#Gk2-long-secret #comment\n");
+  ASSERT_EQ(hashed.size(), 1U);
+  EXPECT_EQ(hashed[0].secret, "x#Gk2-long-secret");
   for (const std::string line : {"", "# empty", "a read", "a read secret extra", "a trade: secret", "a read, secret",
       "a unknown secret", "a read,read secret", "system admin secret", "loopback admin secret", "a read secret\na admin other",
       "a read secret\nb admin secret", "a trade:../main secret", "a trade:MAIN secret", "a trade:bad_id secret", "a trade:-main secret",

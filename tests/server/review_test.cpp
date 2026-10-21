@@ -161,6 +161,13 @@ TEST(TradeReviewApi, CsvDateUsesNewYorkCalendarDateIncludingDst) {
   EXPECT_EQ(csv_record(rows[0], rows[2])["new_york_date"], "2026-11-01");
   EXPECT_EQ(csv_record(rows[0], rows[1])["prices"], "price provenance unrecorded; simulated trading");
   EXPECT_EQ(server::csv_quote("a\rb"), "\"a\rb\"");
+  // Notes and tags a spreadsheet would run as formulas are inert; signed numbers stay numbers.
+  EXPECT_EQ(server::csv_quote("=HYPERLINK(\"http://x\")"), "\"'=HYPERLINK(\"\"http://x\"\")\"");
+  EXPECT_EQ(server::csv_quote("@SUM(A1)"), "'@SUM(A1)");
+  EXPECT_EQ(server::csv_quote("+1+cmd"), "'+1+cmd");
+  EXPECT_EQ(server::csv_quote("-12.50"), "-12.50");
+  EXPECT_EQ(server::csv_quote("+3"), "+3");
+  EXPECT_EQ(server::csv_quote("-"), "'-");
   const std::vector<std::string> fill_columns = {"account", "account_version", "provider", "prices", "new_york_date",
       "run_id", "scenario", "seed", "recording", "id", "attempt", "order_id", "actor", "symbol", "underlying", "side", "quantity", "price", "fee", "quote_time", "time", "context.spot",
       "context.spot_source", "context.iv", "context.delta", "context.years", "context.equity", "context.floor_room", "context.buying_power",

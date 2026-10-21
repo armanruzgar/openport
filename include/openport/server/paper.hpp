@@ -129,6 +129,13 @@ struct TradingView {
   md::Timestamp replay_start = 0, replay_end = 0;  ///< Risk-setting rollover horizon; zero for live accounts.
 };
 
+/// How an expired position awaiting settlement settles: on the closing print, recorded
+/// or still awaited (with the last print before the close as the fallback) for half an
+/// hour after the close; on the opening print for AM series, live while it can still
+/// come and in a replay whenever it does; or by a value entered by hand.
+[[nodiscard]] std::string_view settle_by(const md::OptionContract& contract, const trading::TradingSnapshot& snapshot,
+                                         const TradingView& view);
+
 /// The market's implied variance of an underlying's log price from its analytics'
 /// market time to that day's regular close: the nearest expiry's at-the-money IV²
 /// times its years (as the IV was solved, on calendar time), with today's share of it

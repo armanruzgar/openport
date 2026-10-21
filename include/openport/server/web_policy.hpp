@@ -99,6 +99,24 @@ struct StaticFile {
                                 const std::vector<std::string>& allowed_origins = {},
                                 const std::vector<std::string>& allowed_hosts = {});
 
+/// `value` percent-encoded as encodeURIComponent does, for a URL fragment the
+/// terminal decodes (the startup link's #token=).
+[[nodiscard]] inline std::string url_component(std::string_view value) {
+  constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  for (const unsigned char c : value) {
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.' || c == '!' || c == '~' || c == '*' || c == '\'' || c == '(' || c == ')') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += kHex[c >> 4];
+      out += kHex[c & 15];
+    }
+  }
+  return out;
+}
+
 /// Ticks are complete snapshots of their stream: preserve the active write buffer
 /// and only the latest pending snapshot of each stream (the engine's tick and the
 /// replay's), so one stream never displaces the other. All methods run on the

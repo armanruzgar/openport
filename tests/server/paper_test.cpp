@@ -1386,6 +1386,12 @@ TEST(CircuitBreakers, BadRecoveryAndFailedWritesReportStorageErrorsWithoutStoppi
         std::string original;
         std::getline(in, original);
         EXPECT_EQ(original, "{broken");
+        // Once the file can be written, the halt still unsaved is written and the error clears.
+        std::filesystem::remove(file.string() + ".tmp");
+        provider.sink->publish(md::UnderlyingQuote{"SPX", time + md::kNanosPerSecond, 5000, 5000, 5000});
+        ASSERT_TRUE(wait_for([&] { return engine.status().circuit_breaker.error.empty(); }));
+        std::ifstream saved(file);
+        EXPECT_FALSE(json::parse(saved).at("halts").empty());
       }
     }
     std::filesystem::remove_all(options.paper_journal.parent_path());
@@ -4185,6 +4191,20 @@ TEST(PaperProbability, PriceOddsAddUpAndTouchingIsLikelierThanFinishingBeyond) {
   EXPECT_EQ(now.above, 1);
   EXPECT_EQ(now.touch, 0);
   EXPECT_EQ(server::price_odds(100, 100, 0).touch, 1);
+}
+
+TEST(PaperSettlement, AReplayAwaitsALateOpeningPrintThatLiveWouldNot) {
+  const auto contract = *md::parse_osi("SPX260918C06000000");
+  trading::TradingSnapshot snapshot;
+  snapshot.time = contract.expiry_time() + 10 * md::kNanosPerMinute;  // 9:40, no print since 9:30
+  server::TradingView view;
+  view.opening_settlement = true;
+  EXPECT_EQ(server::settle_by(contract, snapshot, view), "manual");
+  view.run = server::RunIdentity{};
+  EXPECT_EQ(server::settle_by(contract, snapshot, view), "opening_print");
+  snapshot.time = contract.expiry_time() + md::kNanosPerMinute;
+  view.run.reset();
+  EXPECT_EQ(server::settle_by(contract, snapshot, view), "opening_print");
 }
 
 TEST(PaperBeta, BetaIsTheCovarianceOverTheBenchmarksVarianceOfPairedReturns) {

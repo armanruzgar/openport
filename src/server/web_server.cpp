@@ -12,6 +12,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -199,7 +200,9 @@ std::vector<NamedToken> parse_token_file(std::string_view text, bool allow_empty
   };
   while (std::getline(input, line)) {
     ++number;
-    line = line.substr(0, line.find('#'));
+    // A comment starts a field: '#' inside a secret is part of it.
+    for (std::size_t hash = line.find('#'); hash != std::string::npos; hash = line.find('#', hash + 1))
+      if (hash == 0 || std::isspace(static_cast<unsigned char>(line[hash - 1]))) { line.resize(hash); break; }
     std::istringstream fields(line);
     NamedToken token;
     std::string scopes, extra;
@@ -421,7 +424,13 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       request.method != "DELETE";
   const bool counted_stock_trade = request.method == "POST" &&
       (path == "/stocks/trade" || path == "/stocks/trade/preview");
-  if (sandbox_account && (counted_order || counted_stock_trade)) {
+  // Journaled writes that reduce no risk share the order budget, so a visitor cannot
+  // grow a journal or fill the shared inbox with notes, alerts or grouping. Closing,
+  // exercise and cancelling stay unlimited.
+  const bool counted_annotation = request.method != "DELETE" &&
+      (path == "/alerts" || path.starts_with("/alerts/") || path == "/trades/group" || path == "/trades/ungroup" ||
+       ((path.starts_with("/trades/") || path.starts_with("/days/")) && path.ends_with("/note")));
+  if (sandbox_account && (counted_order || counted_stock_trade || counted_annotation)) {
     if (auto rejected = policy.sandboxes->check_order(account)) return rejected;
   }
   if (request.method == "DELETE") {

@@ -664,6 +664,12 @@ void Desk::expire_sandboxes(const std::vector<std::string>& expired) {
       std::erase_if(accounts_, [&](const auto& account) { return account.id == id; });
       trading_views_.erase(id);
       playbook_publications_.erase(id);
+      // As for a deleted account: notifications and playbook modes forget it too.
+      if (removal_sink_) removal_sink_(id);
+      if (playbooks_) {
+        try { playbooks_->remove_account(id); }
+        catch (const std::exception&) { /* Kept in memory; written with the catalogue's next change. */ }
+      }
     }
     std::error_code error;
     std::filesystem::remove_all(options_.paper_journal.parent_path() / "sandboxes" / id, error);
@@ -1045,8 +1051,8 @@ void Desk::publish_circuit_breaker() {
   });
   if (active != breaker_.active) breaker_dirty_ = true;
   breaker_.active = active;
-  if (breaker_dirty_) save_circuit_breaker();
-  breaker_dirty_ = false;
+  // A failed write stays dirty and is retried on the next publication.
+  if (breaker_dirty_ && save_circuit_breaker()) breaker_dirty_ = false;
   
 }
 
@@ -1118,10 +1124,9 @@ void Desk::load_circuit_breaker() {
   }
 }
 
-void Desk::save_circuit_breaker() {
-  if (!breaker_storage_) return;
+bool Desk::save_circuit_breaker() {
+  if (!breaker_storage_) return true;
   const auto file = options_.paper_journal.parent_path() / "market-halts.json";
-  const auto temporary = std::filesystem::path(file.string() + ".tmp");
   try {
     using nlohmann::json;
     json halts = json::array();
@@ -1132,15 +1137,14 @@ void Desk::save_circuit_breaker() {
     const json data{{"schema", 1}, {"symbol", breaker_.symbol}, {"day", md::format_date(breaker_.day)},
                      {"level", breaker_.level}, {"market_time", breaker_.market_time}, {"halts", halts},
                      {"previous_close", close ? json{{"date", md::format_date(close->date)}, {"price", close->price}} : json(nullptr)}};
-    {
-      std::ofstream out(temporary, std::ios::trunc | std::ios::binary);
-      out << data.dump() << '\n';
-      out.close();
-      if (!out) throw std::runtime_error("cannot write temporary file");
-    }
-    std::filesystem::rename(temporary, file);
+    // A halt cannot be undone: synced like account metadata, so a power loss never
+    // leaves an empty file that would reopen trading.
+    save_account_file(file, data.dump() + '\n');
+    if (breaker_.error.starts_with("market halts: cannot write")) breaker_.error.clear();
+    return true;
   } catch (const std::exception& error) {
     breaker_.error = "market halts: cannot write " + file.string() + ": " + error.what();
+    return false;
   }
 }
 

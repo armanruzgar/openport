@@ -42,6 +42,7 @@
 #include "openport/providers/massive.hpp"
 #include "openport/providers/demo.hpp"
 #include "openport/providers/options.hpp"
+#include "openport/providers/replay.hpp"
 #include "openport/server/api.hpp"
 #include "openport/server/backtest.hpp"
 #include "openport/server/engine.hpp"
@@ -604,6 +605,9 @@ int run(int argc, char** argv) {
   if (const auto* feed = dynamic_cast<providers::DemoProvider*>(provider.get())) {
     if (!settings.explicit_symbols) settings.subscription.underlyings = feed->symbols();
     feed->validate(settings.subscription);
+  } else if (const auto* replay = dynamic_cast<providers::ReplayProvider*>(provider.get())) {
+    // A recording plays what it recorded unless --symbols chooses some of it.
+    if (!settings.explicit_symbols) settings.subscription.underlyings = replay->header().subscription.underlyings;
   }
 
   // Each run records to its own file, named by provider and UTC start time.
@@ -761,7 +765,7 @@ int run(int argc, char** argv) {
   if (token_from_file) {
     std::printf("write token: kept in %s; to trade, open this once in a browser tab:\n"
                 "  http://localhost:%u/#token=%s\n",
-                settings.write_token_file.string().c_str(), web.port(), settings.write_token.c_str());
+                settings.write_token_file.string().c_str(), web.port(), server::url_component(settings.write_token).c_str());
   }
   std::fflush(stdout);
 

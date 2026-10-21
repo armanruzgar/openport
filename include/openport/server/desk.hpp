@@ -206,7 +206,7 @@ class Desk {
   void advance_circuit_breaker(md::Timestamp time);
   void publish_circuit_breaker();
   void load_circuit_breaker();
-  void save_circuit_breaker();
+  bool save_circuit_breaker();  ///< False when the write failed (breaker_.error says why).
   md::Timestamp market_time_ = 0;
   std::map<std::string, md::InstrumentId> instruments_;
   std::map<std::string, std::uint64_t> observations_;

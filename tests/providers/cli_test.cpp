@@ -293,6 +293,17 @@ TEST(Cli, DaemonDefaultsToTheIndexAndFourEtfsAndAllowsAnOverride) {
     EXPECT_EQ(reader.header().subscription.max_expiries, 0);
     EXPECT_DOUBLE_EQ(reader.header().subscription.strike_window, 0);
   }
+  {
+    // Without --symbols a recording of fewer symbols plays those, not the live defaults.
+    test::RecordingFile spx, recorded;
+    auto only = test::recording_header();
+    only.subscription.underlyings = {"SPX"};
+    test::record_events(spx.path, {}, only);
+    const auto result = run_daemon("--provider replay --option file='" + spx.path.string() +
+        "' --option speed=max --no-paper --record '" + recorded.path.string() + "' --address invalid-address");
+    EXPECT_EQ(result.output.find("replay: unknown symbol"), std::string::npos) << result.output;
+    EXPECT_EQ(md::RecordingReader(recorded.path).header().subscription.underlyings, std::vector<std::string>{"SPX"});
+  }
 }
 
 // U2: help is an answer, not an error, and its usage lines name every flag.
