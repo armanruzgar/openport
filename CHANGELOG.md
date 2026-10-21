@@ -5,6 +5,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Import historical options from Massive (Polygon).** Historical contract discovery,
   paginated quotes and trades preserve vendor timestamps. Tested with generated
   saved-response fixtures; paid historical access has not been validated live.
+  Quote and trade pages grow up to Massive's 50,000-row maximum within the buffer cap.
 - **Import date ranges and resume.** All importers accept inclusive `--import-days`
   ranges and repeated dates, skip calendar closures, report progress and skip only
   matching complete recordings.

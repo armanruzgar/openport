@@ -189,8 +189,9 @@ and bearer authentication with `MASSIVE_API_KEY`. Historical contracts come from
 contracts that have since expired. Options quotes and trades use `/v3/quotes/O:...`
 and `/v3/trades/O:...`, ascending nanosecond timestamp bounds and same-origin
 pagination. One page per contract/stream is retained across import windows, so
-quiet periods do not trigger repeated empty requests. Pages are bounded, with at
-most one million buffered records across streams. SIP timestamps order delivery;
+quiet periods do not trigger repeated empty requests. Pages request Massive's
+50,000-row maximum, reduced so that one page per stream fits the one-million-record
+buffer (never below 100 rows); a chain of 20 or fewer streams uses full pages. SIP timestamps order delivery;
 trades preserve an exchange timestamp when supplied, otherwise their SIP time.
 No current snapshots, OI, vendor Greeks or underlying prices enter the history.
 Nonstandard deliverables are excluded; corrected/cancelled trades fail explicitly

@@ -461,6 +461,8 @@ TEST(HistoryImport, MassiveSavedQuotesAndTradesKeepSipAndExchangeClocks) {
   EXPECT_EQ(volume[0].contracts, 3);
   EXPECT_EQ(http.urls.size(), 5U) << "retain page lookahead rather than fetching every empty window";
   EXPECT_NE(http.urls[0].find("as_of=2026-09-22"), std::string::npos);
+  for (std::size_t index = 1; index < http.urls.size(); ++index)
+    EXPECT_NE(http.urls[index].find("&limit=50000"), std::string::npos) << http.urls[index];
   for (const auto& headers : http.sent_headers) EXPECT_EQ(headers, (net::Headers{{"Authorization", "Bearer test-key"}}));
 }
 TEST(HistoryImport, MassivePaginationRetryAndFailuresAreBoundedAndPrivate) {
@@ -502,6 +504,17 @@ TEST(HistoryImport, MassivePaginationRetryAndFailuresAreBoundedAndPrivate) {
     }
     EXPECT_NE(std::find(waits.begin(), waits.end(), std::chrono::seconds(2)), waits.end());
   }
+}
+
+TEST(HistoryImport, MassivePagesShareTheBufferCapAcrossStreams) {
+  EXPECT_EQ(providers::massive_history_page_size(0), 50'000U);
+  EXPECT_EQ(providers::massive_history_page_size(4), 50'000U);
+  EXPECT_EQ(providers::massive_history_page_size(20), 50'000U);
+  EXPECT_EQ(providers::massive_history_page_size(400), 2'500U);
+  EXPECT_EQ(providers::massive_history_page_size(10'000), 100U);
+  EXPECT_EQ(providers::massive_history_page_size(1'000'000), 100U);
+  for (const std::size_t streams : {1U, 21U, 400U, 9'999U})
+    EXPECT_LE(streams * providers::massive_history_page_size(streams), 1'000'000U) << streams;
 }
 
 class DailyHistory final : public providers::HistorySource {

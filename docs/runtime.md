@@ -382,8 +382,8 @@ capped at 32 MiB and 250,000 rows after the HTTP client's bounded download. Exce
 a cap fails explicitly; reduce symbols or, for ThetaData/Massive, expiries and retry. Memory grows with the
 chain and one window, not a day's quotes. ThetaData requests each selected expiry
 separately, so unrestricted chains can take many requests. Progress reports completed
-windows and written events. Massive retains one small page per quote/trade stream,
-with a one-million-record buffer cap and 32 MiB response cap; it follows pagination
+windows and written events. Massive retains one page per quote/trade stream, sized
+from 100 to 50,000 rows so all pages fit a one-million-record buffer cap and 32 MiB response cap; it follows pagination
 as each stream reaches its next window. Quotes and trades require historical plan
 entitlements and can take many requests for broad chains. Disk space must accommodate
 the full recording.

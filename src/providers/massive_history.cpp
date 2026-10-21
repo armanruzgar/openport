@@ -16,6 +16,8 @@ namespace openport::providers {
 namespace {
 using nlohmann::json;
 constexpr std::size_t kMaxPending = 1'000'000;
+// Massive documents a 50,000-row maximum for /v3/quotes and /v3/trades pages.
+constexpr std::size_t kMaxPage = 50'000, kMinPage = 100;
 
 double number(const json& row, const char* field) {
   if (!row.contains(field) || !row[field].is_number())
@@ -86,11 +88,15 @@ class MassiveHistory final : public HistorySource {
           stream.trades = trades;
           stream.cursor.path = std::string(trades ? "/v3/trades/" : "/v3/quotes/") + ticker;
           stream.cursor.url = base_ + stream.cursor.path + "?timestamp.gte=" + std::to_string(day.begin) +
-              "&timestamp.lt=" + std::to_string(day.end) + "&order=asc&sort=timestamp&limit=100";
+              "&timestamp.lt=" + std::to_string(day.end) + "&order=asc&sort=timestamp&limit=";
           streams_.push_back(std::move(stream));
         }
       }
     }
+    // Every stream may hold one page, so pages share the buffer cap: large pages
+    // for narrow chains, never fewer requests than the cap allows for broad ones.
+    const auto limit = std::to_string(massive_history_page_size(streams_.size()));
+    for (auto& stream : streams_) stream.cursor.url += limit;
   }
   void read(HistoryWindow window, md::EventSink& sink) override {
     for (auto& stream : streams_) {
@@ -165,7 +171,7 @@ class MassiveHistory final : public HistorySource {
       if (!body.is_object() || body.value("status", "") != "OK") throw std::runtime_error("Massive history: invalid or unsuccessful response");
       // Empty successful responses may omit the optional results field.
       auto rows = body.value("results", json::array());
-      if (!rows.is_array() || rows.size() > 50'000) throw std::runtime_error("Massive history: invalid results array");
+      if (!rows.is_array() || rows.size() > kMaxPage) throw std::runtime_error("Massive history: invalid results array");
       auto next = body.value("next_url", "");
       if (!next.empty()) {
         const auto url = net::parse_url(next);
@@ -191,5 +197,8 @@ class MassiveHistory final : public HistorySource {
 }
 std::unique_ptr<HistorySource> massive_history(net::HttpClient& http, std::string key, HistoryWait wait) {
   return std::make_unique<MassiveHistory>(http, std::move(key), std::move(wait));
+}
+std::size_t massive_history_page_size(std::size_t streams) noexcept {
+  return std::clamp(kMaxPending / std::max<std::size_t>(streams, 1), kMinPage, kMaxPage);
 }
 }  // namespace openport::providers
