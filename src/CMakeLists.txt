@@ -137,6 +137,8 @@ if(OPENPORT_BUILD_PROVIDERS)
   # The engine thread, JSON API and HTTP/WebSocket server behind openportd.
   add_library(openport_server
     server/candles.cpp
+    server/flow.cpp
+    server/flow_api.cpp
     server/metric_cache.cpp
     server/series.cpp
     server/series_api.cpp

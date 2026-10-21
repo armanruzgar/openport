@@ -26,6 +26,8 @@ Engine::Options driver_options(md::Provider& provider, const md::Subscription& s
     options.candles = std::make_shared<CandleStore>();
     options.clock = [replay] { return replay->time(); };
   }
+  // Every engine keeps its own tape: a replay must never show the live feed's prints.
+  options.flow = std::make_shared<FlowTape>(options.flow ? options.flow->options() : FlowTape::Options{});
   if (options.sandboxes && (provider.name() != "demo" || !options.paper_enabled || options.paper_journal.empty()))
     throw std::invalid_argument("Sandboxes require --provider demo and a paper journal");
   if (auto* demo = dynamic_cast<providers::DemoProvider*>(&provider)) {

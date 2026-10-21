@@ -2,6 +2,7 @@
 #include "openport/server/sandboxes.hpp"
 #include "metric_cache.hpp"
 #include "series_api.hpp"
+#include "flow_api.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -780,6 +781,7 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   // History can arrive before the first analysis.
   if (view == "candles") return candles_response(source, symbol, query);
   if (view == "series") return series_response(source, symbol, query);
+  if (view == "flow") return flow_response(source, symbol, query);
   const auto metrics = source.metrics(symbol);
   if (!metrics) return error(404, "no data for " + symbol + " yet");
 
