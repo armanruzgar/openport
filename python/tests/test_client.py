@@ -469,6 +469,11 @@ def test_risk_reads_pass_smile_dynamics_only_when_chosen(stub):
     client.risk_profile("SPX", dynamics="sticky_moneyness")
     query = parse_qs(urlsplit(stub.requests[-1][1]).query)
     assert query["dynamics"] == ["sticky_moneyness"] and query["underlying"] == ["SPX"]
+    client.risk_scenarios("beta", [0, 5], term_scaled=True, dynamics="sticky_delta")
+    query = parse_qs(urlsplit(stub.requests[-1][1]).query)
+    assert query["dynamics"] == ["sticky_delta"] and query["mode"] == ["beta"] and query["term_scaled"] == ["true"]
+    client.risk_scenarios()
+    assert "dynamics" not in parse_qs(urlsplit(stub.requests[-1][1]).query)
 
 
 def test_reload_tokens_uses_live_admin_route_even_from_replay(stub):

@@ -23,9 +23,9 @@ export function DynamicsNote({ dynamics, fallback }: { dynamics?: SmileDynamics;
   </p>
 }
 
-export function DynamicsSelect({ value, onChange }: { value: SmileDynamics; onChange: (value: SmileDynamics) => void }) {
+export function DynamicsSelect({ value, onChange, label = "Smile dynamics" }: { value: SmileDynamics; onChange: (value: SmileDynamics) => void; label?: string }) {
   return <label className="flex flex-col gap-1 text-muted">Smile
-    <select aria-label="Smile dynamics" className="trade-input" value={value} onChange={(e) => onChange(e.target.value as SmileDynamics)}>
+    <select aria-label={label} className="trade-input" value={value} onChange={(e) => onChange(e.target.value as SmileDynamics)}>
       {dynamicsChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
     </select></label>
 }

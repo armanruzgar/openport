@@ -131,7 +131,8 @@ struct ScenarioGrid {
 };
 void validate_scenarios(const ScenarioConfig& config);
 /// `smile` chooses how IVs move with spot (see scenario_vol); the default sticky
-/// strike is what the account's rules use.
+/// strike is what the account's rules use. It applies to every grid mode: time,
+/// beta-weighted and term-scaled grids are risk profile columns under the same smile.
 [[nodiscard]] ScenarioGrid scenario_grid(const Ledger& ledger,
     const Valuations& valuations, const ScenarioConfig& config,
     Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices = {},

@@ -3063,8 +3063,13 @@ past expiry. `term_scaled=true` multiplies each volatility shock by
 `sqrt(30 / max(1, remaining_days))`, relative to 30 days, after time advances.
 Tenors below one day use a one-day cap; this is a model assumption, not observed
 volatility. `range` and `steps` select the spot axis as in the profile.
+`dynamics=sticky_moneyness` or `sticky_delta` moves each smile along its
+underlying's SSVI surface in every mode, exactly as the profile does ([smile
+dynamics](#smile-dynamics)); a term-scaled shock is applied on top of the moved
+smile. The response names `dynamics` and lists `surface_fallback` underlyings
+priced sticky strike for want of a surface.
 
-The terminal's Scenario explorer offers mode, time and term scaling controls.
+The terminal's Scenario explorer offers mode, time, term scaling and smile controls.
 These are read-only analyses: order previews, What-if max loss, grid-loss rules
 and portfolio margin retain their existing configured parallel, zero-day grid.
 
@@ -3289,7 +3294,7 @@ and drift are left out, and touch odds overstate a level reached only on paper.
 The scenario grid and the risk profile hold each strike's IV fixed as spot moves
 (sticky strike); this is what the account's rules, margin scans and breach
 estimates use, and it never changes. For analysis, `GET /api/risk?dynamics=` and
-`GET /api/risk/profile?dynamics=` (and their replay mirrors) also accept
+`GET /api/risk/profile?dynamics=` and `GET /api/risk/scenarios?dynamics=` (and their replay mirrors) also accept
 `sticky_moneyness` and `sticky_delta`, which move each smile with the forward
 along the underlying's fitted SSVI surface ([SVI and SSVI](svi.md)). The grid read
 recomputes the account's configured spot × vol grid; the published snapshot's grid

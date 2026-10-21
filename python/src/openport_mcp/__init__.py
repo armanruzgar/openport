@@ -297,10 +297,11 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     @server.tool()
     def risk_scenarios(account: str | None = None, mode: str = "parallel", days: list[float] | None = None,
                        benchmark: str | None = None, vols: list[float] | None = None,
-                       term_scaled: bool = False, replay: bool = False) -> dict:
-        """Read-only spot × volatility × time scenarios, optionally beta-weighted and term-scaled."""
+                       term_scaled: bool = False, dynamics: str | None = None, replay: bool = False) -> dict:
+        """Read-only spot × volatility × time scenarios, optionally beta-weighted and term-scaled.
+        dynamics is sticky_strike (default), sticky_moneyness or sticky_delta, as in risk_profile."""
         target = selected(account, replay)
-        return result(target, lambda: target.risk_scenarios(mode, days, benchmark, vols, term_scaled))
+        return result(target, lambda: target.risk_scenarios(mode, days, benchmark, vols, term_scaled, dynamics=dynamics))
 
     @server.tool()
     def risk_profile(account: str | None = None, underlying: str | None = None, benchmark: str | None = None,

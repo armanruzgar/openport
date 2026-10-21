@@ -5353,6 +5353,21 @@ TEST_F(PaperEngine, ScenarioExplorerAddsDatesAndLeavesRuleGridUnchanged) {
   EXPECT_EQ(grid["slices"][1]["days"], 1);
   EXPECT_EQ(read(*engine, "/api/risk")["scenarios"], before);
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/scenarios?mode=unknown"}, *engine).status, 400);
+  // Smile dynamics apply to every explorer mode and are named, as on the profile.
+  EXPECT_EQ(grid["dynamics"], "sticky_strike");
+  EXPECT_NE(grid["model"].get<std::string>().find("sticky strike"), std::string::npos);
+  for (const auto* dynamics : {"sticky_moneyness", "sticky_delta"}) {
+    const auto moved = read(*engine, std::string("/api/risk/scenarios?mode=beta&days=0,1,40&term_scaled=true&dynamics=") + dynamics);
+    EXPECT_EQ(moved["dynamics"], dynamics);
+    EXPECT_TRUE(moved["complete"]);
+    ASSERT_EQ(moved["slices"].size(), 3U);
+    const auto profile = read(*engine, std::string("/api/risk/profile?underlying=SPX&days=0&dynamics=") + dynamics);
+    EXPECT_EQ(moved["surface_fallback"], profile["surface_fallback"]);
+    // Without a surface the grid is the sticky-strike grid, and says why.
+    if (moved["surface_fallback"] == json::array({"SPX"})) EXPECT_EQ(moved["slices"], grid["slices"]);
+  }
+  EXPECT_EQ(server::handle_api({"GET", "/api/risk/scenarios?dynamics=sticky"}, *engine).status, 400);
+  EXPECT_EQ(read(*engine, "/api/risk")["scenarios"], before);
 }
 TEST_F(PaperEngine, HistoricalRiskLabelsItsInputsAndReportsInsufficientHistory) {
   seed();

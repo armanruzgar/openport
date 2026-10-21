@@ -196,5 +196,60 @@ TEST(SmileDynamics, ProfileCurvesMoveWithTheSurfaceAndReportFallbacks) {
   EXPECT_EQ(fallback.curves[0].pnl, sticky.curves[0].pnl);
 }
 
+// The risk branch's time, beta-weighted and term-scaled grids are profile columns,
+// so smile dynamics reach them too: each cell is the profile under the same choice.
+TEST(SmileDynamics, TimeBetaAndTermScaledGridsMoveSmilesAsTheProfileDoes) {
+  ScriptedMarket f;
+  const auto c = config();
+  TradingSession s(c, f.time);
+  f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("long", 1), f.time).decision.ok());
+  ScenarioConfig scan;
+  scan.spot_percent = {-10, 0, 10};
+  scan.vol_points = {-5, 0, 5};
+  scan.days = {0, 5};
+  scan.beta_weighted = true;
+  scan.term_scaled = true;
+  scan.betas = {{"SPX", 1.2}};
+  auto grid_config = s.config();
+  grid_config.scenarios = scan;
+  const SmileSurfaces surfaces{{"SPX", skewed()}};
+  const auto sticky = snapshot_scenarios(*s.snapshot(), grid_config, s.valuations(), {});
+  for (auto dynamics : {SmileDynamics::StickyMoneyness, SmileDynamics::StickyDelta}) {
+    const SmileModel smile{dynamics, &surfaces};
+    const auto grid = snapshot_scenarios(*s.snapshot(), grid_config, s.valuations(), smile);
+    ASSERT_TRUE(grid.complete);
+    EXPECT_TRUE(grid.surface_fallback.empty());
+    ASSERT_EQ(grid.cells.size(), 18U);
+    ProfileConfig p;
+    p.percent = scan.spot_percent;
+    p.days = scan.days;
+    p.betas = scan.betas;
+    p.term_scaled = true;
+    p.vol_floor = scan.vol_floor;
+    p.smile = smile;
+    for (std::size_t vol = 0; vol < scan.vol_points.size(); ++vol) {
+      p.vol_points = scan.vol_points[vol];
+      const auto profile = snapshot_profile(*s.snapshot(), s.config(), s.valuations(), p, 5000);
+      ASSERT_TRUE(profile.complete);
+      for (std::size_t day = 0; day < scan.days.size(); ++day)
+        for (std::size_t spot = 0; spot < scan.spot_percent.size(); ++spot) {
+          const auto index = (day * scan.spot_percent.size() + spot) * scan.vol_points.size() + vol;
+          EXPECT_DOUBLE_EQ(grid.cells[index].pnl, profile.curves[day].pnl[spot]) << index;
+          EXPECT_EQ(grid.cells[index].days, scan.days[day]);
+          // A long call on a negative skew gains from the slide in a rally and loses in a selloff.
+          if (scan.spot_percent[spot] > 0) EXPECT_GT(grid.cells[index].pnl, sticky.cells[index].pnl) << index;
+          if (scan.spot_percent[spot] < 0) EXPECT_LT(grid.cells[index].pnl, sticky.cells[index].pnl) << index;
+        }
+    }
+  }
+  // Without a surface the multi-day grid names the underlying and stays sticky strike.
+  const SmileSurfaces none;
+  const auto fallback = snapshot_scenarios(*s.snapshot(), grid_config, s.valuations(), {SmileDynamics::StickyDelta, &none});
+  EXPECT_EQ(fallback.surface_fallback, std::vector<std::string>{"SPX"});
+  ASSERT_EQ(fallback.cells.size(), sticky.cells.size());
+  for (std::size_t i = 0; i < sticky.cells.size(); ++i) EXPECT_EQ(fallback.cells[i].pnl, sticky.cells[i].pnl);
+}
+
 }  // namespace
 }  // namespace openport::trading
