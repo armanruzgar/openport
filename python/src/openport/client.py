@@ -204,6 +204,10 @@ class Client:
         """Admin: seed past moves from symbol,date,session,implied_move,realized_move[,label] (percent)."""
         return self._request("POST", "/earnings/import", {"csv": csv}, control=True, retry=False)
 
+    def delete_imported_earnings(self) -> JSON:
+        """Admin: remove every imported earnings move; recorded moves stay."""
+        return self._request("DELETE", "/earnings/imported", control=True, retry=False)
+
     def analysis_portfolios(self) -> JSON:
         """Admin, reads included: imported outside portfolios."""
         return self._request("GET", "/analysis/portfolios", control=True)

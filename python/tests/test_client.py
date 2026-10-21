@@ -528,6 +528,7 @@ def test_journal_practice_calls_preserve_explicit_targets_and_uint64_seeds(stub)
     ("flow", ("SPX", 50, "call", ["bid", "ask"]), "GET", "/api/underlyings/SPX/flow", "Flow"),
     ("earnings", ("AAPL",), "GET", "/api/earnings", "EarningsHistory"),
     ("import_earnings", ("symbol,date,session,implied_move,realized_move\n",), "POST", "/api/earnings/import", "EarningsImport"),
+    ("delete_imported_earnings", (), "DELETE", "/api/earnings/imported", "EarningsRemoved"),
     ("analysis_portfolios", (), "GET", "/api/analysis/portfolios", "AnalysisPortfolios"),
     ("import_portfolio", ("IRA", "symbol,quantity\nSPY,1\n"), "POST", "/api/analysis/portfolios", "AnalysisPortfolio"),
     ("analysis_portfolio", ("ira",), "GET", "/api/analysis/portfolios/ira", "AnalysisPortfolio"),
