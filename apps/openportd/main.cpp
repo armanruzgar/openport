@@ -172,6 +172,11 @@ int usage(const char* error = nullptr) {
       "         --option option_size_unit=contracts only after confirming option size units\n"
       "tastytrade: production OAuth only; DXLink time units unknown unless confirmed with\n"
       "            --option dxlink_time_unit=milliseconds\n"
+      "schwab: Trader API OAuth refresh token; poll interval follows the request budget\n"
+      "alpaca: equity and ETF options only (no SPX); --option feed=indicative|opra\n"
+      "        --option stock_feed=iex|sip|delayed_sip\n"
+      "ibkr: local Client Portal gateway you have logged in to; needs --expiries and --window;\n"
+      "      --option base_url=https://localhost:5000/v1/api --option max_lines=100\n"
       "record: create a new compressed event file (existing files are never overwritten);\n"
       "        --record-dir names one per run by provider and start time there, and the\n"
       "        web terminal replays recordings from it (default ~/.openport/recordings)\n"
@@ -192,7 +197,9 @@ int usage(const char* error = nullptr) {
   std::fprintf(out,
                "\nkeys are read from the environment: DATABENTO_API_KEY, MASSIVE_API_KEY,\n"
                "TRADIER_ACCESS_TOKEN, TASTYTRADE_CLIENT_SECRET, TASTYTRADE_REFRESH_TOKEN,\n"
-               "and optionally TASTYTRADE_CLIENT_ID. No broker credential flags.\n");
+               "optionally TASTYTRADE_CLIENT_ID, SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET,\n"
+               "SCHWAB_REFRESH_TOKEN, APCA_API_KEY_ID and APCA_API_SECRET_KEY. No broker\n"
+               "credential flags.\n");
   std::fprintf(out, "\nplan presets (--plan seeds any of them in a new journal; over HTTP, steps marked 'after X' need a pass of X first):\n");
   for (const auto& plan : server::plan_presets()) {
     std::fprintf(out, "  %s", plan.id.c_str());

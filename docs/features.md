@@ -371,7 +371,8 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   Status shows per-underlying feed health, sessions, queue/analytics timings and
   local volatility history. Cboe's holiday schedule is read daily; market-wide
   breakers model S&P 500 drops of 7%, 13% and 20% with halt/resume banners.
-- Cboe delayed, Databento, Massive, ThetaData, Tradier and tastytrade supply data.
+- Cboe delayed, Databento, Massive, ThetaData, Tradier, tastytrade, Charles Schwab,
+  Alpaca (equity and ETF options only) and Interactive Brokers supply data.
   Except for Cboe, adapters have sample-response tests but have not been run live
   with a key/account. Broker adapters read data only and cannot place orders.
   [Provider configuration](configuration.md#providers).

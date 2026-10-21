@@ -179,6 +179,14 @@ TEST(Cli, BrokerNamesHelpSandboxAndCredentialFlagsAreValidatedOffline) {
   rejects("openport-probe", "tastytrade SPX --option sandbox=true", "funded production");
   rejects("openportd", "--provider tradier --option access_token=fake", "unknown provider option");
   rejects("openport-probe", "tastytrade SPX --option refresh_token=fake", "unknown provider option");
+  rejects("openportd", "--provider schwab --option refresh_token=fake", "unknown provider option");
+  rejects("openportd", "--provider alpaca --symbols SPX,SPY", "no index options");
+  rejects("openport-probe", "alpaca SPY --option feed=sip", "indicative or opra");
+#ifdef OPENPORT_WITH_IBKR
+  rejects("openportd", "--provider ibkr --symbols SPY", "--expiries and --window are required");
+  rejects("openport-probe", "ibkr SPY --expiries 1 --window 0.05 --option base_url=https://example.com",
+          "local Client Portal gateway");
+#endif
 }
 TEST(Cli, ReplayAndRecordValidationWorksInBothApplications) {
   openport::test::RecordingFile file;

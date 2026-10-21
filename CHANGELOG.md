@@ -1,5 +1,23 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+### Providers
+
+- **Charles Schwab market data.** `--provider schwab` polls Trader API option
+  chains with the underlying quote, open interest, volume, delta and gamma, using
+  an OAuth refresh token from the environment. Health follows each response's
+  `isDelayed`. Tested against documentation-shaped samples; not yet run live.
+- **Alpaca market data.** `--provider alpaca` polls option snapshots for equity
+  and ETF underlyings from the free indicative feed (reported as delayed, derived
+  quotes) or OPRA with a subscription. Alpaca has no index options, so SPX and
+  other indexes are refused. Not yet run live.
+- **Interactive Brokers market data.** `--provider ibkr` reads Client Portal Web
+  API snapshots through your logged-in local gateway: it keeps the session alive,
+  maps contract ids to OSI symbols, paces requests and counts market-data lines.
+  Requires `--expiries` and `--window`. Build option `OPENPORT_WITH_IBKR` (on by
+  default). Not yet run live.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans
