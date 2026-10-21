@@ -17,8 +17,8 @@ export function useBriefMarket(symbol: string, enabled = true, history = true) {
     queryKey: marketKey("summary"), queryFn: ({ signal }) => api.summary(symbol, signal), enabled: active, placeholderData: (previous, query) => placeholder(previous, query), gcTime: 60_000,
   })
   const volatility = useQuery({
-    queryKey: marketKey("volatility"), queryFn: ({ signal }) => api.volatility(symbol, signal), enabled: active,
-    placeholderData: (previous, query) => placeholder(previous, query), refetchInterval: 60_000, gcTime: 60_000,
+    queryKey: [...marketKey("volatility"), live.account], queryFn: ({ signal }) => api.volatility(symbol, signal), enabled: active,
+    placeholderData: (previous, query) => query?.queryKey.at(-1) === live.account ? placeholder(previous, query ? { queryKey: query.queryKey.slice(0, -1) } : undefined) : undefined, refetchInterval: 60_000, gcTime: 60_000,
   })
   const now = marketTime(live, symbol, summary.data?.as_of)
   const minute = Number.isFinite(now) ? Math.floor(now / 60_000) : null

@@ -22,6 +22,17 @@ function wireType(schema: Schema): string {
 }
 
 describe("checked API core types", () => {
+  it("keeps signed history statistics and daily tracking fields on the wire", () => {
+    for (const field of ["current", "rank", "percentile", "z_score"]) {
+      expect(wireType(spec.components.schemas.HistoryRank!.properties![field]!)).toBe("Num")
+      expect(source).toContain(`${field}: Num`)
+    }
+    expect(wireType(spec.components.schemas.Volatility!.properties!.history_ranks!)).toBe("Record<string, HistoryRank>")
+    for (const field of ["vix", "vix_minus_mfiv", "rr25", "bf25", "ratio9_30", "ratio30_93"]) {
+      expect(wireType(spec.components.schemas.VolatilitySeriesRow!.properties![field]!)).toBe("null | number")
+      expect(source).toContain(`${field}?: Num`)
+    }
+  })
   it("keeps position disposal fields and closure kinds in sync", () => {
     const position = /export interface Position \{([\s\S]*?)\n\}/.exec(source)![1]!
     for (const field of ["no_bid", "do_not_exercise"]) {
@@ -51,7 +62,7 @@ describe("checked API core types", () => {
       expect(source).toMatch(/export type CreateAccountRequest = [^\n]+& MarginModel/)
     }
   })
-  it.each(["ProgramCosts", "SizeScaling", "SizeScale", "SizeScalingStatus", "AttemptSummary", "ScalingStep", "ScalingStatus", "PayoutRules", "PayoutStatus", "PayoutBestDay", "Candle", "OptionQuote", "ChainRow", "Fill", "OrdersResponse", "EquitySample", "NotificationChannel", "NotificationStatus", "Alert", "AlertsResponse", "AlertResponse", "AlertDeleted",
+  it.each(["HistoryRank", "EventVolatility", "VolatilityScannerRow", "VolatilityScanner", "ProgramCosts", "SizeScaling", "SizeScale", "SizeScalingStatus", "AttemptSummary", "ScalingStep", "ScalingStatus", "PayoutRules", "PayoutStatus", "PayoutBestDay", "Candle", "OptionQuote", "ChainRow", "Fill", "OrdersResponse", "EquitySample", "NotificationChannel", "NotificationStatus", "Alert", "AlertsResponse", "AlertResponse", "AlertDeleted",
     "Guardrails", "GuardrailState", "AccountDamage", "JournalSize", "EquityHistory", "VerificationCost", "SettlementSource", "SettlementRecord", "SettlementsResponse", "StockPreview", "MarginLeg", "MarginPart", "MarginScan", "MarginUnderlying", "FillFees", "FeeSchedule", "PriceRange", "PriceOdds", "ProbabilityHorizon", "Probability",
     "ProfileLevel", "ProfileHorizon", "Walk", "WalkStep", "Limits", "TokenStatus", "RunJournal", "RunInput", "VerificationRun", "RunVerification", "ForwardTestWindow", "ForwardTest", "PlaybookReport"])("%s matches OpenAPI fields, types and nullability", (name) => {
     const body = new RegExp(`export interface ${name} \\{([^}]+)\\}`).exec(source)?.[1]

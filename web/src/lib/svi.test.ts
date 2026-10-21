@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { SurfaceExpiry, SviFit, SsviFit } from "../api/types"
-import { sampleSvi, sampleSsvi, smileSeries, sviVol, ssviVol } from "./svi"
+import { comparisonSeries, sampleSvi, sampleSsvi, smileSeries, sviVol, ssviVol } from "./svi"
 
 const fit: SviFit = { a: .02, b: .1, rho: -.4, m: .02, sigma: .15, rmse_vol_points: .01,
   points: 50, status: "ok", reason: null, fit_ms: 1, butterfly_min_g: .3, butterfly_k: .2, butterfly_ok: true }
@@ -84,4 +84,18 @@ describe("SSVI surface curves", () => {
       expect(smileSeries([ssviExpiry], "strike", mode, undefined, ssvi).map((s) => s.id)).toEqual([`${expiry.id}-${mode}`])
     }
   })
+})
+
+it("samples stored curves at their original tenor/forward and matches exact expiry ids", () => {
+  const stored = { ...expiry, forward: 5100, svi_years: 1, points: [], calendar_ok: false }
+  const history = { symbol: "SPX", enabled: true, snapshots: [], comparisons: [
+    { label: "prior_close" as const, date: "2026-09-21", snapshot: { as_of: "2026-09-21T19:59:00Z", date: "2026-09-21", slot: "close", spot: 5100, model: "svi" as const, expiries: [stored] } },
+    { label: "week" as const, date: "2026-09-15", snapshot: null },
+  ] }
+  const curves = comparisonSeries(expiry, history, "strike")
+  expect(curves).toHaveLength(2)
+  expect(curves[1]!.points[120]!.x).toBeCloseTo(5100)
+  expect(curves[1]!.points[120]!.y).toBe(sviVol(fit, 0, 1))
+  expect(curves[1]!.label).toContain("grid violation")
+  expect(comparisonSeries({ ...expiry, id: "different" }, history, "strike")).toHaveLength(1)
 })

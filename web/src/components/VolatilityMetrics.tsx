@@ -93,5 +93,17 @@ export function VolatilityDetails({ data }: { data: Volatility }) {
       </Table>
       <p className="mt-2 text-[11px] text-muted">{data.sources.implied_moves}</p>
     </Panel>
+    {!!data.event_volatility?.length && <Panel title="Event volatility · derived two-expiry estimate" className="xl:col-span-2">
+      <Table label="Event volatility" headings={["Event / session", "Implied event move", "Points", "Expiries / status"]}>
+        {data.event_volatility.map((e, i) => <tr key={`${e.date}-${i}`} className="border-t border-border/40">
+          <Cell first><div>{e.label}</div><div className="text-muted">{e.date} · move session {e.session}{e.timing === "session" && " · timing assumed at open"}</div></Cell>
+          <Cell>{vp(e.percent)}{e.percent == null ? "" : "%"}{metricMark(e)}</Cell><Cell>{vp(e.points)}</Cell>
+          <Cell title={`Baseline variance ${vp(e.baseline_variance, 6)}; premium ${vp(e.variance_premium, 6)}`}>
+            {e.near && e.next && <div>{e.near} / {e.next}</div>}{e.reason?.replaceAll("_", " ") ?? "Derived event premium"}
+          </Cell>
+        </tr>)}
+      </Table>
+      <p className="mt-2 text-[11px] text-muted">One standard deviation from excess variance above a constant business-session baseline, using adjacent expiries on both sides of the event. AMC belongs to the next session. Other known events in the solve, missing brackets or negative premiums leave the move unavailable. This model estimate is not an observed or forecast event return.</p>
+    </Panel>}
   </div>
 }

@@ -39,3 +39,11 @@ it("shows fallback reasons, arbitrage flags and escaped event labels in scrollab
   expect(html).toContain("overflow-auto")
   expect(html).not.toContain("NaN")
 })
+
+it("shows derived event premiums beside their labels and keeps unavailable moves missing", () => {
+  const event = { date: "2026-09-25", session: "2026-09-28", label: "Earnings · AMC", timing: "after_close", time: null,
+    near: "2026-09-25PM", next: "2026-09-28AM", baseline_variance: .0001, variance_premium: .0004,
+    percent: 2, points: 2, forward: 100, proxy: false, truncated: false, calendar_arbitrage: false, reason: null }
+  const html = renderToStaticMarkup(<VolatilityDetails data={{ ...data, event_volatility: [event, { ...event, label: "Missing", percent: null, points: null, reason: "event_not_bracketed" }] }} />)
+  for (const text of ["Earnings · AMC", "2.00%", "move session 2026-09-28", "event not bracketed", "constant business-session baseline", "—"]) expect(html).toContain(text)
+})

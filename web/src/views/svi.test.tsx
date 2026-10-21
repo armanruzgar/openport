@@ -17,6 +17,17 @@ const surface: Surface = { symbol: "SPX", spot: 5000, as_of: null, version: 1,
     svi_status: "too_few_points", svi_reason: "need at least five distinct two-sided OTM IV points", svi_points: 3, points: [] }] }
 
 describe("SVI view", () => {
+  it("shows unavailable comparison dates and an accessible same-expiry selector", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity } } })
+    client.setQueryData(["surface", "SPX", 6, .1, 1], surface)
+    client.setQueryData(["surface-history", "SPX", 0], { symbol: "SPX", enabled: true, snapshots: [], comparisons: [
+      { label: "prior_close", date: "2026-09-21", snapshot: null }, { label: "week", date: "2026-09-15", snapshot: null },
+      { label: "month", date: "2026-08-21", snapshot: null },
+    ] })
+    const html = renderToStaticMarkup(<QueryClientProvider client={client}><SmileView symbol="SPX" /></QueryClientProvider>)
+    client.clear()
+    for (const text of ['aria-label="Comparison expiry"', "Prior close", "1 week ago", "1 month ago", "no close snapshot", "own tenor and forward"]) expect(html).toContain(text)
+  })
   it("shows parameters, units, explicit failures and both arbitrage badges", () => {
     const html = renderToStaticMarkup(<SviTable expiries={surface.expiries} violations={surface.calendar_violations!} />)
     expect(html).toContain("Butterfly violation")

@@ -10,7 +10,7 @@ import { volatilityTerm, volPoints } from "../lib/volatility"
 import { SviTable } from "../components/SviTable"
 import { Empty, Panel, Segmented } from "../components/ui"
 import { days, expiryLabel, fixed, isNum, pct, price, vol } from "../lib/format"
-import { smileSeries, type SmileMode } from "../lib/svi"
+import { comparisonLabels, comparisonSeries, smileSeries, type SmileMode } from "../lib/svi"
 import { matchingPayload } from "../lib/payload"
 
 // Natural tenors, placed on the square-root time axis.
@@ -18,11 +18,13 @@ const tenorTicks = [7, 30, 91, 182, 365, 730, 1826].map(Math.sqrt)
 const tenor = (d: number) => (d < 25 ? "1w" : d < 60 ? "1m" : d < 120 ? "3m" : d < 250 ? "6m" : d < 500 ? "1y" : d < 1000 ? "2y" : "5y")
 
 export function SmileView({ symbol }: { symbol: string }) {
-  const version = useLive().version(symbol)
+  const live = useLive()
+  const version = live.version(symbol)
   const [expiries, setExpiries] = useState(6)
   const [window, setWindow] = useState(0.1)
   const [mode, setMode] = useState<SmileMode>("all")
   const [axis, setAxis] = useState<"strike" | "moneyness">("strike")
+  const [comparisonExpiry, setComparisonExpiry] = useState("")
 
   const surface = useQuery({
     queryKey: ["surface", symbol, expiries, window, version],
@@ -35,10 +37,10 @@ export function SmileView({ symbol }: { symbol: string }) {
     placeholderData: (previous) => matchingPayload(previous, symbol),
   })
   const volatility = useQuery({
-    queryKey: ["volatility", symbol, version],
+    queryKey: ["volatility", symbol, version, live.account],
     queryFn: ({ signal }) => api.volatility(symbol, signal),
     refetchInterval: 60_000,
-    placeholderData: (previous) => matchingPayload(previous, symbol),
+    placeholderData: (previous, query) => query?.queryKey[3] === live.account ? matchingPayload(previous, symbol) : undefined,
   })
   const volatilityData = matchingPayload(volatility.data, symbol)
   const history = useQuery({
@@ -50,10 +52,18 @@ export function SmileView({ symbol }: { symbol: string }) {
   })
   const surfaceData = matchingPayload(surface.data, symbol)
   const summaryData = matchingPayload(summary.data, symbol)
+  const surfaceHistory = useQuery({
+    queryKey: ["surface-history", symbol, Math.floor(Date.parse(surfaceData?.as_of ?? "") / 60_000) || 0],
+    queryFn: ({ signal }) => api.surfaceHistory(symbol, signal),
+    staleTime: 60_000,
+  })
+  const comparisonData = matchingPayload(surfaceHistory.data, symbol)
 
   const shown = useMemo(() => (surfaceData?.expiries ?? []).filter((e) => (e.days ?? 0) > 1 / 24), [surfaceData])
   const smiles = useMemo(() => smileSeries(shown, axis, mode, { spot: surfaceData?.spot ?? null, window }, surfaceData?.ssvi),
     [shown, axis, mode, surfaceData?.spot, surfaceData?.ssvi, window])
+  const selectedComparison = shown.find(e => e.id === comparisonExpiry) ?? shown[0]
+  const comparisons = comparisonSeries(selectedComparison, comparisonData, axis, { spot: surfaceData?.spot ?? null, window })
 
   const term = useMemo<Series[]>(() => {
     if (volatilityData) return volatilityTerm(volatilityData)
@@ -162,6 +172,16 @@ export function SmileView({ symbol }: { symbol: string }) {
         </Panel>
       </div>
       {volatilityData && <VolatilityDetails data={volatilityData} />}
+      <Panel title="Historical smile comparison · same listed expiry" className="xl:col-span-2" actions={<select aria-label="Comparison expiry" value={selectedComparison?.id ?? ""} onChange={event => setComparisonExpiry(event.target.value)} className="rounded border border-border bg-panel px-2 py-1 text-xs">
+        {shown.map(e => <option key={e.id} value={e.id}>{expiryLabel(e.id, true)}</option>)}
+      </select>}>
+        <LineChart series={comparisons} height={280} formatX={x => fixed(x, axis === "strike" ? 0 : 3)} formatY={y => vol(y, 1)} xLabel={axis === "strike" ? "strike" : "log-moneyness"} />
+        <div className="mt-2 space-y-1 text-[11px] text-muted">
+          <p>Current sample: {surfaceData?.as_of ?? "unavailable"}</p>
+          {surfaceHistory.isError ? <p>{String(surfaceHistory.error)}</p> : !comparisonData ? <p>Loading surface history…</p> : !comparisonData.enabled ? <p>Surface collection is disabled for this source.</p> : comparisonData.comparisons.map(c => <p key={c.label}>{comparisonLabels[c.label]} · {c.date}: {c.snapshot ? `sample ${c.snapshot.as_of}${c.snapshot.expiries.some(e => e.id === selectedComparison?.id && e.svi) ? "" : " · no fit for this expiry"}` : "no close snapshot"}</p>)}
+          <p>Derived SVI curves at each sample's own tenor and forward, clipped to its calibration range. Close samples come from the final five session minutes; timestamps show actual observations. Comparisons do not hold time to expiry constant. Flagged fits remain diagnostic.</p>
+        </div>
+      </Panel>
       <ProbabilityPanel symbol={symbol} />
     </div>
   )
