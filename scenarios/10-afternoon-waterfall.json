@@ -36,17 +36,5 @@
       "move": -0.003,
       "iv": 0.025
     }
-  ],
-  "objectives": [
-    {
-      "id": "loss-budget",
-      "type": "max_loss",
-      "limit": 1000
-    },
-    {
-      "id": "flat-before-close",
-      "type": "flat_by",
-      "at": "15:55"
-    }
   ]
 }

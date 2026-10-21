@@ -12,11 +12,14 @@ const std::vector<Scenario>& builtin_scenarios() {
       auto scenario = parse_scenario(text, file);
       scenario.builtin = true;
       scenario.source_file = file;
+      if (!scenario.objectives.empty())
+        throw std::invalid_argument(std::string(file) + ": objectives: built-ins declare them in scenarios/objectives/builtin.json");
       if (std::any_of(out.begin(), out.end(), [&](const auto& prior) { return prior.id == scenario.id; }))
         throw std::invalid_argument(std::string(file) + ": id: duplicate built-in id");
       out.push_back(std::move(scenario));
     };
-@OPENPORT_EMBEDDED_SCENARIOS@    return out;
+@OPENPORT_EMBEDDED_SCENARIOS@    apply_builtin_objectives(out, R"@OPENPORT_OBJECTIVES_DELIMITER@(@OPENPORT_BUILTIN_OBJECTIVES@)@OPENPORT_OBJECTIVES_DELIMITER@", "scenarios/objectives/builtin.json");
+    return out;
   }();
   return scenarios;
 }

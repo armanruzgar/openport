@@ -10,8 +10,9 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Practice: grade declared objectives from journal states, retain scores and
   personal bests, and offer spaced fresh-seed practice with completion streaks.
 - Scenarios: import/export packs and fixed challenges, including challenge inputs
-  and recomputed drill results in replay verification receipts. Three built-ins
-  now declare objectives; their source hashes change, so old runs need old sources.
+  and recomputed drill results in replay verification receipts. Morning crush,
+  Afternoon waterfall and Range bleed have objectives in a separate built-in
+  objectives file, so their sources and earlier runs' hashes are unchanged.
 
 ## 0.4.0 (2026-10-06)
 

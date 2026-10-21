@@ -87,7 +87,14 @@ struct ScenarioWindow {
 /// Invalid built-ins throw; invalid user files are reported and skipped.
 [[nodiscard]] std::vector<Scenario> load_scenarios(const std::filesystem::path& user = {},
     const std::function<void(const std::string&)>& log = {});
+/// Built-in scenarios. Their source text stays as shipped, since run receipts hash it;
+/// their drill objectives come from the separate scenarios/objectives/builtin.json.
 [[nodiscard]] const std::vector<Scenario>& builtin_scenarios();
+/// Lowercase letters, digits and interior hyphens, at most 40 bytes: safe in a file name.
+[[nodiscard]] bool valid_scenario_id(std::string_view id);
+/// Attaches objectives from a JSON object keyed by scenario id. Unknown ids,
+/// scenarios that already declare objectives and invalid objectives throw.
+void apply_builtin_objectives(std::vector<Scenario>& scenarios, std::string_view source, const std::filesystem::path& file);
 [[nodiscard]] md::Timestamp scenario_open(const Scenario& scenario, md::Date date);
 /// The (first) session's close.
 [[nodiscard]] md::Timestamp scenario_close(const Scenario& scenario, md::Date date);

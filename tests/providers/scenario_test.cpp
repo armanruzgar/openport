@@ -536,4 +536,21 @@ TEST(Scenarios, MachineObjectivesValidateTypesLimitsAndSessionDeadlines) {
   source["objectives"] = json::array({{{"id", "x"}, {"type", "max_loss"}, {"limit", 100}}, {{"id", "x"}, {"type", "max_loss"}, {"limit", 100}}});
   EXPECT_THROW((void)providers::parse_scenario(source.dump(), "test.json"), std::invalid_argument);
 }
+TEST(Scenarios, BuiltInObjectivesComeFromTheirOwnFileKeyedByScenarioId) {
+  EXPECT_TRUE(providers::valid_scenario_id("range-bleed"));
+  for (const auto* id : {"", "-lead", "trail-", "Upper", "../up", "a/b", "a.b", "0123456789012345678901234567890123456789x"})
+    EXPECT_FALSE(providers::valid_scenario_id(id)) << id;
+  for (const auto& scenario : providers::builtin_scenarios()) {
+    EXPECT_EQ(json::parse(scenario.source).count("objectives"), 0U) << scenario.id;
+    if (scenario.id == "morning-crush" || scenario.id == "afternoon-waterfall" || scenario.id == "range-bleed")
+      EXPECT_FALSE(scenario.objectives.empty()) << scenario.id;
+  }
+  std::vector<providers::Scenario> scenarios{providers::parse_scenario(valid().dump(), "test.json")};
+  const auto id = scenarios.front().id;
+  EXPECT_THROW(providers::apply_builtin_objectives(scenarios, R"({"unknown":[]})", "objectives.json"), std::invalid_argument);
+  EXPECT_THROW(providers::apply_builtin_objectives(scenarios, json{{id, {{{"id", "x"}, {"type", "magic"}}}}}.dump(), "objectives.json"), std::invalid_argument);
+  providers::apply_builtin_objectives(scenarios, json{{id, {{{"id", "loss"}, {"type", "max_loss"}, {"limit", 100}}}}}.dump(), "objectives.json");
+  ASSERT_EQ(scenarios.front().objectives.size(), 1U);
+  EXPECT_THROW(providers::apply_builtin_objectives(scenarios, json{{id, json::array()}}.dump(), "objectives.json"), std::invalid_argument);
+}
 }
