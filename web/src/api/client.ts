@@ -248,7 +248,7 @@ export const api = {
   chain: (symbol: string, expiry: string, window: number, signal?: AbortSignal) =>
     get<Chain>(`${underlying(symbol)}/chain?expiry=${encodeURIComponent(expiry)}&window=${window}`, signal),
   exposure: (symbol: string, expiries: number, window: number, signal?: AbortSignal,
-    convention: ExposureConvention = "open_interest", slice: ExposureSlice = "all") =>
+    convention: ExposureConvention = "long_calls_short_puts", slice: ExposureSlice = "all") =>
     get<ExposureMatrix>(`${underlying(symbol)}/exposure?expiries=${expiries}&window=${window}&convention=${convention}&slice=${slice}`, signal),
   surface: (symbol: string, expiries: number, window: number, signal?: AbortSignal) =>
     get<Surface>(`${underlying(symbol)}/surface?expiries=${expiries}&window=${window}`, signal),

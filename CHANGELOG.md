@@ -8,6 +8,16 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   through the API, terminal, Python client/frames and MCP. Preserve the default
   long-call/short-put convention; report customer flow as unavailable without
   aggressor-side data. Document formulas, units, coverage and search limits.
+- Analytics: charm's carry and yield rates now use the floored exposure horizon, so a
+  small forward/spot gap near expiry no longer dominates 0DTE CEX. Flip searches
+  bisect only the brackets nearest spot and reprice one metric; a convention or
+  slice request copies only the selected expiries.
+- API: the default exposure convention is named `long_calls_short_puts` in
+  responses, the terminal, Python client and MCP. `open_interest` is still accepted
+  as a deprecated input for the same convention.
+- API: without a finite positive spot, exposure totals (`gex`, `vex` and the other
+  metrics) and per-strike and per-expiry cells are null instead of 0, with
+  `exposure.available=false` and a reason.
 
 ## 0.4.0 (2026-10-06)
 

@@ -36,10 +36,14 @@ def exposure_frame(exposure):
     metrics = ("gex", "vex", "dex", "cex", "vomex")
     rows = []
     summary = exposure.get("exposure", {})
+    # Older servers omit the convention or echo the default's deprecated spelling.
+    convention = exposure.get("convention") or "long_calls_short_puts"
+    if convention == "open_interest":
+        convention = "long_calls_short_puts"
     for expiry in exposure["expiries"]:
         for index, strike in enumerate(exposure["strikes"]):
             row = {"strike": strike, "expiry": expiry["id"], "days": expiry.get("days"),
-                   "as_of": exposure.get("as_of"), "convention": exposure.get("convention", "open_interest"),
+                   "as_of": exposure.get("as_of"), "convention": convention,
                    "slice": exposure.get("slice", "all"), "available": summary.get("available"),
                    "unavailable_reason": summary.get("unavailable_reason")}
             for metric in metrics:

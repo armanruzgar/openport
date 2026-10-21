@@ -19,22 +19,26 @@ const metrics: { value: Metric; label: string; name: string; unit: string }[] = 
   { value: "vomex", label: "VOMEX", name: "Vomma", unit: "dollars per vol point squared" },
 ]
 
+// Older servers omit the convention or echo the default's deprecated spelling.
+const conventionOf = (payload: { convention?: string | null }) =>
+  !payload.convention || payload.convention === "open_interest" ? "long_calls_short_puts" : payload.convention
+
 export function ExposureView({ symbol }: { symbol: string }) {
   const version = useLive().version(symbol)
   const [expiries, setExpiries] = useState(8)
   const [window, setWindow] = useState(0.05)
   const [metric, setMetric] = useState<Metric>("gex")
-  const [convention, setConvention] = useState<ExposureConvention>("open_interest")
+  const [convention, setConvention] = useState<ExposureConvention>("long_calls_short_puts")
   const [slice, setSlice] = useState<ExposureSlice>("all")
 
   const exposure = useQuery({
     queryKey: ["exposure", symbol, expiries, window, convention, slice, version],
     queryFn: ({ signal }) => api.exposure(symbol, expiries, window, signal, convention, slice),
-    placeholderData: (previous) => previous && (previous.convention ?? "open_interest") === convention &&
+    placeholderData: (previous) => previous && conventionOf(previous) === convention &&
       (previous.slice ?? "all") === slice ? matchingPayload(previous, symbol) : undefined,
   })
   const publication = matchingPayload(exposure.data, symbol)
-  const modeMatches = !publication || (publication.convention ?? "open_interest") === convention &&
+  const modeMatches = !publication || conventionOf(publication) === convention &&
     (publication.slice ?? "all") === slice
   const data = modeMatches ? publication : undefined
   const totals = useMemo(() => {
@@ -68,9 +72,8 @@ export function ExposureView({ symbol }: { symbol: string }) {
           Positioning convention
           <select aria-label="Positioning convention" className="rounded border border-border bg-panel px-2 py-1 text-foreground"
             value={convention} onChange={(event) => setConvention(event.target.value as ExposureConvention)}>
-            <option value="open_interest">Default · long calls, short puts</option>
+            <option value="long_calls_short_puts">Dealers long calls, short puts (default)</option>
             <option value="short_all">Dealers short all options</option>
-            <option value="long_calls_short_puts">Dealers long calls, short puts</option>
             <option value="customer_flow">Customer flow · unavailable</option>
           </select>
         </label>

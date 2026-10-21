@@ -187,7 +187,8 @@ export interface Expiry {
   coverage?: Coverage | null
 }
 
-export type ExposureConvention = "open_interest" | "short_all" | "long_calls_short_puts" | "customer_flow"
+/** The server still accepts and older servers echo "open_interest", the deprecated spelling of the default. */
+export type ExposureConvention = "long_calls_short_puts" | "short_all" | "customer_flow"
 export type ExposureSlice = "all" | "0dte" | "ex_0dte"
 export interface ExposureLevels {
   flip: Num

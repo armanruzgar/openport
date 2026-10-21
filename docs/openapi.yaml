@@ -191,9 +191,18 @@
           "in": "query",
           "required": false,
           "schema": {
-            "$ref": "#/components/schemas/ExposureConvention"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExposureConvention"
+              },
+              {
+                "type": "string",
+                "const": "open_interest",
+                "deprecated": true
+              }
+            ]
           },
-          "description": "Default open_interest preserves long calls / short puts. long_calls_short_puts is its explicit alias; short_all negates both sides. customer_flow requires signed customer trade/volume direction and is currently unavailable."
+          "description": "Default long_calls_short_puts assumes dealers long calls and short puts. open_interest is a deprecated spelling of it and is echoed back as long_calls_short_puts. short_all negates both sides. customer_flow requires signed customer trade/volume direction and is currently unavailable."
         },
         {
           "name": "slice",
@@ -2260,9 +2269,18 @@
           "in": "query",
           "required": false,
           "schema": {
-            "$ref": "#/components/schemas/ExposureConvention"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExposureConvention"
+              },
+              {
+                "type": "string",
+                "const": "open_interest",
+                "deprecated": true
+              }
+            ]
           },
-          "description": "Default open_interest preserves long calls / short puts. long_calls_short_puts is its explicit alias; short_all negates both sides. customer_flow requires signed customer trade/volume direction and is currently unavailable."
+          "description": "Default long_calls_short_puts assumes dealers long calls and short puts. open_interest is a deprecated spelling of it and is echoed back as long_calls_short_puts. short_all negates both sides. customer_flow requires signed customer trade/volume direction and is currently unavailable."
         },
         {
           "name": "slice",
@@ -24469,15 +24487,11 @@
         "anyOf": [
           {
             "type": "string",
-            "const": "open_interest"
+            "const": "long_calls_short_puts"
           },
           {
             "type": "string",
             "const": "short_all"
-          },
-          {
-            "type": "string",
-            "const": "long_calls_short_puts"
           },
           {
             "type": "string",

@@ -31,7 +31,7 @@ def test_exposure_client_passes_modes_on_live_and_replay(stub):
         assert query == {"expiries": ["4"], "window": ["0.02"], "convention": ["short_all"], "slice": ["ex_0dte"]}
     assert "/api/replay/underlyings/SPX/exposure?" in stub.requests[-1][1]
     client.exposure("SPX")
-    assert parse_qs(urlsplit(stub.requests[-1][1]).query)["convention"] == ["open_interest"]
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query)["convention"] == ["long_calls_short_puts"]
 
 
 def test_exposure_frame_keeps_alignment_missing_values_and_context():
@@ -52,13 +52,15 @@ def test_exposure_frame_keeps_alignment_missing_values_and_context():
     assert not frame.iloc[0].available
     assert frame.iloc[0].unavailable_reason == "No signed volume"
     assert exposure_frame({"expiries": [], "strikes": []}).empty
+    older = {**data, "convention": "open_interest"}
+    assert set(exposure_frame(older).convention) == {"long_calls_short_puts"}
 
 
 def test_mcp_exposure_schema_and_mode_forwarding(stub):
     server = create_server(Client(stub.url, "secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
     schema = tools["exposure"].input_schema["properties"]
-    assert set(schema["convention"]["enum"]) == {"open_interest", "short_all", "long_calls_short_puts", "customer_flow"}
+    assert set(schema["convention"]["enum"]) == {"long_calls_short_puts", "short_all", "customer_flow"}
     assert set(schema["slice"]["enum"]) == {"all", "0dte", "ex_0dte"}
     response = asyncio.run(server.call_tool("exposure", {"symbol": "SPX", "replay": True,
         "convention": "short_all", "slice": "0dte", "expiries": 4, "window": .02}))

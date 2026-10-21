@@ -205,7 +205,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.probability(symbol, days, prices))
 
     @server.tool()
-    def exposure(symbol: str, replay: bool = False, convention: ExposureConvention = "open_interest",
+    def exposure(symbol: str, replay: bool = False, convention: ExposureConvention = "long_calls_short_puts",
                  slice: ExposureSlice = "all", expiries: int = 8, window: float = 0.08) -> dict:
         """Derived OI-weighted GEX, VEX, DEX, daily charm and vomma, with walls/flips.
 

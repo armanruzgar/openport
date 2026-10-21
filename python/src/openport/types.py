@@ -499,7 +499,8 @@ class ReplayResult(ReplayFeedback):
     replay: JSON | None
 
 
-ExposureConvention = Literal["open_interest", "short_all", "long_calls_short_puts", "customer_flow"]
+# The server also accepts "open_interest", the deprecated spelling of long_calls_short_puts.
+ExposureConvention = Literal["long_calls_short_puts", "short_all", "customer_flow"]
 ExposureSlice = Literal["all", "0dte", "ex_0dte"]
 
 

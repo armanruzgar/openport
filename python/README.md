@@ -199,8 +199,9 @@ frame = exposure_frame(exposure)  # strike/expiry rows: gex, vex, dex, cex, vome
 levels = exposure["exposure"]["levels"]["cex"]  # flip, positive_wall, negative_wall
 ```
 
-`convention` defaults to `open_interest` (dealers long calls, short puts);
-`long_calls_short_puts` names the same assumption. `short_all` shorts both sides.
+`convention` defaults to `long_calls_short_puts` (dealers long calls, short puts).
+The server still accepts `open_interest` as a deprecated spelling of it and echoes
+`long_calls_short_puts`. `short_all` shorts both sides.
 `customer_flow` returns unavailable with a reason and null metrics because current
 feeds have no aggressor-side or signed volume data. Unsigned volume supplies no sign.
 `slice` is `all`, `0dte` or `ex_0dte`, using the snapshot's New York calendar date,

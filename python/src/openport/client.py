@@ -138,7 +138,7 @@ class Client:
         return self._market(symbol, "chain", expiry=expiry, window=window)
 
     def exposure(self, symbol: str, expiries: int = 8, window: float = 0.08, *,
-                 convention: ExposureConvention = "open_interest", slice: ExposureSlice = "all") -> Exposure:
+                 convention: ExposureConvention = "long_calls_short_puts", slice: ExposureSlice = "all") -> Exposure:
         """OI-weighted GEX/VEX/DEX/CEX/VOMEX; customer flow is unavailable without signed data."""
         return self._market(symbol, "exposure", expiries=expiries, window=window,
                             convention=convention, slice=slice)
