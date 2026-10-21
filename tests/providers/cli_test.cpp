@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <sys/wait.h>
+#include <sys/resource.h>
 
 #include <cstdio>
 #include <cmath>
@@ -15,6 +16,7 @@
 #include "openport/trading/journal.hpp"
 #include "openport/pricing/black.hpp"
 #include "openport/server/plans.hpp"
+#include "../../apps/openportd/startup.hpp"
 
 namespace {
 /// A private HOME for launched binaries, so a daemon that gets far enough to start never
@@ -252,8 +254,8 @@ TEST(Cli, DaemonReportsJournalLockedByAnotherProcessBeforeWebStartupFails) {
 }
 
 struct Finished { int status = -1; std::string output; };
-Finished run_daemon(const std::string& args) {
-  const auto command = isolated_home() + "\"" + OPENPORT_APPS_DIR + "/openportd\" " + args + " 2>&1";
+Finished run_daemon(const std::string& args, const std::string& environment = "") {
+  const auto command = environment + isolated_home() + "\"" + OPENPORT_APPS_DIR + "/openportd\" " + args + " 2>&1";
   Finished finished;
   FILE* pipe = popen(command.c_str(), "r");
   if (!pipe) return finished;
@@ -269,6 +271,92 @@ TEST(Cli, DaemonPrintsItsVersion) {
   EXPECT_EQ(result.status, 0) << result.output;
   EXPECT_EQ(result.output, std::string("openportd ") + OPENPORT_VERSION + "\n");
   EXPECT_TRUE(std::regex_match(result.output, std::regex(R"(openportd \d+\.\d+\.\d+\n)"))) << result.output;
+}
+
+TEST(Cli, PrintUrlReadsExistingSettingsWithoutStartingOrCreatingAnything) {
+  openport::test::RecordingFile file;
+  const auto token = file.directory / "write-token";
+  const auto args = "--print-url --write-token-file '" + token.string() + "' --address ::1 --port 9090";
+  const auto missing = run_daemon(args, "OPENPORT_WRITE_TOKEN='' ");
+  EXPECT_EQ(missing.status, 2);
+  EXPECT_FALSE(std::filesystem::exists(token));
+  { std::ofstream out(token); out << "test a&b/#%\n"; }
+  const auto result = run_daemon(args, "OPENPORT_WRITE_TOKEN='' ");
+  EXPECT_EQ(result.status, 0) << result.output;
+  EXPECT_EQ(result.output, "http://[::1]:9090/#token=test%20a%26b%2F%23%25\n");
+  EXPECT_EQ(run_daemon(args, "OPENPORT_WRITE_TOKEN=override ").output, "http://[::1]:9090/#token=override\n");
+  EXPECT_EQ(run_daemon(args + " --write-token explicit", "OPENPORT_WRITE_TOKEN=override ").output,
+            "http://[::1]:9090/#token=explicit\n");
+  EXPECT_EQ(run_daemon("--print-url --paper-journal '" + (file.directory / "paper.jsonl").string() + "'",
+                       "OPENPORT_WRITE_TOKEN='' ").output,
+            "http://127.0.0.1:8080/#token=test%20a%26b%2F%23%25\n");
+  EXPECT_FALSE(std::filesystem::exists(file.directory / "paper.jsonl"));
+  EXPECT_FALSE(std::filesystem::exists(file.directory / "crash.log"));
+  rejects("openportd", "--print-url --repair-journals", "cannot be combined");
+  rejects("openportd", "--print-url --dry-run", "cannot be combined");
+  const auto named = file.directory / "named-tokens";
+  { std::ofstream out(named); out << "reader read fixture-reader-token\n"; }
+  const auto named_args = " --token-file '" + named.string() + "' --paper-journal '" +
+                         (file.directory / "named" / "paper.jsonl").string() + "'";
+  const auto named_result = run_daemon("--print-url" + named_args, "OPENPORT_WRITE_TOKEN='' ");
+  EXPECT_EQ(named_result.status, 2);
+  EXPECT_NE(named_result.output.find("named tokens are not selected automatically"), std::string::npos);
+  EXPECT_EQ(run_daemon("--open --provider missing" + named_args, "OPENPORT_WRITE_TOKEN='' ").status, 2);
+  EXPECT_FALSE(std::filesystem::exists(file.directory / "named" / "write-token"));
+}
+
+TEST(Cli, BrowserReceivesOneLiteralUrlAndFailureLeavesItPrintable) {
+  openport::test::RecordingFile file;
+#ifdef __APPLE__
+  const auto launcher = file.directory / "open";
+#else
+  const auto launcher = file.directory / "xdg-open";
+#endif
+  const auto output = file.directory / "arguments";
+  { std::ofstream script(launcher); script << "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$1\" > '" << output.string() << "'\n"; }
+  std::filesystem::permissions(launcher, std::filesystem::perms::owner_all);
+  const auto args = "--print-url --open --address 0.0.0.0 --write-token 'literal&$(echo bad)'";
+  const auto env = "PATH='" + file.directory.string() + "' ";
+  const auto result = run_daemon(args, env);
+  EXPECT_EQ(result.status, 0) << result.output;
+  std::ifstream in(output);
+  const std::string actual(std::istreambuf_iterator<char>(in), {});
+  EXPECT_EQ(actual, "1\nhttp://localhost:8080/#token=literal%26%24%28echo%20bad%29\n");
+  { std::ofstream script(launcher); script << "#!/bin/sh\nexec /bin/sleep 5\n"; }
+  const auto started = std::chrono::steady_clock::now();
+  EXPECT_EQ(run_daemon(args, env).status, 0);
+  EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(4));
+  std::filesystem::remove(launcher);
+  const auto failed = run_daemon(args, env);
+  EXPECT_EQ(failed.status, 1);
+  EXPECT_NE(failed.output.find("http://localhost:8080/#token="), std::string::npos);
+  EXPECT_NE(failed.output.find("open the printed link manually"), std::string::npos);
+}
+
+TEST(Cli, FatalSignalWritesPrivateLocalRecordAndPreservesSignalExit) {
+  openport::test::RecordingFile file;
+  const auto log = file.directory / "crash.log";
+  const auto child = fork();
+  ASSERT_GE(child, 0);
+  if (child == 0) {
+    const rlimit core{0, 0};
+    setrlimit(RLIMIT_CORE, &core);
+    openport::startup::install_crash_log(log, "fixture-build");
+    raise(SIGABRT);
+    _exit(99);
+  }
+  int status = 0;
+  ASSERT_EQ(waitpid(child, &status, 0), child);
+  ASSERT_TRUE(WIFSIGNALED(status));
+  EXPECT_EQ(WTERMSIG(status), SIGABRT);
+  std::ifstream input(log);
+  const std::string text(std::istreambuf_iterator<char>(input), {});
+  EXPECT_EQ(text, "started fixture-build\nfatal SIGABRT\n");
+  EXPECT_EQ(std::filesystem::status(log).permissions() & std::filesystem::perms::all,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+  const auto link = file.directory / "link";
+  std::filesystem::create_symlink(log, link);
+  EXPECT_THROW(openport::startup::install_crash_log(link, "unused"), std::runtime_error);
 }
 
 TEST(Cli, DaemonDefaultsToTheIndexAndFourEtfsAndAllowsAnOverride) {

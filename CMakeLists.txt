@@ -26,6 +26,7 @@ option(OPENPORT_STATIC_DEPS "Link OpenSSL and zstd statically, so a release arch
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CompilerOptions)
 include(Dependencies)
+include(BuildInfo)
 
 add_subdirectory(src)
 

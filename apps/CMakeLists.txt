@@ -2,7 +2,7 @@ add_executable(openport-probe probe/main.cpp)
 target_link_libraries(openport-probe PRIVATE openport::providers openport::options)
 
 add_executable(openportd openportd/main.cpp)
-target_link_libraries(openportd PRIVATE openport::server openport::providers openport::options)
+target_link_libraries(openportd PRIVATE openport::server openport::providers openport::options openport_build_info)
 target_compile_definitions(openportd PRIVATE OPENPORT_VERSION="${PROJECT_VERSION}")
 
 # `cmake --install build --component openport` lays out bin/ and share/openport/web,

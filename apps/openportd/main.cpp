@@ -53,6 +53,7 @@
 #include "openport/server/web_policy.hpp"
 #include "openport/trading/journal.hpp"
 #include "openport/server/event_calendar.hpp"
+#include "startup.hpp"
 
 namespace {
 
@@ -72,6 +73,9 @@ struct Settings {
   md::Subscription subscription{{"SPX", "SPY", "QQQ", "IWM", "DIA"}, 0, 0.0};
   std::string address = "127.0.0.1";
   unsigned short port = 8080;
+  bool open = false;
+  bool print_url = false;
+  std::filesystem::path crash_log;
   std::filesystem::path web_root;
   std::filesystem::path scenario_dir;
   unsigned backtest_keep = 20;
@@ -132,6 +136,8 @@ int usage(const char* error = nullptr) {
       "                 [--no-paper] [--write-token TOKEN] [--write-token-file PATH] [--candle-dir DIR] [--no-history]\n"
       "                 [--dividends FILE|massive] [--event-calendar FILE] [--events FILE] [--no-cboe-holidays]\n"
       "                 [--series-dir DIR] [--no-series]\n"
+      "                 [--open] [--crash-log PATH]\n"
+      "       openportd --print-url [--open] [--write-token-file PATH] [--address ADDR] [--port N]\n"
       "       openportd --backfill-series FILE... [--force] [--series-dir DIR]\n"
       "       openportd --verify-run JOURNAL\n"
       "       openportd --backtest PLAYBOOK[@VERSION][,PLAYBOOK[@VERSION]...] --plan PLAN (--days FILE | --recordings DIR | --scenarios N --seed S) --out REPORT.json\n"
@@ -156,6 +162,10 @@ int usage(const char* error = nullptr) {
       "write token: --write-token overrides OPENPORT_WRITE_TOKEN; required for remote writes\n"
       "write token file: without either, the token kept in PATH, created at random if missing,\n"
       "                  with a link that saves it in a browser tab printed at startup\n"
+      "open: launch the terminal in the default browser after startup (opt-in); creates a\n"
+      "      write-token beside the journal unless a token is already configured\n"
+      "print-url: print the link from existing token settings and exit; add --open to open it\n"
+      "crash log: local fatal signal record, default crash.log beside the paper journal\n"
       "dividends: SYMBOL,YYYY-MM-DD,AMOUNT lines (ex-date, dollars a share); on each ex-date\n"
       "           held shares receive the dividend and short shares pay it. \"massive\" reads\n"
       "           them for the stock and ETF symbols from Massive's API instead, every six\n"
@@ -306,7 +316,7 @@ int repair_journals(const std::filesystem::path& journal, const std::filesystem:
 
 /// The write token kept in `path`: read when present, else created at random with
 /// owner-only permissions, so a container keeps its token in its volume.
-std::string load_write_token(const std::filesystem::path& path) {
+std::string load_write_token(const std::filesystem::path& path, bool create = true) {
   const auto read = [&] {
     std::ifstream in(path);
     std::string token;
@@ -315,6 +325,7 @@ std::string load_write_token(const std::filesystem::path& path) {
     return token;
   };
   if (auto token = read(); !token.empty()) return token;
+  if (!create) throw std::runtime_error("no token in " + path.string() + "; start openportd with --open or --write-token-file first");
   std::array<unsigned char, 16> bytes{};
   if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1)
     throw std::runtime_error("cannot generate a write token");
@@ -383,6 +394,8 @@ int run(int argc, char** argv) {
     const bool has_value = i + 1 < argc;
     if (arg == "--help" || arg == "-h") return usage();
     if (arg == "--version") { std::printf("openportd %s\n", OPENPORT_VERSION); return 0; }
+    if (arg == "--open") { settings.open = true; continue; }
+    if (arg == "--print-url") { settings.print_url = true; continue; }
     if (arg == "--require-token") { settings.require_token = true; continue; }
     if (arg == "--no-paper") { settings.paper_enabled = false; continue; }
     if (arg == "--no-series") { settings.series = false; continue; }
@@ -401,7 +414,10 @@ int run(int argc, char** argv) {
     if (arg == "--repair-journals") { settings.repair_journals = true; continue; }
     if (!has_value) return usage(("missing value for " + arg).c_str());
     const std::string value = argv[++i];
-    if (arg == "--file") { settings.repair_file = value; }
+    if (arg == "--crash-log") {
+      if (value.empty()) return usage("--crash-log requires a nonempty path");
+      settings.crash_log = value;
+    } else if (arg == "--file") { settings.repair_file = value; }
     else if (arg == "--provider") {
       settings.provider.name = value;
     } else if (arg == "--sandboxes") {
@@ -533,6 +549,28 @@ int run(int argc, char** argv) {
           (demo ? ".openport/demo/paper-journal.jsonl" : ".openport/paper-journal.jsonl");
   }
   if (demo && settings.massive_dividends) return usage("demo: --dividends massive needs network access; use a file");
+  if (settings.open || settings.print_url) {
+    if (settings.compact_journals || settings.repair_journals || settings.repair_dry_run ||
+        !settings.repair_file.empty() || settings.force || !settings.backfill_series.empty())
+      return usage("--open and --print-url cannot be combined with maintenance commands");
+    if (settings.write_token.empty() && settings.write_token_file.empty() && settings.token_file.empty()) {
+      if (settings.paper_journal.empty()) return usage("specify --write-token-file when HOME is unavailable");
+      settings.write_token_file = settings.paper_journal.parent_path() / "write-token";
+    }
+  }
+  if (settings.print_url) {
+    if (settings.write_token.empty() && settings.write_token_file.empty())
+      return usage("named tokens are not selected automatically; specify --write-token-file for a legacy token");
+    if (settings.write_token.empty()) settings.write_token = load_write_token(settings.write_token_file, false);
+    const auto url = startup::terminal_url(settings.address, settings.port, settings.write_token);
+    std::printf("%s\n", url.c_str());
+    std::fflush(stdout);
+    if (settings.open && !startup::open_browser(url)) {
+      std::fprintf(stderr, "openportd: cannot open browser; open the printed link manually\n");
+      return 1;
+    }
+    return 0;
+  }
   std::filesystem::path candle_directory;
   if (settings.candle_dir) candle_directory = *settings.candle_dir;
   else if (const auto* home = std::getenv("HOME")) candle_directory = std::filesystem::path(home) / ".openport/candles";
@@ -585,6 +623,13 @@ int run(int argc, char** argv) {
   if (settings.paper_enabled && settings.paper_journal.empty())
     return usage("HOME is unavailable; specify --paper-journal or --no-paper");
   if (!demo) providers::validate_subscription(settings.provider.name, settings.subscription);
+  if (settings.crash_log.empty() && !settings.paper_journal.empty())
+    settings.crash_log = settings.paper_journal.parent_path() / "crash.log";
+  if (!settings.crash_log.empty()) {
+    try { startup::install_crash_log(settings.crash_log,
+        "openportd " OPENPORT_VERSION " " OPENPORT_BUILD_REVISION " " OPENPORT_BUILD_PLATFORM); }
+    catch (const std::exception& error) { std::fprintf(stderr, "openportd: %s\n", error.what()); }
+  }
   // A SIGKILLed run leaves its generated days behind; nothing else would remove them.
   providers::remove_orphaned_demo_directories();
   auto provider = providers::make_provider(settings.provider);
@@ -747,10 +792,13 @@ int run(int argc, char** argv) {
   std::printf("web terminal: %s\n", settings.web_root.string().c_str());
   if (token_from_file) {
     std::printf("write token: kept in %s; to trade, open this once in a browser tab:\n"
-                "  http://localhost:%u/#token=%s\n",
-                settings.write_token_file.string().c_str(), web.port(), settings.write_token.c_str());
+                "  %s\n",
+                settings.write_token_file.string().c_str(),
+                startup::terminal_url(settings.address, web.port(), settings.write_token).c_str());
   }
   std::fflush(stdout);
+  if (settings.open && !startup::open_browser(startup::terminal_url(settings.address, web.port(), settings.write_token)))
+    std::fprintf(stderr, "openportd: cannot open browser; use --print-url to get the terminal link\n");
 
   std::signal(SIGHUP, on_signal);
   std::signal(SIGINT, on_signal);
