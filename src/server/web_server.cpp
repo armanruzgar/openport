@@ -642,7 +642,7 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
       // The strand writes this after on_accept returns, with the subscription
       // installed. Queue it first so concurrent publications cannot overtake it.
       event({{"type", "event_stream"}, {"version", 1}, {"account", account_}, {"source", source_}});
-      subscription_ = events_->subscribe([weak = weak_from_this()](const nlohmann::json& event) {
+      subscription_ = events_->subscribe(account_, source_, [weak = weak_from_this()](const nlohmann::json& event) {
         if (auto self = weak.lock()) self->event(event);
       });
     } else hub_.add(weak_from_this());
@@ -650,7 +650,6 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
   }
 
   void event(const nlohmann::json& event) {
-    if (event.at("account") != account_ || event.at("source") != source_) return;
     // Bound queued producer work as well as socket writes. Ticks may coalesce;
     // losing one fill silently is not acceptable, so close an overflowing stream.
     const std::lock_guard lock(event_mutex_);

@@ -3,6 +3,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 ## Unreleased
 
 - Versioned account WebSocket events with bounded delivery and typed Python iteration.
+  The stream dispatches only to the addressed account's subscribers and sends `floor`
+  only on entering or leaving the warning band.
+- Outbound notification channels keep their previous default events; `order_state`
+  is opt-in.
 - `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
 - Signed inbound playbook signals with account scopes, timestamp/nonce replay protection
   and rate limits; saved manual/automatic modes remain authoritative.

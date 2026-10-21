@@ -432,7 +432,11 @@ subscription is installed. Subsequent messages are:
 
 Kinds reuse the notification publisher: `fill`, `order_state`, `order_rejected`,
 `alert`, `rule_trip`, `playbook_ready`, `floor`, `assignment`, `exercise` (future
-kinds may be added). `details` carries fill/order/alert/stage IDs and kind-specific
+kinds may be added). The stream always includes `order_state`, which outbound
+channels receive only when listed. `floor` fires only when the account enters or
+leaves the default $500 warning band of `breach.room` (inclusive), with
+`details.warning` true on entry and false on exit and `details.floor_distance`;
+unchanged observations and unknown room are silent. `details` carries fill/order/alert/stage IDs and kind-specific
 evidence. `market_time` is the engine's event timestamp, null when unknown;
 `simulated:true` describes paper execution, not the provenance of market prices.
 Read `status.provider` to distinguish recorded, generated and provider quotes.

@@ -319,7 +319,7 @@ TEST(Notifications, ObservesNewAccountEventsOnceAndSkipsRecoveredHistory) {
   h.drain();
   std::multiset<std::string> kinds;
   for (const auto& call : h.http->calls) kinds.insert(json::parse(call.body).at("event").get<std::string>());
-  EXPECT_EQ(kinds, (std::multiset<std::string>{"fill", "order_state", "order_rejected", "rule_trip", "rule_trip", "assignment", "exercise", "playbook_ready"}));
+  EXPECT_EQ(kinds, (std::multiset<std::string>{"fill", "order_rejected", "rule_trip", "rule_trip", "assignment", "exercise", "playbook_ready"}));
 }
 TEST(Notifications, PlanDailyLossTripsNotifyOnceForLocksAndFailures) {
   for (const auto action : {trading::BreachAction::Lock, trading::BreachAction::Fail}) {
@@ -640,7 +640,7 @@ TEST(Notifications, LiveEngineObservesCommandsAndStalledFeedWithoutAnApiReader) 
   }
   std::multiset<std::string> kinds;
   for (const auto& call : h.http->calls) kinds.insert(json::parse(call.body).at("event").get<std::string>());
-  EXPECT_EQ(kinds, (std::multiset<std::string>{"fill", "order_state", "order_state", "order_rejected", "feed_stalled", "feed_stalled"}));
+  EXPECT_EQ(kinds, (std::multiset<std::string>{"fill", "order_rejected", "feed_stalled", "feed_stalled"}));
 }
 TEST(Notifications, ReplayDemoAndDrillEnginesDoNotNotifyByDefault) {
   for (const std::string name : {"manual", "replay", "demo"}) {
@@ -751,7 +751,8 @@ TEST(Notifications, LocalEventsAreVersionedAndDoNotNeedDeliveryChannels) {
   options.worker = false;
   server::Notifications events({}, nullptr, options);
   std::vector<json> received;
-  const auto subscription = events.subscribe([&](const json& event) { received.push_back(event); });
+  const auto subscription = events.subscribe("practice", "live", [&](const json& event) { received.push_back(event); });
+  events.subscribe("main", "replay", [&](const json& event) { received.push_back(event); });
   events.publish({"fill", "demo/practice", 0, "Synthetic fill", {{"price", "1.23"}}});
   events.publish({"playbook_ready", "replay/run-1/main", 0, "Synthetic stage", {{"stage_id", "one"}}});
   ASSERT_EQ(received.size(), 2U);
@@ -764,7 +765,8 @@ TEST(Notifications, LocalEventsAreVersionedAndDoNotNeedDeliveryChannels) {
   EXPECT_EQ(received[1].at("run_id"), "run-1");
   EXPECT_EQ(received[1].at("source"), "replay");
   events.unsubscribe(subscription);
-  events.publish({"alert", "main", 0, "No subscriber", {}});
+  events.publish({"alert", "practice", 0, "No subscriber", {}});
+  events.publish({"alert", "main", 0, "Live is not replay", {}});
   EXPECT_EQ(received.size(), 2U);
 }
 
@@ -773,7 +775,7 @@ TEST(Notifications, LocalOrderChangesAndFillsAreObservedOnceAndHistoryIsQuiet) {
   options.worker = false;
   server::Notifications events({}, nullptr, options);
   std::vector<json> received;
-  events.subscribe([&](const json& event) { if (event.at("event") != "floor") received.push_back(event); });
+  events.subscribe("main", "live", [&](const json& event) { if (event.at("event") != "floor") received.push_back(event); });
   auto snapshot = std::make_shared<trading::TradingSnapshot>();
   events.observe("main", view(snapshot));
   snapshot = std::make_shared<trading::TradingSnapshot>(*snapshot);
@@ -805,7 +807,7 @@ TEST(Notifications, LocalStreamWorksOnDemoWithoutExternalDeliveryOptIn) {
   server::Notifications::Options stream_options; stream_options.worker = false;
   auto stream = std::make_shared<server::Notifications>(server::NotificationConfig{}, nullptr, stream_options);
   std::vector<json> received;
-  stream->subscribe([&](const json& event) { if (event.at("event") == "rule_trip") received.push_back(event); });
+  stream->subscribe("main", "live", [&](const json& event) { if (event.at("event") == "rule_trip") received.push_back(event); });
   server::Engine::Options options;
   options.notifications = h.notifications;
   options.event_stream = stream;
@@ -822,4 +824,53 @@ TEST(Notifications, LocalStreamWorksOnDemoWithoutExternalDeliveryOptIn) {
   EXPECT_EQ(received[0].at("source"), "live");
   h.drain();
   EXPECT_TRUE(h.http->calls.empty());
+}
+
+TEST(Notifications, OrderChangesAreOptInForOutboundChannels) {
+  const auto defaults = server::parse_notification_config(json{{"channels", {channel()}}}.dump());
+  EXPECT_FALSE(defaults.channels[0].events.contains("order_state"));
+  EXPECT_TRUE(defaults.channels[0].events.contains("fill"));
+  auto listed = channel();
+  listed["events"] = {"order_state"};
+  Harness h(json::array({listed}));
+  auto snapshot = std::make_shared<trading::TradingSnapshot>();
+  h.notifications->observe("main", view(snapshot));
+  snapshot = std::make_shared<trading::TradingSnapshot>(*snapshot);
+  trading::Order order; order.id = 1;
+  snapshot->recent_orders.push_back(order);
+  snapshot->open_orders.push_back(order);
+  h.notifications->observe("main", view(snapshot));
+  h.drain();
+  ASSERT_EQ(h.http->calls.size(), 1U);
+  EXPECT_EQ(json::parse(h.http->calls[0].body).at("event"), "order_state");
+}
+
+TEST(Notifications, StreamFloorEventsOnlyMarkEnteringAndLeavingTheWarningBand) {
+  server::Notifications::Options options;
+  options.worker = false;
+  server::Notifications events({}, nullptr, options);
+  std::vector<json> floors, other;
+  events.subscribe("main", "live", [&](const json& event) { if (event.at("event") == "floor") floors.push_back(event); });
+  events.subscribe("other", "live", [&](const json& event) { other.push_back(event); });
+  auto snapshot = std::make_shared<trading::TradingSnapshot>();
+  auto current = view(snapshot);
+  events.observe("main", current);
+  current.breach.room = Money::parse("900");
+  for (int i = 0; i < 300; ++i) events.observe("main", current);  // more than the 256-message socket queue
+  EXPECT_TRUE(floors.empty());
+  current.breach.room = Money::parse("400");
+  events.observe("main", current); events.observe("main", current);
+  ASSERT_EQ(floors.size(), 1U);
+  EXPECT_EQ(floors[0].at("details").at("warning"), true);
+  EXPECT_EQ(floors[0].at("details").at("floor_distance"), "500.00");
+  current.breach.room.reset();  // Unknown room neither clears nor repeats the warning.
+  events.observe("main", current);
+  current.breach.room = Money::parse("450");
+  events.observe("main", current);
+  EXPECT_EQ(floors.size(), 1U);
+  current.breach.room = Money::parse("800");
+  events.observe("main", current); events.observe("main", current);
+  ASSERT_EQ(floors.size(), 2U);
+  EXPECT_EQ(floors[1].at("details").at("warning"), false);
+  EXPECT_TRUE(other.empty());
 }

@@ -14,6 +14,12 @@ using trading::Money;
 using namespace std::chrono_literals;
 const std::set<std::string> kEvents = {"fill", "order_state", "order_rejected", "floor", "rule_trip",
     "assignment", "exercise", "playbook_ready", "feed_stalled", "alert"};
+// Order transitions are frequent; outbound channels receive them only when listed.
+std::set<std::string> default_events() {
+  auto events = kEvents;
+  events.erase("order_state");
+  return events;
+}
 [[noreturn]] void invalid() { throw std::runtime_error("Invalid notification configuration"); }
 void keys(const json& value, const std::set<std::string>& allowed) {
   if (!value.is_object()) invalid();
@@ -97,7 +103,7 @@ NotificationConfig parse_notification_config(std::string_view text) {
       NotificationChannel channel;
       channel.id = item.at("id").get<std::string>();
       channel.type = item.at("type").get<std::string>();
-      channel.events = kEvents;
+      channel.events = default_events();
       settings(channel, item);
       if (!safe_id(channel.id) || !ids.insert(channel.id).second) invalid();
       if (channel.type == "telegram") {
@@ -192,17 +198,6 @@ bool Notifications::enqueue(std::size_t channel, const NotificationEvent& event)
 void Notifications::publish(const NotificationEvent& event) {
   std::unique_lock lock(mutex_);
   if (stopping_) return;
-  std::string account = event.account, source = "live";
-  json run = nullptr;
-  if (account.starts_with("replay/")) {
-    source = "replay";
-    const auto slash = account.find('/', 7);
-    if (slash != std::string::npos) { run = account.substr(7, slash - 7); account.erase(0, slash + 1); }
-  } else if (account.starts_with("demo/")) account.erase(0, 5);
-  const json message{{"type", "event"}, {"version", 1}, {"sequence", std::to_string(++sequence_)},
-      {"event", event.kind}, {"account", account}, {"source", source}, {"run_id", run},
-      {"market_time", stamp(event.time)}, {"simulated", true}, {"message", event.message}, {"details", event.details}};
-  const auto subscribers = subscribers_;
   for (std::size_t i = 0; i < channels_.size(); ++i) {
     auto& channel = channels_[i];
     if (!channel.config.enabled || !channel.config.events.contains(event.kind)) continue;
@@ -218,18 +213,50 @@ void Notifications::publish(const NotificationEvent& event) {
     }
     enqueue(i, event);
   }
+  auto details = event.details;
+  if (event.kind == "floor") {
+    // The stream uses the default band. Unlike a channel it also reports leaving
+    // it, so a client can clear a warning; unchanged observations are silent.
+    const auto& room = event.details.at("room");
+    if (room.is_null()) return;
+    const auto distance = NotificationChannel{}.floor_distance;
+    const bool near = Money::parse(room.get<std::string>()) <= distance;
+    auto& latched = stream_near_floor_[event.account];
+    if (latched == near) return;
+    latched = near;
+    details["warning"] = near;
+    details["floor_distance"] = distance.str();
+  }
+  std::string account = event.account, source = "live";
+  json run = nullptr;
+  if (account.starts_with("replay/")) {
+    source = "replay";
+    const auto slash = account.find('/', 7);
+    if (slash != std::string::npos) { run = account.substr(7, slash - 7); account.erase(0, slash + 1); }
+  } else if (account.starts_with("demo/")) account.erase(0, 5);
+  const auto sequence = ++sequence_;
+  const auto listeners = subscribers_.find({account, source});
+  if (listeners == subscribers_.end() || listeners->second.empty()) return;
+  const auto subscribers = listeners->second;
   lock.unlock();
+  const json message{{"type", "event"}, {"version", 1}, {"sequence", std::to_string(sequence)},
+      {"event", event.kind}, {"account", account}, {"source", source}, {"run_id", run},
+      {"market_time", stamp(event.time)}, {"simulated", true}, {"message", event.message}, {"details", std::move(details)}};
   for (const auto& [id, subscriber] : subscribers) { (void)id; subscriber(message); }
 }
-std::uint64_t Notifications::subscribe(Subscriber subscriber) {
+std::uint64_t Notifications::subscribe(std::string account, std::string source, Subscriber subscriber) {
   const std::lock_guard lock(mutex_);
   const auto id = ++subscription_;
-  subscribers_.emplace(id, std::move(subscriber));
+  subscribers_[{std::move(account), std::move(source)}].emplace(id, std::move(subscriber));
   return id;
 }
 void Notifications::unsubscribe(std::uint64_t subscription) {
   const std::lock_guard lock(mutex_);
-  subscribers_.erase(subscription);
+  for (auto listeners = subscribers_.begin(); listeners != subscribers_.end(); ++listeners) {
+    if (!listeners->second.erase(subscription)) continue;
+    if (listeners->second.empty()) subscribers_.erase(listeners);
+    return;
+  }
 }
 int Notifications::test(std::string_view channel) {
   const std::lock_guard lock(mutex_);
@@ -367,6 +394,7 @@ void Notifications::remove_account(const std::string& account, bool discard_pend
   seen_.erase(account);
   const std::lock_guard lock(mutex_);
   for (auto& channel : channels_) channel.near_floor.erase(account);
+  stream_near_floor_.erase(account);
   if (discard_pending) std::erase_if(queue_, [&](const auto& pending) { return pending.event.account == account; });
 }
 
