@@ -6,7 +6,7 @@
     "license": {
       "name": "MIT"
     },
-    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. symbols() is status.underlyings; series() is summary.expiries; neither has a separate route. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
+    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. The Python symbols() helper reads status.underlyings and series() reads summary.expiries; volatility_history() reads the separate stored-series route. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
   },
   "servers": [
     {
@@ -269,6 +269,14 @@
           "schema": {
             "type": "string"
           }
+        },
+        {
+          "name": "account",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          },
+          "description": "Read earnings/news from this plan in addition to supplied labels and the daemon calendar. Defaults to the request account."
         }
       ],
       "get": {
@@ -5101,6 +5109,160 @@
         },
         "x-scope": "read"
       }
+    },
+    "/api/underlyings/{symbol}/series": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "fields",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "interval",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Stored volatility series",
+        "description": "1d completed sessions (up to 3660 days) or 1m samples (up to 7 days). Fields are stored series names; proxy_iv30, rv21, vix and vix_minus_mfiv are daily only. VIX tracking requires same-session SPX/SPY and VIX observations, without substituting proxy history. sample_time is the local market sample; vix_sample_time is the source daily bar start.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VolatilitySeries"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/underlyings/{symbol}/surface-history": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "compare",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Stored SVI parameters at actual market sample times",
+        "description": "Stored SVI parameters at actual market sample times. Default range is the last 45 days; from/to accept ISO timestamps or New York dates, ordered and at most 366 days. compare=true omits the range list and returns the prior close, one calendar week and one calendar month targets, rolled back over non-sessions. Missing target sessions are null; no nearest stored date is substituted. Close snapshots appear only once the session is complete at market as_of. Failed fits and finite-grid diagnostics remain visible.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurfaceHistory"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/volatility/scanner": {
+      "parameters": [],
+      "get": {
+        "summary": "Batch volatility metrics for all subscribed symbols",
+        "description": "Batch volatility metrics for all subscribed symbols. Each row has its own market as_of and feed state; absent snapshots have null metrics. IV30 uses MFIV30 else ATM30, with the same basis for IV minus completed 21-session RV. IV rank/percentile use 252 completed session slots, including named proxies before local history; RR25 rank uses local signed values only. term_ratio is MFIV9/MFIV30. Today requires an unexpired same-day expiry. All volatility, RR and VRP values are vol points; ranks are fractions and moves are percent/points. Simulated feeds are explicitly labelled.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VolatilityScanner"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/volatility/scanner": {
+      "$ref": "#/paths/~1api~1volatility~1scanner"
+    },
+    "/api/replay/history/{run_id}/volatility/scanner": {
+      "$ref": "#/paths/~1api~1volatility~1scanner"
+    },
+    "/api/replay/underlyings/{symbol}/surface-history": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1surface-history"
+    },
+    "/api/replay/history/{run_id}/underlyings/{symbol}/surface-history": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1surface-history"
+    },
+    "/api/replay/underlyings/{symbol}/series": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
+    },
+    "/api/replay/history/{run_id}/underlyings/{symbol}/series": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
     }
   },
   "components": {
@@ -8849,6 +9011,48 @@
               "vrp",
               "implied_moves"
             ]
+          },
+          "iv_rank": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "iv_percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "iv_z_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "history_ranks": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HistoryRank"
+            }
+          },
+          "event_volatility": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventVolatility"
+            }
           }
         },
         "required": [
@@ -12020,7 +12224,14 @@
         "properties": {
           "buying_power_after": {
             "description": "Exact buying power immediately after automatic share delivery on a plan enforcing buying power. Negative values trigger a delivery shortfall alert: openings consuming unavailable buying power are refused until resolved; closes that free buying power remain allowed. Null for older journal records, other fills or plans without buying-power checks.",
-            "anyOf": [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "string"
@@ -24357,6 +24568,738 @@
           "marked_pnl",
           "entry_reasons",
           "rule_trips"
+        ]
+      },
+      "HistoryRank": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "rank": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "percentile": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "z_score": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "sessions": {
+            "type": "integer"
+          },
+          "window": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "current",
+          "rank",
+          "percentile",
+          "z_score",
+          "sessions",
+          "window"
+        ],
+        "description": "Unclamped min/max rank, fraction strictly below current, and population z-score over finite values in 252 completed session slots. Flat windows have null rank/z-score. Counts disclose partial history."
+      },
+      "VolatilitySeriesRow": {
+        "type": "object",
+        "properties": {
+          "t": {
+            "type": "number"
+          },
+          "sample_time": {
+            "type": "number"
+          },
+          "vix_sample_time": {
+            "type": "number"
+          },
+          "sources": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "forward": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mfiv9": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mfiv30": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mfiv93": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mfiv182": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mfiv365": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "atm7": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "atm30": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "atm60": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "atm90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "atm180": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rr25": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bf25": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rr10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bf10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ratio9_30": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ratio30_93": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gex": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gamma_flip": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "call_wall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "put_wall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proxy_iv30": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rv21": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vix": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vix_minus_mfiv": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "t",
+          "sources"
+        ]
+      },
+      "VolatilitySeries": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "interval": {
+            "enum": [
+              "1m",
+              "1d"
+            ]
+          },
+          "from": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "integer"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VolatilitySeriesRow"
+            }
+          }
+        },
+        "required": [
+          "symbol",
+          "interval",
+          "from",
+          "to",
+          "fields",
+          "rows"
+        ]
+      },
+      "SurfaceSnapshot": {
+        "type": "object",
+        "properties": {
+          "as_of": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "slot": {
+            "enum": [
+              "10:00",
+              "12:00",
+              "14:00",
+              "close"
+            ]
+          },
+          "spot": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "const": "svi"
+          },
+          "expiries": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/SurfaceExpiry"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "calendar_ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "calendar_ok"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "as_of",
+          "date",
+          "slot",
+          "spot",
+          "model",
+          "expiries"
+        ]
+      },
+      "SurfaceComparison": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "enum": [
+              "prior_close",
+              "week",
+              "month"
+            ]
+          },
+          "date": {
+            "type": "string"
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SurfaceSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "date",
+          "snapshot"
+        ]
+      },
+      "SurfaceHistory": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SurfaceSnapshot"
+            }
+          },
+          "comparisons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SurfaceComparison"
+            }
+          }
+        },
+        "required": [
+          "symbol",
+          "enabled",
+          "snapshots",
+          "comparisons"
+        ]
+      },
+      "EventVolatility": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "session": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "timing": {
+            "type": "string"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "near": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "baseline_variance": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "variance_premium": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "percent": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "points": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "forward": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "proxy": {
+            "type": "boolean"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "calendar_arbitrage": {
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "date",
+          "session",
+          "label",
+          "timing",
+          "time",
+          "near",
+          "next",
+          "baseline_variance",
+          "variance_premium",
+          "percent",
+          "points",
+          "forward",
+          "proxy",
+          "truncated",
+          "calendar_arbitrage",
+          "reason"
+        ],
+        "description": "Derived event variance premium from adjacent expiries straddling an event: Wnear=b*Nnear, Wnext=b*Nnext+E. N uses fractional regular business sessions. Premium move is 100*sqrt(E), points use the next expiry forward. Requires a positive pre-event baseline horizon and a single known event through the later expiry. Null move with explicit reason for missing brackets, unusable/negative variance or confounding events. Date-only timing assumes session open, BMO is before the opening settlement and AMC is after the closing settlement and allocated to the next business session. time is null unless explicitly supplied; no market timestamp is inferred."
+      },
+      "VolatilityScannerRow": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "feed_state": {
+            "type": "string"
+          },
+          "iv_basis": {
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "integer"
+          },
+          "history_sessions": {
+            "type": "integer"
+          },
+          "proxy_sessions": {
+            "type": "integer"
+          },
+          "rr25_sessions": {
+            "type": "integer"
+          },
+          "proxy_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "iv30": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "iv_rank": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "iv_percentile": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "vrp": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "rr25": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "rr25_rank": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "term_ratio": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "today_percent": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "today_points": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "proxy": {
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "realized_as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "symbol",
+          "feed_state",
+          "iv_basis",
+          "as_of",
+          "version",
+          "history_sessions",
+          "proxy_sessions",
+          "rr25_sessions",
+          "proxy_name",
+          "iv30",
+          "iv_rank",
+          "iv_percentile",
+          "vrp",
+          "rr25",
+          "rr25_rank",
+          "term_ratio",
+          "today_percent",
+          "today_points",
+          "truncated",
+          "proxy",
+          "reason",
+          "realized_as_of"
+        ]
+      },
+      "VolatilityScanner": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VolatilityScannerRow"
+            }
+          },
+          "simulated": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "units": {
+            "const": "vol_points"
+          }
+        },
+        "required": [
+          "rows",
+          "simulated",
+          "provider",
+          "units"
         ]
       }
     }

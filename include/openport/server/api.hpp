@@ -60,6 +60,8 @@ using ApiCompletion = std::function<void(ApiResponse)>;
 void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompletion complete);
 
 /// Routes:
+///   GET /api/volatility/scanner
+///   GET /api/underlyings/{symbol}/surface-history[?from=][&to=][&compare=true]
 ///   GET /api/status
 ///   GET /api/underlyings/{symbol}/summary
 ///   GET /api/underlyings/{symbol}/chain?expiry={id}[&window=0.1]

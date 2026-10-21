@@ -641,6 +641,7 @@ int run(int argc, char** argv) {
   engine_options.dividends = settings.dividends;
   engine_options.demo_dividends = !settings.dividends_source;
   engine_options.events = settings.events;
+  engine_options.event_calendar = settings.event_calendar;
   engine_options.write_mode = server::write_mode({settings.address, settings.write_token, settings.allowed_origins, settings.tokens, settings.require_token, engine_options.sandboxes, settings.client_ip_header});
   server::Engine engine(*provider, settings.subscription, engine_options);
   engine.start();

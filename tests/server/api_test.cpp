@@ -472,6 +472,12 @@ class VolatilitySource final : public server::MetricsSource {
   std::shared_ptr<const analytics::UnderlyingMetrics> snapshot;
   mutable server::CandleStore store;
   mutable std::atomic<int> event_reads{0};
+  std::vector<trading::PlanEvent> calendar;
+  std::shared_ptr<const server::TradingView> plan;
+  std::shared_ptr<const server::TradingView> trading_view(std::string_view account) const override {
+    return account == "practice" ? plan : nullptr;
+  }
+  std::vector<trading::PlanEvent> event_calendar() const override { return calendar; }
   std::vector<std::string> symbols() const override { return {"SPX"}; }
   std::shared_ptr<const analytics::UnderlyingMetrics> metrics(const std::string& symbol) const override {
     return symbol == "SPX" ? snapshot : nullptr;
@@ -546,6 +552,29 @@ TEST(Api, VolatilityUsesSnapshotCacheAndRetainsCloseOnlyHistory) {
   source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(metrics);
   EXPECT_TRUE(get(source, "/api/underlyings/SPX/volatility")["mfiv"]["expiries"].empty());
 }
+TEST(Api, EventVolatilityReadsCurrentAccountCalendarsAndDeduplicatesImports) {
+  test::SyntheticChain chain;
+  VolatilitySource source;
+  source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(analytics::analyze(chain.book.underlyings().at("SPX"), chain.book, chain.as_of));
+  source.calendar = {{"earnings", "2026-09-25", "SPX", "after_close", "Earnings"},
+      {"earnings", "2026-09-25", "OTHER", "before_open", "Wrong underlying"}};
+  auto plan = std::make_shared<server::TradingView>();
+  plan->config.rules.events = source.calendar;
+  plan->config.rules.events.push_back({"earnings", "2026-09-29", "SPX", "before_open", "Plan only"});
+  source.plan = plan;
+  auto body = get(source, "/api/underlyings/SPX/volatility?account=practice");
+  test::capture_contract("analytics", "GET", "/api/underlyings/SPX/volatility?account=practice",
+      server::handle_api({"GET", "/api/underlyings/SPX/volatility?account=practice"}, source));
+  ASSERT_EQ(body["event_volatility"].size(), 3u);
+  EXPECT_EQ(body["event_volatility"][1]["label"], "Earnings · AMC");
+  EXPECT_EQ(body["event_volatility"][1]["session"], "2026-09-28");
+  EXPECT_TRUE(body["event_volatility"][1]["time"].is_null());
+  EXPECT_EQ(body["event_volatility"][1]["reason"], "event_not_bracketed");
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/volatility")["event_volatility"].size(), 2u);
+  source.plan = std::make_shared<const server::TradingView>();
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/volatility?account=practice")["event_volatility"].size(), 2u);
+  EXPECT_EQ(source.event_reads, 1);
+}
 }  // namespace
 
 namespace {
@@ -589,7 +618,8 @@ namespace {
 TEST(Api, ContractFixture) {
   const StubSource source;
   for (const auto* path : {"/api/status", "/api/underlyings/SPX", "/api/underlyings/SPX/summary", "/api/underlyings/SPX/chain",
-      "/api/underlyings/SPX/exposure", "/api/underlyings/SPX/surface", "/api/underlyings/SPX/volatility", "/api/underlyings/SPX/candles"}) {
+      "/api/underlyings/SPX/exposure", "/api/underlyings/SPX/surface", "/api/underlyings/SPX/volatility", "/api/underlyings/SPX/candles",
+      "/api/underlyings/SPX/series", "/api/underlyings/SPX/surface-history", "/api/volatility/scanner"}) {
     const auto response = server::handle_api({"GET", path}, source);
     EXPECT_EQ(response.status, 200) << response.body;
     test::capture_contract("analytics", "GET", path, response);

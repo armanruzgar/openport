@@ -380,8 +380,10 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   if (!addressed) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
   const auto& account = *addressed;
   if (!sandbox.empty()) {
+    if (path.starts_with("/api/underlyings/") && path.ends_with("/volatility") && account != sandbox)
+      return api_error(403, "SCOPE_REQUIRED", "Event volatility may read only this sandbox's plan calendar");
     const bool market_read = read && (path == "/ws" || path == "/api/status" || path == "/api/accounts" ||
-        path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path.starts_with("/api/underlyings/"));
+        path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" || path.starts_with("/api/underlyings/"));
     const bool account_read = read && (path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/trades" ||

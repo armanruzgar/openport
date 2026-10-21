@@ -32,6 +32,19 @@ struct SeriesStatus {
   md::Timestamp last_write = 0;  ///< Market time of the most recently persisted row.
   std::string last_error;
 };
+struct SurfaceExpirySnapshot {
+  std::string id;
+  md::Date expiry;
+  double forward = analytics::kNaN;
+  analytics::SviFit fit;
+  bool calendar_ok = true;
+};
+struct SurfaceSnapshot {
+  md::Timestamp time = 0;  ///< Actual market timestamp, not the scheduled capture time.
+  std::string slot;  ///< 10:00, 12:00, 14:00, or close.
+  double spot = analytics::kNaN;
+  std::vector<SurfaceExpirySnapshot> expiries;
+};
 
 /// Thread-safe, append-only monthly CSVs. Empty directory is memory-only.
 /// Duplicate minutes keep their first row; force appends a replacement only if changed.
@@ -47,7 +60,11 @@ class SeriesStore {
   [[nodiscard]] std::size_t cached_minutes(const std::string& symbol) const;
   [[nodiscard]] SeriesStatus status(md::Timestamp now) const;
   void report_error(std::string error);
+  bool insert_surface(const std::string& symbol, const SurfaceSnapshot& snapshot, bool force = false);
+  [[nodiscard]] std::vector<SurfaceSnapshot> surfaces(const std::string& symbol,
+      md::Timestamp from, md::Timestamp to) const;
  private:
+  void load_surfaces(const std::filesystem::path& path);
   void load(const std::filesystem::path& path);
   void read_file(const std::filesystem::path& path, const std::function<void(const SeriesRow&)>& visit) const;
   [[nodiscard]] std::map<md::Timestamp, SeriesRow> read_minutes(const std::string& symbol,
@@ -64,9 +81,12 @@ class SeriesStore {
   mutable std::set<std::filesystem::path> damaged_;
   md::Timestamp last_write_ = 0;
   mutable std::string error_;
+  std::map<std::string, std::map<std::pair<md::Date, std::string>, SurfaceSnapshot>> surfaces_;
 };
 
 [[nodiscard]] SeriesRow series_row(const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics);
+[[nodiscard]] std::string surface_slot(md::Timestamp time);
+[[nodiscard]] SurfaceSnapshot surface_snapshot(const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics);
 class MetricsSource;
 /// Owns its worker thread. Polling reads only immutable publications, once per minute
 /// per symbol. sample() is also exposed for deterministic tests without sleeps.

@@ -31,7 +31,7 @@ class SeriesSource final : public server::MetricsSource {
     state.provider = "cboe";
     state.underlyings["SPX"].state = md::FeedState::Delayed;
   }
-  std::vector<std::string> symbols() const override { return {snapshot->symbol}; }
+  std::vector<std::string> symbols() const override { return subscribed.empty() ? std::vector<std::string>{snapshot->symbol} : subscribed; }
   std::shared_ptr<const analytics::UnderlyingMetrics> metrics(const std::string& symbol) const override { return symbol == snapshot->symbol ? snapshot : nullptr; }
   server::EngineStatus status() const override { return state; }
   md::Timestamp wall_time() const override { return ny(17, 0); }
@@ -41,6 +41,7 @@ class SeriesSource final : public server::MetricsSource {
   server::EngineStatus state;
   server::SeriesStore store;
   server::CandleStore bars;
+  std::vector<std::string> subscribed;
 };
 
 std::vector<server::SeriesRow> history_samples(bool sessions_only) {
@@ -385,9 +386,16 @@ TEST(Series, BackfillIsByteIdenticalOnRepetitionAndFreshRebuildAndRefusesDemo) {
   ASSERT_EQ(store.rows("SPX", 0, ny(17, 0)).size(), 2u);
   EXPECT_TRUE(std::isfinite(store.rows("SPX", 0, ny(17, 0))[1].values[3]));
   const auto bytes = read(directory / "SPX-2026-09.csv");
+  const auto surface_bytes = read(directory / "SPX-2026-09.surfaces");
+  ASSERT_FALSE(surface_bytes.empty());
+  const auto surfaces = store.surfaces("SPX", 0, ny(17, 0));
+  ASSERT_EQ(surfaces.size(), 1u);
+  EXPECT_EQ(surfaces[0].time, ny(16, 0));
   EXPECT_EQ(server::backfill_series(file.path, store), 0u);
   EXPECT_EQ(read(directory / "SPX-2026-09.csv"), bytes);
+  EXPECT_EQ(read(directory / "SPX-2026-09.surfaces"), surface_bytes);
   EXPECT_EQ(server::backfill_series(file.path, store, true), 0u);
+  EXPECT_EQ(read(directory / "SPX-2026-09.surfaces"), surface_bytes);
   server::SeriesStore rebuild(file.directory / "other");
   EXPECT_EQ(server::backfill_series(file.path, rebuild), 2u);
   EXPECT_EQ(read(file.directory / "other/SPX-2026-09.csv"), bytes);
@@ -496,5 +504,52 @@ TEST(SeriesApi, RankUsesFullPrecisionCurrentIvSoTheSameSnapshotIsATie) {
   const auto response = json::parse(server::handle_api({"GET", "/api/underlyings/SPX/volatility"}, source).body);
   EXPECT_EQ(response["history_sessions"], 1);
   EXPECT_EQ(response["iv_percentile"], 0);
+  EXPECT_EQ(response["history_ranks"].size(), server::kSeriesFields.size());
+  for (const auto* field : {"rr25", "bf25", "ratio9_30", "ratio30_93"}) {
+    EXPECT_EQ(response["history_ranks"][field]["window"], 252);
+    if (!response["history_ranks"][field]["current"].is_null())
+      EXPECT_EQ(response["history_ranks"][field]["percentile"], 0);
+  }
+}
+TEST(SeriesApi, VixTrackingJoinsCompletedSessionsWithoutProxySubstitutionOrGapFilling) {
+  SeriesSource source;
+  auto metrics = *source.snapshot; metrics.as_of = ny(17, 0);
+  source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(metrics);
+  source.store.insert("SPX", row(ny(15, 59), 20));
+  source.bars.merge_days("VIX", {{ny(9, 30, {2026, 9, 21}), 10, 10, 10, 10},
+      {ny(9, 30), 22, 22, 22, 22}, {ny(9, 30, {2026, 9, 23}), 25, 25, 25, 25}});
+  const auto response = server::handle_api({"GET", "/api/underlyings/SPX/series?fields=vix,vix_minus_mfiv&from=2026-09-21&to=2026-09-23"}, source);
+  ASSERT_EQ(response.status, 200);
+  const auto rows = json::parse(response.body)["rows"];
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_TRUE(rows[0]["vix_minus_mfiv"].is_null());
+  EXPECT_EQ(rows[1]["vix"], 22);
+  EXPECT_EQ(rows[1]["vix_minus_mfiv"], 2);
+  EXPECT_EQ(rows[1]["sources"]["vix_minus_mfiv"], "VIX_daily_close_minus_own_mfiv30");
+  EXPECT_EQ(rows[1]["vix_sample_time"], ny(9, 30) / md::kNanosPerSecond);
+  EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/SPX/series?interval=1m&fields=vix"}, source).status, 400);
+}
+TEST(SeriesApi, ScannerIncludesAllSubscriptionsAndMarksMissingAndSimulatedValues) {
+  SeriesSource source;
+  source.subscribed = {"SPX", "QQQ"};
+  auto metrics = *source.snapshot; metrics.as_of = ny(16, 0);
+  source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(metrics);
+  source.store.insert("SPX", server::series_row(source.snapshot));
+  const auto response = server::handle_api({"GET", "/api/volatility/scanner"}, source);
+  ASSERT_EQ(response.status, 200);
+  const auto data = json::parse(response.body);
+  ASSERT_EQ(data["rows"].size(), 2u);
+  EXPECT_EQ(data["simulated"], false);
+  EXPECT_EQ(data["rows"][0]["as_of"], md::format_timestamp(metrics.as_of));
+  EXPECT_EQ(data["rows"][0]["iv_percentile"], 0);
+  EXPECT_EQ(data["rows"][0]["history_sessions"], 1);
+  EXPECT_EQ(data["rows"][0]["feed_state"], "delayed");
+  EXPECT_EQ(data["rows"][1]["reason"], "no_snapshot");
+  EXPECT_TRUE(data["rows"][1]["iv30"].is_null());
+  EXPECT_TRUE(data["rows"][1]["as_of"].is_null());
+  EXPECT_TRUE(data["rows"][0]["today_percent"].is_null());
+  source.state.provider = "demo";
+  EXPECT_EQ(json::parse(server::handle_api({"GET", "/api/volatility/scanner"}, source).body)["simulated"], true);
+  EXPECT_EQ(server::handle_api({"GET", "/api/volatility/scanner?symbols=SPX"}, source).status, 400);
 }
 }  // namespace

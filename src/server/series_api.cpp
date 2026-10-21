@@ -7,6 +7,7 @@
 #include <set>
 #include <sstream>
 #include "openport/analytics/volatility_history.hpp"
+#include "openport/providers/demo.hpp"
 
 namespace openport::server {
 namespace {
@@ -42,6 +43,50 @@ json series_status_json(const MetricsSource& source) {
           {"last_error", state.last_error.empty() ? json(nullptr) : json(state.last_error)}};
 }
 
+ApiResponse volatility_scanner_response(const MetricsSource& source) {
+  json rows = json::array();
+  const auto status = source.status();
+  for (const auto& symbol : source.symbols()) {
+    json row{{"symbol", symbol}, {"as_of", nullptr}, {"realized_as_of", nullptr}, {"version", 0}, {"iv_basis", "missing"},
+        {"history_sessions", 0}, {"rr25_sessions", 0}, {"proxy_sessions", 0}, {"proxy_name", nullptr},
+        {"truncated", false}, {"proxy", false}, {"reason", "no_snapshot"}};
+    for (const auto* field : {"iv30", "iv_rank", "iv_percentile", "vrp", "rr25", "rr25_rank", "term_ratio", "today_percent", "today_points"}) row[field] = nullptr;
+    const auto health = status.underlyings.find(symbol);
+    row["feed_state"] = std::string(md::to_string(health == status.underlyings.end() ? status.feed_state : health->second.state));
+    if (const auto m = source.metrics(symbol)) {
+      const auto v = cached_volatility(m);
+      const auto& iv = std::isfinite(v.mfiv[1].vol) ? v.mfiv[1] : v.atm[1];
+      const auto proxy = analytics::iv_proxy(symbol);
+      const auto rank = analytics::iv_rank(analytics::historical_iv(own_days(source, symbol, m->as_of), daily_bars(source, proxy), proxy, m->as_of), iv.vol, m->as_of);
+      std::vector<analytics::HistoricalValue> skew;
+      if (source.series()) for (const auto& sample : source.series()->rows(symbol, 0, m->as_of, true))
+        skew.push_back({md::new_york_time(sample.time).date, sample.values[12], "own"});
+      const auto rr = analytics::history_rank(skew, v.skew25.rr, m->as_of);
+      auto bars = daily_bars(source, symbol);
+      std::erase_if(bars, [&](const auto& bar) {
+        const auto date = md::new_york_time(bar.start).date;
+        return close_time(date) > m->as_of || !md::market_session(md::new_york_to_utc(date, 9, 30)).open;
+      });
+      const auto rv = analytics::realized_window(bars, 21).close_to_close.vol;
+      const auto moves = analytics::implied_moves(*m, v);
+      row.update({{"as_of", md::format_timestamp(m->as_of)}, {"version", m->version}, {"iv30", number(iv.vol)},
+          {"iv_basis", std::isfinite(v.mfiv[1].vol) ? "own_mfiv" : std::isfinite(iv.vol) ? "own_atm" : "missing"},
+          {"iv_rank", number(rank.rank)}, {"iv_percentile", number(rank.percentile)}, {"history_sessions", rank.sessions},
+          {"proxy_sessions", rank.proxy_sessions}, {"proxy_name", proxy.empty() ? json(nullptr) : json(proxy)},
+          {"vrp", number(analytics::variance_risk_premium(iv, rv).spread)}, {"rr25", number(v.skew25.rr)},
+          {"realized_as_of", bars.empty() ? json(nullptr) : json(md::format_date(md::new_york_time(bars.back().start).date))},
+          {"rr25_rank", number(rr.rank)}, {"rr25_sessions", rr.sessions}, {"term_ratio", number(v.ratio9_30)},
+          {"today_percent", number(moves.today_percent)}, {"today_points", number(moves.today_points)},
+          {"truncated", iv.truncated || v.mfiv[0].truncated || moves.today_truncated},
+          {"proxy", iv.proxy || !std::isfinite(v.mfiv[1].vol) || v.skew_proxy || moves.today_proxy},
+          {"reason", iv.reason.empty() ? json(nullptr) : json(iv.reason)}});
+    }
+    rows.push_back(std::move(row));
+  }
+  return {200, json{{"rows", rows}, {"simulated", providers::simulated_provider(status.provider)},
+      {"provider", status.provider}, {"units", "vol_points"}}.dump()};
+}
+
 void add_volatility_history(json& response, const MetricsSource& source, const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
   const auto& m = *metrics;
   const auto volatility = cached_volatility(metrics);
@@ -55,6 +100,7 @@ void add_volatility_history(json& response, const MetricsSource& source, const s
   const auto rank = analytics::iv_rank(history, current, m.as_of);
   response["iv_rank"] = number(rank.rank);
   response["iv_percentile"] = number(rank.percentile);
+  response["iv_z_score"] = number(rank.z_score);
   response["history_sessions"] = rank.sessions;
   response["history_basis"] = {{"current", mfiv.is_number() ? "own_mfiv" : atm.is_number() ? "own_atm" : "missing"},
       {"own_sessions", rank.own_sessions}, {"proxy_sessions", rank.proxy_sessions}, {"window", 252}};
@@ -69,6 +115,17 @@ void add_volatility_history(json& response, const MetricsSource& source, const s
   for (const auto& value : history)
     if (value.date >= cutoff) observations.push_back({{"date", md::format_date(value.date)}, {"value", value.vol}, {"source", value.source}});
   response["history_values"] = observations;
+  const auto rows = source.series() ? source.series()->rows(m.symbol, 0, m.as_of, true) : std::vector<SeriesRow>{};
+  const auto sample = series_row(metrics);
+  response["history_ranks"] = json::object();
+  for (std::size_t i = 0; i < kSeriesFields.size(); ++i) {
+    std::vector<analytics::HistoricalValue> values;
+    for (const auto& row : rows) values.push_back({md::new_york_time(row.time).date, row.values[i], "own"});
+    const auto field_rank = analytics::history_rank(values, sample.values[i], m.as_of);
+    response["history_ranks"][kSeriesFields[i]] = {{"current", number(sample.values[i])},
+        {"rank", number(field_rank.rank)}, {"percentile", number(field_rank.percentile)},
+        {"z_score", number(field_rank.z_score)}, {"sessions", field_rank.sessions}, {"window", 252}};
+  }
   response["ex_post_vrp"] = nullptr;
   if (m.symbol != "SPX" && m.symbol != "SPY") return;
   const auto spx = own_days(source, "SPX", m.as_of);
@@ -124,12 +181,12 @@ ApiResponse series_response(const MetricsSource& source, const std::string& symb
   std::vector<std::string> fields;
   if (!query.contains("fields")) {
     for (auto name : kSeriesFields) fields.emplace_back(name);
-    if (daily) { fields.emplace_back("proxy_iv30"); fields.emplace_back("rv21"); }
+    if (daily) { fields.emplace_back("proxy_iv30"); fields.emplace_back("rv21"); fields.emplace_back("vix"); fields.emplace_back("vix_minus_mfiv"); }
   } else {
     std::istringstream input(query.at("fields"));
     for (std::string name; std::getline(input, name, ',');) {
       if (std::find(kSeriesFields.begin(), kSeriesFields.end(), name) == kSeriesFields.end() &&
-          !(daily && (name == "proxy_iv30" || name == "rv21"))) return bad("unknown series field or daily-only field");
+          !(daily && (name == "proxy_iv30" || name == "rv21" || name == "vix" || name == "vix_minus_mfiv"))) return bad("unknown series field or daily-only field");
       if (std::find(fields.begin(), fields.end(), name) != fields.end()) return bad("duplicate series field");
       fields.push_back(name);
     }
@@ -176,6 +233,24 @@ ApiResponse series_response(const MetricsSource& source, const std::string& symb
       const auto value = analytics::realized_window(std::span<const md::Bar>(bars).first(i + 1), 21).close_to_close.vol;
       auto& row = make(time); row["rv21"] = number(value);
       if (std::isfinite(value)) row["sources"]["rv21"] = "daily_closes";
+    }
+  }
+  if (daily && (symbol == "SPX" || symbol == "SPY") && (wants("vix") || wants("vix_minus_mfiv"))) {
+    for (const auto& bar : daily_bars(source, "VIX")) {
+      const auto date = md::new_york_time(bar.start).date;
+      const auto time = close_time(date);
+      if (time < from || time > observed_to || !md::market_session(md::new_york_to_utc(date, 9, 30)).open ||
+          !std::isfinite(bar.close) || bar.close <= 0) continue;
+      auto& row = make(time);
+      row["vix_sample_time"] = bar.start / md::kNanosPerSecond;
+      if (wants("vix")) { row["vix"] = bar.close; row["sources"]["vix"] = "VIX_daily_close"; }
+      const auto sample = std::find_if(own.begin(), own.end(), [&](const auto& value) {
+        return md::new_york_time(value.time).date == date;
+      });
+      if (wants("vix_minus_mfiv") && sample != own.end() && std::isfinite(sample->values[3])) {
+        row["vix_minus_mfiv"] = bar.close - sample->values[3];
+        row["sources"]["vix_minus_mfiv"] = "VIX_daily_close_minus_own_mfiv30";
+      }
     }
   }
   // Explicit missing sessions break chart lines instead of bridging a data outage.
