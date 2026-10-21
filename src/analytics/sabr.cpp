@@ -28,7 +28,11 @@ double scaled_iv(double a, double beta, double rho, double nu, double k, double 
   if (std::abs(z) < 1e-6) {
     ratio = 1 - rho * z / 2 + (2 - 3 * rho * rho) * z * z / 12;
   } else {
-    const double argument = (std::sqrt(1 - 2 * rho * z + z * z) + z - rho) / (1 - rho);
+    // x(z) = log((D + z - rho) / (1 - rho)) with D = sqrt(1 - 2 rho z + z^2). For
+    // z < 0, D + z cancels; (D + z - rho)(D - z + rho) = 1 - rho^2 gives the same
+    // argument as (1 + rho) / (D - z + rho), a sum of positive terms.
+    const double d = std::sqrt(1 - 2 * rho * z + z * z);
+    const double argument = z < 0 ? (1 + rho) / (d - z + rho) : (d + z - rho) / (1 - rho);
     if (!(argument > 0) || !std::isfinite(argument)) return kNaN;
     ratio = z / std::log(argument);
   }

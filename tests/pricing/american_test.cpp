@@ -77,6 +77,21 @@ TEST(AmericanApproximation, MatchesTheConvergedTreeOnTextbookInputs) {
   }
 }
 
+TEST(AmericanApproximation, BjerksundStenslandMatchesHaugsTable) {
+  // Haug (2007), The Complete Guide to Option Pricing Formulas, 2nd ed., the
+  // Bjerksund-Stensland 2002 table: American calls, X = 100, r = 0.10, b = 0
+  // (dividend yield 0.10), at the table's four decimals. Rows are T = 0.1 then
+  // 0.5; within each, sigma = 0.15, 0.25, 0.35 at S = 90, 100, 110.
+  const double table[2][3][3] = {{{0.0205, 1.8757, 10.0000}, {0.3151, 3.1256, 10.3725}, {0.9479, 4.3746, 11.1578}},
+                                 {{0.8099, 4.0628, 10.7898}, {2.7180, 6.7661, 12.9814}, {4.9665, 9.4608, 15.5137}}};
+  const double years[] = {0.1, 0.5}, vols[] = {0.15, 0.25, 0.35}, spots[] = {90, 100, 110};
+  for (int t = 0; t < 2; ++t)
+    for (int v = 0; v < 3; ++v)
+      for (int s = 0; s < 3; ++s)
+        EXPECT_NEAR(bjerksund_stensland_price({kCall, spots[s], 100, years[t], 0.10, 0.10, vols[v]}), table[t][v][s], 5e-5)
+            << years[t] << ' ' << vols[v] << ' ' << spots[s];
+}
+
 TEST(AmericanApproximation, BoundedByEuropeanIntrinsicAndTheTree) {
   for (double t : {0.02, 0.25, 1.0, 3.0})
     for (double vol : {0.08, 0.2, 0.6})

@@ -44,6 +44,23 @@ TEST(Sabr, MatchesHaganAtTheMoneyAndIsScaleFree) {
   EXPECT_TRUE(std::isnan(sabr_iv(p, f, 0, 0)));
 }
 
+TEST(Sabr, LargeNegativeZHasNoCancellation) {
+  // With beta = 1, flipping k and rho flips z and x(z) together (x(-z; -rho) = -x(z; rho)),
+  // so the two IVs differ only in the correction's rho term. z = -nu / alpha * k
+  // reaches -1e7 here, where (D + z - rho) cancels to roundoff; the z < 0 branch
+  // uses (1 + rho) / (D - z + rho) and stays exact to the z > 0 mirror.
+  const double t = 0.25, alpha = 1e-4, nu = 50;
+  for (double rho : {-0.6, 0.0, 0.45})
+    for (double k : {0.2, 2.0, 20.0}) {
+      const double correction = 1 + (rho * nu * alpha / 4 + (2 - 3 * rho * rho) / 24 * nu * nu) * t;
+      const double mirror = 1 + (-rho * nu * alpha / 4 + (2 - 3 * rho * rho) / 24 * nu * nu) * t;
+      const double iv = sabr_iv({alpha, 1, rho, nu}, kForward, k, t);
+      const double flipped = sabr_iv({alpha, 1, -rho, nu}, kForward, -k, t);
+      ASSERT_TRUE(std::isfinite(iv)) << rho << ' ' << k;
+      EXPECT_NEAR(iv / flipped, correction / mirror, 1e-13) << rho << ' ' << k;
+    }
+}
+
 TEST(Sabr, RecoversParametersWithFixedBeta) {
   for (const auto& p : {known, SabrParameters{.18, 1, .3, .6}, SabrParameters{.18 * std::pow(kForward, .5), .5, -.4, 2.5}}) {
     const auto fit = fit_sabr(smile(p), kForward, .25, p.beta);
