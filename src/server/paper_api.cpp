@@ -581,7 +581,7 @@ json fill_json(const Fill& f, const TradingView& view) {
           {"symbol", f.symbol}, {"underlying", underlying(view, f.symbol)},
           {"side", f.side == Side::Buy ? "buy" : "sell"}, {"quantity", f.quantity},
           {"price", f.price.str()}, {"fee", f.fee.str()}, {"fees", fill_fees_json(f.fees)}, {"context", context_json(f.context)},
-          {"quote", fill_quote_json(f)},
+          {"quote", fill_quote_json(f)}, {"feed", f.feed.empty() ? json(nullptr) : json(f.feed)},
           {"quote_time", md::format_timestamp(f.quote_time)}, {"time", md::format_timestamp(f.time)}};
 }
 json position_greeks(const MarkedPosition& p, const TradingView& view) {

@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <future>
 #include <limits>
+#include <map>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -213,6 +214,32 @@ TEST_F(PaperEngine, ProgramCostOverridesAndCustomVerification) {
   expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", "bad"}, {"max_resets", 1.5}}), 400, "INVALID_REQUEST");
   engine->stop();
   std::filesystem::remove_all(directory);
+}
+
+TEST_F(PaperEngine, FillsNameTheFeedAFailoverReportedBeforeTheirQuote) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "single", "4.20")).status, 201);
+  // A failover names the feed in the underlying's status, before that feed's quotes.
+  provider.sink->publish(md::ProviderStatus{market.time, md::FeedState::Delayed,
+                                            "fallback cboe: delayed; primary tradier error", "SPX", "cboe"});
+  quote("4.00", "4.30");
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "fallback", "4.30")).status, 201);
+  provider.sink->publish(md::ProviderStatus{market.time, md::FeedState::Live, "tradier recovered", "SPX", "tradier"});
+  quote("4.00", "4.40");
+  const auto third = write(*engine, "POST", "/api/orders", order(market, "primary", "4.40"));
+  ASSERT_EQ(third.status, 201) << third.body;
+  const auto fills = read(*engine, "/api/fills")["fills"];
+  ASSERT_EQ(fills.size(), 3U);
+  std::map<std::string, json> by_price;
+  for (const auto& fill : fills) by_price[fill["price"]] = fill["feed"];
+  EXPECT_TRUE(by_price.at("4.20").is_null());
+  EXPECT_EQ(by_price.at("4.30"), "cboe");
+  EXPECT_EQ(by_price.at("4.40"), "tradier");
+  ASSERT_TRUE(wait_for([&] { return engine->status().underlyings.at("SPX").feed == "tradier"; }));
+  const auto status = read(*engine, "/api/status");
+  EXPECT_EQ(status["underlyings"][0]["feed"], "tradier");
+  EXPECT_EQ(status["underlyings"][0]["fallback"], false);
+  EXPECT_TRUE(status["provider"]["fallback"].is_null());
 }
 
 TEST_F(PaperEngine, InsideFillRulesAndWalkingOrdersRoundTrip) {

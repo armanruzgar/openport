@@ -987,9 +987,15 @@ void Desk::fail_trading(PaperAccount& account, std::string reason) {
 void Desk::observe_trading(const md::Event& event) {
   if (const auto* definition = std::get_if<md::ContractDefinition>(&event)) {
     instruments_[definition->contract.osi_symbol()] = definition->id;
+  } else if (const auto* status = std::get_if<md::ProviderStatus>(&event); status && !status->feed.empty()) {
+    if (!status->underlying.empty()) feeds_[status->underlying] = status->feed;
+    else for (auto& [underlying, feed] : feeds_) feed = status->feed;
   } else if (const auto* quote = std::get_if<md::OptionQuote>(&event)) {
     market_time_ = std::max(market_time_, quote->ts);
     if (const auto* option = book_.option(quote->id)) {
+      // In stream order: a failover reports its switch before the new feed's quotes.
+      const auto feed = feeds_.find(option->contract.underlying);
+      if (feed != feeds_.end()) quote_feeds_[option->contract.osi_symbol()] = feed->second;
       auto& number = observations_[option->contract.osi_symbol()];
       if (number == std::numeric_limits<std::uint64_t>::max()) {
         for (auto& account : accounts_) fail_trading(account, "ARITHMETIC_OVERFLOW: quote observation exhausted");
@@ -1327,8 +1333,10 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         if (quoted && (fresh || open(underlying, option->quote_ts))) {
           // A vouched quote offered later than the provider gave it keeps that first time.
           const auto time = fresh ? offered(underlying, option->quote_ts) : option->quote_ts;
+          const auto feed = quote_feeds_.find(symbol);
           quotes.push_back({symbol, observations_[symbol], time, quote_price(option->bid), quote_price(option->ask),
-                            whole_size(option->bid_size), whole_size(option->ask_size), std::min(option->quote_ts, time)});
+                            whole_size(option->bid_size), whole_size(option->ask_size), std::min(option->quote_ts, time),
+                            feed == quote_feeds_.end() ? std::string{} : feed->second});
         }
         auto valuation = valuation_for(symbol, definition->second, metrics(underlying));
         if (fresh && valuation.time > 0) valuation.time = market_time_;

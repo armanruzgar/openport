@@ -210,6 +210,10 @@ class Desk {
   md::Timestamp market_time_ = 0;
   std::map<std::string, md::InstrumentId> instruments_;
   std::map<std::string, std::uint64_t> observations_;
+  /// The feed a failover names for each underlying, and the feed of each
+  /// contract's latest quote; empty for a single feed.
+  std::map<std::string, std::string> feeds_;
+  std::map<std::string, std::string> quote_feeds_;
   /// Each underlying's latest md::SnapshotComplete time, from snapshot providers.
   std::map<std::string, md::Timestamp> snapshots_;
   /// The market time each underlying's latest complete snapshot arrived at. It vouches

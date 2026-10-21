@@ -164,6 +164,35 @@ TEST(FillAudit, TheFirstQuotedTimeSurvivesRecoveryAndOlderFillsLoadWithoutIt) {
   EXPECT_EQ(nlohmann::json(fill).contains("quote"), false);
 }
 
+TEST(FillAudit, FillsNameTheFeedThatPricedThemAndKeepItThroughRecovery) {
+  TemporaryDirectory directory;
+  const auto path = directory.file("feeds.jsonl");
+  ScriptedMarket market;
+  std::string continuous;
+  {
+    TradingSession session(config(), market.time, FileJournal::create(path));
+    market.seed(session, "4.00", "4.20", 10);
+    ASSERT_TRUE(session.submit(market.market("single", 1), market.time).decision.ok());
+    // A single feed names nothing, and its fills keep their bytes.
+    EXPECT_TRUE(session.snapshot()->recent_fills.back().feed.empty());
+    EXPECT_FALSE(nlohmann::json(session.snapshot()->recent_fills.back()).contains("feed"));
+    market.next();
+    auto quote = market.quote("4.00", "4.20", 10);
+    quote.feed = "cboe";
+    session.on_quotes({quote}, {market.valuation()}, market.time);
+    ASSERT_TRUE(session.submit(market.market("fallback", 1), market.time).decision.ok());
+    EXPECT_EQ(session.snapshot()->recent_fills.back().feed, "cboe");
+    continuous = session.snapshot_json();
+  }
+  auto recovered = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  EXPECT_EQ(recovered.snapshot_json(), continuous);
+  const auto fills = recovered.snapshot()->recent_fills;
+  ASSERT_EQ(fills.size(), 2U);
+  EXPECT_TRUE(fills[0].feed.empty());
+  EXPECT_EQ(fills[1].feed, "cboe");
+  EXPECT_EQ(nlohmann::json(fills[1]).at("feed"), "cboe");
+}
+
 TEST(QuoteLiquidity, PreviewsShowEachLegsQuoteAndTheDisplayedSizeTheAccountLeft) {
   Chain chain;
   TradingSession session(config(), chain.time);

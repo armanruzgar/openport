@@ -398,6 +398,8 @@ struct Fill {
   /// Absent on fills recorded before the book was kept with them.
   std::optional<FillQuote> quote = std::nullopt;
   std::optional<FillFees> fees = std::nullopt;
+  /// The feed whose quote priced the fill, when a failover named one; empty otherwise.
+  std::string feed = {};
 };
 
 /// Observation numbers strictly increase per OSI. Repeated/older observations
@@ -415,6 +417,8 @@ struct QuoteObservation {
   /// for an unchanged quote at later times. Zero means `time`. A confirmation of
   /// the same observation at a later time keeps the first time here.
   Timestamp quoted = 0;
+  /// The feed that supplied the quote, when a failover names one; empty otherwise.
+  std::string feed = {};
   /// When the quote was first given.
   [[nodiscard]] Timestamp first_time() const { return quoted > 0 ? quoted : time; }
 };
