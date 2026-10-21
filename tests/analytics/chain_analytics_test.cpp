@@ -153,6 +153,201 @@ void add_option(ChainBook& book, md::InstrumentId id, md::Date date, OptionType 
   if (oi >= 0) book.apply(md::OpenInterest{id, as_of, oi});
 }
 
+TEST(ChainAnalytics, DeltaCharmAndVommaMatchFiniteDifferences) {
+  SyntheticChain chain;
+  const auto m = analytics::analyze(chain.book.underlyings().at("SPX"), chain.book, chain.as_of);
+  double dex = 0, cex = 0, vomex = 0;
+  for (const auto& row : m.slices[0].strikes) {
+    double expected_delta = 0, expected_charm = 0, expected_vomma = 0;
+    for (const auto* side : {&row.call, &row.put}) {
+      const double weight = (side->contract.type == OptionType::Call ? 1 : -1) *
+                            side->open_interest * side->contract.multiplier;
+      pricing::BsmInputs in{side->contract.type, kSpot, row.strike, chain.years,
+          SyntheticChain::kRate, SyntheticChain::kDividend, row.iv};
+      expected_delta += weight * pricing::bsm_greeks(in).delta * kSpot;
+      constexpr double dt = 1e-6, dv = 1e-5;
+      auto before = in, after = in;
+      before.expiry += dt;
+      after.expiry -= dt;
+      expected_charm += weight * kSpot *
+          (pricing::bsm_greeks(after).delta - pricing::bsm_greeks(before).delta) / (2 * dt * 365);
+      before = after = in;
+      before.vol -= dv;
+      after.vol += dv;
+      expected_vomma += weight *
+          (pricing::bsm_greeks(after).vega - pricing::bsm_greeks(before).vega) / (2 * dv * 10000);
+    }
+    EXPECT_NEAR(row.dex, expected_delta, 1e-5);
+    EXPECT_NEAR(row.cex, expected_charm, .01);
+    EXPECT_NEAR(row.vomex, expected_vomma, .001);
+    dex += row.dex; cex += row.cex; vomex += row.vomex;
+  }
+  EXPECT_DOUBLE_EQ(m.exposure.dex, dex);
+  EXPECT_DOUBLE_EQ(m.exposure.cex, cex);
+  EXPECT_DOUBLE_EQ(m.exposure.vomex, vomex);
+  // Short puts have positive delta: do not net call and put OI before computing DEX.
+  EXPECT_GT(m.exposure.dex, 0);
+  EXPECT_TRUE(std::isnan(m.exposure.levels[2].flip));
+  EXPECT_TRUE(std::isnan(m.exposure.levels[2].negative_wall));
+}
+
+TEST(ChainAnalytics, ExposureConventionsKeepDefaultAndMissingFlowHonest) {
+  SyntheticChain chain;
+  const auto m = analytics::analyze(chain.book.underlyings().at("SPX"), chain.book, chain.as_of);
+  const auto alias = analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts);
+  EXPECT_EQ(analytics::parse_exposure_convention("open_interest"),
+            analytics::ExposureConvention::LongCallsShortPuts);  // deprecated spelling
+  EXPECT_EQ(analytics::parse_exposure_convention("long_calls_short_puts"), m.exposure_convention);
+  EXPECT_FALSE(analytics::parse_exposure_convention("dealer_long"));
+  EXPECT_STREQ(analytics::to_string(m.exposure_convention), "long_calls_short_puts");
+  const auto short_all = analytics::exposure_view(m, analytics::ExposureConvention::ShortAll);
+  for (const auto field : analytics::kExposureFields)
+    EXPECT_DOUBLE_EQ(m.exposure.*field, alias.exposure.*field);
+  for (const auto& row : short_all.slices[0].strikes) {
+    EXPECT_LT(row.gex, 0);
+    EXPECT_NEAR(row.dex, -(row.call.delta * row.call.open_interest +
+                          row.put.delta * row.put.open_interest) * 100 * kSpot, 1e-5);
+  }
+  EXPECT_TRUE(std::isnan(short_all.exposure.gamma_flip));
+  EXPECT_TRUE(std::isnan(short_all.exposure.call_wall));
+  // Unsigned volume is not customer direction, even when every side has it.
+  auto with_volume = m;
+  for (auto& row : with_volume.slices[0].strikes) row.call.volume = row.put.volume = 100;
+  const auto flow = analytics::exposure_view(with_volume, analytics::ExposureConvention::CustomerFlow);
+  EXPECT_FALSE(flow.exposure.available);
+  EXPECT_NE(flow.exposure.unavailable_reason.find("aggressor"), std::string::npos);
+  for (const auto field : analytics::kExposureFields) {
+    EXPECT_TRUE(std::isnan(flow.exposure.*field));
+    EXPECT_TRUE(std::isnan(flow.slices[0].strikes[0].*field));
+  }
+  EXPECT_TRUE(m.exposure.available);
+}
+
+TEST(ChainAnalytics, EqualOiStillCarriesDeltaAndShortAllHasADeltaFlip) {
+  ChainBook book;
+  const auto as_of = md::new_york_to_utc({2026, 9, 22}, 16, 0);
+  book.apply(md::UnderlyingQuote{"SPX", as_of, 100, 100, 100});
+  for (const auto type : {OptionType::Call, OptionType::Put})
+    add_option(book, type == OptionType::Put, {2026, 10, 22}, type, 100, as_of, 100, .3, 10);
+  analytics::AnalyticsOptions options;
+  options.fallback_rate = 0;
+  const auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+  EXPECT_DOUBLE_EQ(m.exposure.gex, 0);
+  EXPECT_DOUBLE_EQ(m.exposure.vex, 0);
+  EXPECT_NEAR(m.exposure.dex, 100000, 1e-8);
+  const auto short_all = analytics::exposure_view(m, analytics::ExposureConvention::ShortAll);
+  EXPECT_NEAR(short_all.exposure.levels[2].flip,
+              100 * std::exp(-.5 * .3 * .3 * m.slices[0].years), 1e-6);
+}
+
+TEST(ChainAnalytics, NewExposureMetricsUseTheFloorWhileDeltaQuotesUseTrueTime) {
+  ChainBook book;
+  const auto as_of = md::new_york_to_utc({2026, 10, 22}, 15, 59);
+  book.apply(md::UnderlyingQuote{"SPX", as_of, 100, 100, 100});
+  add_option(book, 0, {2026, 10, 22}, OptionType::Call, 100, as_of, 100, .3, 10);
+  analytics::AnalyticsOptions options;
+  options.fallback_rate = 0;
+  const auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+  const auto& row = m.slices[0].strikes[0];
+  const auto floored = pricing::black_greeks(OptionType::Call, 100, 100, .5 / 365, row.iv);
+  EXPECT_NEAR(row.dex, floored.delta * 100000, 1e-8);
+  EXPECT_NEAR(row.vomex, floored.volga * 1000 / 10000, 1e-8);
+  constexpr double dt = 1e-8;
+  const double before = pricing::black_greeks(OptionType::Call, 100, 100, .5 / 365 + dt, row.iv).delta;
+  const double after = pricing::black_greeks(OptionType::Call, 100, 100, .5 / 365 - dt, row.iv).delta;
+  EXPECT_NEAR(row.cex, (after - before) * 100000 / (2 * dt * 365), 1e-4);
+  EXPECT_NE(row.call.delta, floored.delta);
+}
+
+TEST(ChainAnalytics, ZeroDteCharmStaysBoundedWithASmallForwardGap) {
+  // Thirty minutes to the close, a 1-point forward/spot gap annualizes to a carry of
+  // ~3.5 over true time, which used to swamp charm against the half-day floor. Over
+  // the floored horizon it is a ~15% rate, a modest shift for out-of-the-money OI.
+  const auto as_of = md::new_york_to_utc({2026, 10, 22}, 15, 30);
+  auto charm = [&](double forward) {
+    ChainBook book;
+    book.apply(md::UnderlyingQuote{"SPX", as_of, 5000, 5000, 5000});
+    md::InstrumentId id = 0;
+    for (double strike = 4950; strike <= 5050; strike += 5) {
+      add_option(book, id++, {2026, 10, 22}, OptionType::Call, strike, as_of, forward, .15,
+                 strike >= 5010 ? 1000 : 0);
+      add_option(book, id++, {2026, 10, 22}, OptionType::Put, strike, as_of, forward, .15,
+                 strike <= 4990 ? 1500 : 0);
+    }
+    analytics::AnalyticsOptions options;
+    options.fallback_rate = 0;
+    const auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+    EXPECT_NEAR(m.slices[0].forward.forward, forward, 1e-3);
+    EXPECT_LT(m.slices[0].years, 1.0 / (365 * 24));
+    return m.exposure.cex;
+  };
+  const double flat = charm(5000);
+  const double gapped = charm(5001);
+  ASSERT_TRUE(std::isfinite(flat) && std::isfinite(gapped));
+  ASSERT_NE(flat, 0);
+  EXPECT_LT(std::abs(gapped - flat), .25 * std::abs(flat)) << flat << " " << gapped;
+}
+
+TEST(ChainAnalytics, ZeroDtePartitionsEveryMetricUsingSnapshotNewYorkDate) {
+  ChainBook book;
+  // UTC is already the next day; tomorrow's expiry must remain ex-0DTE.
+  const auto as_of = md::new_york_to_utc({2026, 10, 21}, 21, 0);
+  book.apply(md::UnderlyingQuote{"SPX", as_of, 100, 100, 100});
+  for (int day = 22; day <= 23; ++day)
+    for (const auto type : {OptionType::Call, OptionType::Put})
+      add_option(book, 2 * (day - 22) + (type == OptionType::Put), {2026, 10, day},
+                 type, 100, as_of, 100, .3, type == OptionType::Call ? 20 : 10);
+  analytics::AnalyticsOptions options;
+  options.fallback_rate = 0;
+  options.exposure_min_days = 1;
+  auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+  EXPECT_TRUE(analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts,
+                                     analytics::ExposureSlice::ZeroDte).slices.empty());
+  const auto later = md::new_york_to_utc({2026, 10, 22}, 15, 59);
+  m = analytics::analyze(book.underlyings().at("SPX"), book, later, options);
+  const auto today = analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts,
+                                             analytics::ExposureSlice::ZeroDte);
+  const auto ex = analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts,
+                                          analytics::ExposureSlice::ExZeroDte);
+  ASSERT_EQ(today.slices.size(), 1u);
+  ASSERT_EQ(ex.slices.size(), 1u);
+  EXPECT_EQ(today.as_of, later);
+  EXPECT_EQ(today.exposure_settings.min_days, 1);
+  for (const auto field : analytics::kExposureFields)
+    EXPECT_NEAR(m.exposure.*field, today.exposure.*field + ex.exposure.*field, 1e-8);
+  // Once settlement has passed, the same-day slice is absent, not a stale 0DTE position.
+  const auto settled = analytics::analyze(book.underlyings().at("SPX"), book,
+      md::new_york_to_utc({2026, 10, 22}, 16, 1), options);
+  EXPECT_TRUE(analytics::exposure_view(settled, analytics::ExposureConvention::LongCallsShortPuts,
+                                     analytics::ExposureSlice::ZeroDte).slices.empty());
+}
+
+TEST(ChainAnalytics, HigherOrderFlipsAreRepricedRootsAndWallsUseSignedExtrema) {
+  ChainBook book;
+  const auto as_of = md::new_york_to_utc({2026, 9, 22}, 16, 0);
+  book.apply(md::UnderlyingQuote{"SPX", as_of, 100, 100, 100});
+  add_option(book, 0, {2026, 10, 22}, OptionType::Call, 100, as_of, 100, .3, 10);
+  analytics::AnalyticsOptions options;
+  options.fallback_rate = 0;
+  const auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+  const double half_variance = .5 * .3 * .3 * m.slices[0].years;
+  // Vanna/charm vanish at d2=0. Vomma vanishes at d1=0 and d2=0;
+  // its d1 root is slightly nearer to spot in price space.
+  EXPECT_NEAR(m.exposure.levels[1].flip, 100 * std::exp(half_variance), 1e-6);
+  EXPECT_NEAR(m.exposure.levels[3].flip, 100 * std::exp(half_variance), 1e-6);
+  EXPECT_NEAR(m.exposure.levels[4].flip, 100 * std::exp(-half_variance), 1e-6);
+  EXPECT_EQ(m.exposure.levels[2].positive_wall, 100);
+  EXPECT_EQ(m.exposure.levels[3].negative_wall, 100);
+  EXPECT_EQ(m.exposure.levels[4].negative_wall, 100);
+  book.apply(md::OpenInterest{0, as_of, 0});
+  const auto zero = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+  for (const auto& levels : zero.exposure.levels) {
+    EXPECT_TRUE(std::isnan(levels.flip));
+    EXPECT_TRUE(std::isnan(levels.positive_wall));
+    EXPECT_TRUE(std::isnan(levels.negative_wall));
+  }
+}
+
 TEST(ChainAnalytics, GammaUnderflowIsNotAFlip) {
   ChainBook book;
   const auto as_of = md::new_york_to_utc({2026, 10, 22}, 4, 0);

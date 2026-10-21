@@ -12,7 +12,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
-                    Exposure, Volatility, Candles, Risk, OrderPreview, SubmitResult,
+                    Exposure, ExposureConvention, ExposureSlice, Volatility, Candles, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
                     WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis)
 
@@ -153,8 +153,11 @@ class Client:
     def chain(self, symbol: str, expiry: str | None = None, window: float = 0) -> Chain:
         return self._market(symbol, "chain", expiry=expiry, window=window)
 
-    def exposure(self, symbol: str, expiries: int = 8, window: float = 0.08) -> Exposure:
-        return self._market(symbol, "exposure", expiries=expiries, window=window)
+    def exposure(self, symbol: str, expiries: int = 8, window: float = 0.08, *,
+                 convention: ExposureConvention = "long_calls_short_puts", slice: ExposureSlice = "all") -> Exposure:
+        """OI-weighted GEX/VEX/DEX/CEX/VOMEX; customer flow is unavailable without signed data."""
+        return self._market(symbol, "exposure", expiries=expiries, window=window,
+                            convention=convention, slice=slice)
 
     def surface(self, symbol: str, expiries: int = 12, window: float = 0.2) -> Surface:
         return self._market(symbol, "surface", expiries=expiries, window=window)

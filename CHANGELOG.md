@@ -130,6 +130,22 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   and recomputed drill results in replay verification receipts. Morning crush,
   Afternoon waterfall and Range bleed have objectives in a separate built-in
   objectives file, so their sources and earlier runs' hashes are unchanged.
+- Analytics: add OI-weighted delta, daily charm and vomma exposure, per-strike and
+  expiry totals, signed walls and sticky-strike spot flips alongside GEX/VEX.
+- Analytics: expose positioning conventions and snapshot-date 0DTE/ex-0DTE slices
+  through the API, terminal, Python client/frames and MCP. Preserve the default
+  long-call/short-put convention; report customer flow as unavailable without
+  aggressor-side data. Document formulas, units, coverage and search limits.
+- Analytics: charm's carry and yield rates now use the floored exposure horizon, so a
+  small forward/spot gap near expiry no longer dominates 0DTE CEX. Flip searches
+  bisect only the brackets nearest spot and reprice one metric; a convention or
+  slice request copies only the selected expiries.
+- API: the default exposure convention is named `long_calls_short_puts` in
+  responses, the terminal, Python client and MCP. `open_interest` is still accepted
+  as a deprecated input for the same convention.
+- API: without a finite positive spot, exposure totals (`gex`, `vex` and the other
+  metrics) and per-strike and per-expiry cells are null instead of 0, with
+  `exposure.available=false` and a reason.
 
 ## 0.4.0 (2026-10-06)
 

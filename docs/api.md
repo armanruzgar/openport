@@ -25,15 +25,26 @@ halt reaches the regular close. See [stress scenarios](scenarios.md#events).
 | `GET /api/status` | Running `version`, provider, market and per-underlying sessions, feed health (including the demo day title), engine counters, notification delivery status (no secrets), and optional sandbox availability |
 | `POST /api/notifications/test` | Queue a test for `{ "channel": "ID" }`; requires admin |
 | `PUT /api/notifications/channels/ID` | Change a channel's enabled state, event filters and floor distance for this process; requires admin |
-| `GET /api/underlyings/{symbol}/summary` | Spot and its source, expiries with forward, rate and its source, ATM IV, GEX, VEX, coverage and `last_trade` / `auto_close` UTC ISO times |
+| `GET /api/underlyings/{symbol}/summary` | Spot and its source, expiries with forward, rate and its source, ATM IV, GEX/VEX/DEX/CEX/VOMEX, coverage and `last_trade` / `auto_close` UTC ISO times |
 | `GET /api/underlyings/{symbol}/chain?expiry={id}` | Every strike with both sides' quotes, IV, Greeks, early-exercise premium, `volume` (session contracts or null) and whether paper orders can fill on each quote (`executable`, `quote_issue`); coverage includes `volume` |
-| `GET /api/underlyings/{symbol}/exposure?expiries=8` | GEX and VEX by strike and expiry, flip and walls |
+| `GET /api/underlyings/{symbol}/exposure?expiries=8&convention=long_calls_short_puts&slice=all` | GEX, VEX, DEX, CEX and VOMEX by strike and expiry, totals, flips and signed walls |
 | `GET /api/underlyings/{symbol}/surface?expiries=12` | Smile points per expiry |
 | `GET /api/underlyings/{symbol}/volatility` | Current model-free IV, ATM/skew, realized vol, cones, implied moves, IV rank/percentile and ex-ante/ex-post VRP, with sources and history counts |
 | `GET /api/underlyings/{symbol}/series?fields=mfiv30,atm30,rr25&from=&to=&interval=1d` | Selected metric history at `1m` or `1d`; bounded date ranges, null gaps and per-value sources ([fields and limits](volatility.md#series-api)) |
 | `GET /api/underlyings/{symbol}/candles?interval=5m` | OHLC bars at 1m, 5m, 15m, 30m, 1h or 1d, oldest first |
 | `GET /api/underlyings/{symbol}/probability?days=0,1,7,30&prices=` | Probability cones (one and two standard deviations) from the at-the-money term structure, and each price's odds of finishing above or below it or touching it by each horizon ([model](paper-trading.md#risk-profile-and-probabilities)) |
 | `WS /ws` | A small tick each second with versions, so clients refetch only what changed; at most 256 open sessions, after which an upgrade gets 503 with `Retry-After: 5` |
+
+Exposure `convention` is `long_calls_short_puts` (the default), `short_all`, or
+`customer_flow`; the deprecated `open_interest` is still accepted as
+`long_calls_short_puts`, and the response echoes the canonical name. The last mode is unavailable without aggressor-side data and
+returns `exposure.available=false`, `unavailable_reason`, and null metrics.
+`slice=all|0dte|ex_0dte` selects live expiries using the snapshot's New York calendar
+date before display limits. `total_gex`, `total_vex`, `total_dex`, `total_cex`, and
+`total_vomex` align with displayed strikes; `exposure` totals and `levels` cover
+the full selected slice. Each metric's levels contain `flip`, `positive_wall`,
+and `negative_wall`; absent crossings or walls are null. These query parameters
+also work on replay and saved-run routes. [Formulas and units](methods.md#dealer-exposure).
 
 Expiry ids are the date plus settlement, for example `2026-10-16AM`.
 

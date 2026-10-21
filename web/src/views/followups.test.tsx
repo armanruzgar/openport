@@ -41,7 +41,7 @@ function render(view: ReactNode, payloads: { summary?: Summary; chain?: Chain; e
   clients.push(client)
   client.setQueryData(["summary", "SPY", 1], payloads.summary ?? summary)
   if (payloads.chain) client.setQueryData(["chain", "SPY", expiry.id, 0.05, 1], payloads.chain)
-  if (payloads.exposure) client.setQueryData(["exposure", "SPY", 8, 0.05, 1], payloads.exposure)
+  if (payloads.exposure) client.setQueryData(["exposure", "SPY", 8, 0.05, "long_calls_short_puts", "all", 1], payloads.exposure)
   return renderToStaticMarkup(<QueryClientProvider client={client}>{view}</QueryClientProvider>)
 }
 

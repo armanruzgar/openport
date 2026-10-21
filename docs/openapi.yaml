@@ -185,11 +185,38 @@
             "minimum": 0,
             "maximum": 1
           }
+        },
+        {
+          "name": "convention",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExposureConvention"
+              },
+              {
+                "type": "string",
+                "const": "open_interest",
+                "deprecated": true
+              }
+            ]
+          },
+          "description": "Default long_calls_short_puts assumes dealers long calls and short puts. open_interest is a deprecated spelling of it and is echoed back as long_calls_short_puts. short_all negates both sides. customer_flow requires signed customer trade/volume direction and is currently unavailable."
+        },
+        {
+          "name": "slice",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/ExposureSlice"
+          },
+          "description": "Default all. 0dte selects live expiries whose date equals the snapshot as_of New York calendar date; ex_0dte excludes those. Not the UTC date, wall clock, or next overnight trading date. Applied before display limits."
         }
       ],
       "get": {
         "summary": "GET /api/underlyings/{symbol}/exposure",
-        "description": "Read the current publication.",
+        "description": "Read derived dealer exposure under an explicit positioning convention and expiry slice. Assumptions are not observed dealer positions. See methods.md for formulas and units. Invalid convention/slice values return 400.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -2252,11 +2279,38 @@
             "minimum": 0,
             "maximum": 1
           }
+        },
+        {
+          "name": "convention",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExposureConvention"
+              },
+              {
+                "type": "string",
+                "const": "open_interest",
+                "deprecated": true
+              }
+            ]
+          },
+          "description": "Default long_calls_short_puts assumes dealers long calls and short puts. open_interest is a deprecated spelling of it and is echoed back as long_calls_short_puts. short_all negates both sides. customer_flow requires signed customer trade/volume direction and is currently unavailable."
+        },
+        {
+          "name": "slice",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "$ref": "#/components/schemas/ExposureSlice"
+          },
+          "description": "Default all. 0dte selects live expiries whose date equals the snapshot as_of New York calendar date; ex_0dte excludes those. Not the UTC date, wall clock, or next overnight trading date. Applied before display limits."
         }
       ],
       "get": {
         "summary": "GET /api/underlyings/{symbol}/exposure",
-        "description": "Read the current publication.",
+        "description": "Read derived dealer exposure under an explicit positioning convention and expiry slice. Assumptions are not observed dealer positions. See methods.md for formulas and units. Invalid convention/slice values return 400.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -7183,6 +7237,15 @@
                 "type": "null"
               }
             ]
+          },
+          "dex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "cex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "vomex": {
+            "$ref": "#/components/schemas/Num"
           }
         },
         "required": [
@@ -7198,7 +7261,10 @@
           "atm_iv",
           "gex",
           "vex",
-          "strikes"
+          "strikes",
+          "dex",
+          "cex",
+          "vomex"
         ]
       },
       "ExposureSummary": {
@@ -7221,6 +7287,31 @@
           },
           "oi_coverage": {
             "$ref": "#/components/schemas/Num"
+          },
+          "dex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "cex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "vomex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "levels": {
+            "$ref": "#/components/schemas/ExposureMetricLevels"
           }
         },
         "required": [
@@ -7228,8 +7319,15 @@
           "vex",
           "gamma_flip",
           "call_wall",
-          "put_wall"
-        ]
+          "put_wall",
+          "dex",
+          "cex",
+          "vomex",
+          "available",
+          "unavailable_reason",
+          "levels"
+        ],
+        "description": "OI-weighted totals and levels over every strike and expiry in the selected slice, independently of display window and expiry limit. GEX: dollars per 1% spot move; VEX: dollar delta per vol point; DEX: dollar delta; CEX: dollar delta per calendar day at fixed spot and fitted carry; VOMEX: dollars per vol point squared. All use the snapshot exposure time floor (default half a day). Levels reprice sticky-strike IV at hypothetical spots within the configured range (default +/-10%); flip is the nearest sign change, null if none. Walls are the largest positive and most negative strike sums, null when absent. Legacy gamma_flip/call_wall/put_wall alias levels.gex. Unavailable results are null, never inferred flow; zero totals with no OI should be read with oi_coverage."
       },
       "Summary": {
         "type": "object",
@@ -7460,6 +7558,15 @@
                 "type": "null"
               }
             ]
+          },
+          "dex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "cex": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "vomex": {
+            "$ref": "#/components/schemas/Num"
           }
         },
         "required": [
@@ -7468,7 +7575,10 @@
           "gex",
           "vex",
           "call",
-          "put"
+          "put",
+          "dex",
+          "cex",
+          "vomex"
         ]
       },
       "Chain": {
@@ -7549,37 +7659,7 @@
           "expiries": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "expiry": {
-                  "type": "string"
-                },
-                "days": {
-                  "$ref": "#/components/schemas/Num"
-                },
-                "gex": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Num"
-                  }
-                },
-                "vex": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Num"
-                  }
-                }
-              },
-              "required": [
-                "id",
-                "expiry",
-                "days",
-                "gex",
-                "vex"
-              ]
+              "$ref": "#/components/schemas/ExposureExpiry"
             }
           },
           "total_gex": {
@@ -7590,6 +7670,36 @@
           },
           "exposure": {
             "$ref": "#/components/schemas/ExposureSummary"
+          },
+          "total_vex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "total_dex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "total_cex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "total_vomex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "convention": {
+            "$ref": "#/components/schemas/ExposureConvention"
+          },
+          "slice": {
+            "$ref": "#/components/schemas/ExposureSlice"
           }
         },
         "required": [
@@ -7600,8 +7710,15 @@
           "strikes",
           "expiries",
           "total_gex",
-          "exposure"
-        ]
+          "exposure",
+          "total_vex",
+          "total_dex",
+          "total_cex",
+          "total_vomex",
+          "convention",
+          "slice"
+        ],
+        "description": "Aligned strike-by-expiry exposure arrays. total_* arrays sum displayed expiries only; exposure contains full selected-slice totals and levels. No aggressor-side data is currently captured: customer_flow returns available=false, an unavailable_reason and null cells/totals/levels even when unsigned volume exists."
       },
       "SviFit": {
         "type": "object",
@@ -25901,6 +26018,138 @@
           "marked_pnl",
           "entry_reasons",
           "rule_trips"
+        ]
+      },
+      "ExposureConvention": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "long_calls_short_puts"
+          },
+          {
+            "type": "string",
+            "const": "short_all"
+          },
+          {
+            "type": "string",
+            "const": "customer_flow"
+          }
+        ]
+      },
+      "ExposureSlice": {
+        "anyOf": [
+          {
+            "type": "string",
+            "const": "all"
+          },
+          {
+            "type": "string",
+            "const": "0dte"
+          },
+          {
+            "type": "string",
+            "const": "ex_0dte"
+          }
+        ]
+      },
+      "ExposureLevels": {
+        "type": "object",
+        "properties": {
+          "flip": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "positive_wall": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "negative_wall": {
+            "$ref": "#/components/schemas/Num"
+          }
+        },
+        "required": [
+          "flip",
+          "positive_wall",
+          "negative_wall"
+        ]
+      },
+      "ExposureMetricLevels": {
+        "type": "object",
+        "properties": {
+          "gex": {
+            "$ref": "#/components/schemas/ExposureLevels"
+          },
+          "vex": {
+            "$ref": "#/components/schemas/ExposureLevels"
+          },
+          "dex": {
+            "$ref": "#/components/schemas/ExposureLevels"
+          },
+          "cex": {
+            "$ref": "#/components/schemas/ExposureLevels"
+          },
+          "vomex": {
+            "$ref": "#/components/schemas/ExposureLevels"
+          }
+        },
+        "required": [
+          "gex",
+          "vex",
+          "dex",
+          "cex",
+          "vomex"
+        ]
+      },
+      "ExposureExpiry": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "expiry": {
+            "type": "string"
+          },
+          "days": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "gex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "vex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "dex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "cex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          },
+          "vomex": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Num"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "expiry",
+          "days",
+          "gex",
+          "vex",
+          "dex",
+          "cex",
+          "vomex"
         ]
       },
       "ScenarioMark": {

@@ -523,14 +523,67 @@ class ReplayResult(ReplayFeedback):
     replay: JSON | None
 
 
+# The server also accepts "open_interest", the deprecated spelling of long_calls_short_puts.
+ExposureConvention = Literal["long_calls_short_puts", "short_all", "customer_flow"]
+ExposureSlice = Literal["all", "0dte", "ex_0dte"]
+
+
+class ExposureLevels(TypedDict):
+    flip: float | None
+    positive_wall: float | None
+    negative_wall: float | None
+
+
+class ExposureMetricLevels(TypedDict):
+    gex: ExposureLevels
+    vex: ExposureLevels
+    dex: ExposureLevels
+    cex: ExposureLevels
+    vomex: ExposureLevels
+
+
+class ExposureSummary(TypedDict):
+    gex: float | None
+    vex: float | None
+    dex: float | None
+    cex: float | None
+    vomex: float | None
+    gamma_flip: float | None
+    call_wall: float | None
+    put_wall: float | None
+    oi_coverage: float | None
+    available: bool
+    unavailable_reason: str | None
+    levels: ExposureMetricLevels
+
+
+class ExposureExpiry(TypedDict):
+    id: str
+    expiry: str
+    days: float | None
+    gex: list[float | None]
+    vex: list[float | None]
+    dex: list[float | None]
+    cex: list[float | None]
+    vomex: list[float | None]
+
+
 class Exposure(TypedDict):
     symbol: str
     as_of: str | None
     spot: float | None
+    spot_source: Literal["quote", "parity"] | None
+    version: int
+    convention: ExposureConvention
+    slice: ExposureSlice
     strikes: list[float]
-    expiries: list[JSON]
+    expiries: list[ExposureExpiry]
     total_gex: list[float | None]
-    exposure: JSON
+    total_vex: list[float | None]
+    total_dex: list[float | None]
+    total_cex: list[float | None]
+    total_vomex: list[float | None]
+    exposure: ExposureSummary
 
 
 class HistoryRank(TypedDict):

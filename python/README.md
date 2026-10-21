@@ -317,3 +317,29 @@ These controls use global replay routes even from a history client. MCP exposes
 `start_scenario_pack`; writes retain its explicit account requirement. Drill
 scores and bests are returned in replay history; challenge inputs and recomputed
 results are included in verification receipts. See [scenarios](../docs/scenarios.md).
+
+### Dealer exposure
+
+```python
+from openport import exposure_frame
+
+exposure = client.exposure("SPX", convention="short_all", slice="0dte", expiries=8, window=0.05)
+frame = exposure_frame(exposure)  # strike/expiry rows: gex, vex, dex, cex, vomex
+levels = exposure["exposure"]["levels"]["cex"]  # flip, positive_wall, negative_wall
+```
+
+`convention` defaults to `long_calls_short_puts` (dealers long calls, short puts).
+The server still accepts `open_interest` as a deprecated spelling of it and echoes
+`long_calls_short_puts`. `short_all` shorts both sides.
+`customer_flow` returns unavailable with a reason and null metrics because current
+feeds have no aggressor-side or signed volume data. Unsigned volume supplies no sign.
+`slice` is `all`, `0dte` or `ex_0dte`, using the snapshot's New York calendar date,
+also in replay. The MCP `exposure` tool accepts the same convention, slice, expiries
+and window parameters, plus `replay`.
+
+DEX is dollar delta; CEX is dollar delta change per calendar day at fixed spot and
+fitted carry; VOMEX is dollars per squared volatility point. The frame preserves
+null cells, snapshot time and mode metadata. Summary totals and levels include the
+full selected slice, while `total_*` arrays and frames cover displayed expiries and
+strikes. These are derived positioning assumptions, not observed inventory.
+See [formulas, units and limits](../docs/methods.md#dealer-exposure).
