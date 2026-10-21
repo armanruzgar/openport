@@ -74,10 +74,18 @@ struct BacktestHost::Impl {
   json saved(const std::string& id, bool report) const {
     const auto directory = options.directory / id;
     const auto size = tree_bytes(directory);
-    auto state = read_json(directory / "state.json");
-    if (!current.is_null() && current.at("id") == id) state = current;
-    else if (state.at("status") == "running" || state.at("status") == "cancelling") state["status"] = "interrupted";
-    return with_storage_fields(directory, std::move(state), report, size);
+    if (!current.is_null() && current.at("id") == id) return with_storage_fields(directory, current, report, size);
+    // One damaged run (a truncated or hand-edited file) is listed as failed, and kept
+    // until purged, rather than failing the listing and every new run.
+    try {
+      auto state = read_json(directory / "state.json");
+      if (state.at("status") == "running" || state.at("status") == "cancelling") state["status"] = "interrupted";
+      return with_storage_fields(directory, std::move(state), report, size);
+    } catch (const json::exception& error) {
+      return {{"id", id}, {"status", "failed"}, {"phase", "finished"}, {"completed", 0}, {"total", 0},
+              {"label", kBacktestLabel}, {"report", nullptr}, {"error", std::string("Saved run is unreadable: ") + error.what()},
+              {"keep", true}, {"bytes", size}};
+    }
   }
   std::vector<std::string> ids() const {
     std::vector<std::string> result;

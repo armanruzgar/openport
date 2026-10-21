@@ -2283,9 +2283,15 @@ TEST(ReplayRun, StopCancelsAndJoinsBackgroundVerification) {
   EXPECT_EQ(stopping.wait_for(20ms), std::future_status::timeout);
   release.set_value();
   stopping.get();
+  // Cancelled, it found no difference: it reads as interrupted, never as failed,
+  // here and after a restart.
   const auto status = json::parse(replay_call(host, "GET", route).body);
-  EXPECT_EQ(status.at("status"), "failed");
-  EXPECT_NE(status.at("message").get<std::string>().find("cancelled"), std::string::npos);
+  EXPECT_EQ(status.at("status"), "idle");
+  EXPECT_NE(status.at("message").get<std::string>().find("interrupted"), std::string::npos);
+  options.verification_progress = {};
+  server::ReplayHost restarted(options);
+  EXPECT_EQ(json::parse(replay_call(restarted, "GET", route).body).at("status"), "idle");
+  restarted.stop();
 }
 
 TEST(ReplayRun, HistoryWaitsForTheStoppingJournalsFinalSync) {

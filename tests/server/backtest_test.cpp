@@ -784,6 +784,29 @@ TEST(BacktestApi, ListingSummarizesSavedReportIdentityWithoutCopyingTrades) {
   EXPECT_EQ(json::parse(call(host, {"GET", "/api/backtests/000001"}).body).at("report"), report);
 }
 
+TEST(BacktestApi, ADamagedSavedRunIsListedAsFailedAndCanBePurged) {
+  test::RecordingFile storage;
+  const json state{{"id", "000001"}, {"status", "completed"}, {"phase", "finished"}, {"completed", 1}, {"total", 1},
+      {"label", server::kBacktestLabel}, {"report", nullptr}};
+  std::filesystem::create_directories(storage.directory / "000001");
+  server::write_backtest_report(storage.directory / "000001" / "state.json", state);
+  std::filesystem::create_directories(storage.directory / "000002");
+  std::ofstream(storage.directory / "000002" / "state.json") << R"({"id":"000002","sta)";
+  server::BacktestHost host({storage.directory, {}, {}, {}, {}, true});
+  const auto listing = call(host, {"GET", "/api/backtests"}, false);
+  ASSERT_EQ(listing.status, 200) << listing.body;
+  const auto runs = json::parse(listing.body).at("runs");
+  ASSERT_EQ(runs.size(), 2U);
+  EXPECT_EQ(runs[0].at("id"), "000002");
+  EXPECT_EQ(runs[0].at("status"), "failed");
+  EXPECT_NE(runs[0].at("error").get<std::string>().find("unreadable"), std::string::npos);
+  EXPECT_EQ(runs[1].at("status"), "completed");
+  EXPECT_EQ(call(host, {"GET", "/api/backtests/000002"}, false).status, 200);
+  const auto purged = call(host, {"DELETE", "/api/backtests/000002?purge=true"}, false);
+  EXPECT_EQ(purged.status, 200) << purged.body;
+  EXPECT_FALSE(std::filesystem::exists(storage.directory / "000002"));
+}
+
 TEST(BacktestApi, VolumeRuleAcceptsScenariosButRejectsRecordingsWithoutVolume) {
   test::RecordingFile storage;
   const auto scenarios = storage.directory / "scenarios";

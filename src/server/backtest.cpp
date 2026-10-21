@@ -10,6 +10,8 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <fcntl.h>
+#include <unistd.h>
 #include "openport/providers/replay_batches.hpp"
 #include "openport/server/plans.hpp"
 #include "openport/trading/history.hpp"
@@ -700,6 +702,11 @@ void write_backtest_report(const std::filesystem::path& file, const json& report
   output << report.dump(2) << '\n';
   output.close();
   if (!output) throw std::runtime_error("Cannot write backtest report");
+  // Synced before the rename, so a crash leaves the old file or the new one, whole.
+  const int fd = ::open(temporary.c_str(), O_RDONLY);
+  const bool synced = fd >= 0 && ::fsync(fd) == 0;
+  if (fd >= 0) ::close(fd);
+  if (!synced) throw std::runtime_error("Cannot sync backtest report");
   std::filesystem::rename(temporary, file);
 }
 

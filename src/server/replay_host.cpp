@@ -541,9 +541,29 @@ class ReplayHost::History {
   }
   /// Removes what a resumed run rebuilds as it re-executes: its equity history and
   /// playbook catalogue, which would otherwise hold the later state it reaches again.
-  void rebuild(const std::string& id) const {
+  /// A resume rebuilds the run's equity history and playbook catalogue: they are set
+  /// aside until it is known to work, then dropped, or put back if it does not.
+  void set_aside(const std::string& id) const {
     std::error_code ignored;
-    for (const auto* suffix : {".playbooks.json", ".jsonl.equity.csv"}) std::filesystem::remove(directory_ / (id + suffix), ignored);
+    for (const auto* suffix : {".playbooks.json", ".jsonl.equity.csv"}) {
+      const auto path = directory_ / (id + suffix);
+      std::filesystem::remove(path.string() + ".resuming", ignored);
+      std::filesystem::rename(path, path.string() + ".resuming", ignored);
+    }
+  }
+  void restore(const std::string& id) const {
+    std::error_code ignored;
+    for (const auto* suffix : {".playbooks.json", ".jsonl.equity.csv"}) {
+      const auto path = directory_ / (id + suffix);
+      const auto aside = path.string() + ".resuming";
+      if (std::filesystem::exists(aside, ignored)) std::filesystem::rename(aside, path, ignored);
+      else std::filesystem::remove(path, ignored);
+    }
+  }
+  void drop_aside(const std::string& id) const {
+    std::error_code ignored;
+    for (const auto* suffix : {".playbooks.json", ".jsonl.equity.csv"})
+      std::filesystem::remove((directory_ / (id + suffix)).string() + ".resuming", ignored);
   }
   /// A saved run's journal, or empty when there is none by that id.
   std::filesystem::path journal(const std::string& id) const {
@@ -661,6 +681,11 @@ class ReplayHost::History {
   void verification_progress(std::uint64_t done, std::uint64_t total) {
     verification_["transactions"] = done;
     verification_["progress"] = total ? static_cast<double>(done) / static_cast<double>(total) : 0.0;
+  }
+  /// Leaves the saved "running" status, which reads back as interrupted.
+  void abandon_verification() {
+    verifying_.clear();
+    verification_ = json::object();
   }
   void end_verification(const std::string& id, json result, const json& fingerprint) {
     result["stamp"] = fingerprint;
@@ -1071,6 +1096,12 @@ void ReplayHost::history(const ApiRequest& request, const ApiCompletion& complet
           const std::lock_guard lock(handoff_mutex_);
           history_->verification_progress(done, total);
         });
+        // Cancelled by a stop, it found nothing: it stays interrupted, not failed.
+        if (!verified.matched && verifier_stop_.load()) {
+          const std::lock_guard lock(handoff_mutex_);
+          history_->abandon_verification();
+          return;
+        }
         json value{{"status", verified.matched ? "passed" : "failed"}, {"message", verified.message},
                    {"transactions", verified.transactions}, {"equity", verified.matched ? json(verified.equity.str()) : json(nullptr)},
                    {"head", verified.head.empty() ? json(nullptr) : json(verified.head)}, {"build", OPENPORT_VERSION},
@@ -1338,6 +1369,21 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     engine.analytics = start.at("analytics").get<analytics::AnalyticsOptions>();
     engine.dividends = start.at("dividends").get<std::vector<trading::Dividend>>();
     engine.resume = std::make_shared<const trading::JournalRecovery>(std::move(recovery));
+    // Until the resumed run matches, its set-aside sidecars go back on any failure.
+    std::string aside;
+    struct PutBack {
+      const History& history;
+      std::string& id;
+      std::unique_ptr<Engine>& engine;
+      // The failed engine first: stopping, it would rewrite the equity file put back.
+      void now() {
+        if (id.empty()) return;
+        if (engine) { engine->stop(); engine.reset(); }
+        history.restore(id);
+        id.clear();
+      }
+      ~PutBack() { now(); }
+    } put_back{*history_, aside, session->engine};
     std::unique_lock handoff(handoff_mutex_);
     if (restart) {
       if (target > session->provider->end_time()) throw std::invalid_argument("Restart at exceeds the recording's end");
@@ -1349,7 +1395,8 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
       for (const auto& record : engine.resume->records) prefix->append(record.time, record.type, record.payload);
       prefix->flush();
     } else {
-      history_->rebuild(id);
+      history_->set_aside(id);
+      aside = id;
       engine.paper_journal = file;
     }
     engine.replay = true;
@@ -1371,8 +1418,11 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
       // The journal is as it was: nothing appends until every recorded transaction matched.
       const auto reason = session->engine->status().trading.reason;
       session->engine->stop();
+      // Before the reply: a caller may read the run as soon as it has it.
+      put_back.now();
       return refuse(reason);
     }
+    if (!aside.empty()) { history_->drop_aside(aside); aside.clear(); }
     std::shared_ptr<Session> old;
     {
       const std::lock_guard lock(mutex_);
