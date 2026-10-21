@@ -5,12 +5,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "openport/analytics/svi.hpp"
 #include "openport/analytics/ssvi.hpp"
 #include "openport/analytics/sabr.hpp"
+#include "openport/analytics/heston.hpp"
 #ifdef OPENPORT_SVI_API_BENCH
 #include "openport/server/api.hpp"
 #endif
@@ -110,6 +112,10 @@ int main(int argc, char** argv) {
     }
     static_cast<void>(analytics::sabr_calendar(fits));
     return true;
+  });
+  // The research Heston fit over the eight leading expiries, as the API's default.
+  measure("heston_8_expiries", [&] {
+    return analytics::fit_heston(std::span(m.slices).first(8)).status == analytics::SviStatus::Ok;
   });
 #ifdef OPENPORT_SVI_API_BENCH
   const server::ApiRequest request{"GET", "/api/underlyings/SPX/surface?expiries=60&window=0"};

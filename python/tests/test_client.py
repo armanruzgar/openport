@@ -196,6 +196,7 @@ def test_base_url_rejects_ambiguous_credentials(url):
     ("exposure", ("SPX",), "GET", "/api/underlyings/SPX/exposure", "ExposureMatrix"),
     ("surface", ("SPX",), "GET", "/api/underlyings/SPX/surface", "Surface"),
     ("volatility", ("SPX",), "GET", "/api/underlyings/SPX/volatility", "Volatility"),
+    ("heston", ("SPX",), "GET", "/api/underlyings/SPX/heston", "Heston"),
     ("candles", ("SPX",), "GET", "/api/underlyings/SPX/candles", "Candles"),
     ("account", (), "GET", "/api/account", "Account"),
     ("portfolio", (), "GET", "/api/portfolio", "Portfolio"),

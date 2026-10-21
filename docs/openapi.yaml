@@ -279,6 +279,49 @@
         }
       }
     },
+    "/api/underlyings/{symbol}/heston": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "expiries",
+          "in": "query",
+          "required": false,
+          "description": "Fit one Heston parameter set to this many leading expiries (default 8).",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/heston",
+        "description": "Research only: a Heston (1993) calibration over the leading expiries for comparison with SVI and SSVI. Nothing in analytics, rules or scenarios uses it. Fitted on the first request for a snapshot and cached.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Heston"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/underlyings/{symbol}/volatility": {
       "parameters": [
         {
@@ -6823,6 +6866,180 @@
           "butterfly_ok",
           "min_k",
           "max_k"
+        ]
+      },
+      "Heston": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "spot": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "ok",
+                "type": "string"
+              },
+              {
+                "const": "too_few_points",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "v0": {
+                    "type": "number"
+                  },
+                  "kappa": {
+                    "type": "number"
+                  },
+                  "theta": {
+                    "type": "number"
+                  },
+                  "xi": {
+                    "type": "number"
+                  },
+                  "rho": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "v0",
+                  "kappa",
+                  "theta",
+                  "xi",
+                  "rho"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feller": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rmse_vol_points": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "points": {
+            "type": "number"
+          },
+          "fit_ms": {
+            "type": "number"
+          },
+          "expiries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "expiry": {
+                  "type": "string"
+                },
+                "days": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "forward": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "points": {
+                  "type": "number"
+                },
+                "rmse_vol_points": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "svi_rmse_vol_points": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "ssvi_rmse_vol_points": {
+                  "$ref": "#/components/schemas/Num"
+                }
+              },
+              "required": [
+                "id",
+                "expiry",
+                "days",
+                "forward",
+                "points",
+                "rmse_vol_points",
+                "reason",
+                "svi_rmse_vol_points",
+                "ssvi_rmse_vol_points"
+              ]
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "spot",
+          "as_of",
+          "version",
+          "status",
+          "reason",
+          "parameters",
+          "feller",
+          "rmse_vol_points",
+          "points",
+          "fit_ms",
+          "expiries",
+          "model"
         ]
       },
       "SurfaceExpiry": {

@@ -12,6 +12,7 @@
 #include <set>
 
 #include "openport/analytics/chain_analytics.hpp"
+#include "openport/analytics/svi.hpp"
 #include "openport/net/http.hpp"
 #include "openport/server/web_server.hpp"
 #include "support/american_chain.hpp"
@@ -253,6 +254,58 @@ TEST(Api, SurfaceAddsSabrOnlyWhenRequested) {
     EXPECT_TRUE(get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + bad, 400).contains("error"));
   test::capture_contract("analytics", "GET", "/api/underlyings/SPX/surface?sabr_beta=0.5",
                          server::handle_api({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.5"}, source));
+}
+
+TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
+  analytics::UnderlyingMetrics m;
+  m.symbol = "SPX"; m.spot = 5000; m.version = 1;
+  m.as_of = md::new_york_to_utc({2026, 9, 23}, 16, 0);
+  for (int days : {14, 45, 120}) {
+    analytics::SliceMetrics slice;
+    slice.expiry = md::date_from_days(md::days_since_epoch({2026, 9, 23}) + days);
+    slice.expiry_time = md::new_york_to_utc(slice.expiry, 16, 0);
+    slice.years = days / 365.0;
+    slice.forward.forward = 5000; slice.forward.discount = 1; slice.forward.ok = true;
+    const analytics::SviParameters p{.015 * slice.years, .1 * slice.years, -.55, .025, .15};
+    for (int j = 0; j <= 30; ++j) {
+      const double k = -.3 * std::sqrt(slice.years / .25) + .45 * std::sqrt(slice.years / .25) * j / 30;
+      analytics::StrikeMetrics row;
+      row.strike = 5000 * std::exp(k);
+      row.iv = analytics::svi_iv(p, k, slice.years);
+      auto& side = k >= 0 ? row.call : row.put;
+      side.bid = 1; side.ask = 1.1; side.mid = 1.05;
+      side.bid_iv = row.iv - .002; side.ask_iv = row.iv + .002;
+      slice.strikes.push_back(row);
+    }
+    m.slices.push_back(slice);
+  }
+  StubSource source(m);
+  const json heston = get(source, "/api/underlyings/SPX/heston");
+  ASSERT_EQ(heston["status"], "ok") << heston["reason"];
+  for (const auto* key : {"v0", "kappa", "theta", "xi", "rho"}) EXPECT_GT(std::abs(heston["parameters"][key].get<double>()), 0) << key;
+  EXPECT_TRUE(heston["feller"].is_boolean());
+  EXPECT_LT(heston["rmse_vol_points"].get<double>(), 2);
+  EXPECT_NE(heston["model"].get<std::string>().find("nothing in OpenPort's analytics"), std::string::npos);
+  ASSERT_EQ(heston["expiries"].size(), 3U);
+  for (const auto& expiry : heston["expiries"]) {
+    EXPECT_GT(expiry["points"].get<int>(), 5);
+    EXPECT_LE(expiry["points"].get<int>(), 25);
+    EXPECT_TRUE(expiry["rmse_vol_points"].is_number());
+    EXPECT_TRUE(expiry["svi_rmse_vol_points"].is_number());
+    EXPECT_TRUE(expiry["ssvi_rmse_vol_points"].is_number());
+    EXPECT_TRUE(expiry["reason"].is_null());
+  }
+  // Cached per snapshot and expiry count.
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/heston"), heston);
+  const json one = get(source, "/api/underlyings/SPX/heston?expiries=1");
+  EXPECT_EQ(one["status"], "too_few_points");
+  EXPECT_TRUE(one["parameters"].is_null());
+  EXPECT_TRUE(one["feller"].is_null());
+  EXPECT_TRUE(one["rmse_vol_points"].is_null());
+  EXPECT_EQ(one["expiries"].size(), 1U);
+  get(source, "/api/underlyings/SPX/heston?expiries=0", 400);
+  test::capture_contract("analytics", "GET", "/api/underlyings/SPX/heston",
+                         server::handle_api({"GET", "/api/underlyings/SPX/heston"}, source));
 }
 
 TEST(Api, ErrorsAreJson) {

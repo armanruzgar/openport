@@ -13,6 +13,7 @@ add_library(openport_core
   analytics/svi.cpp
   analytics/ssvi.cpp
   analytics/sabr.cpp
+  analytics/heston.cpp
   analytics/volatility.cpp
   analytics/realized.cpp
   analytics/volatility_history.cpp

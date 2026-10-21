@@ -96,6 +96,18 @@ class Surface(TypedDict):
     expiries: list[JSON]
 
 
+class Heston(TypedDict):
+    """A research Heston fit for comparison with SVI/SSVI; nothing in OpenPort uses it."""
+    symbol: str
+    status: str
+    reason: str | None
+    parameters: JSON | None
+    feller: bool | None
+    rmse_vol_points: float | None
+    expiries: list[JSON]
+    model: str
+
+
 class Walk(TypedDict):
     step: str
     seconds: int

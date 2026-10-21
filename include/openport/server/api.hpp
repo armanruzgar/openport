@@ -67,6 +67,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
 ///   GET /api/underlyings/{symbol}/series[?fields=mfiv30,atm30][&interval=1m|1d][&from=][&to=]
 ///   GET /api/underlyings/{symbol}/volatility
 ///   GET /api/underlyings/{symbol}/surface[?expiries=12][&window=0.2][&sabr_beta=0..1|fit]
+///   GET /api/underlyings/{symbol}/heston[?expiries=8]  (research only; see docs/svi.md)
 ///   GET /api/underlyings/{symbol}/candles[?interval=5m][&limit=500]
 /// Candles: {symbol, interval, bars: [{t, o, h, l, c}]}, oldest first, where t is
 /// the bar's start in Unix seconds of market-data time; interval is 1m, 5m, 15m,

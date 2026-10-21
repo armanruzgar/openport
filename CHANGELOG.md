@@ -13,6 +13,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   (Hagan lognormal, β fixed at 1 or ½, or fitted) with their parameters, RMSE and
   the same butterfly and calendar checks. The surface API fits them only when
   asked (`sabr_beta`), so nothing changes for analytics or other readers.
+- **Compare a Heston calibration (research, API only).**
+  `GET /api/underlyings/{symbol}/heston` fits one Heston parameter set to the
+  leading expiries and reports it beside each expiry's SVI and SSVI RMSE. Its
+  parameters are weakly identified on real smiles; nothing else uses it.
 
 ### Risk
 

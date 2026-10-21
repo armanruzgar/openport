@@ -5,6 +5,7 @@
 #include <optional>
 #include <nlohmann/json.hpp>
 
+#include "openport/analytics/heston.hpp"
 #include "openport/analytics/realized.hpp"
 #include "openport/analytics/sabr.hpp"
 #include "openport/analytics/ssvi.hpp"
@@ -21,6 +22,8 @@ struct SurfaceFits {
   std::optional<analytics::SsviFit> ssvi;
   /// Optional SABR overlays, fitted only when requested, by fixed beta or "fit".
   std::map<std::string, std::vector<analytics::SabrFit>> sabr;
+  /// The research Heston fit, by the number of leading expiries it covers.
+  std::map<std::size_t, analytics::HestonFit> heston;
   std::optional<analytics::VolatilityMetrics> volatility;
   std::map<const CandleStore*, analytics::RealizedMetrics> realized;
   std::map<const MetricsSource*, nlohmann::json> volatility_responses;

@@ -569,6 +569,49 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
   return response;
 }
 
+/// GET /api/underlyings/{symbol}/heston: a research comparison only. One Heston
+/// parameter set over the leading expiries, beside each expiry's SVI and SSVI RMSE.
+json heston_json(const std::shared_ptr<const UnderlyingMetrics>& metrics, std::size_t max_expiries) {
+  const auto& m = *metrics;
+  const auto count = std::min(max_expiries, m.slices.size());
+  const auto cache = surface_cache(metrics);
+  analytics::HestonFit fit;
+  std::vector<analytics::SviFit> fits;
+  analytics::SsviFit ssvi;
+  {
+    const std::lock_guard lock(cache->mutex);
+    const auto found = cache->heston.find(count);
+    fit = found != cache->heston.end() ? found->second
+        : cache->heston.emplace(count, analytics::fit_heston(std::span(m.slices).first(count))).first->second;
+    while (cache->fits.size() < count) cache->fits.push_back(analytics::fit_svi(m.slices[cache->fits.size()]));
+    if (!cache->ssvi) cache->ssvi = analytics::fit_ssvi(m.slices);
+    fits.assign(cache->fits.begin(), cache->fits.begin() + static_cast<std::ptrdiff_t>(count));
+    ssvi = *cache->ssvi;
+  }
+  const bool ok = fit.status == analytics::SviStatus::Ok;
+  json expiries = json::array();
+  for (std::size_t i = 0; i < count; ++i) {
+    const auto& slice = m.slices[i];
+    const auto& expiry = fit.expiries[i];
+    expiries.push_back({{"id", expiry_id(slice)}, {"expiry", md::format_date(slice.expiry)},
+                        {"days", sig(slice.years * 365.0, 4)}, {"forward", price(slice.forward.forward)},
+                        {"points", expiry.points}, {"rmse_vol_points", ok ? sig(expiry.rmse_vol_points) : json(nullptr)},
+                        {"reason", expiry.reason.empty() ? json(nullptr) : json(expiry.reason)},
+                        {"svi_rmse_vol_points", fits[i].status == analytics::SviStatus::Ok ? sig(fits[i].rmse_vol_points) : json(nullptr)},
+                        {"ssvi_rmse_vol_points", sig(ssvi.expiries[i].rmse_vol_points)}});
+  }
+  const auto& p = fit.parameters;
+  return {{"symbol", m.symbol}, {"spot", price(m.spot)}, {"as_of", md::format_timestamp(m.as_of)},
+          {"version", m.version}, {"status", analytics::to_string(fit.status)},
+          {"reason", fit.reason.empty() ? json(nullptr) : json(fit.reason)},
+          {"parameters", ok ? json{{"v0", p.v0}, {"kappa", p.kappa}, {"theta", p.theta}, {"xi", p.xi}, {"rho", p.rho}} : json(nullptr)},
+          {"feller", ok ? json(fit.feller) : json(nullptr)},
+          {"rmse_vol_points", ok ? sig(fit.rmse_vol_points) : json(nullptr)}, {"points", fit.points},
+          {"fit_ms", fit.fit_ms}, {"expiries", expiries},
+          {"model", "Heston (1993) stochastic volatility, one parameter set for these expiries, fitted for "
+                    "comparison with SVI and SSVI; nothing in OpenPort's analytics, rules or scenarios uses it"}};
+}
+
 json reason_json(const std::string& reason) {
   return reason.empty() ? json(nullptr) : json(reason);
 }
@@ -845,6 +888,8 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   }
   if (view == "exposure")
     return ok(exposure_json(*metrics, expiries, query.contains("window") ? window : 0.08));
+  if (view == "heston")
+    return ok(heston_json(metrics, query.contains("expiries") ? static_cast<std::size_t>(expiries) : 8));
   if (view == "surface") {
     // sabr_beta=B (0 to 1) adds SABR fits with that fixed beta; sabr_beta=fit calibrates it.
     std::optional<std::optional<double>> sabr_beta;

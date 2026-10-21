@@ -312,6 +312,59 @@ cold API with `sabr_beta=1` over 60 expiries 1.3 s against 0.95 s without. The
 workload's smiles are SVI-shaped, so these time the overlay, not its accuracy.
 The terminal requests six expiries by default.
 
+## Heston: a research comparison through the API
+
+`GET /api/underlyings/{symbol}/heston[?expiries=8]` calibrates one Heston (1993)
+parameter set, dv=κ(θ−v)dt+ξ√v dZ with spot-variance correlation ρ and initial
+variance v0, to the leading expiries, for comparison with SVI and SSVI. It is a
+research tool only: there is no terminal view, and nothing in analytics, rules,
+scenarios or the smile display uses it. The first request for a snapshot and
+expiry count fits it on that API worker and caches it beside the other fits.
+
+**Pricing.** Undiscounted calls on the forward use Lewis's (2001) single integral
+C=F−√(FK)/π ∫₀^∞ Re[e^{iux}φ(u−i/2)]/(u²+¼) du with x=log(F/K), and the
+characteristic function in the "little Heston trap" form of Albrecher et al.
+(2007), which avoids the complex-log branch jump. Its β−d and log terms are
+O(ξ²); they are rewritten algebraically (β−d=−ξ²(iu+u²)/(β+d), and log1p by
+series for small arguments), so the small-ξ limit is exact rather than roundoff
+divided by ξ². The integral uses 16-point Gauss–Legendre panels starting 0.5 wide
+at the origin, where 1/(u²+¼) peaks, and doubling to a width that holds about four
+periods of e^{iux}, up to U=10/√w+30 for the tenor's total variance w. Puts follow
+from parity.
+
+**Calibration.** SVI's eligible OTM quotes for expiries at least a week away, kept
+within three ATM standard deviations (|k|≤3·IV_atm·√T, beyond which prices near
+roundoff and vegas near zero would dominate), thinned evenly in k to at most 25
+per expiry, with SVI's normalised weights and equal expiry weight. The objective
+is vega-weighted price residuals, a first-order IV residual. Bounded Nelder–Mead
+in (log v0, log κ, log θ, log ξ, ρ) with v0,θ∈[1e-4,4], κ∈[0.05,20], ξ∈[0.01,5],
+|ρ|≤0.999, from 18 fixed seeds (v0 and θ at the shortest and longest ATM IV²,
+κ∈{.5,2,6}, ξ∈{.3,1}, ρ∈{−.7,−.3,.2}), refining the best two for at most 3,000
+iterations until log-parameter widths are below 1e-6. Reported RMSE inverts each
+fitted price to its IV exactly, per expiry and overall (root mean square over
+expiries, as SSVI). Feller's condition 2κθ≥ξ² is reported, not imposed. At least
+two usable expiries are needed; skipped expiries keep a reason.
+
+**Robustness and limits.** Tests recover an exact synthetic surface to 6e-6 vol
+points with every parameter to five digits, fit noisy quotes within their noise,
+match full-truncation Euler Monte Carlo prices within four standard errors, and
+match Black–Scholes at the mean variance as ξ→0. On real-shaped smiles the
+parameters are weakly identified: on the SVI benchmark workload below, κ settles
+at its 0.05 bound with θ≈0.56, trading mean reversion against long-run variance
+while the fitted surface stays within 0.05–0.2 vol points. Read the surface and
+its RMSE beside SVI and SSVI (each expiry includes their RMSE), not individual
+parameters. One parameter set cannot match short-dated equity-index skew well;
+that is a property of the model, which is why it is offered for comparison only.
+
+Response: `status`, `reason`, `parameters` `{v0,kappa,theta,xi,rho}` (full
+precision; null unless `ok`), `feller`, `rmse_vol_points`, `points`, `fit_ms`,
+`model`, and `expiries[]` with `id, expiry, days, forward, points,
+rmse_vol_points, reason, svi_rmse_vol_points, ssvi_rmse_vol_points`.
+
+On the SVI workload above (`openport_measure_svi`, 2026-10-21, a busy shared machine),
+the eight leading expiries (four of them a week or more away) took 2.2 s median.
+A synthetic three-expiry surface fits in about 0.2–0.4 s in the tests.
+
 ## References
 
 - Gatheral (2004), *A parsimonious arbitrage-free implied volatility parameterization
@@ -327,3 +380,9 @@ The terminal requests six expiries by default.
   a=−0.0410, b=0.1331, ρ=0.3060, m=0.3586, σ=0.4153.
 - Hagan, Kumar, Lesniewski & Woodward (2002), *Managing smile risk*, Wilmott
   Magazine, September, 84–108: Eqs. (2.17a) and (2.18).
+- Heston (1993), *A closed-form solution for options with stochastic volatility
+  with applications to bond and currency options*, Review of Financial Studies 6(2).
+- Lewis (2001), *A simple option formula for general jump-diffusion and other
+  exponential Lévy processes*, OptionCity working paper.
+- Albrecher, Mayer, Schoutens & Tistaert (2007), *The little Heston trap*, Wilmott
+  Magazine, January, 83–92.

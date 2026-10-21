@@ -12,7 +12,7 @@ from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
                     Exposure, Volatility, Candles, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
-                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability)
+                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, Heston)
 
 
 def _list(values) -> str | None:
@@ -144,6 +144,10 @@ class Client:
                 sabr_beta: float | str | None = None) -> Surface:
         """SVI and SSVI fits; sabr_beta (0 to 1, or "fit") adds the optional SABR overlay."""
         return self._market(symbol, "surface", expiries=expiries, window=window, sabr_beta=sabr_beta)
+
+    def heston(self, symbol: str, expiries: int | None = None) -> Heston:
+        """Research only: one Heston fit over the leading expiries, beside their SVI and SSVI RMSE."""
+        return self._market(symbol, "heston", expiries=expiries)
 
     def volatility(self, symbol: str) -> Volatility:
         return self._market(symbol, "volatility")
