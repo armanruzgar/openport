@@ -185,7 +185,10 @@ including the post-close ETF price movement; saved runs verify at their saved re
 Revision 9 gives every strike of an ETF monthly (SPY, QQQ, XSP) the monthly open
 interest, also on dates when that expiry is one of the date's dailies or weeklies.
 Revisions 2–8 gave the monthly level only to its wider strikes listed on earlier
-dates, so open interest jumped near the edge of the daily strike window.
+dates, so open interest jumped near the edge of the daily strike window. Revision 9
+also holds SPY option volatility with SPY's price after the stock close (as QQQ's
+already was), and keeps an overnight first session's frozen cash index at the close
+`previous_close` sets.
 
 ## Several sessions
 

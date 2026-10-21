@@ -570,9 +570,11 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
           sink.publish(md::UnderlyingQuote{"SPX", md::new_york_to_utc(md::previous_business_day(date), 16, 0), 0, 0, kOpen});
         } else {
           const auto day = md::previous_business_day(date);
+          // Revision 9: the frozen index is the close the scenario's previous_close sets.
+          const double scale = revision >= 9 ? std::exp(play.previous_close.value_or(0)) : 1;
           for (const auto& symbol : script.symbols)
             sink.publish(md::UnderlyingQuote{symbol, md::new_york_to_utc(day, md::regular_close_hour(day), 0),
-                                             0, 0, cents(previous.for_symbol(symbol))});
+                                             0, 0, cents(previous.for_symbol(symbol) * scale)});
         }
       }
       if (revision >= 2)
@@ -734,7 +736,8 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
             : underlying == "XSP" ? spx / 10 : underlying == "NDX" ? close_ndx
             : underlying == "RUT" ? (regular ? close_rut : rut) : (regular ? close_vix : vix);
         const double moved = underlying == "SPX" || underlying == "XSP" ? (regular ? close_level / kOpen : ratio)
-            : underlying == "SPY" ? ratio : underlying == "QQQ" ? qqq / kQqqOpen
+            // Revision 9: SPY's options, like its price, stop following the latent level at the close.
+        : underlying == "SPY" ? (revision >= 9 && regular ? close_level / kOpen : ratio) : underlying == "QQQ" ? qqq / kQqqOpen
             : underlying == "NDX" ? price / kNdxOpen : underlying == "RUT" ? price / kRutOpen : 1;
         const double extra = underlying == "QQQ" || underlying == "NDX" ? 0.03 : underlying == "SPY" ? 0.005
             : underlying == "RUT" ? 0.04 : 0.0;

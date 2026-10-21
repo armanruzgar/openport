@@ -22921,7 +22921,7 @@
           },
           "revision": {
             "type": "integer",
-            "description": "Scenario output revision. New runs use 9, which gives every strike of an ETF monthly its monthly open interest. Revision 8 freezes ETF underlying prices at the 16:00 ET stock close (13:00 early) while options trade to 16:15 (13:15 early). Revision 7 keeps positive two-sided quotes with sizes inside four model standard deviations of the forward, using the greater of ATM and strike IV, including 5-delta calls and puts and ordinary protective wings. Remote tails may have no bid; authored book stress events override normal quotes. Saved revisions 1–8 retain their original events; an omitted revision regenerates revision 1."
+            "description": "Scenario output revision. New runs use 9, which gives every strike of an ETF monthly its monthly open interest, holds SPY option volatility with its price after the stock close and keeps an overnight start's frozen index at previous_close. Revision 8 freezes ETF underlying prices at the 16:00 ET stock close (13:00 early) while options trade to 16:15 (13:15 early). Revision 7 keeps positive two-sided quotes with sizes inside four model standard deviations of the forward, using the greater of ATM and strike IV, including 5-delta calls and puts and ordinary protective wings. Remote tails may have no bid; authored book stress events override normal quotes. Saved revisions 1–8 retain their original events; an omitted revision regenerates revision 1."
           },
           "seed": {
             "type": "string"
