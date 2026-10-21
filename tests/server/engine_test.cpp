@@ -159,6 +159,43 @@ TEST(Engine, StatusUsesRevisedPollBudgetForStaleness) {
 }  // namespace
 
 namespace {
+TEST(Engine, ACleanShutdownSendsNoFeedStalledNotifications) {
+  class SilentHttp final : public net::HttpClient {
+   public:
+    net::HttpResponse post(std::string_view, std::string_view, const net::Headers&, std::chrono::seconds,
+                           const std::atomic<bool>*) override { return {200, "{}"}; }
+  };
+  // Like the polling and streaming providers, it reports Stopped while it shuts down.
+  class StoppingProvider final : public md::Provider {
+   public:
+    std::string_view name() const noexcept override { return "stopping"; }
+    md::Capabilities capabilities() const noexcept override { return {}; }
+    void start(const md::Subscription&, md::EventSink& out) override { sink = &out; }
+    void stop() override {
+      if (!sink) return;
+      sink->publish(md::ProviderStatus{1, md::FeedState::Stopped, "SPY: stopped", "SPY"});
+      ASSERT_TRUE(eventually([&] { return engine->status().underlyings.at("SPY").state == md::FeedState::Stopped; }));
+      // Let the engine finish the pass that saw it before stop() goes on.
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      sink = nullptr;
+    }
+    md::EventSink* sink = nullptr;
+    server::Engine* engine = nullptr;
+  } provider;
+  server::Notifications::Options delivery;
+  delivery.worker = false;
+  auto notifications = std::make_shared<server::Notifications>(server::parse_notification_config(
+      R"({"channels":[{"id":"phone","type":"webhook","url":"https://example.invalid/hook"}]})"),
+      std::make_unique<SilentHttp>(), delivery);
+  server::Engine::Options options;
+  options.notifications = notifications;
+  server::Engine engine(provider, {{"SPY"}}, options);
+  provider.engine = &engine;
+  engine.start();
+  engine.stop();
+  EXPECT_EQ(notifications->status().at("queue_depth"), 0) << notifications->status().dump();
+}
+
 TEST(Engine, RejectsEverySecondStartIncludingAfterStop) {
   ManualProvider provider;
   server::Engine engine(provider, {{"SPY"}}, {});

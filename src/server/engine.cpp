@@ -142,6 +142,8 @@ void Engine::start() {
 }
 
 void Engine::stop() {
+  // Providers publish Stopped as they shut down: that is not a stalled feed.
+  shutting_down_ = true;
   if (series_worker_) series_worker_->stop();
   if (provider_started_) {
     provider_.stop();
@@ -432,7 +434,7 @@ void Engine::run() {
       desk_.apply_command(command, desk_.market_time(), options_.clock());
     }
     publish_desk();
-    if (options_.notifications && !stopping_) {
+    if (options_.notifications && !stopping_ && !shutting_down_) {
       const auto stale_after = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::max(3 * provider_.capabilities().poll_interval, std::chrono::seconds(60))).count();
       for (const auto& [symbol, health] : health_) {
