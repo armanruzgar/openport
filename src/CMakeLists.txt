@@ -156,6 +156,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/equity.cpp
     server/event_calendar.cpp
     server/strategy_template.cpp
+    server/hedges.cpp
     server/playbooks.cpp
     server/playbook_api.cpp
     server/desk_playbooks.cpp

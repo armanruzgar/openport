@@ -1,6 +1,7 @@
 #include "paper_json.hpp"
 #include "event_calendar.hpp"
 #include "openport/server/sandboxes.hpp"
+#include "openport/server/hedges.hpp"
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
 
@@ -2610,6 +2611,7 @@ bool known_account(const MetricsSource& source, const std::string& account) {
 
 namespace {
 constexpr std::size_t kMaxProfileCurves = 8;
+constexpr std::size_t kMaxProfileLegs = 8;
 bool underlying_symbol(std::string_view symbol) {
   return !symbol.empty() && symbol.size() <= 16 &&
          std::all_of(symbol.begin(), symbol.end(), [](char c) { return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.'; });
@@ -2715,9 +2717,30 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
   double vol_points = 0, range = 10;
   int steps = 41;
   std::map<std::string, double> given;
+  // Hypothetical legs, by padded OSI symbol, valued with (or without) the held book.
+  std::vector<std::pair<std::string, Quantity>> legs;
+  bool held_book = true;
   bool valid = true;
   for (const auto& [key, value] : query) {
     if (key == "account" && valid_account(value)) account = value;
+    else if (!grid && key == "legs") {
+      for (const auto item : split_list(value)) {
+        const auto colon = item.rfind(':');
+        Quantity quantity = 0;
+        const auto text = colon == std::string_view::npos ? std::string_view{} : item.substr(colon + 1);
+        const auto [end, ec] = std::from_chars(text.data() + (text.starts_with('+') ? 1 : 0), text.data() + text.size(), quantity);
+        const std::string symbol(item.substr(0, colon == std::string_view::npos ? 0 : colon));
+        valid &= colon != std::string_view::npos && ec == std::errc{} && end == text.data() + text.size() && quantity != 0 &&
+                 std::abs(quantity) <= 10000 && symbol.size() == 21 && md::parse_osi(symbol).has_value() &&
+                 std::none_of(legs.begin(), legs.end(), [&](const auto& leg) { return leg.first == symbol; });
+        if (!valid) break;
+        legs.emplace_back(symbol, quantity);
+      }
+      valid &= legs.size() <= kMaxProfileLegs;
+    } else if (!grid && key == "held") {
+      valid &= value == "true" || value == "false";
+      held_book = value == "true";
+    }
     else if (key == "underlying" && underlying_symbol(value)) underlying = value;
     else if (key == "benchmark" && (value == "SPY" || value == "SPX")) benchmark = value;
     else if (key == "days") {
@@ -2756,6 +2779,8 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
     if (!valid) break;
   }
   if (!valid) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+  if (!legs.empty() && underlying.empty()) return api_error(400, "INVALID_REQUEST", "legs require an underlying");
+  if (legs.empty() && !held_book) return api_error(400, "INVALID_REQUEST", "held=false requires legs");
   if (!known_account(source, account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + account);
   const auto view = source.trading_view(account);
   if (!view || !view->snapshot) return api_error(503, "TRADING_UNAVAILABLE", "Paper trading is disabled or unavailable");
@@ -2765,12 +2790,23 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
   std::set<std::string> held;
   Timestamp first_expiry = std::numeric_limits<Timestamp>::max();
   for (const auto& p : s.positions) {
-    if (!underlying.empty() && p.position.contract.underlying != underlying) continue;
+    if (!held_book || (!underlying.empty() && p.position.contract.underlying != underlying)) continue;
     held.insert(p.position.contract.underlying);
     if (p.position.contract.expiry_time() > s.time) first_expiry = std::min(first_expiry, p.position.contract.expiry_time());
   }
   for (const auto& stock : s.stocks)
-    if (underlying.empty() || stock.position.symbol == underlying) held.insert(stock.position.symbol);
+    if (held_book && (underlying.empty() || stock.position.symbol == underlying)) held.insert(stock.position.symbol);
+  // Each leg must be quoted in the underlying's analytics, which also value it.
+  const auto leg_metrics = legs.empty() ? nullptr : source.metrics(underlying);
+  std::vector<const analytics::OptionMetrics*> leg_options;
+  for (const auto& [symbol, quantity] : legs) {
+    const auto* option = leg_metrics ? find_option(*leg_metrics, symbol) : nullptr;
+    if (!option || option->contract.underlying != underlying)
+      return api_error(404, "UNKNOWN_CONTRACT", "No current " + underlying + " quote for leg " + symbol);
+    leg_options.push_back(option);
+    held.insert(underlying);
+    if (option->contract.expiry_time() > s.time) first_expiry = std::min(first_expiry, option->contract.expiry_time());
+  }
   ProfileConfig config;
   config.vol_points = vol_points;
   config.term_scaled = term_scaled;
@@ -2876,7 +2912,48 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
         {"term_scaled", term_scaled}, {"slices", slices}, {"complete", complete},
         {"model", "Derived Black-76 sticky-strike scenarios; time reduces carry and remaining life. Term scaling uses sqrt(30/max(1,remaining days)). Trading rules retain their configured parallel, zero-day grid."}}.dump()};
   }
-  const auto profile = snapshot_profile(s, view->config, view->valuations, config, spot, underlying);
+  RiskProfile profile;
+  json leg_list = json::array();
+  if (legs.empty()) profile = snapshot_profile(s, view->config, view->valuations, config, spot, underlying);
+  else {
+    // The held book in scope plus the legs, each leg valued from the analytics that
+    // quote it unless the account already values that contract.
+    std::map<std::string, Position> positions;
+    std::map<std::string, StockPosition> stocks;
+    std::map<std::string, double> share_prices;
+    if (held_book) {
+      for (const auto& marked : s.positions)
+        if (marked.position.contract.underlying == underlying) positions.emplace(marked.position.contract.osi_symbol(), marked.position);
+      for (const auto& marked : s.stocks) {
+        if (marked.position.symbol != underlying) continue;
+        stocks.emplace(marked.position.symbol, marked.position);
+        if (marked.fresh && marked.mark) share_prices[marked.position.symbol] = marked.mark->dollars();
+      }
+    }
+    auto valuations = view->valuations;
+    for (std::size_t i = 0; i < legs.size(); ++i) {
+      const auto& [symbol, quantity] = legs[i];
+      auto& position = positions.try_emplace(symbol, Position{leg_options[i]->contract, 0, {}, {}, {}}).first->second;
+      position.quantity += quantity;
+      if (position.quantity == 0) positions.erase(symbol);
+      if (!valuations.contains(symbol)) valuations[symbol] = valuation_for(symbol, leg_options[i]->contract, leg_metrics);
+      leg_list.push_back({{"symbol", symbol}, {"quantity", quantity}});
+    }
+    // Analytics can publish ahead of the account's view of the same quotes.
+    const auto now = std::max(s.time, leg_metrics->as_of);
+    const bool floors = held_book;
+    profile = risk_profile(Ledger::restore({}, std::move(positions), std::move(stocks)), valuations, config, spot, s.equity,
+        floors && view->config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt,
+        floors ? s.soft_floor : std::nullopt, now, view->config.limits.max_valuation_age, share_prices);
+    if (held_book && !s.valuation_complete) {
+      profile.complete = false;
+      profile.room.reset(); profile.soft_room.reset();
+      for (auto& curve : profile.curves) {
+        std::fill(curve.pnl.begin(), curve.pnl.end(), 0.0);
+        curve.down.reset(); curve.up.reset(); curve.soft_down.reset(); curve.soft_up.reset();
+      }
+    }
+  }
   json prices = json::array();
   for (const double percent : config.percent) prices.push_back(spot > 0 ? number(spot * (1 + percent / 100)) : json(nullptr));
   json curves = json::array();
@@ -2896,9 +2973,208 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
       {"percent", config.percent}, {"prices", prices}, {"curves", curves}, {"betas", betas},
       {"weighted_dollar_delta", weighted_complete ? number(weighted) : json(nullptr)},
       {"weighted_delta", weighted_complete && spot > 0 ? number(weighted / spot) : json(nullptr)},
-      {"complete", profile.complete}, {"term_scaled", term_scaled},
+      {"complete", profile.complete}, {"term_scaled", term_scaled}, {"held", held_book}, {"legs", leg_list},
       {"model", "Black-76 on each contract's smile IV plus the offset, sticky strike; remaining life and carry shrink by the days; "
                 "each underlying moves its beta times the reference's percent move; when term_scaled is true the IV offset is multiplied by sqrt(30/max(1,remaining days))"}}.dump()};
+}
+
+/// GET /api/risk/hedges: the smallest trade of each hedge that brings one risk
+/// bucket's dollar delta or vega within its limit, or its worst scenario-grid cell
+/// within the grid limit and above the floor, ranked by spread cost and residual risk.
+ApiResponse hedge_response(const std::map<std::string, std::string>& query, const MetricsSource& source, std::string account) {
+  std::string scope = "aggregate", target;
+  double share = 1;
+  for (const auto& [key, value] : query) {
+    if (key == "account" && valid_account(value)) account = value;
+    else if (key == "scope" && (value == "aggregate" || underlying_symbol(value))) scope = value;
+    else if (key == "target" && (value == "delta" || value == "vega" || value == "grid")) target = value;
+    else if (key == "utilisation" && query_decimal(value, share) && share > 0 && share <= 1) {}
+    else return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+  }
+  if (target.empty()) return api_error(400, "INVALID_REQUEST", "target must be delta, vega or grid");
+  if (!known_account(source, account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + account);
+  const auto view = source.trading_view(account);
+  if (!view || !view->snapshot) return api_error(503, "TRADING_UNAVAILABLE", "Paper trading is disabled or unavailable");
+  const auto& s = *view->snapshot;
+  const bool aggregate = scope == "aggregate";
+  const auto found = s.risk.underlyings.find(scope);
+  if (!aggregate && found == s.risk.underlyings.end()) return api_error(404, "UNKNOWN_SCOPE", "No exposure in " + scope);
+  const auto& bucket = aggregate ? s.risk.aggregate : found->second;
+  if (!s.risk.complete || !s.valuation_complete)
+    return api_error(422, "HEDGE_UNAVAILABLE", "Hedges need fresh valuations of every position and open order");
+  HedgeGoal goal;
+  std::optional<Money> floor = view->config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt;
+  if (s.soft_floor) floor = floor ? std::max(*floor, *s.soft_floor) : s.soft_floor;
+  if (target == "delta") goal.delta_limit = bucket.limits.dollar_delta * share;
+  else if (target == "vega") goal.vega_limit = bucket.limits.vega * share;
+  else {
+    if (bucket.limits.worst_grid_loss) goal.grid_floor = -*bucket.limits.worst_grid_loss * share;
+    if (floor) {
+      const double room = -(s.equity - *floor).dollars();
+      goal.grid_floor = goal.grid_floor ? std::max(*goal.grid_floor, room) : room;
+    }
+    if (!goal.grid_floor) return api_error(422, "HEDGE_UNAVAILABLE", "No grid loss limit or floor to hedge the grid to");
+  }
+  // The held book in scope on the rules' scenario grid.
+  std::map<std::string, Position> positions;
+  std::map<std::string, StockPosition> stocks;
+  std::map<std::string, double> prices;
+  for (const auto& p : s.positions)
+    if (aggregate || p.position.contract.underlying == scope) positions.emplace(p.position.contract.osi_symbol(), p.position);
+  for (const auto& stock : s.stocks) {
+    if (stock.fresh && stock.mark) prices[stock.position.symbol] = stock.mark->dollars();
+    if (aggregate || stock.position.symbol == scope) stocks.emplace(stock.position.symbol, stock.position);
+  }
+  const auto& grid_config = view->config.scenarios;
+  const auto max_age = view->config.limits.max_valuation_age;
+  const auto book_grid = scenario_grid(Ledger::restore({}, positions, stocks), view->valuations, grid_config, s.time, max_age, prices);
+  if (!book_grid.complete) return api_error(422, "HEDGE_UNAVAILABLE", "The scenario grid cannot value every held position");
+  HedgeBook book{bucket.reachable.delta_low, bucket.reachable.delta_high, bucket.reachable.vega_low, bucket.reachable.vega_high, {}};
+  for (const auto& cell : book_grid.cells) book.cells.push_back(cell.pnl);
+  const auto worst = [](const std::vector<double>& cells) { return cells.empty() ? json(nullptr) : number(*std::min_element(cells.begin(), cells.end())); };
+  // The beta-weighted dollar delta to SPY, where every held underlying has a beta.
+  std::optional<double> weighted = 0.0;
+  for (const auto& [symbol, held] : s.risk.underlyings) {
+    if (!aggregate && symbol != scope) continue;
+    const auto beta = profile_beta(source, symbol, "SPY", {});
+    if (beta.source.empty()) { weighted.reset(); break; }
+    *weighted += held.position.dollar_delta * beta.beta;
+  }
+  struct Choice {
+    std::string name, kind, instrument, underlying, reason;
+    bool beta = false;
+    HedgeUnit unit;
+    const analytics::OptionMetrics* option = nullptr;
+    double price = 0, mid = 0, instrument_beta = 1;
+  };
+  std::vector<Choice> choices;
+  const auto option_choice = [&](const std::string& underlying, pricing::OptionType type, bool beta) {
+    Choice choice{std::string(beta ? "Beta hedge: " : "") + underlying + " ATM " + (type == pricing::OptionType::Call ? "call" : "put"),
+                  "option", "", underlying, "", beta, {}, nullptr};
+    const auto metrics = source.metrics(underlying);
+    const auto* option = metrics ? atm_option(*metrics, type) : nullptr;
+    if (!option) { choice.reason = "No tradable two-sided at-the-money quote"; choices.push_back(choice); return; }
+    const auto symbol = option->contract.osi_symbol();
+    auto valuations = view->valuations;
+    if (!valuations.contains(symbol)) valuations[symbol] = valuation_for(symbol, option->contract, metrics);
+    const auto& valuation = valuations.at(symbol);
+    choice.instrument = symbol;
+    choice.option = option;
+    choice.mid = option->mid;
+    const auto unit_grid = scenario_grid(Ledger::restore({}, {{symbol, Position{option->contract, 1, {}, {}, {}}}}), valuations, grid_config,
+        std::max(s.time, metrics->as_of), max_age, prices);
+    if (!valid_valuation(valuation) || !unit_grid.complete) { choice.reason = "No fresh valuation of " + symbol; choices.push_back(choice); return; }
+    choice.unit = {100 * valuation.delta * valuation.spot, 100 * valuation.vega, {},
+                   100 * std::max(0.0, option->ask - option->mid), 100 * std::max(0.0, option->mid - option->bid)};
+    for (const auto& cell : unit_grid.cells) choice.unit.cells.push_back(cell.pnl);
+    choices.push_back(choice);
+  };
+  const auto share_choice = [&](const std::string& underlying, bool beta) {
+    Choice choice{std::string(beta ? "Beta hedge: " : "") + underlying + " shares", "shares", underlying, underlying, "", beta, {}, nullptr};
+    const auto metrics = source.metrics(underlying);
+    double price = prices.contains(underlying) ? prices.at(underlying) : metrics && metrics->spot > 0 ? metrics->spot : 0.0;
+    if (md::is_index_underlying(underlying)) choice.reason = underlying + " is an index: it has no shares to trade";
+    else if (!(price > 0) || !std::isfinite(price)) choice.reason = "No current price for " + underlying;
+    else {
+      auto share_prices = prices;
+      share_prices[underlying] = price;
+      const auto unit_grid = scenario_grid(Ledger::restore({}, {}, {{underlying, StockPosition{underlying, 1, {}, {}, {}}}}), view->valuations,
+          grid_config, s.time, max_age, share_prices);
+      choice.unit = {price, 0, {}, 0, 0};
+      for (const auto& cell : unit_grid.cells) choice.unit.cells.push_back(cell.pnl);
+      choice.price = choice.mid = price;
+      if (!unit_grid.complete) choice.reason = "The scenario grid cannot value " + underlying + " shares";
+    }
+    choices.push_back(choice);
+  };
+  if (aggregate) {
+    share_choice("SPY", true);
+    for (const auto* index : {"SPY", "SPX"})
+      for (const auto type : {pricing::OptionType::Put, pricing::OptionType::Call}) option_choice(index, type, true);
+  } else {
+    share_choice(scope, false);
+    for (const auto type : {pricing::OptionType::Put, pricing::OptionType::Call}) option_choice(scope, type, false);
+  }
+  const auto ratio = [](double value, std::optional<double> limit) -> json {
+    if (!limit) return nullptr;
+    return *limit == 0 ? (value == 0 ? json(0) : json(nullptr)) : number(value / *limit);
+  };
+  const std::optional<double> delta_limit = bucket.limits.dollar_delta, vega_limit = bucket.limits.vega;
+  const std::optional<double> grid_limit = bucket.limits.worst_grid_loss;
+  struct Ranked { json body; bool feasible; double cost, residual; };
+  std::vector<Ranked> ranked;
+  for (auto& choice : choices) {
+    json body{{"name", choice.name}, {"kind", choice.kind}, {"underlying", choice.underlying}, {"instrument", nullable(choice.instrument)},
+              {"beta_hedge", choice.beta}};
+    if (!choice.reason.empty()) {
+      body.update(json{{"feasible", false}, {"reason", choice.reason}, {"side", nullptr}, {"quantity", nullptr}, {"price", nullptr},
+                       {"premium", nullptr}, {"spread_cost", nullptr}, {"residual", nullptr}, {"order", nullptr}, {"stock_trade", nullptr},
+                       {"exceeds_order_limit", false}});
+      ranked.push_back({body, false, 0, 0});
+      continue;
+    }
+    const long long most = choice.kind == "shares" ? 10'000'000 : 100'000;
+    const auto units = smallest_hedge(hedge_constraints(book, choice.unit, goal), most);
+    if (!units) {
+      body.update(json{{"feasible", false}, {"reason", "No size of this hedge meets the target"}, {"side", nullptr}, {"quantity", nullptr},
+                       {"price", nullptr}, {"premium", nullptr}, {"spread_cost", nullptr}, {"residual", nullptr}, {"order", nullptr},
+                       {"stock_trade", nullptr}, {"exceeds_order_limit", false}});
+      ranked.push_back({body, false, 0, 0});
+      continue;
+    }
+    const auto q = *units;
+    const bool buy = q >= 0;
+    const double size = static_cast<double>(std::llabs(q));
+    if (choice.option) choice.price = buy ? choice.option->ask : choice.option->bid;
+    const double multiplier = choice.kind == "shares" ? 1 : 100;
+    const double premium = (buy ? 1 : -1) * size * multiplier * choice.price;
+    const double cost = size * (buy ? choice.unit.buy_cost : choice.unit.sell_cost);
+    const auto after = hedged(book, choice.unit, q);
+    const double delta = std::max(std::abs(after.delta_low), std::abs(after.delta_high));
+    const double vega = std::max(std::abs(after.vega_low), std::abs(after.vega_high));
+    const double loss = after.worst_cell ? std::max(0.0, -*after.worst_cell) : 0;
+    double residual = target == "delta" ? delta / std::max(1e-9, *delta_limit) : target == "vega" ? vega / std::max(1e-9, *vega_limit)
+        : grid_limit ? loss / std::max(1e-9, *grid_limit) : loss;
+    json order = nullptr, stock_trade = nullptr;
+    const auto quantity = static_cast<long long>(size);
+    if (q != 0 && choice.option)
+      order = {{"symbol", choice.instrument}, {"side", buy ? "buy" : "sell"}, {"type", "limit"}, {"time_in_force", "day"},
+               {"quantity", quantity}, {"limit_price", Money::from_double(choice.price).str()}};
+    if (q != 0 && choice.kind == "shares") stock_trade = {{"symbol", choice.instrument}, {"side", buy ? "buy" : "sell"}, {"shares", quantity}};
+    body.update(json{{"feasible", true}, {"reason", q == 0 ? json("Already within the target") : json(nullptr)},
+        {"side", q == 0 ? json(nullptr) : json(buy ? "buy" : "sell")}, {"quantity", quantity},
+        {"price", number(choice.price)}, {"premium", number(premium)}, {"spread_cost", number(cost)},
+        {"residual", {{"dollar_delta_low", number(after.delta_low)}, {"dollar_delta_high", number(after.delta_high)},
+                      {"vega_low", number(after.vega_low)}, {"vega_high", number(after.vega_high)},
+                      {"worst_cell", after.worst_cell ? number(*after.worst_cell) : json(nullptr)},
+                      {"delta_utilisation", ratio(delta, delta_limit)}, {"vega_utilisation", ratio(vega, vega_limit)},
+                      {"grid_utilisation", ratio(loss, grid_limit)},
+                      {"beta_weighted_dollar_delta", weighted ? number(*weighted + static_cast<double>(q) * choice.unit.delta * choice.instrument_beta) : json(nullptr)}}},
+        {"order", order}, {"stock_trade", stock_trade},
+        {"exceeds_order_limit", choice.option && quantity > view->config.limits.max_order_contracts}});
+    ranked.push_back({body, true, cost, residual});
+  }
+  std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+    if (a.feasible != b.feasible) return a.feasible;
+    if (a.cost != b.cost) return a.cost < b.cost;
+    return a.residual < b.residual;
+  });
+  json hedges = json::array();
+  for (auto& item : ranked) hedges.push_back(std::move(item.body));
+  return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"time", md::format_timestamp(s.time)},
+      {"scope", scope}, {"target", target}, {"utilisation", share},
+      {"current", {{"dollar_delta_low", number(book.delta_low)}, {"dollar_delta_high", number(book.delta_high)},
+                   {"vega_low", number(book.vega_low)}, {"vega_high", number(book.vega_high)}, {"worst_cell", worst(book.cells)},
+                   {"beta_weighted_dollar_delta", weighted ? number(*weighted) : json(nullptr)},
+                   {"delta_limit", number(bucket.limits.dollar_delta)}, {"vega_limit", number(bucket.limits.vega)},
+                   {"grid_floor", goal.grid_floor ? number(*goal.grid_floor) : json(nullptr)}}},
+      {"hedges", hedges}, {"simulated", true},
+      {"model", "Linear in the hedge's size: dollar delta and vega across what open orders can reach, and each cell of the rules' "
+                "spot x volatility grid for the held book (pending orders' grid reservations are not included), with the hedge "
+                "entered at the far side. The smallest whole size meeting the target is shown; ranked by spread cost, then residual "
+                "risk. Fees are not included; the what-if and the ticket preview price them. Beta hedges trade SPY or SPX against "
+                "the aggregate bucket, whose dollar delta counts every underlying one for one; the beta-weighted dollar delta is shown "
+                "beside it."}}.dump()};
 }
 }  // namespace
 
@@ -2909,7 +3185,12 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   if (!order_detail && path != "/api/portfolio" && path != "/api/orders" && path != "/api/fills" && path != "/api/risk" &&
       path != "/api/trades.csv" && path != "/api/fills.csv" && path != "/api/account" && path != "/api/account/equity" &&
       path != "/api/trades" && path != "/api/settlements" && path != "/api/plans" && path != "/api/accounts" && path != "/api/risk/profile" &&
-      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history") return {};
+      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history" && path != "/api/risk/hedges") return {};
+  if (path == "/api/risk/hedges") {
+    const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
+    if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+    return hedge_response(*pairs, source, request.access.sandbox);
+  }
   if (path == "/api/risk/profile" || path == "/api/risk/scenarios") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");

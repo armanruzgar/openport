@@ -130,6 +130,14 @@ struct TradingView {
   md::Timestamp replay_start = 0, replay_end = 0;  ///< Risk-setting rollover horizon; zero for live accounts.
 };
 
+/// A contract's valuation from an analytics snapshot: its strike's smile IV and its
+/// own Greeks, or, for a far wing without a smile IV, its ask's (or bid's) IV at the
+/// expiry's forward. Invalid when the snapshot does not quote the contract.
+[[nodiscard]] trading::Valuation valuation_for(const std::string& symbol, const md::OptionContract& contract,
+                                               const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics);
+/// The snapshot's quote of a padded OSI symbol, or null when it lists none.
+[[nodiscard]] const analytics::OptionMetrics* find_option(const analytics::UnderlyingMetrics& metrics, std::string_view symbol);
+
 /// The market's implied variance of an underlying's log price from its analytics'
 /// market time to that day's regular close: the nearest expiry's at-the-money IV²
 /// times its years (as the IV was solved, on calendar time), with today's share of it

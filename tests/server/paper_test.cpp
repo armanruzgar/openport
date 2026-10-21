@@ -4323,6 +4323,78 @@ TEST_F(PaperEngine, RiskProfileCurvesTheHeldBookOverDatesAndBetaWeightsIt) {
   EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/SPX/probability?days=400"}, *engine).status, 400);
   EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/SPX/probability?prices=0"}, *engine).status, 400);
 }
+
+// The Analyze tab's curves: hypothetical legs priced like held contracts, with the
+// held book or without it; and the smallest hedges back inside a limit.
+TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"plan", "eod-25k"}, {"reason", "evaluation"}}).status, 200);
+  const auto query = "/api/risk/profile?underlying=SPX&days=0,7&range=10&steps=5&iv=1";
+  const auto leg = "&legs=" + std::string("SPXW%20%20261022C05000000");
+  // Before any trade, a leg alone is the curve the held contract will have.
+  auto alone = read(*engine, query + leg + ":1&held=false");
+  EXPECT_FALSE(alone["held"]);
+  EXPECT_EQ(alone["legs"], json::parse(R"([{"symbol":"SPXW  261022C05000000","quantity":1}])"));
+  EXPECT_TRUE(alone["complete"]);
+  EXPECT_TRUE(alone["room"].is_null());
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "entry", "4.20")).status, 201);
+  engine->synchronize().get();
+  const auto held = read(*engine, query);
+  for (std::size_t day = 0; day < 2; ++day)
+    for (std::size_t i = 0; i < 5; ++i)
+      EXPECT_NEAR(alone["curves"][day]["pnl"][i].get<double>(), held["curves"][day]["pnl"][i].get<double>(), 1e-9) << day << "/" << i;
+  // With the held book, a leg that closes it leaves nothing; one that doubles it, twice.
+  const auto closed = read(*engine, query + leg + ":-1");
+  for (const auto& value : closed["curves"][1]["pnl"]) EXPECT_EQ(value, 0);
+  EXPECT_TRUE(closed["held"]);
+  const auto doubled = read(*engine, query + leg + ":%2B1");
+  EXPECT_NEAR(doubled["curves"][1]["pnl"][4].get<double>(), 2 * held["curves"][1]["pnl"][4].get<double>(), 1e-6);
+  test::capture_contract("paper", "GET", query + leg + ":1", server::handle_api({"GET", query + leg + ":1"}, *engine));
+  for (const auto* bad : {"&legs=SPXW%20%20261022C05000000:0", "&legs=SPXW261022C05000000:1", "&legs=SPXW%20%20261022C05000000:x",
+                          "&held=false", "&held=maybe"})
+    EXPECT_EQ(server::handle_api({"GET", query + std::string(bad)}, *engine).status, 400) << bad;
+  EXPECT_EQ(server::handle_api({"GET", "/api/risk/profile?legs=SPXW%20%20261022C05000000:1"}, *engine).status, 400);
+  EXPECT_EQ(server::handle_api({"GET", std::string(query) + "&legs=SPXW%20%20261022P05000000:1"}, *engine).status, 404);
+
+  // One call is about $250k of SPX delta: against a $100k limit, selling it is the hedge.
+  auto risk = read(*engine, "/api/risk");
+  auto limits = risk["limits"];
+  limits["per_underlying"]["dollar_delta"] = 100000;
+  ASSERT_EQ(write(*engine, "PUT", "/api/risk/limits", {{"expected_revision", risk["limits_revision"]}, {"limits", limits}}).status, 200);
+  auto hedges = read(*engine, "/api/risk/hedges?scope=SPX&target=delta");
+  test::capture_contract("paper", "GET", "/api/risk/hedges?scope=SPX&target=delta",
+                         server::handle_api({"GET", "/api/risk/hedges?scope=SPX&target=delta"}, *engine));
+  EXPECT_EQ(hedges["scope"], "SPX");
+  EXPECT_GT(hedges["current"]["dollar_delta_high"].get<double>(), 100000);
+  ASSERT_EQ(hedges["hedges"].size(), 3U);
+  const auto& best = hedges["hedges"][0];
+  EXPECT_EQ(best["name"], "SPX ATM call");
+  EXPECT_TRUE(best["feasible"]);
+  EXPECT_EQ(best["side"], "sell");
+  EXPECT_EQ(best["quantity"], 1);
+  EXPECT_EQ(best["order"]["symbol"], market.symbol());
+  EXPECT_EQ(best["order"]["limit_price"], "4.00");
+  EXPECT_NEAR(best["premium"].get<double>(), -400, 1e-9);
+  EXPECT_NEAR(best["spread_cost"].get<double>(), 10, 1e-6);
+  EXPECT_LE(best["residual"]["delta_utilisation"].get<double>(), 1);
+  // An index has no shares, and this chain lists no put.
+  for (std::size_t i = 1; i < 3; ++i) {
+    EXPECT_FALSE(hedges["hedges"][i]["feasible"]);
+    EXPECT_TRUE(hedges["hedges"][i]["reason"].is_string());
+  }
+  EXPECT_EQ(hedges["hedges"][1]["name"], "SPX shares");
+  // The aggregate offers beta hedges in SPY and SPX; the grid is already above the floor.
+  hedges = read(*engine, "/api/risk/hedges?target=grid");
+  EXPECT_EQ(hedges["scope"], "aggregate");
+  ASSERT_EQ(hedges["hedges"].size(), 5U);
+  EXPECT_TRUE(hedges["hedges"][0]["beta_hedge"]);
+  EXPECT_EQ(hedges["hedges"][0]["quantity"], 0);
+  EXPECT_EQ(hedges["hedges"][0]["reason"], "Already within the target");
+  EXPECT_LT(hedges["current"]["grid_floor"].get<double>(), 0);
+  for (const auto* bad : {"", "?target=gamma", "?target=delta&scope=spx", "?target=delta&utilisation=0", "?target=delta&other=1"})
+    EXPECT_EQ(server::handle_api({"GET", std::string("/api/risk/hedges") + bad}, *engine).status, 400) << bad;
+  EXPECT_EQ(server::handle_api({"GET", "/api/risk/hedges?target=delta&scope=QQQ"}, *engine).status, 404);
+}
 }  // namespace
 
 namespace {
