@@ -32,6 +32,20 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 
 ## Trading terminal
 
+- **Keyboard and phone controls**: `?` help, symbol jump, chain arrows, buy/sell
+  ticket shortcuts, review/cancel and focused-position close. Phones use a
+  calls/puts toggle and bottom-sheet tickets.
+- **Saved terminal layouts**: chain preferences per symbol, named local workspaces,
+  collapsible stacked expiries, windowed chain rows, panel pop-outs and an optional
+  wide-screen positions/orders split.
+- **Watchlist and history**: subscribed-symbol prices, prior-daily-bar change, ATM
+  IV, IV rank and expected move, plus a local unread notification drawer for
+  observed fills, deliveries, rule breaches and alert firings. Toasts remain.
+- **Chart tools**: SMA, EMA and Bollinger overlays; persisted horizontal lines and
+  trendlines, with price-alert creation from a line. VWAP math is available but
+  the current OHLC endpoint has no volume, so the UI reports it unavailable.
+  See [terminal controls and limitations](terminal.md).
+
 - **Brief** brings together prior-session and observed overnight levels, implied
   moves, volatility changes, positioning and supplied events, alongside floor
   room, loss allowance, guardrails and positions. It uses market time in replay

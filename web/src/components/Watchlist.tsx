@@ -5,7 +5,7 @@ import { marketTime, useLive } from "../api/live"
 import type { UnderlyingSnapshot } from "../api/types"
 import { barDay, expectedMove } from "../lib/candles"
 import { defaultExpiry } from "../lib/expiry"
-import { fixed, isNum, price, vol } from "../lib/format"
+import { fixed, isNum, pct, price, vol } from "../lib/format"
 import { matchingPayload } from "../lib/payload"
 import { Dialog } from "./Dialog"
 
@@ -33,7 +33,7 @@ function WatchSymbol({ underlying, onSelect }: { underlying: UnderlyingSnapshot;
     <dl className="mt-2 grid grid-cols-2 gap-2 text-xs">
       <div><dt className="text-muted">Change vs prior daily bar</dt><dd className="tabular">{isNum(change) ? `${change >= 0 ? "+" : ""}${fixed(change, 2)}%` : "—"}</dd></div>
       <div><dt className="text-muted">ATM IV</dt><dd>{vol(expiry?.atm_iv)}</dd></div>
-      <div><dt className="text-muted">IV rank</dt><dd title={volatility?.proxy?.used ? `Includes ${volatility.proxy.name ?? "index"} proxy history` : "Own available history"}>{fixed(rank, 1)}{volatility?.proxy?.used ? " · proxy" : ""}</dd></div>
+      <div><dt className="text-muted">IV rank</dt><dd title={volatility?.proxy?.used ? `Includes ${volatility.proxy.name ?? "index"} proxy history` : "Own available history"}>{pct(rank, 1)}{volatility?.proxy?.used ? " · proxy" : ""}</dd></div>
       <div><dt className="text-muted">Derived ±1σ move</dt><dd>{price(expectedMove(spot, expiry?.atm_iv, expiry?.days))}</dd></div>
     </dl>
     <p className="mt-2 break-words text-[10px] text-faint">{as_of ? `Market data: ${as_of}` : "Market time unavailable"}{expiry ? ` · ${expiry.id}` : ""}</p>

@@ -111,7 +111,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
   return <Table label="Positions" left={picking ? 2 : 1} headers={[...(picking ? ["Pick"] : []), "Contract", "Qty", "Avg price", "Mark / age", "Market value", "Unrealized", "P&L %", "Realized", "Today", "Dollar delta", "Vega", "Theta", ""]}>
     {positions.map((position) => {
       const change = position.unrealised != null ? ratio(position.unrealised, position.basis.replace("-", "")) : null
-      return <tr key={position.symbol} tabIndex={0} aria-label={`${contractLabel(position)} position; F to close`}
+      return <tr key={position.symbol} tabIndex={0} aria-label={`${contractLabel(position)} position${onClose && !position.awaiting_settlement ? "; F to close" : ""}`}
         onKeyDown={(event) => {
           if (event.key.toLowerCase() === "f" && shortcutAllowed(event.nativeEvent) && onClose && !position.awaiting_settlement) {
             event.preventDefault(); event.stopPropagation(); onClose(position)

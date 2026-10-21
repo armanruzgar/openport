@@ -89,7 +89,7 @@ export function App() {
   }, [navigate, queryClient, route.expiry, view, symbol, version, pages, live])
 
   const waiting = live.status?.feed.message || "Connecting to openportd…"
-  const content = view === "chart" && symbol ? <ChartView symbol={symbol} />
+  const content = view === "chart" && symbol ? <ChartView symbol={symbol} expiry={route.expiry} />
     : view === "dashboard" ? <DashboardView />
     : view === "brief" ? <BriefView symbol={symbol} />
     : view === "positions" ? <PositionsView />

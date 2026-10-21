@@ -8,7 +8,8 @@ import type { Candle, Candles } from "../api/types"
 import { CandleChart, stackTags } from "../charts/CandleChart"
 import { PriceChart } from "../components/PriceChart"
 import { chartLevels } from "../lib/candles"
-import { expiry, portfolio, status } from "../test/trading-fixtures"
+import { ChartView } from "./ChartView"
+import { expiry, portfolio, status, summary } from "../test/trading-fixtures"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 
@@ -108,4 +109,14 @@ describe("price chart panel", () => {
     expect(hidden).not.toContain("Chart interval")
     expect(hidden).not.toContain("Loading bars")
   })
+})
+
+it("keeps the selected expiry's expected move when the chart is opened by hash route", () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+  clients.push(client)
+  const later = { ...expiry, id: "2026-11-20PM", expiry: "2026-11-20", days: 58 }
+  client.setQueryData(["summary", "SPX", 1], { ...summary, expiries: [expiry, later] })
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><ChartView symbol="SPX" expiry={later.id} /></QueryClientProvider>)
+  expect(html).toContain("One standard deviation by 2026-11-20")
+  expect(html).not.toContain("One standard deviation by 2026-10-16")
 })
