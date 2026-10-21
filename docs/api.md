@@ -509,7 +509,8 @@ retains its exact changed definition, trades and journals. The catalogue is not
 modified. Six-digit variant IDs are local to their sweep, not ordinary backtest IDs.
 `GET /api/backtests/sweeps` lists sweeps separately from ordinary runs;
 `GET /api/backtests/sweeps/{id}` reads progress and reports; `DELETE` cancels an
-active sweep. Mutations require replay scope. The same one-job limit and retention
+active sweep, and `DELETE …?purge=true` removes a finished sweep and its variant
+files as it does a single run. Mutations require replay scope. The same one-job limit and retention
 policy cover ordinary runs and sweeps.
 
 Completed variants with available mean daily P&L are ranked descending using exact

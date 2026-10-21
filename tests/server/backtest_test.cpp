@@ -1615,4 +1615,15 @@ TEST(BacktestApi, SweepUsesSeparateRoutesAndPreservesNormalListing) {
   EXPECT_TRUE(json::parse(call(host, {"GET", "/api/backtests"}, false).body).at("runs").empty());
   EXPECT_EQ(json::parse(call(host, {"GET", "/api/backtests/sweeps"}, false).body).at("runs").size(), 1U);
   test::capture_contract("sweeps", "GET", "/api/backtests/sweeps/" + id, {200, state.dump()});
+  // Saved sweeps purge like single runs, but only through the sweep route.
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/sweeps/" + id + "?purge=false"}, false).status, 400);
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/sweeps/" + id + "?purge=true&x=1"}, false).status, 400);
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/sweeps?purge=true"}, false).status, 400);
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/" + id + "?purge=true"}, false).status, 404);
+  const auto purged = call(host, {"DELETE", "/api/backtests/sweeps/" + id + "?purge=true"}, false);
+  ASSERT_EQ(purged.status, 200) << purged.body;
+  EXPECT_EQ(json::parse(purged.body), (json{{"id", id}, {"deleted", true}}));
+  test::capture_contract("sweeps", "DELETE", "/api/backtests/sweeps/" + id, purged);
+  EXPECT_EQ(call(host, {"GET", "/api/backtests/sweeps/" + id}, false).status, 404);
+  EXPECT_TRUE(json::parse(call(host, {"GET", "/api/backtests/sweeps"}, false).body).at("runs").empty());
 }

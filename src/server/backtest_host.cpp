@@ -133,7 +133,8 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
       }
     }
     const bool purge = request.method == "DELETE" && query->contains("purge") && query->at("purge") == "true";
-    if (sweep && !query->empty()) throw std::invalid_argument("Sweeps do not accept query parameters");
+    if (sweep && !query->empty() && !(purge && query->size() == 1))
+      throw std::invalid_argument("Sweeps accept only purge=true when deleting a saved sweep");
     for (const auto& [key, value] : *query) {
       (void)value;
       if (!(request.method == "GET" && id == "compare" && key == "ids") &&

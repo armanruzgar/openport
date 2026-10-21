@@ -10,6 +10,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
 - Signed inbound playbook signals with account scopes, timestamp/nonce replay protection
   and rate limits; saved manual/automatic modes remain authoritative.
+- `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as for single runs.
 - Bounded backtest parameter sweeps with exact variant reports and historical ranking.
 - Optional Arrow/Parquet exports preserving money text, with an offline example notebook.
 - Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC).

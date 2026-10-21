@@ -5297,7 +5297,7 @@
         }
       },
       "delete": {
-        "summary": "Cancel an active parameter sweep",
+        "summary": "Cancel an active parameter sweep or purge a saved one",
         "x-scope": "replay",
         "responses": {
           "200": {
@@ -5305,7 +5305,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BacktestSweepState"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BacktestSweepState"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BacktestDeleted"
+                    }
+                  ]
                 }
               }
             }
@@ -5313,7 +5320,19 @@
           "default": {
             "$ref": "#/components/responses/Error"
           }
-        }
+        },
+        "description": "Without purge, request cancellation of the active sweep. With purge=true, permanently remove a finished, cancelled, failed or interrupted sweep and all its variant files, including pinned sweeps, as for single runs. 409 while active: cancel first and wait. 404 unknown sweep or an ordinary run ID.",
+        "parameters": [
+          {
+            "name": "purge",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "const": true
+            },
+            "description": "Omit to cancel; true to delete a saved sweep."
+          }
+        ]
       }
     }
   },
