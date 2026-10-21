@@ -120,6 +120,32 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
 - Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
 
+### Fill models and fill quality
+
+- **Queue fills** (`fill_model: "queue"`, `queue_fills`, `queue_seed`): a resting
+  single-leg limit at the touch waits behind the size displayed when it joins; trade
+  prints at its price use that queue up before it fills at its limit, prints through
+  its price fill it, and cancellations come out of the queue in proportion. Without
+  prints, volume increases (half each side) or a documented five-minute turnover of
+  the displayed size stand in. Fractions round at random from the seed, so the same
+  feed always gives the same fills. Orders show the estimate and wait with `QUEUE`.
+  Recordings' trade prints reach only accounts using it; others keep their bytes.
+- **Stop stress** (`stop_stress_ticks`, `stop_stress_percent`): stops reached while a
+  contract's spread or quote rate is a chosen multiple of its normal slip extra ticks,
+  reported on the order and its fills. Off by default.
+- Queue fills and stop stress are program rules: an attempt with either leaves its
+  preset, unlike latency, slippage, impact and inside fills. Daemon flags
+  `--paper-fill-model queue`, `--paper-queue-seed`, `--paper-stop-stress-ticks` and
+  `--paper-stop-stress-percent` seed a new main journal.
+- **Fill quality** (`GET /api/fills/quality`, Journal): fills placed between the mid
+  and the natural by time of day, spread width and DTE, with a heuristic
+  Conservative calibration.
+- **Real-fill calibration** (`POST /api/fills/calibration`, Journal): import generic,
+  tastytrade, thinkorswim/Schwab or IBKR fills, compare each with the same-time
+  recorded quote and what the paper models would have done, and get suggested
+  settings. Analysis only: nothing is stored or traded. The broker layouts are tested
+  on sample files, not live exports.
+
 ### API, Python and automation
 
 - Versioned account WebSocket events with bounded delivery and typed Python iteration.
@@ -142,6 +168,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   `openport` is an unrelated project). Only tags on `main` publish, and the publish
   action is pinned to a commit SHA.
 - Python client coverage for every documented HTTP operation, with a contract parity guard.
+- `Client.fill_quality()` and `Client.calibrate_fills()` for the fill-quality report and real-fill calibration.
 - MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
   market views and order changes, retaining account scopes and preview guidance.
 

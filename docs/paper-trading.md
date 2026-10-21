@@ -381,8 +381,9 @@ For each OSI and side, better limit price wins,
 then acceptance sequence (order ID). Buy and sell budgets are separate; buys are
 processed first for deterministic cross-side risk effects. OSIs are processed in
 lexical order after atomic installation of the entire batch. Submissions also
-respect existing better orders when sharing the current budget. There is no queue
-position, trade-through or hidden-liquidity simulation in v1.
+respect existing better orders when sharing the current budget. By default there is
+no queue position, trade-through or hidden-liquidity simulation; the optional
+[queue fills](#queue-fills) model adds a seeded queue estimate for resting limits.
 
 ### Walking limits
 
@@ -505,6 +506,100 @@ These models are simulations. None knows queue position, hidden liquidity, or
 whether the market would have traded at all. Impact invents a price schedule, not
 observed market depth; latency selects a later supplied quote, not a future trade.
 Neither removes the hindsight advantage of a delayed feed.
+
+### Queue fills
+
+**Queue position** (`fill_model: "queue"`, or `queue_fills: true` in custom rules)
+turns on a probabilistic queue model for resting limits, with latency, impact,
+slippage and inside fills at zero. It is off by default: an account without it
+receives no trade data, journals nothing new and keeps every byte of its journal
+and replays. Unlike the execution settings above, queue fills and `queue_seed` are
+**program rules**: an attempt that turns them on no longer follows its preset
+(`plan_id` is empty) and counts as a new purchase for program costs.
+
+A resting single-leg limit (DAY/GTC, or a triggered stop-limit once working) that
+is not marketable **joins the queue** at its price:
+
+- At its own side's touch (a buy limit equal to the bid, a sell equal to the ask),
+  the estimated queue ahead is the size displayed there when it joins, plus the
+  account's own earlier orders at the same price that have not filled.
+- Strictly inside the spread, nothing displayed is ahead; only the account's own
+  earlier orders at that price are.
+- Behind the touch (a buy below the bid), it has no queue yet. It joins when the
+  touch comes to its price, behind what is displayed then.
+
+Each market batch then **uses the queue up**, in price/time priority across the
+account's orders:
+
+1. **Trade prints.** When the feed supplies trades (its `trades` capability, as
+   recordings with prints and OPRA-style feeds do), contracts printed at the
+   order's price after it joined consume the queue ahead. What prints past the
+   queue the order may fill, at its limit. A print **through** the price (below a
+   buy limit, above a sell limit) fills it whatever is ahead: any order there would
+   have met it. Prints reported in the batch an order joins in came before it
+   rested at the touch, so only those through its price count. A print's optional
+   venue is kept with it but never required.
+2. **Volume increases.** Without prints, an increase in the contract's cumulative
+   day volume between batches while the touch stayed at the order's price counts
+   as traded there, half of it on this side (volume carries no side or price). The
+   first reading is only a baseline.
+3. **The volume-rate heuristic.** With neither, the displayed size the order last
+   saw at its price is assumed to trade once every **300 seconds** of market time,
+   pro rata between batches (each step at most the freshness window, 60 seconds by
+   default). Without a displayed level at the price, nothing is assumed to trade.
+
+Displayed size that **leaves the level without trading** (the size shrinking by more
+than the contracts counted as traded) is treated as cancellations spread evenly
+through the queue: the share of them ahead of the order is removed. The estimate
+never exceeds what is displayed at the price (plus the account's own earlier
+orders), and it is zero once the level clears (the touch moves past the price
+without crossing it).
+
+Fractions — half a volume increase, part of a turnover, a share of cancellations —
+are **rounded at random**, up with the probability of the fraction, from a hash of
+`queue_seed` (0–2,147,483,647, default 0), the attempt's start, the order and the
+market time. The same seed and the same feed therefore always give the same fills;
+replays and reproducible runs verify byte for byte.
+
+A queued fill trades at the order's **limit**, without slippage or impact, and takes
+nothing from the far side's displayed size; the fill records `queued: true` and the
+book it saw. It is bounded by the contracts that traded past the queue, and passes
+the usual fill-time checks. The far side reaching the limit still fills the order
+at once as before (`queued: false`), and a changed price joins the queue again at
+the new price. Orders report the estimate as `queue` (`price`, `ahead`, `earned`,
+`displayed`, `joined_at`, `updated_at`, `source` and `simulated: true`) and wait with
+`QUEUE` while contracts are ahead.
+
+Limits of the model: displayed size is the whole NBBO across venues, so the queue
+ahead is an upper estimate, not an exchange's queue position; it knows no hidden or
+reserve size, no pro-rata allocation and no orders that join ahead; prints may lag
+or be filtered by the provider; volume increases are halved without knowing their
+side; and the 300-second turnover is an assumption, not a measurement. Multi-leg
+orders, markets, stops and extended-hours touch stops are unaffected.
+
+### Stop stress
+
+**Stop stress** (`stop_stress_ticks` 0–10, `stop_stress_percent` 101–1000, default
+200) adds extra adverse ticks to a **price-triggered** order (a stop, stop-limit,
+trailing stop or bracket stop-loss on its option or its own underlying) that is
+reached in a **fast market**. Conditional triggers on another symbol, a study or the
+clock are not stops. It is off at zero; while it is off nothing is measured or
+journaled. Like queue fills it is a program rule.
+
+For each contract the account measures what is normal: exponential averages
+(weight 1/8) of the spread width and of the market time between new observations.
+After eight valid observations, a new one is **fast** when its spread is at least
+`stop_stress_percent` of the average, or it came at most 100/`stop_stress_percent`
+of the average gap after the one before (quotes changing that much faster than
+normal), each measured against the averages before it. A stop reached on a fast
+quote of any of its contracts records `stress_ticks`, and every fill of it slips
+that many more ticks in the displayed price's tick tier, on top of the account's
+slippage and impact; fills report `stress_ticks`. A stop-limit's limit still caps
+its price. Extended-hours stops, which send a limit at the touch, are unaffected.
+
+Spread and quote rate stand in for what a live fast market does to stops; they are
+measured from the supplied quotes only, so a sparse or snapshot feed shows less of
+the rate signal than a streaming one.
 
 ### Fees
 
@@ -2912,6 +3007,73 @@ Sunday evening's overnight session counts toward Monday and one on the evening b
 Thanksgiving toward the Friday. (Trades from older servers have no `trading_day`; for
 them the terminal counts weekdays without holidays.) The calendar keeps the New York
 date.
+
+### Fill quality
+
+`GET /api/fills/quality` (and the Journal's **Fill quality** panel) places each of the
+account's fills on the book it traded against (`Fill.quote`), measured from the mid
+toward the natural (the far side): **mid or better**, within **one tick past the
+mid**, further **inside**, at the **natural**, or **beyond** it (slippage, impact,
+stop stress). Ticks use the natural price's tick tier and are positive when worse
+for the side. Each group reports fills, contracts by place, contract-weighted mean
+ticks from the mid and from the natural, and the dollars paid beyond the mid
+(multiplier applied). Groups: overall, New York **time of day** (before 09:30,
+09:30–10:00, 10:00–12:00, 12:00–14:00, 14:00–15:30, 15:30–16:15, after 16:15),
+**spread width** in ticks (1, 2, 3–4, 5–9, 10+) and calendar **days to expiry**
+(0, 1, 2–7, 8–30, 31+). `attempt=current` (the default) or `all`. Fills recorded by
+older builds without their book, on a book without both sides, or given away for
+nothing are counted as `unmeasured`.
+
+The report suggests a **Conservative calibration** as a labelled rule of thumb
+(`basis: "heuristic"`): Conservative's 1,000 ms, 1 slippage tick and 1 impact tick,
+with 2 slippage ticks when at least half the contracts traded on spreads of five
+ticks or more, in the first or last half hour or at 0 DTE, and 2 impact ticks when at
+least a quarter used up the displayed size left on their quote. It describes paper
+fills only; real fills calibrate from data below.
+
+### Real-fill calibration
+
+`POST /api/fills/calibration` (the Fill quality panel's **Calibrate from real fills**)
+reads a CSV of the trader's real broker fills into a separate analysis and returns
+it; **nothing is stored, journaled or traded**, and no account changes. A read token
+may post it. The request is JSON, `{"csv": "...", "format": "auto",
+"max_quote_age_seconds": 60}`, within the 64 KiB request limit (split longer
+exports); at most 5,000 fills are read. Formats:
+
+| `format` | Reads |
+| --- | --- |
+| `generic` | Header columns `time` (ISO 8601; New York unless it names an offset), `symbol` (OSI, padded or compact), `side` (buy/sell, or BTO/STC…), `quantity` (its sign stands in for a missing side) and `price`, with optional `bid` and `ask` at the fill |
+| `tastytrade` | The transaction history export: `Type` Trade rows of option instruments; time from `Date`, side from `Action`, price from `Value / (Quantity × Multiplier)`, which excludes commissions and fees |
+| `schwab` | A thinkorswim account statement's Account Trade History section (`Exec Time`, `Side`, `Qty`, `Symbol`, `Exp`, `Strike`, `Type`, `Price`; a spread's later legs share the first leg's time), or a Schwab transaction export (`Date`, `Action`, `Symbol` like `SPXW 10/22/2026 5000.00 C`, `Quantity`, `Price`), which gives dates only |
+| `ibkr` | A Flex Query trades file (`Symbol`, `DateTime` such as `20261021;101532` or `TradeDate`/`TradeTime`, `Buy/Sell`, `Quantity`, `TradePrice`, options only when `AssetClass` is given), or an activity statement's `Trades` section (`Date/Time`, `Quantity`, `T. Price`, symbols like `SPXW 22OCT26 5000 C`) |
+| `auto` | Detects the format from the header |
+
+Times without an offset are read as New York time, as these exports usually show
+for US accounts; check the export's time zone setting. The layouts follow the
+brokers' documented and commonly exported columns; they were built and tested from
+sample files, not live exports from each broker.
+
+Each timed fill is compared with the book at the same time: the file's own bid and
+ask when it has them, otherwise the **last recorded quote** at or before the fill and
+no older than `max_quote_age_seconds`, from the complete recordings in the directory
+the replay picker lists (`--record-dir`, else `~/.openport/recordings`) that start
+on the fill's trading date. A fill with no time, or no quote, is listed with a note
+and left out of the comparison. For each matched fill the response gives its place
+on the book and what each paper model would have done at once with a **limit at the
+real price** on that book: **as displayed** fills at the natural only when it is
+marketable and within the displayed size; **Conservative** adds a slippage tick
+and an impact tick per displayed-size block and fills only if the whole price fits;
+**inside at midpoint** also fills a limit at least halfway across the spread at its
+limit. Latency is not simulated here: broker exports carry no order-entry time.
+
+The suggestion (`basis: "real_fills"`) brings paper fills closest to the real ones:
+slippage ticks equal to the contract-weighted median ticks beyond the natural when
+that is at least half a tick; otherwise, when most real contracts filled inside the
+spread, inside fills at the median fraction of the way from the own side to the
+natural; otherwise as displayed. One impact tick is suggested when at least a
+quarter of the matched contracts were in fills larger than the displayed size.
+`fill_latency_ms` is null. The suggestion is advice to apply when starting a new
+attempt; it never changes an account.
 
 ## Trade notes and tags
 

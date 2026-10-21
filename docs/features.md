@@ -144,6 +144,14 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   **Inside at midpoint** allows limits at or beyond midpoint to fill inside the
   spread; custom inside fills use a deterministic share of the spread and remain
   bounded by the far side's remaining size. [Fill models](paper-trading.md#optional-fill-models).
+- **Queue position** puts a resting limit at the touch behind the size displayed
+  when it joins. Trade prints at its price use the queue up before it fills at its
+  limit; prints through the price fill it; without prints, volume increases or a
+  documented five-minute turnover stand in. Seeded, deterministic and replayable;
+  off by default and a program rule. [Queue fills](paper-trading.md#queue-fills).
+- **Stop stress** adds 0–10 adverse ticks to stops reached while the spread or the
+  quote rate is a chosen multiple of its normal; off by default and a program rule.
+  [Stop stress](paper-trading.md#stop-stress).
 - DAY/GTC single-leg and net combo limits can walk by a chosen step and interval
   toward a cap on market time. Tickets, previews, edits and history expose the
   walk, which survives replay and recovery. [Walking limits](paper-trading.md#walking-limits).
@@ -152,8 +160,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   displayed size and quote age. Entry notes and tags follow into the Journal.
 - Fees can be flat per contract or itemized: open/close commission, per-leg caps,
   clearing, regulatory, index and exercise/assignment charges. [Fees](paper-trading.md#fees).
-- These models simulate depth, not queue position, hidden liquidity or whether a
-  real market would trade. Delayed data still gives hindsight.
+- These models simulate depth and, with queue fills, an estimated queue, not an
+  exchange's queue position, hidden liquidity or whether a real market would trade.
+  Delayed data still gives hindsight.
 
 ## Strategies and shares
 
@@ -353,6 +362,13 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 - Trade notes and tags and daily plans/reviews persist. Trade and fill CSVs carry
   attempt identity and replay run, scenario and seed, plus settlement sources and
   automatic exit labels. [Exports](paper-trading.md#csv-downloads).
+- Fill quality places fills between the mid and the natural (mid, mid plus a tick,
+  inside, natural, beyond) by time of day, spread width and DTE, with a heuristic
+  Conservative suggestion. [Fill quality](paper-trading.md#fill-quality).
+- Real-fill calibration reads generic, tastytrade, thinkorswim/Schwab and IBKR
+  exports, compares each fill with the same-time recorded quote and the paper models,
+  and suggests settings; analysis only, nothing stored or traded. Parsers are tested
+  on sample files, not live exports. [Calibration](paper-trading.md#real-fill-calibration).
 
 ## Replay, scenarios and the demo market
 
