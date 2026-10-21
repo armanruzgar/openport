@@ -145,11 +145,13 @@ ApiResponse flow_response(const MetricsSource& source, const std::string& symbol
       {"source", source_kind}, {"message", message},
       {"as_of", latest > 0 ? json(md::format_timestamp(latest)) : json(nullptr)},
       {"block_size", options.block_size}, {"capacity", options.capacity}, {"retained", snapshot.prints.size()},
-      {"total", snapshot.total}, {"evicted", snapshot.evicted}, {"matched", kept.size()},
+      {"total", snapshot.total}, {"evicted", snapshot.evicted},
+      // The queue drops trades by instrument id, before their underlying is known: feed-wide.
+      {"dropped_trades", status.dropped_events}, {"matched", kept.size()},
       {"totals", totals.body()}, {"expiries", expiries}, {"strikes", strikes}, {"prints", prints},
       {"model", "Each print is classified against the option's quote when it was applied: within half a cent of the ask "
                 "is a buy, of the bid a sell, above the ask a buy and below the bid a sell (outside); between them, "
-                "or without a two-sided quote, it is unclassified. Net premium is bought minus sold premium. Sweeps, "
+                "without a two-sided quote, or when the quote is stamped after the print, it is unclassified. Net premium is bought minus sold premium. Sweeps, "
                 "blocks and multi-leg groups are inferred from venue, time and size, not reported by the feed."}}.dump()};
 }
 

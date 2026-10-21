@@ -61,7 +61,9 @@ void FlowTape::add(const md::OptionTrade& trade, const analytics::OptionState& o
   print.simulated = simulated;
   print.block = trade.size >= options_.block_size;
   print.bid = print.ask = std::numeric_limits<double>::quiet_NaN();
-  if (option.two_sided()) {
+  // The queue can coalesce a quote stamped after the trade ahead of it: never
+  // classify a print against a quote from its future.
+  if (option.two_sided() && option.quote_ts <= trade.ts) {
     print.bid = option.bid;
     print.ask = option.ask;
     print.quote_time = option.quote_ts;
@@ -86,22 +88,31 @@ void FlowTape::add(const md::OptionTrade& trade, const analytics::OptionState& o
   mark_sweep(tape);
   mark_legs(tape);
   while (tape.prints.size() > options_.capacity) {
+    // Deque references stay valid at the ends, so only the evicted print leaves the index.
+    const auto* oldest = &tape.prints.front();
+    if (const auto found = tape.recent.find(oldest->symbol); found != tape.recent.end()) {
+      std::erase(found->second, oldest);
+      if (found->second.empty()) tape.recent.erase(found);
+    }
     tape.prints.pop_front();
     ++tape.evicted;
   }
 }
 
 void FlowTape::mark_sweep(Tape& tape) {
-  const auto& last = tape.prints.back();
+  auto& last = tape.prints.back();
   if (last.direction == 0 || last.venue == 0) return;
+  tape.latest = std::max(tape.latest, last.time);
+  // Only directional prints with a venue of this contract, within the window of the newest.
+  auto& recent = tape.recent[last.symbol];
+  while (!recent.empty() && recent.front()->time < tape.latest - options_.sweep_window) recent.pop_front();
+  recent.push_back(&last);
   std::vector<FlowPrint*> members;
   std::set<std::uint16_t> venues;
-  for (auto it = tape.prints.rbegin(); it != tape.prints.rend(); ++it) {
-    if (it->time < last.time - options_.sweep_window) break;
-    if (it->symbol != last.symbol || it->direction != last.direction || it->venue == 0 ||
-        std::abs(it->time - last.time) > options_.sweep_window) continue;
-    members.push_back(&*it);
-    venues.insert(it->venue);
+  for (auto* candidate : recent) {
+    if (candidate->direction != last.direction || std::abs(candidate->time - last.time) > options_.sweep_window) continue;
+    members.push_back(candidate);
+    venues.insert(candidate->venue);
   }
   if (venues.size() < 2) return;
   for (auto* member : members) member->sweep = true;

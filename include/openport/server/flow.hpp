@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -56,9 +57,10 @@ struct FlowPrint {
 /// snapshot. Thread-safe.
 ///
 /// Classification uses the quote the chain book holds when the print is applied.
-/// The event queue coalesces quotes under load, so that quote can be a little
-/// newer than the trade. Sweeps and multi-leg groups are inferred, not reported
-/// by the feed:
+/// The event queue coalesces quotes under load, so that quote can be newer than
+/// the trade; a print whose quote is stamped after it is left unquoted rather
+/// than classified against its future. Sweeps and multi-leg groups are inferred,
+/// not reported by the feed:
 /// - a sweep is two or more prints of one contract, in one direction, on at least
 ///   two known venues within `sweep_window` of each other;
 /// - a block is a single print of at least `block_size` contracts;
@@ -95,6 +97,10 @@ class FlowTape {
     std::deque<FlowPrint> prints;
     std::uint64_t total = 0;
     std::uint64_t evicted = 0;
+    /// Sweep candidates by contract: retained directional prints with a venue,
+    /// within `sweep_window` of the newest such print's time.
+    std::map<std::string, std::deque<FlowPrint*>> recent;
+    md::Timestamp latest = std::numeric_limits<md::Timestamp>::min();
   };
   void mark_sweep(Tape& tape);
   void mark_legs(Tape& tape);

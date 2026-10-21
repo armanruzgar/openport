@@ -25152,6 +25152,10 @@
           "evicted": {
             "type": "integer"
           },
+          "dropped_trades": {
+            "type": "integer",
+            "description": "Option trades of every underlying the event queue dropped under overload since the engine started. They never reached the tape and are not in total."
+          },
           "matched": {
             "type": "integer"
           },
@@ -25192,6 +25196,7 @@
           "retained",
           "total",
           "evicted",
+          "dropped_trades",
           "matched",
           "totals",
           "expiries",

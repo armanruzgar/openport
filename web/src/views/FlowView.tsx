@@ -52,6 +52,8 @@ export function FlowView({ symbol }: { symbol: string }) {
   return (
     <div className="flex flex-col gap-3">
       {data.source === "simulated" && <p role="note" className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">{data.message}</p>}
+      {data.dropped_trades > 0 && <p role="note" className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-xs text-warn">
+        The event queue dropped {count(data.dropped_trades)} option {data.dropped_trades === 1 ? "trade" : "trades"} under load, across every underlying. They are missing from this tape and its sums.</p>}
       <div className="flex flex-wrap items-center gap-2">
         <Segmented label="Calls or puts" value={kind} onChange={setKind}
           options={[{ value: "both", label: "All" }, { value: "call", label: "Calls" }, { value: "put", label: "Puts" }]} />

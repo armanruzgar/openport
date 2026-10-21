@@ -17,7 +17,7 @@ const print: FlowPrint = { sequence: 9, time: "2026-10-21T14:30:01.000Z", symbol
   side: "ask", aggressor: "buy", venue: 27, sweep: true, block: true, group: null, simulated: false }
 const totals = { call_net: 107500, put_net: -1500, net: 106000, bought: 107500, sold: 1500, unclassified: 0, contracts: 255, prints: 2 }
 const flow: Flow = { symbol: "SPX", provider: "databento", trades: true, source: "feed", message: null, as_of: print.time,
-  block_size: 100, capacity: 5000, retained: 2, total: 2, evicted: 0, matched: 2, totals,
+  block_size: 100, capacity: 5000, retained: 2, total: 2, evicted: 0, dropped_trades: 0, matched: 2, totals,
   expiries: [{ ...totals, expiry: "2026-10-21PM" }],
   strikes: [{ ...totals, expiry: "2026-10-21PM", strike: 5800, put_net: 0, net: 107500 }, { ...totals, expiry: "2026-10-21PM", strike: 5700, call_net: 0, net: -1500 }],
   prints: [print, { ...print, sequence: 8, type: "put", strike: 5700, price: 2.9, size: 5, premium: 1450, side: "outside", aggressor: "sell", sweep: false, block: false, group: 3 }],
@@ -66,6 +66,9 @@ describe("flow", () => {
     html = render(<FlowView symbol="SPX" />, [[["flow", "SPX", { limit: 200 }, 1], simulated]])
     expect(html).toContain("They are not market trades.")
     expect(html).toContain(">simulated<")
+    expect(html).not.toContain("dropped")
+    html = render(<FlowView symbol="SPX" />, [[["flow", "SPX", { limit: 200 }, 1], { ...flow, dropped_trades: 1200 }]])
+    expect(html).toContain("dropped 1,200 option trades under load")
   })
 })
 

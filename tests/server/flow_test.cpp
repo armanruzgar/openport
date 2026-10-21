@@ -58,6 +58,22 @@ TEST(FlowTape, ClassifiesEachPrintAgainstTheStandingQuote) {
   EXPECT_TRUE(tape.snapshot("SPY").prints.empty());
 }
 
+TEST(FlowTape, AQuoteStampedAfterThePrintLeavesItUnquoted) {
+  server::FlowTape tape;
+  auto call = option("SPXW  261021C05800000", 4.10, 4.30);
+  call.quote_ts = kOpen + 5;
+  tape.add(print(kOpen + 4, 4.30, 1), call);  // the queue coalesced a later quote ahead of it
+  tape.add(print(kOpen + 5, 4.30, 1), call);  // stamped with the quote: classified
+  const auto prints = tape.snapshot("SPX").prints;
+  ASSERT_EQ(prints.size(), 2u);
+  EXPECT_EQ(prints[0].side, server::PrintSide::Unquoted);
+  EXPECT_EQ(prints[0].direction, 0);
+  EXPECT_TRUE(std::isnan(prints[0].bid) && std::isnan(prints[0].ask));
+  EXPECT_EQ(prints[0].quote_time, 0);
+  EXPECT_EQ(prints[1].side, server::PrintSide::Ask);
+  EXPECT_EQ(prints[1].quote_time, kOpen + 5);
+}
+
 TEST(FlowTape, SweepsNeedOneContractOneDirectionAndTwoVenuesWithinASecond) {
   server::FlowTape tape;
   const auto call = option("SPY   261021C00580000", 2.00, 2.05);
@@ -79,6 +95,39 @@ TEST(FlowTape, SweepsNeedOneContractOneDirectionAndTwoVenuesWithinASecond) {
   EXPECT_FALSE(prints[4].sweep);
   EXPECT_FALSE(prints[5].sweep);
   EXPECT_FALSE(prints[6].sweep);
+}
+
+TEST(FlowTape, SweepsSurviveEvictionAndAFullTape) {
+  server::FlowTape::Options options;
+  options.capacity = 2;
+  server::FlowTape small(options);
+  const auto call = option("SPY   261021C00580000", 2.00, 2.05);
+  small.add(print(kOpen, 2.05, 10, 1), call);
+  small.add(print(kOpen + 1, 2.05, 10, 1), call);
+  small.add(print(kOpen + 2, 2.05, 10, 2), call);  // evicts the first; the other two sweep
+  auto prints = small.snapshot("SPY").prints;
+  ASSERT_EQ(prints.size(), 2u);
+  EXPECT_TRUE(prints[0].sweep && prints[1].sweep);
+  small.add(print(kOpen + 3, 2.05, 10, 3), call);
+  small.add(print(kOpen + 4, 2.05, 10, 3), call);
+  prints = small.snapshot("SPY").prints;
+  EXPECT_TRUE(prints[0].sweep && prints[1].sweep);
+
+  // A full tape of one contract, every print a tenth of a second apart: each
+  // print looks back only over its window, not the whole tape.
+  server::FlowTape tape;
+  for (int i = 0; i < 20'000; ++i)
+    tape.add(print(kOpen + i * md::kNanosPerSecond / 10, 2.05, 1, static_cast<std::uint16_t>(1 + (i / 30) % 2 * (i % 2))), call);
+  const auto full = tape.snapshot("SPY");
+  ASSERT_EQ(full.prints.size(), 5000u);
+  EXPECT_EQ(full.evicted, 15'000u);
+  // Runs of 30 alternate between one venue and two: only the two-venue runs sweep.
+  for (std::size_t i = 0; i < full.prints.size(); ++i) {
+    const auto n = 15'000 + i;
+    const bool two_venues = (n / 30) % 2 == 1;
+    const bool edge = n % 30 < 10 || n % 30 >= 20;  // within a second of a neighbouring run
+    if (!edge) EXPECT_EQ(full.prints[i].sweep, two_venues) << n;
+  }
 }
 
 TEST(FlowTape, BlocksMultiLegGroupsAndCapacity) {

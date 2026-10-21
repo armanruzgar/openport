@@ -22,13 +22,17 @@ about real flow.
 Each underlying keeps its last 5,000 prints in memory (`capacity`); `total` counts
 every print seen since the engine started and `evicted` the ones dropped for space.
 Each engine, live or replay, keeps its own tape. Under overload the event queue
-may drop trades before quotes (`dropped_events` in status).
+may drop trades before quotes; `dropped_trades` counts them (the same number as
+`dropped_events` in status). It is feed-wide, since the queue drops a trade before
+its underlying is known, and those trades are not in `total`.
 
 ## Classification
 
 A print is compared with the option's quote in the chain book when the print is
 applied, so with the newest quote received before it. The queue coalesces quotes
-under load, so that quote can occasionally be a little newer than the trade.
+under load, so that quote can be newer than the trade; when the quote is stamped
+after the trade, the print is `unquoted` instead of classified against a quote it
+never met.
 
 | `side` | Price | `aggressor` |
 | --- | --- | --- |
@@ -36,7 +40,7 @@ under load, so that quote can occasionally be a little newer than the trade.
 | `bid` | within half a cent of the bid | `sell` |
 | `mid` | strictly between them | null |
 | `outside` | above the ask or below the bid | `buy` above, `sell` below |
-| `unquoted` | no two-sided quote | null |
+| `unquoted` | no two-sided quote, or only one stamped after the trade | null |
 
 Net premium is price × size × multiplier, added for buys and subtracted for sells,
 apart for calls and puts. Mid and unquoted premium is reported as `unclassified`.

@@ -698,6 +698,8 @@ export interface Flow {
   retained: number
   total: number
   evicted: number
+  /** Feed-wide: trades the event queue dropped under overload, never on the tape. */
+  dropped_trades: number
   matched: number
   totals: FlowTotals
   expiries: FlowExpiry[]
