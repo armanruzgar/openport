@@ -169,3 +169,18 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+@media (max-width: 639px) {
+  .ticket-sheet {
+    margin: auto 0 0;
+    width: 100%;
+    max-width: none;
+    max-height: 88dvh;
+    border-radius: 1rem 1rem 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  button, .trade-button, select { min-height: 44px; }
+  [data-chain] button { min-height: 40px; }
+  .trade-input { font-size: 16px; }
+  [role="radiogroup"] { max-width: 100%; flex-wrap: wrap; }
+}

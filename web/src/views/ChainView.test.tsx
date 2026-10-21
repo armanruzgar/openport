@@ -92,3 +92,27 @@ it("marks a non-whitelisted underlying above the chain", async () => {
     planned.data = undefined; client.clear(); vi.unstubAllGlobals()
   }
 })
+
+it("expands and collapses additional expiries without replacing the selected chain", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  localStorage.clear()
+  vi.mocked(useLive).mockReturnValue(liveState({ ...status, trading: undefined }, null, "open"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+  const later = { ...selection.expiry, id: "2026-11-20PM", expiry: "2026-11-20" }
+  client.setQueryData(["summary", "SPX", 1], { ...summary, expiries: [...summary.expiries, later] })
+  client.setQueryData(["chain", "SPX", selection.expiry.id, .05, 1], chain)
+  client.setQueryData(["chain", "SPX", later.id, 0, 1], { ...chain, expiry: later })
+  const host = document.createElement("div"), root = createRoot(host)
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ChainView symbol="SPX" expiry={selection.expiry.id} onExpiry={() => {}} /></QueryClientProvider>))
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Stack expiries")!.click())
+    expect(host.querySelectorAll('table[aria-label="Option chain"]')).toHaveLength(1)
+    const expand = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(later.id))!
+    await act(async () => expand.click())
+    expect(host.querySelectorAll('table[aria-label="Option chain"]')).toHaveLength(2)
+    await act(async () => expand.click())
+    expect(host.querySelectorAll('table[aria-label="Option chain"]')).toHaveLength(1)
+  } finally {
+    await act(async () => root.unmount()); client.clear(); localStorage.clear(); vi.unstubAllGlobals()
+  }
+})
