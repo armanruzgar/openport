@@ -784,6 +784,17 @@ TEST(BacktestApi, ListingSummarizesSavedReportIdentityWithoutCopyingTrades) {
   EXPECT_EQ(json::parse(call(host, {"GET", "/api/backtests/000001"}).body).at("report"), report);
 }
 
+TEST(BacktestApi, InvalidPlanRulesKeepTheirCodeAsForAccounts) {
+  test::RecordingFile storage;
+  server::BacktestHost host({storage.directory / "reports", storage.directory, {}, {}, {}, true});
+  const json rules{{"phase", "funded"}, {"payouts", {{"qualifying_days", 1}}},
+      {"size_scaling", {{"profit_percent", 1}, {"payouts", 0}, {"days", 2}, {"increase_percent", 25}, {"max_balance", "9999"}}}};
+  const json body{{"playbook", "batch"}, {"plan", {{"initial_cash", "10000"}, {"rules", rules}}}, {"scenarios", 2}, {"seed", "1"}};
+  const auto refused = call(host, {"POST", "/api/backtests", body.dump()}, false);
+  EXPECT_EQ(refused.status, 422) << refused.body;
+  EXPECT_EQ(json::parse(refused.body).at("error").at("code"), "INVALID_RULES");
+}
+
 TEST(BacktestApi, ADamagedSavedRunIsListedAsFailedAndCanBePurged) {
   test::RecordingFile storage;
   const json state{{"id", "000001"}, {"status", "completed"}, {"phase", "finished"}, {"completed", 1}, {"total", 1},

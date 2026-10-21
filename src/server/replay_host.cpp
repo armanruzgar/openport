@@ -444,7 +444,12 @@ class ArchivedReplay final : public MetricsSource {
     }
     if (playbooks) view_->playbooks_json = playbooks->publication("main", false).dump();
     std::ifstream metadata(std::filesystem::path(file).replace_extension(".json"));
-    if (metadata) simulated_ = json::parse(metadata).value("demo", false);
+    // Only the simulated flag comes from the sidecar: a damaged one leaves the archive,
+    // which rests on its journal, readable.
+    if (metadata) {
+      const auto parsed = json::parse(metadata, nullptr, false);
+      simulated_ = parsed.is_object() && parsed.value("demo", false);
+    }
   }
   const json& integrity() const { return integrity_; }
   std::vector<std::string> symbols() const override { return {}; }
@@ -609,11 +614,12 @@ class ReplayHost::History {
       if (current && !active->provider->finished()) continue;
       json item{{"id", id}, {"file", id}, {"demo", false}, {"result", "open"}, {"pnl", nullptr}};
       bool finalized = current;
+      bool resumable = current;  // a resume starts from the run's metadata
       try {
         if (current) finish(*active);
         {
           std::ifstream metadata(std::filesystem::path(file).replace_extension(".json"));
-          if (metadata) item.update(json::parse(metadata));
+          if (metadata) { item.update(json::parse(metadata)); resumable = true; }
           finalized = item.value("finished", false);
         }
         item.update(summary(id, file));
@@ -638,7 +644,7 @@ class ReplayHost::History {
       }
       // A run interrupted by shutdown or a crash, with its start state intact, can
       // continue: POST /api/replay {"resume"}. A stopped or replaced run has ended.
-      item["interrupted"] = !finalized && !item.contains("error");
+      item["interrupted"] = !finalized && resumable && !item.contains("error");
       item["finished"] = true;
       item["read_only"] = true;
       out.push_back(std::move(item));

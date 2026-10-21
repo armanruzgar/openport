@@ -239,7 +239,11 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         if (!view || view->playbooks_json.empty()) throw std::invalid_argument("Playbooks are unavailable");
         BacktestRequest job;
         try { job = parse_backtest(json::parse(request.body), json::parse(view->playbooks_json), host.scenarios, host.options.recordings); }
-        catch (const std::exception& error) { throw std::invalid_argument(error.what()); }
+        catch (const trading::TradingError& error) {
+          // Plan rules keep their code, as account creation reports them.
+          if (error.code() == trading::Reason::INVALID_RULES) throw;
+          throw std::invalid_argument(error.what());
+        } catch (const std::exception& error) { throw std::invalid_argument(error.what()); }
         job.analytics = host.options.analytics;
         job.dividends = host.options.dividends;
         job.actor = request.actor;
@@ -302,6 +306,10 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
       response.body = host.current.dump();
     }
   } catch (const UnsafePath& error) { response = api_error(409, "BACKTEST_UNSAFE_PATH", error.what()); }
+  catch (const trading::TradingError& error) {
+    response = error.code() == trading::Reason::INVALID_RULES ? api_error(422, "INVALID_RULES", error.what())
+                                                             : api_error(500, "BACKTEST_IO", error.what());
+  }
   catch (const std::invalid_argument& error) { response = api_error(400, "INVALID_REQUEST", error.what()); }
   catch (const json::exception& error) { response = api_error(400, "INVALID_REQUEST", error.what()); }
   catch (const std::exception& error) { response = api_error(500, "BACKTEST_IO", error.what()); }

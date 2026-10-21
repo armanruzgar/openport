@@ -315,6 +315,42 @@ TEST(Playbooks, DteAndBusinessDayExitsCloseAtTheirExactUpdate) {
   }
 }
 
+TEST(Playbooks, ForwardTestsCountADaysInTradeDeadlineAsATimeStop) {
+  const auto opened = md::new_york_to_utc({2026, 9, 4}, 10, 0);
+  const auto deadline = md::new_york_to_utc({2026, 9, 8}, 15, 45);
+  auto setup = breadth_setup();
+  setup["management"].erase("trailing_stop");
+  setup["management"]["max_days_in_trade"] = 1;
+  server::Desk::Options options;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("live test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(opened, 10), opened, opened);
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", setup}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  ASSERT_EQ(desk.trading_view()->snapshot->positions.size(), 2U) << desk.trading_view()->playbooks_json;
+  desk.replay_batch(breadth_batch(deadline, 10), deadline, deadline);
+  const auto view = desk.trading_view();
+  ASSERT_TRUE(view->snapshot->positions.empty());
+  ASSERT_EQ(view->snapshot->recent_orders.back().request.note, "Playbook automatic days in trade stop; entry 1");
+  const auto forward = server::playbook_forward_report(json::parse(view->playbooks_json), *view).at("morning");
+  EXPECT_EQ(forward.at("time_stops"), 1);
+}
+TEST(Playbooks, AnArchivedPlaybooksReplayModeCanStillBeTurnedOff) {
+  const auto opened = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  server::Desk::Options options; options.replay = true;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(opened, 10), opened, opened);
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", breadth_setup()}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "delete"}, {"id", "morning"}, {"version", 1}}, opened).decision.ok());
+  EXPECT_EQ(json::parse(desk.trading_view()->playbooks_json).at("modes").at("morning"), "auto");
+  EXPECT_FALSE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  const auto off = command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "off"}}, opened);
+  ASSERT_TRUE(off.decision.ok()) << off.decision.message;
+  EXPECT_EQ(json::parse(desk.trading_view()->playbooks_json).at("modes").value("morning", "off"), "off");
+}
+
 TEST(Playbooks, DefinitionValidationRejectsUnknownAndInconsistentFields) {
   EXPECT_NO_THROW(server::validate_playbook(definition()));
   for (const auto& [path, value] : std::vector<std::pair<std::string, json>>{
