@@ -5101,6 +5101,86 @@
         },
         "x-scope": "read"
       }
+    },
+    "/api/account/cash-flows": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "post": {
+        "summary": "POST /api/account/cash-flows",
+        "description": "Practice-only deposits and withdrawals. Requires admin on live, replay or admin on replay. Transfers adjust capital and daily bases and are excluded from P&L. Withdrawals require sufficient cash and unreserved buying power, complete marks and positive remaining equity. Evaluation, verification and funded plans are refused with PLAN_LOCKED. History is in GET /api/account cash_flows.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CashTransferRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/replay/account/cash-flows": {
+      "$ref": "#/paths/~1api~1account~1cash-flows"
+    },
+    "/api/market/halt": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "post": {
+        "summary": "POST /api/market/halt",
+        "description": "Available only through /api/replay/market/halt (replay or admin scope); live returns 422 PLAN_LOCKED. Start a simulated single-stock/ETF halt at current replay time for minutes, capped at regular close. Blocks submissions and fills on that underlying only. The command is recorded for replay verification. See status circuit_breaker.halts for scope and resume time.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Account"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HaltRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/replay/market/halt": {
+      "$ref": "#/paths/~1api~1market~1halt"
     }
   },
   "components": {
@@ -5715,6 +5795,13 @@
             "type": "number"
           },
           "active": {
+            "type": "boolean"
+          },
+          "underlying": {
+            "type": "string",
+            "description": "Present for a simulated single-name pause; absent means market-wide."
+          },
+          "simulated": {
             "type": "boolean"
           }
         },
@@ -9560,6 +9647,39 @@
             "maximum": 1000000,
             "default": 0,
             "description": "Resets allowed on the same plan; 0 is unlimited. Cost overrides do not clear the count. The requested limit applies."
+          },
+          "pin_risk": {
+            "type": "boolean",
+            "default": false,
+            "description": "Opt-in simulated contrary exercise of physical short options within $0.10 of the expiry reference strike; independent seeded 25% contrary chance per contract. No after-hours prices are fabricated."
+          },
+          "pin_risk_seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "default": 0,
+            "description": "Replay seed mixed with attempt start, OSI and expiry date."
+          },
+          "cash_credit_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Annual positive-cash credit rate, in basis points. Simple actual/365 accrual at rollover, rounded to cents."
+          },
+          "margin_debit_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Annual negative-cash debit rate for portfolio margin, in basis points. Financing counts in equity and daily loss without adjusting its opening base."
+          },
+          "stock_borrow_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
           }
         },
         "required": [
@@ -11076,6 +11196,16 @@
               "type": "string"
             },
             "description": "Preset IDs unlocked by the current pass; empty otherwise."
+          },
+          "cash_flows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CashFlow"
+            }
+          },
+          "cash_transfers_allowed": {
+            "type": "boolean",
+            "description": "True only on practice accounts with no evaluation objectives, program fees or funded phase."
           }
         },
         "required": [
@@ -12378,6 +12508,39 @@
                 "maximum": 1000000,
                 "default": 0,
                 "description": "Resets allowed on the same plan; 0 is unlimited. Omitted settings are retained on same-plan resets. Explicit overrides do not clear the used count."
+              },
+              "pin_risk": {
+                "type": "boolean",
+                "default": false,
+                "description": "Opt-in simulated contrary exercise of physical short options within $0.10 of the expiry reference strike; independent seeded 25% contrary chance per contract. No after-hours prices are fabricated."
+              },
+              "pin_risk_seed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647,
+                "default": 0,
+                "description": "Replay seed mixed with attempt start, OSI and expiry date."
+              },
+              "cash_credit_rate_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "default": 0,
+                "description": "Annual positive-cash credit rate, in basis points. Simple actual/365 accrual at rollover, rounded to cents."
+              },
+              "margin_debit_rate_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "default": 0,
+                "description": "Annual negative-cash debit rate for portfolio margin, in basis points. Financing counts in equity and daily loss without adjusting its opening base."
+              },
+              "stock_borrow_rate_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "default": 0,
+                "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
               }
             },
             "required": [
@@ -15168,6 +15331,39 @@
                 "maximum": 1000000,
                 "default": 0,
                 "description": "Resets allowed on the same plan; 0 is unlimited. Omitted settings are retained on same-plan resets. Explicit overrides do not clear the used count."
+              },
+              "pin_risk": {
+                "type": "boolean",
+                "default": false,
+                "description": "Opt-in simulated contrary exercise of physical short options within $0.10 of the expiry reference strike; independent seeded 25% contrary chance per contract. No after-hours prices are fabricated."
+              },
+              "pin_risk_seed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647,
+                "default": 0,
+                "description": "Replay seed mixed with attempt start, OSI and expiry date."
+              },
+              "cash_credit_rate_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "default": 0,
+                "description": "Annual positive-cash credit rate, in basis points. Simple actual/365 accrual at rollover, rounded to cents."
+              },
+              "margin_debit_rate_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "default": 0,
+                "description": "Annual negative-cash debit rate for portfolio margin, in basis points. Financing counts in equity and daily loss without adjusting its opening base."
+              },
+              "stock_borrow_rate_bps": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000,
+                "default": 0,
+                "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
               }
             },
             "required": [
@@ -21173,7 +21369,7 @@
       },
       "OrderWait": {
         "type": "object",
-        "description": "What keeps an open order from filling now, as matching reads the books, sessions and clocks: TRIGGER, REGULAR_SESSION, SESSION_CLOSED, INVALID_QUOTE, STALE_QUOTE, FILL_LATENCY, NEWER_QUOTE, LIMIT, DISPLAYED_SIZE or STALE_DATA.",
+        "description": "What keeps an open order from filling now, as matching reads the books, sessions and clocks: TRIGGER, REGULAR_SESSION, SESSION_CLOSED, INVALID_QUOTE, STALE_QUOTE, FILL_LATENCY, NEWER_QUOTE, LIMIT, DISPLAYED_SIZE STALE_DATA or MARKET_HALTED.",
         "properties": {
           "code": {
             "enum": [
@@ -21186,7 +21382,8 @@
               "LIMIT",
               "DISPLAYED_SIZE",
               "STALE_DATA",
-              "SESSION_CLOSED"
+              "SESSION_CLOSED",
+              "MARKET_HALTED"
             ]
           },
           "message": {
@@ -21837,6 +22034,39 @@
             "maximum": 1000000,
             "default": 0,
             "description": "Resets allowed on the same plan; 0 is unlimited. Omitted settings are retained on same-plan resets. Explicit overrides do not clear the used count."
+          },
+          "pin_risk": {
+            "type": "boolean",
+            "default": false,
+            "description": "Opt-in simulated contrary exercise of physical short options within $0.10 of the expiry reference strike; independent seeded 25% contrary chance per contract. No after-hours prices are fabricated."
+          },
+          "pin_risk_seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "default": 0,
+            "description": "Replay seed mixed with attempt start, OSI and expiry date."
+          },
+          "cash_credit_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Annual positive-cash credit rate, in basis points. Simple actual/365 accrual at rollover, rounded to cents."
+          },
+          "margin_debit_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Annual negative-cash debit rate for portfolio margin, in basis points. Financing counts in equity and daily loss without adjusting its opening base."
+          },
+          "stock_borrow_rate_bps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000,
+            "default": 0,
+            "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
           }
         },
         "required": [
@@ -21992,7 +22222,7 @@
       },
       "ClosedAttribution": {
         "type": "object",
-        "description": "A contract or shares traded today and no longer held, with the day's P&L by Greek.",
+        "description": "Closed positions and cash financing, with today's P&L by Greek.",
         "properties": {
           "symbol": {
             "type": "string"
@@ -22005,6 +22235,10 @@
               },
               {
                 "const": "shares",
+                "type": "string"
+              },
+              {
+                "const": "cash",
                 "type": "string"
               }
             ]
@@ -24373,6 +24607,113 @@
           "entry_reasons",
           "rule_trips"
         ]
+      },
+      "CashFlow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer"
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "day": {
+            "type": "string",
+            "format": "date"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "deposit",
+              "withdrawal",
+              "credit_interest",
+              "debit_interest",
+              "borrow_fee"
+            ]
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "basis": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "rate_bps": {
+            "type": "integer"
+          },
+          "days": {
+            "type": "integer"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "attempt",
+          "time",
+          "day",
+          "kind",
+          "symbol",
+          "amount",
+          "basis",
+          "rate_bps",
+          "days",
+          "client_id"
+        ]
+      },
+      "CashTransferRequest": {
+        "type": "object",
+        "required": [
+          "client_id",
+          "amount"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Idempotency key within the current attempt. Same ID and amount is a no-op; changed amount is 409 DUPLICATE_CLIENT_ID."
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]{1,2})?$",
+            "description": "Nonzero whole-cent amount: positive deposit, negative withdrawal."
+          }
+        }
+      },
+      "HaltRequest": {
+        "type": "object",
+        "required": [
+          "symbol",
+          "minutes"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A subscribed stock/ETF underlying; indices are refused."
+          },
+          "minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 390
+          }
+        }
       }
     }
   }

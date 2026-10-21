@@ -153,3 +153,12 @@ it.each(["evaluation", "verification"] as const)("explains all trade objectives 
   expect(fundedText).not.toContain("Microscalping sums")
   expect(fundedText).not.toContain("Trade consistency can hold")
 })
+
+it("offers practice transfers and shows financing in the account history", () => {
+  const html = render(<DashboardView />, { ...account, cash_transfers_allowed: true,
+    cash_flows: [{ id: "1", attempt: account.evaluation.attempt, time: account.time, day: "2026-09-22",
+      kind: "credit_interest", symbol: null, amount: "10.00", basis: "100000.00", rate_bps: 365, days: 1, client_id: null }] })
+  for (const text of ["Post transfer", "Withdraw", "credit interest", "+$10.00", "daily-loss base unchanged"])
+    expect(html).toContain(text)
+  expect(render(<DashboardView />, { ...account, cash_transfers_allowed: false })).not.toContain("Post transfer")
+})

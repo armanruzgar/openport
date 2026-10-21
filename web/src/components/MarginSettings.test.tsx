@@ -17,3 +17,12 @@ describe("margin settings", () => {
     expect(marginFacts({ margin: "portfolio", pm_vol_shock: 5 })).toEqual(["Portfolio margin with ±5 vol points"])
   })
 })
+
+it("keeps financing and pin risk opt-in and carries their overrides", () => {
+  const defaults = planMargin()
+  expect(defaults.pin_risk).toBe(false)
+  expect(defaults.cash_credit_rate_bps).toBe(0)
+  expect(marginRequest({ ...defaults, pin_risk: true, pin_risk_seed: 42, cash_credit_rate_bps: 365,
+    margin_debit_rate_bps: 1200, stock_borrow_rate_bps: 500 }, defaults)).toEqual({ pin_risk: true,
+    pin_risk_seed: 42, cash_credit_rate_bps: 365, margin_debit_rate_bps: 1200, stock_borrow_rate_bps: 500 })
+})

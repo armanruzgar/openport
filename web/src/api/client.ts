@@ -238,6 +238,8 @@ export const api = {
   deleteAccount: (id: string, mode: WriteMode) => write<DeleteAccountResponse>(`/api/accounts/${encodeURIComponent(id)}`, "DELETE", mode),
   createAccount: (request: CreateAccountRequest, mode: WriteMode) => write<CreateAccountResponse>("/api/accounts", "POST", mode, request),
   resetAccount: (request: ResetRequest, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/reset"), "POST", mode, request),
+  transferCash: (client_id: string, amount: Money, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/cash-flows"), "POST", mode, { client_id, amount }),
+  haltUnderlying: (symbol: string, minutes: number, mode: WriteMode) => accountWrite<Account>(scoped("/api/market/halt"), "POST", mode, { symbol, minutes }),
   requestPayout: (amount: Money, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/payout"), "POST", mode, { amount }),
   status: (signal?: AbortSignal) => get<Status>("/api/status", signal),
   series: (symbol: string, signal?: AbortSignal) => get<VolatilitySeries>(`${underlying(symbol)}/series?interval=1d&fields=mfiv30,atm30,rr25,rv21,proxy_iv30`, signal),

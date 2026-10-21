@@ -12,7 +12,16 @@ export function CircuitBreakerBanner() {
     </div>
   ) : null
   // A deeper fall can trip another level before the first halt ends.
-  const active = circuitBreaker.halts.filter((h) => h.active)
+  const allActive = circuitBreaker.halts.filter((h) => h.active)
+  const active = allActive.filter(h => !h.underlying)
+  if (!active.length && allActive.length) {
+    const resumes = new Map<string, number>()
+    for (const pause of allActive) resumes.set(pause.underlying!, Math.max(resumes.get(pause.underlying!) ?? 0, Date.parse(pause.end)))
+    return <div role="status" aria-label="Single-name trading halt" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs tabular">
+      {[...resumes].map(([symbol, end]) => <span key={symbol}>Simulated single-name halt: {symbol}. Trading resumes at {resumeTime.format(end)} ET. </span>)}
+      Other underlyings are not halted.
+    </div>
+  }
   const halt = active.sort((a, b) => b.level - a.level)[0]
   if (!halt) return null
   const resume = new Date(Math.max(...active.map((h) => new Date(h.end).getTime())))

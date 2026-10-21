@@ -189,7 +189,7 @@ export function GroupButton({ positions, trading, onDone }: { positions: Positio
 export function ClosedToday({ closed }: { closed: ClosedAttribution[] }) {
   return <Table label="Closed today" headers={["Contract", "Today", ...attributionParts.map((part) => part.label)]}>
     {closed.map((row) => <tr key={row.symbol}>
-      <td className="font-medium">{row.kind === "shares" ? `${row.symbol} shares` : osiLabel(row.symbol, row.underlying)}</td>
+      <td className="font-medium">{row.kind === "cash" ? "Cash financing" : row.kind === "shares" ? `${row.symbol} shares` : osiLabel(row.symbol, row.underlying)}</td>
       <td className={toneText[toneOf(row.attribution.total)]} title={describeAttribution(row.attribution)}>{signedMoney(row.attribution.total.toFixed(2))}</td>
       {attributionParts.map((part) => <td key={part.key}>{signedMoney(row.attribution[part.key].toFixed(2))}</td>)}
     </tr>)}

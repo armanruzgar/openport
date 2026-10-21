@@ -283,3 +283,16 @@ it("describes joint requests and reports while retaining single schemas", () => 
   expect(schemas.BacktestComparison.properties.combined.properties.includes_joint.const).toBe(true)
   expect(schemas.BacktestResult.properties.rule_trips.items.properties.playbook.type).toBe("string")
 })
+
+it("keeps financing, pin risk and scoped halts in the contract", () => {
+  const schemas = spec.components.schemas
+  for (const name of ["AccountRules", "AccountRulesInput"]) {
+    expect(wireType(schemas[name]!.properties!.pin_risk!)).toBe("boolean")
+    for (const key of ["pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps"])
+      expect(wireType(schemas[name]!.properties![key]!)).toBe("integer")
+  }
+  expect(wireType(schemas.Account!.properties!.cash_flows!)).toBe("CashFlow[]")
+  expect(wireType(schemas.MarketHalt!.properties!.underlying!)).toBe("string")
+  expect(schemas.WhatIfOrder!.properties!.then).toEqual(schemas.NewOrder!.properties!.then)
+  expect(schemas.WhatIfOrder!.properties!.oco).toEqual(schemas.NewOrder!.properties!.oco)
+})
