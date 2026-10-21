@@ -1,3 +1,4 @@
+import { studyPrefs, type Studies } from "./studies"
 import type { Candle, CandleInterval } from "../api/types"
 import type { Order, Position } from "../api/trading-types"
 import { isNum } from "./format"
@@ -146,7 +147,7 @@ export function timeTicks(bars: readonly Candle[], interval: CandleInterval, spa
 }
 
 const chartStorageKey = "openport.chart"
-export interface ChartPrefs { interval: CandleInterval; hidden: boolean }
+export interface ChartPrefs { interval: CandleInterval; hidden: boolean; studies?: Studies }
 const defaultPrefs: ChartPrefs = { interval: "5m", hidden: false }
 
 /** The viewer's last interval and whether they hid the chart; defaults where storage is unavailable. */
@@ -156,6 +157,7 @@ export function loadChartPrefs(): ChartPrefs {
     return {
       interval: candleIntervals.some((i) => i.value === saved?.interval) ? saved!.interval! : defaultPrefs.interval,
       hidden: saved?.hidden === true,
+      ...(saved?.studies ? { studies: studyPrefs(saved.studies) } : {}),
     }
   } catch {
     return defaultPrefs

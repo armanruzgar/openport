@@ -12,6 +12,19 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Providers: map Tradier chain and DXLink session volume without inventing trades
   or timestamps. Map documented ORATS/DXLink Greeks and ThetaData vega/rho scales;
   ThetaData theta remains unknown. Sample/mock tested, not yet validated live.
+### Terminal
+
+- Add keyboard help, symbol jump, chain contract navigation, buy/sell prefills,
+  review/cancel shortcuts and focused-position close through the existing ticket.
+- Remember chain settings per symbol and save named route/preference workspaces.
+- Add a subscribed-symbol watchlist and persistent local notification history with
+  unread counts, mark-all-read and clear; keep existing toasts.
+- Window large chains, reuse unchanged rows, and stack collapsible expiries.
+- Add SMA, EMA and Bollinger studies plus saved per-symbol horizontal lines and
+  trendlines, including price-alert creation. VWAP explicitly remains unavailable
+  on the current volume-free candle API; its math is tested with sample volumes.
+- Add chain, chart, positions and orders pop-outs, an optional wide-screen
+  positions/orders split, and phone calls/puts selection with bottom-sheet tickets.
 
 ## 0.4.0 (2026-10-06)
 

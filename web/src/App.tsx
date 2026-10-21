@@ -14,6 +14,10 @@ import { ReplayBanner } from "./components/ReplayBanner"
 import { Welcome, welcome } from "./components/Welcome"
 import { Sidebar, viewLabels } from "./components/Sidebar"
 import { Empty } from "./components/ui"
+import { shortcutAllowed } from "./lib/keyboard"
+import { HotkeyHelp, Popout, Workspaces } from "./components/TerminalTools"
+import { SymbolSearch, Watchlist } from "./components/Watchlist"
+import { ChartView } from "./views/ChartView"
 import { payoutsVisible } from "./lib/payouts"
 import { accountViews, navigableViews, useRoute } from "./lib/route"
 import { matchingPayload } from "./lib/payload"
@@ -35,6 +39,9 @@ export function App() {
   const [route, navigate] = useRoute()
   const live = useLive()
   const queryClient = useQueryClient()
+  const [help, setHelp] = useState(false)
+  const [search, setSearch] = useState(false)
+  const [split, setSplit] = useState(false)
   const [menu, setMenu] = useState(false)
   const closeMenu = useCallback(() => setMenu(false), [])
   const storage = live.accounts.find((account) => account.id === live.account)
@@ -53,9 +60,13 @@ export function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target instanceof Element ? event.target : null
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || target?.closest(
-        'input, textarea, select, button, [contenteditable]:not([contenteditable="false"]), [role="radiogroup"], [role="tablist"], [role="textbox"], [role="combobox"], [role="slider"], [role="spinbutton"]',
-      )) return
+      if (!shortcutAllowed(event, true)) return
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault(); setSearch(true); return
+      }
+      if (event.metaKey || event.ctrlKey) return
+      if (event.key === "?") { event.preventDefault(); setHelp(true); return }
+      if (target?.closest('button, [role="radiogroup"], [role="tablist"], [data-chain]')) return
       const next = pages[Number(event.key) - 1]
       if (next) {
         event.preventDefault()
@@ -78,7 +89,8 @@ export function App() {
   }, [navigate, queryClient, route.expiry, view, symbol, version, pages, live])
 
   const waiting = live.status?.feed.message || "Connecting to openportd…"
-  const content = view === "dashboard" ? <DashboardView />
+  const content = view === "chart" && symbol ? <ChartView symbol={symbol} expiry={route.expiry} />
+    : view === "dashboard" ? <DashboardView />
     : view === "brief" ? <BriefView symbol={symbol} />
     : view === "positions" ? <PositionsView />
     : view === "orders" ? <OrdersView />
@@ -114,7 +126,22 @@ export function App() {
           live.switchAccount(id, "user")
           void queryClient.invalidateQueries()
         }} />
-        <main className="min-w-0 flex-1 p-3 lg:p-5">{content}</main>
+        <main className="min-w-0 flex-1 p-3 lg:p-5">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <button className="trade-button" onClick={() => setSearch(true)}>Symbol ⌘/Ctrl K</button>
+            <button className="trade-button" aria-label="Keyboard shortcuts" onClick={() => setHelp(true)}>?</button>
+            <Workspaces route={{ ...route, symbol, view }} />
+            {["chain", "positions", "orders", "chart"].includes(view) && <Popout route={{ ...route, symbol, view }} label={view} />}
+            {live.trading && (view === "positions" || view === "orders") && <button className="trade-button hidden 2xl:inline" aria-pressed={split} onClick={() => setSplit(!split)}>Positions + orders</button>}
+          </div>
+          <Watchlist onSymbol={(s) => navigate({ symbol: s, expiry: null })} />
+          <div className={split && (view === "positions" || view === "orders") ? "grid min-w-0 gap-4 2xl:grid-cols-2" : ""}>
+            <div className="min-w-0">{content}</div>
+            {split && (view === "positions" || view === "orders") && <div className="hidden min-w-0 2xl:block">{view === "positions" ? <OrdersView /> : <PositionsView />}</div>}
+          </div>
+        </main>
+        {help && <HotkeyHelp onClose={() => setHelp(false)} />}
+        {search && <SymbolSearch onSymbol={(s) => navigate({ symbol: s, expiry: null })} onClose={() => setSearch(false)} />}
         <AlertWatcher />
         <Toasts />
         <Welcome onNavigate={(next) => navigate({ view: next })} />

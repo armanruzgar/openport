@@ -10,7 +10,7 @@ import { notify } from "../lib/notify"
 
 /** Announces each firing of the account's server alerts once, after the first list it sees. */
 export function ServerAlertWatcher({ sound }: { sound: boolean }) {
-  const { accountScope } = useLive()
+  const { accountScope, account, source } = useLive()
   const alerts = useServerAlerts().data?.alerts
   const seen = useRef<{ scope: number; fired: Map<string, number> } | null>(null)
   useEffect(() => {
@@ -21,9 +21,9 @@ export function ServerAlertWatcher({ sound }: { sound: boolean }) {
     if (last?.scope !== accountScope) return
     for (const alert of firedAlerts(last.fired, alerts)) {
       const { title, body } = serverAlertMessage(alert)
-      notify(title, body, sound)
+      notify(title, body, sound, { kind: "alert", scope: `${source}:${account}`, id: `server-alert:${alert.id}:${alert.fired}` })
     }
-  }, [alerts, accountScope, sound])
+  }, [alerts, accountScope, sound, source, account])
   return null
 }
 

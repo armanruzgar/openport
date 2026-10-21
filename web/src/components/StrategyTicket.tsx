@@ -1,3 +1,4 @@
+import { reviewTicketKey } from "../lib/keyboard"
 import { ActionDestination, useActionDestination } from "../api/action-destination"
 import { useActionApi } from "../api/action-client"
 import { useWalk } from "./WalkFields"
@@ -63,7 +64,7 @@ export function StrategyTicket({ legs, onLegs, expiries, underlying, spot, tradi
   const destination = useActionDestination()
   const body = <ActionDestination value={destination}><StrategyBody legs={legs} onLegs={onLegs} expiries={expiries} underlying={underlying} spot={spot} trading={trading} initialUnits={units} closing={closing} roll={roll} smiles={smiles} surface={surface} template={template} tags={tags} note={note} /></ActionDestination>
   if (variant === "bare") return body
-  if (variant === "dialog") return <Dialog title={title} onClose={onClose}>{body}</Dialog>
+  if (variant === "dialog") return <Dialog sheet title={title} onClose={onClose}>{body}</Dialog>
   return (
     <aside aria-label="Strategy ticket" className="flex max-h-[calc(100dvh-7rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-panel shadow-chart">
       <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
@@ -306,7 +307,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
       {planNotice && <p role="status" className="text-sm text-warn">{planNotice}</p>}
       {dayLocked && <p role="status" className="text-sm text-warn">{dayLockNotice}</p>}
       {rules?.buy_only && !reduces && <p role="status" className="text-sm text-warn">{rules.plan ?? "This plan"} is buy-only. Multi-leg orders may only close held positions.</p>}
-      <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void submit() }}>
+      <form onKeyDownCapture={reviewTicketKey} className="space-y-4" onSubmit={(event) => { event.preventDefault(); void submit() }}>
         <fieldset disabled={pending || order != null} className="grid min-w-0 grid-cols-2 gap-3 disabled:opacity-70">
           <legend className="sr-only">Strategy order</legend>
           <div className="trade-label col-span-2">
@@ -362,8 +363,8 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
           </>}
         </dl>
         {stopRequired && <p role="status" className={missingStop ? "text-sm text-warn" : "text-xs text-muted"}>Stop-loss required by this plan.{missingStop ? " Add a protective stop before submitting." : ""}</p>}
-        <OrderPreviewPanel sizing={!closing && !roll && !reduces} preview={preview} onSize={(size) => setUnits(String(size))} disabled={pending || order != null}
-          onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} />
+        <div data-ticket-review tabIndex={-1} role="region" aria-label="Order review"><OrderPreviewPanel sizing={!closing && !roll && !reduces} preview={preview} onSize={(size) => setUnits(String(size))} disabled={pending || order != null}
+          onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} /></div>
         {!!(rules?.fill_latency_ms || rules?.impact_ticks) && <p className="text-xs text-muted">The preview uses current quotes. It cannot predict the later quote or the full cost of sweeping additional size blocks.</p>}
         {!!rules?.slippage_ticks && <p className="text-xs text-muted">Quoted price estimates exclude slippage; the server preview includes it.</p>}
         {chart && <figure aria-label="Profit and loss at expiry">

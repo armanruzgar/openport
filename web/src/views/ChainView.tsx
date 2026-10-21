@@ -1,15 +1,16 @@
+import { shortcutAllowed } from "../lib/keyboard"
 import { useQueries, useQuery } from "@tanstack/react-query"
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { api } from "../api/client"
 import { planEntryNotice, planMarketTime } from "../lib/plan-rules"
 import { marketTime, useLive } from "../api/live"
 import type { ChainRow, OptionQuote } from "../api/types"
 import { ExpiryPicker } from "../components/ExpiryPicker"
-import { Flash } from "../components/Flash"
+import { ChainTable } from "../components/ChainTable"
+import { useChainPrefs } from "../lib/chain-prefs"
 import { CoverageBadge, Empty, Panel, Segmented, Stat } from "../components/ui"
 import { expiryCoverage } from "../lib/coverage"
 import { count, days, fixed, isNum, money, pct, price, vol } from "../lib/format"
-import { liquidity, liquidityDetail, quoteIssueText, spreadShare, volumeOiRatio } from "../lib/liquidity"
 import { matchingPayload } from "../lib/payload"
 import { americanApproximation, rateSourceHint } from "../lib/model"
 import { OrderTicket, type TicketSelection } from "../components/OrderTicket"
@@ -22,7 +23,6 @@ import { deliversShares } from "../lib/trading"
 import { MAX_LEGS, strategyLabel, toggleLeg, type StrategyLeg, type TemplateSetup } from "../lib/strategy"
 import { Dialog } from "../components/Dialog"
 import { useAccount, usePortfolio } from "../api/trading"
-import type { LiquidityUsed } from "../api/trading-types"
 import { useMediaQuery } from "../lib/media"
 import { sideFromCell } from "../lib/trading"
 import { autoCloseCountdown, defaultExpiry } from "../lib/expiry"
@@ -54,12 +54,12 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
   const planNotice = planEntryNotice(account?.rules, symbol, planMarketTime(account?.time,
     live.underlyings.find((u) => u.symbol === symbol)?.as_of, live.source !== "live" ? live.replay?.time : null), false, account)
   const version = live.version(symbol)
-  const [window, setWindow] = useState(0.05)
-  const [showGreeks, setShowGreeks] = useState(false)
-  const [showLiquidity, setShowLiquidity] = useState(true)
+  const [prefs, updatePrefs] = useChainPrefs(symbol)
+  const { window, greeks: showGreeks, liquidity: showLiquidity, mode } = prefs
+  const setWindow = (window: number) => updatePrefs({ window })
   const [ticket, setTicket] = useState<TicketSelection | null>(null)
   // Strategy mode collects up to four legs from the chain for one multi-leg order.
-  const [mode, setMode] = useState<"single" | "strategy">("single")
+
   const [legs, setLegs] = useState<StrategyLeg[]>([])
   const [templatesOpen, setTemplatesOpen] = useState(false)
   const [sharesOpen, setSharesOpen] = useState(false)
@@ -89,6 +89,8 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
   useEffect(() => { setTicket(null); setUntradable(null); setTemplatesOpen(false); setSharesOpen(false); setStockStrategy(null) }, [symbol, selected, live.accountScope])
   // A strategy keeps its legs across expiries, for calendars and diagonals.
   useEffect(() => { setLegs([]); setTemplate(undefined); setReviewing(false) }, [symbol, live.accountScope])
+  // The saved mode can also change from another tab or a restored workspace, so clear here, not in the toggle.
+  useEffect(() => { setTicket(null); setLegs([]); setTemplate(undefined); setTemplatesOpen(false); setReviewing(false) }, [mode])
 
   const chain = useQuery({
     queryKey: ["chain", symbol, selected, window, version],
@@ -107,7 +109,9 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
   }, [data, forward])
   const agreement = useMemo(() => (data ? vendorAgreement(data.strikes, forward) : null), [data, forward])
   // Legs follow the chain's latest quotes, fetching the chains of legs in other expiries.
-  const otherExpiries = [...new Set(legs.map((leg) => leg.expiry))].filter((id) => id !== selected)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  useEffect(() => setExpanded(new Set()), [symbol])
+  const otherExpiries = [...new Set([...legs.map((leg) => leg.expiry), ...(prefs.stacked ? [...expanded].filter((id) => expiries.some((e) => e.id === id)) : [])])].filter((id) => id !== selected)
   const others = useQueries({ queries: otherExpiries.map((id) => ({
     queryKey: ["chain", symbol, id, 0, version],
     queryFn: ({ signal }: { signal: AbortSignal }) => api.chain(symbol, id, 0, signal),
@@ -124,6 +128,20 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
   const strategyOpen = mode === "strategy" && legs.length > 0
   const provider = live.status?.provider.name ?? "vendor"
 
+  function chooseQuote(source: NonNullable<typeof data>, quote: OptionQuote, row: ChainRow, optionType: "call" | "put", cell: "bid" | "ask") {
+    if (!quote.tradable || !quote.symbol) { setUntradable(quote.untradable_reason ?? "Contract unavailable for paper trading"); return }
+    if (mode === "strategy") {
+      if (legs.length >= MAX_LEGS && !legs.some((leg) => leg.symbol === quote.symbol)) { setUntradable(`A strategy has at most ${MAX_LEGS} legs.`); return }
+      setTemplate(undefined)
+      setLegs((current) => toggleLeg(current, { symbol: quote.symbol!, underlying: symbol, side: sideFromCell(cell), ratio: 1, type: optionType,
+        strike: row.strike, expiry: source.expiry.id, quote }))
+      return
+    }
+    const clickedPrice = quote[cell]
+    setTicket({ symbol: quote.symbol, underlying: symbol, expiry: source.expiry, strike: row.strike, optionType, cell,
+      price: isNum(clickedPrice) ? String(clickedPrice) : "", spot: source.spot })
+
+  }
   if (summary.isError) return <Empty>{String(summary.error)}</Empty>
   if (!summaryData) return <Empty>Loading {symbol}…</Empty>
 
@@ -161,20 +179,21 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
         </div>
       )}
 
-      <PriceChart symbol={symbol} spot={data?.spot ?? summaryData.spot} expiry={e ?? null} />
+      <PriceChart key={symbol} symbol={symbol} spot={data?.spot ?? summaryData.spot} expiry={e ?? null} />
 
-      <div className={docked && (ticket || strategyOpen) ? "grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_24rem]" : ""}>
+      <div onKeyDown={(event) => { if (event.key === "Escape" && shortcutAllowed(event.nativeEvent)) { setTicket(null); setReviewing(false) } }} className={docked && (ticket || strategyOpen) ? "grid items-start gap-3 xl:grid-cols-[minmax(0,1fr)_24rem]" : ""}>
       <Panel
         title={<>{e ? `${symbol} ${e.expiry} ${e.settlement}` : symbol}{(live.status?.provider.simulated || (live.source === "replay" && live.replay?.demo)) && <span className="text-warn"> · simulated prices and volume</span>}</>}
         actions={
           <>
             <CoverageBadge coverage={coverage} />
+            <button type="button" className="trade-button" aria-pressed={prefs.stacked} onClick={() => updatePrefs({ stacked: !prefs.stacked })}>Stack expiries</button>
             {live.trading && deliversShares(symbol) && <button type="button" className="trade-button" onClick={() => setSharesOpen(true)}>Trade shares</button>}
-            {live.trading && <Segmented label="Ticket mode" value={mode} onChange={(next) => { setMode(next); setTicket(null); editLegs([]); setTemplatesOpen(false); setReviewing(false) }}
+            {live.trading && <Segmented label="Ticket mode" value={mode} onChange={(next) => updatePrefs({ mode: next })}
               options={[{ value: "single", label: "Single" }, { value: "strategy", label: "Strategy" }]} />}
             {live.trading && mode === "strategy" && <button type="button" className="trade-button" disabled={!data} onClick={() => setTemplatesOpen(true)}>Templates</button>}
             <Segmented label="Strike window" value={window} options={windows} onChange={setWindow} />
-            <button type="button" className="trade-button" aria-pressed={showLiquidity} onClick={() => setShowLiquidity((value) => !value)}>Liquidity columns</button>
+            <button type="button" className="trade-button" aria-pressed={showLiquidity} onClick={() => updatePrefs({ liquidity: !showLiquidity })}>Liquidity columns</button>
             <Segmented
               label="Columns"
               value={showGreeks ? "greeks" : "quotes"}
@@ -182,7 +201,7 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
                 { value: "quotes", label: "Quotes" },
                 { value: "greeks", label: "Greeks" },
               ]}
-              onChange={(v) => setShowGreeks(v === "greeks")}
+              onChange={(v) => updatePrefs({ greeks: v === "greeks" })}
             />
           </>
         }
@@ -190,22 +209,23 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
         {data ? (
           <ChainTable key={`${symbol}/${selected}`} rows={data.strikes} forward={forward} atmStrike={atmStrike} showGreeks={showGreeks} showLiquidity={showLiquidity} provider={provider}
             selected={highlighted} held={held} used={used}
-            onQuote={live.trading ? (quote, row, optionType, cell) => {
-              if (!quote.tradable || !quote.symbol) { setUntradable(quote.untradable_reason ?? "Contract unavailable for paper trading"); return }
-              if (mode === "strategy") {
-                if (legs.length >= MAX_LEGS && !legs.some((leg) => leg.symbol === quote.symbol)) { setUntradable(`A strategy has at most ${MAX_LEGS} legs.`); return }
-                setTemplate(undefined)
-                setLegs((current) => toggleLeg(current, { symbol: quote.symbol!, underlying: symbol, side: sideFromCell(cell), ratio: 1, type: optionType,
-                  strike: row.strike, expiry: data.expiry.id, quote }))
-                return
-              }
-              const clickedPrice = quote[cell]
-              setTicket({ symbol: quote.symbol, underlying: symbol, expiry: data.expiry, strike: row.strike, optionType, cell,
-                price: isNum(clickedPrice) ? String(clickedPrice) : "", spot: data.spot })
-            } : undefined} />
+            onQuote={live.trading ? (quote, row, optionType, cell) => chooseQuote(data, quote, row, optionType, cell) : undefined} />
         ) : (
           <Empty>{chain.isError ? String(chain.error) : "Loading chain…"}</Empty>
         )}
+        {prefs.stacked && expiries.filter((expiry) => expiry.id !== selected).map((expiry) => {
+          const source = chains.get(expiry.id)
+          const open = expanded.has(expiry.id)
+          return <section key={expiry.id} className="mt-3 border-t border-border pt-2">
+            <button type="button" className="trade-button mb-2" aria-expanded={open} onClick={() => setExpanded((current) => {
+              const next = new Set(current); if (open) next.delete(expiry.id); else next.add(expiry.id); return next
+            })}>{open ? "▾" : "▸"} {expiry.id}</button>
+            {open && (source ? <ChainTable rows={source.strikes.filter((row) => !window || !isNum(source.spot) || Math.abs(row.strike / source.spot - 1) <= window)}
+              forward={source.expiry.forward} atmStrike={null} showGreeks={showGreeks} showLiquidity={showLiquidity} provider={provider}
+              selected={highlighted} held={held} used={used} onQuote={live.trading ? (quote, row, type, cell) => chooseQuote(source, quote, row, type, cell) : undefined} />
+              : <p className="text-xs text-muted">{others[otherExpiries.indexOf(expiry.id)]?.isError ? "Could not load this expiry." : "Loading expiry…"}</p>)}
+          </section>
+        })}
         {deamericanized && (
           <p className="mt-2 text-[11px] text-muted">
             IVs de-Americanised: early-exercise premium removed with a Leisen-Reimer tree
@@ -232,11 +252,11 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
             <button type="button" className="trade-button border-accent" disabled={legs.length < 2} onClick={() => setReviewing(true)}>Review</button>
           </div>
         </div>)}
-      {live.trading && mode === "single" && ticket && ticket.underlying === symbol && ticket.expiry.id === selected && <div className={docked ? "sticky top-16" : ""}>
+      {live.trading && mode === "single" && ticket && ticket.underlying === symbol && chains.has(ticket.expiry.id) && <div className={docked ? "sticky top-16" : ""}>
         <OrderTicket
           key={`${ticket.symbol}/${ticket.cell}`}
-          selection={ticket} trading={live.trading} variant={docked ? "panel" : "dialog"} smile={data?.strikes}
-          quote={data?.strikes.find((row) => row.strike === ticket.strike)?.[ticket.optionType] ?? null}
+          selection={ticket} trading={live.trading} variant={docked ? "panel" : "dialog"} smile={chains.get(ticket.expiry.id)?.strikes}
+          quote={chains.get(ticket.expiry.id)?.strikes.find((row) => row.strike === ticket.strike)?.[ticket.optionType] ?? null}
           onClose={() => setTicket(null)} />
       </div>}
       </div>
@@ -245,157 +265,6 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
       {live.trading && templatesOpen && data && <StrategyTemplates key={`${symbol}/${selected}`} near={data} expiries={expiries}
         onStockStrategy={(kind) => { setTemplatesOpen(false); setStockStrategy(kind) }} onClose={() => setTemplatesOpen(false)} onApply={(setup) => { setLegs(setup.legs); setTemplate(setup); setTemplatesOpen(false); setReviewing(true) }} />}
       {live.trading && untradable && <Dialog title="Paper trading unavailable" onClose={() => setUntradable(null)}><p className="text-sm text-warn">{untradable}</p></Dialog>}
-    </div>
-  )
-}
-
-interface Column {
-  key: string
-  label: string
-  title: string
-  render: (o: OptionQuote) => React.ReactNode
-  greek?: boolean
-  liquidity?: boolean
-}
-
-function columns(provider: string): Column[] {
-  return [
-    { key: "volume", label: "Vol", title: "Session volume (contracts); hover for volume / OI", liquidity: true, render: (o) => <span title={`Volume / OI: ${fixed(volumeOiRatio(o), 2)}`}>{count(o.volume)}</span> },
-    { key: "spread", label: "Spr %", title: "Bid-ask spread / quote mid", liquidity: true, render: (o) => pct(spreadShare(o), 1) },
-    { key: "liquidity", label: "Liq", title: "Quote liquidity: good, thin or none", liquidity: true, render: (o) => <span className={liquidity(o).cue === "good" ? "text-bullish" : "text-warn"} title={liquidityDetail(o)}>{liquidity(o).cue}</span> },
-    { key: "oi", label: "OI", title: "Open interest (contracts)", render: (o) => count(o.oi) },
-    { key: "delta", label: "Δ", title: "Delta per unit of underlying", render: (o) => fixed(o.delta, 3) },
-    { key: "gamma", label: "Γ", title: "Gamma per $1 of spot", render: (o) => fixed(o.gamma, 5), greek: true },
-    { key: "vega", label: "Vega", title: "Per vol point", render: (o) => fixed(o.vega, 3), greek: true },
-    { key: "theta", label: "Θ", title: "per calendar day, forward held fixed (as Cboe quotes it)", render: (o) => fixed(o.theta, 3), greek: true },
-    {
-      key: "iv",
-      label: "IV",
-      title: `Implied vol from the mid (hover a cell to compare with ${provider})`,
-      render: (o) => <span title={[
-        isNum(o.eep) && o.eep >= 0.005 ? `IV after removing a $${fixed(o.eep, 2)} early-exercise premium` : null,
-        isNum(o.vendor_iv) ? `OpenPort ${vol(o.iv)} · ${provider} ${vol(o.vendor_iv)}` : null,
-      ].filter(Boolean).join(" · ") || undefined}>{vol(o.iv)}</span>,
-    },
-    { key: "bid", label: "Bid", title: "Best bid", render: (o) => <Flash value={o.bid}>{price(o.bid)}</Flash> },
-    { key: "ask", label: "Ask", title: "Best offer", render: (o) => <Flash value={o.ask}>{price(o.ask)}</Flash> },
-  ]
-}
-
-function ChainTable({
-  rows,
-  forward,
-  atmStrike,
-  showGreeks,
-  showLiquidity,
-  provider,
-  onQuote,
-  selected = null,
-  held,
-  used,
-}: {
-  rows: ChainRow[]
-  forward: number | null
-  atmStrike: number | null
-  showGreeks: boolean
-  showLiquidity: boolean
-  provider: string
-  onQuote?: (quote: OptionQuote, row: ChainRow, type: "call" | "put", cell: "bid" | "ask") => void
-  /** Cells in the ticket, by canonical OSI: the side each contract trades on. */
-  selected?: Map<string, "bid" | "ask"> | null
-  /** Held quantity by canonical OSI, marked beside the strike. */
-  held?: Map<string, number>
-  /** Current quotes whose displayed size the account's paper orders have taken some of, by canonical OSI. */
-  used?: Map<string, LiquidityUsed>
-}) {
-  const all = columns(provider).filter((c) => (showGreeks || !c.greek) && (showLiquidity || !c.liquidity))
-  const callColumns = all
-  const putColumns = [...all].reverse()
-  const cell = "px-2 py-1 text-right tabular whitespace-nowrap"
-  const quoteCell = (column: Column, row: ChainRow, type: "call" | "put") => {
-    const quote = row[type]
-    if (!quote) return "—"
-    const key = column.key
-    if (!onQuote || (key !== "bid" && key !== "ask")) return column.render(quote)
-    const active = quote.symbol != null && selected?.get(quote.symbol) === key
-    // Paper orders cannot fill on a one-sided, crossed or sizeless quote; and what the
-    // account's orders took of the displayed size stays used until a new quote.
-    const issue = quoteIssueText(quote)
-    const taken = quote.symbol != null ? used?.get(quote.symbol) : undefined
-    const left = taken ? (key === "bid" ? taken.bid_left : taken.ask_left) : null
-    const size = taken ? (key === "bid" ? taken.bid_size : taken.ask_size) : null
-    const note = [issue ? `Not executable: ${issue}` : null, left != null && size != null && left < size ? `${left} of ${size} displayed left for your paper orders` : null].filter(Boolean).join(" · ")
-    return <button type="button" aria-pressed={active} className={`rounded px-1 underline decoration-dotted underline-offset-4 hover:bg-raised hover:text-accent ${active ? "bg-accent/15 text-accent ring-1 ring-accent/50" : issue ? "text-faint" : key === "bid" ? "text-bearish" : "text-bullish"}`}
-      aria-label={`${sideFromCell(key)} ${row.strike} ${type} at ${key} ${price(quote[key])}${quote.tradable ? "" : `: ${quote.untradable_reason ?? "unavailable"}`}${note ? `: ${note}` : ""}`}
-      title={[quote.tradable ? `${sideFromCell(key)} paper order` : quote.untradable_reason ?? "Unavailable", note].filter(Boolean).join(" · ")}
-      onClick={() => onQuote(quote, row, type, key)}>{column.render(quote)}
-      {left != null && size != null && left < size && <div className="text-[9px] leading-none text-warn no-underline">{left} left</div>}</button>
-  }
-
-  // Open centred on the money, and re-centre when the expiry (and so the ATM strike) changes.
-  const scroller = useRef<HTMLDivElement>(null)
-  const atmRow = useRef<HTMLTableRowElement>(null)
-  useLayoutEffect(() => {
-    const container = scroller.current
-    const row = atmRow.current
-    if (!container || !row) return
-    container.scrollTop = row.offsetTop - container.clientHeight / 2 + row.offsetHeight / 2
-  }, [atmStrike])
-
-  return (
-    <div ref={scroller} className="relative overflow-auto" style={{ maxHeight: "calc(100vh - 345px)" }}>
-      <table className="w-full border-collapse text-xs">
-        <thead className="sticky top-0 z-10 bg-panel">
-          <tr className="text-[11px] uppercase tracking-wide text-muted">
-            <th colSpan={callColumns.length} className="pb-1 text-left font-normal text-gex-positive">Calls</th>
-            <th className="pb-1 font-normal" />
-            <th colSpan={putColumns.length} className="pb-1 text-right font-normal text-gex-negative">Puts</th>
-          </tr>
-          <tr className="border-b border-border text-muted">
-            {callColumns.map((c) => (
-              <th key={`c-${c.key}`} title={c.title} className={`${cell} font-normal`}>{c.label}</th>
-            ))}
-            <th className="px-3 py-1 text-center font-normal">Strike</th>
-            {putColumns.map((c) => (
-              <th key={`p-${c.key}`} title={c.title} className={`${cell} font-normal`}>{c.label}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const callItm = isNum(forward) && row.strike < forward
-            const putItm = isNum(forward) && row.strike > forward
-            const atm = row.strike === atmStrike
-            return (
-              <tr
-                key={row.strike}
-                ref={atm ? atmRow : undefined}
-                className={`border-b border-border/40 hover:bg-raised/70 ${atm ? "outline outline-1 -outline-offset-1 outline-warn/60" : ""}`}
-              >
-                {callColumns.map((c) => (
-                  <td key={`c-${c.key}`} className={`${cell} ${callItm ? "bg-raised/50" : ""}`}>
-                    {quoteCell(c, row, "call")}
-                  </td>
-                ))}
-                <td className="px-3 py-1 text-center tabular">
-                  <div className={atm ? "text-warn" : ""}>{row.strike}</div>
-                  <div className="text-[10px] text-faint">{vol(row.iv, 1)}</div>
-                  {(["call", "put"] as const).map((type) => {
-                    const quantity = row[type]?.symbol ? held?.get(row[type]!.symbol!) : undefined
-                    return quantity ? <div key={type} className={`text-[10px] font-medium ${quantity > 0 ? "text-bullish" : "text-bearish"}`} title={`You hold ${quantity} ${type}${Math.abs(quantity) === 1 ? "" : "s"}`}>
-                      {type === "call" ? "C" : "P"} {quantity > 0 ? "+" : "−"}{Math.abs(quantity)}</div> : null
-                  })}
-                </td>
-                {putColumns.map((c) => (
-                  <td key={`p-${c.key}`} className={`${cell} ${putItm ? "bg-raised/50" : ""}`}>
-                    {quoteCell(c, row, "put")}
-                  </td>
-                ))}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
     </div>
   )
 }

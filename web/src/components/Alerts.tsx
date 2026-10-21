@@ -1,3 +1,5 @@
+import { notificationHistory, useNotificationHistory } from "../lib/notification-history"
+import { useOutsideClose } from "../lib/outside-close"
 import { useEffect, useRef, useState } from "react"
 import { useLive } from "../api/live"
 import { useAccount, useRisk, useFills, useTrades } from "../api/trading"
@@ -24,14 +26,13 @@ export function AlertWatcher() {
     alertStore.set({ ...settings, prices: settings.prices.filter((alert) => !due.includes(alert)) })
     for (const alert of due) {
       const { title, body } = priceAlertMessage(alert, spot(alert.symbol) as number)
-      notify(title, body, settings.sound)
+      notify(title, body, settings.sound, { kind: "alert", scope: "browser", id: `price:${alert.id}` })
     }
   }, [settings, underlyings, source])
   // Account alerts fire in replays too; external forwarding follows the server opt-in.
-  if (source !== "live") return <ServerAlertWatcher sound={settings.sound} />
   return <>
     <ServerAlertWatcher sound={settings.sound} />
-    {settings.fills && <FillWatcher sound={settings.sound} />}
+    <FillWatcher sound={settings.sound} enabled={source === "live" && settings.fills} />
     <DeliveryWatcher sound={settings.sound} />
     <RuleWatcher sound={settings.sound} />
   </>
@@ -41,18 +42,19 @@ function RuleWatcher({ sound }: { sound: boolean }) {
   const account = useAccount().data
   const risk = useRisk().data
   const id = useActiveAccount()
+  const { source } = useLive()
   useEffect(() => {
     if (!account || !risk || account.account_version !== risk.account_version) return
-    const alerts = ruleAlertStore.fresh(id, account.evaluation.day, ruleAlerts(account, risk))
-    for (const alert of alerts) notify(alert.title, alert.body, sound)
-  }, [account, risk, id, sound])
+    const alerts = ruleAlertStore.fresh(source === "live" ? id : `${source}:${id}`, account.evaluation.day, ruleAlerts(account, risk))
+    for (const alert of alerts) notify(alert.title, alert.body, sound, { kind: "rule", scope: `${source}:${id}`, id: `rule:${account.evaluation.day}:${alert.id}`, quiet: source !== "live" })
+  }, [account, risk, id, sound, source])
   return null
 }
 
 /** Assignments, exercises at expiry and dividends arrive without an order, often
  * overnight: each new one is announced once, whatever the fill setting. */
 function DeliveryWatcher({ sound }: { sound: boolean }) {
-  const { accountScope, trading } = useLive()
+  const { accountScope, trading, source, account } = useLive()
   const data = useTrades("current").data
   const seen = useRef<{ scope: number; fill: number; dividends: number } | null>(null)
   useEffect(() => {
@@ -66,19 +68,19 @@ function DeliveryWatcher({ sound }: { sound: boolean }) {
     if (last?.scope !== accountScope) return
     for (const fill of fills.filter((f) => Number(f.id) > last.fill && unordered(f))) {
       const { title, body } = deliveryMessage(fill)
-      notify(title, body, sound)
+      notify(title, body, sound, { kind: "assignment", scope: `${source}:${account}`, id: `delivery:${fill.id}:${fill.time}`, quiet: source !== "live" })
     }
     for (const dividend of dividends.slice(last.dividends)) {
       const { title, body } = dividendMessage(dividend)
-      notify(title, body, sound)
+      notify(title, body, sound, { kind: "dividend", scope: `${source}:${account}`, id: `dividend:${dividend.symbol}:${dividend.ex_date}:${dividend.time}`, quiet: source !== "live" })
     }
-  }, [data, accountScope, trading?.enabled, sound])
+  }, [data, accountScope, trading?.enabled, sound, source, account])
   return null
 }
 
 /** Only fills after the first list it sees, so history and account switches stay quiet. */
-function FillWatcher({ sound }: { sound: boolean }) {
-  const { accountScope } = useLive()
+function FillWatcher({ sound, enabled }: { sound: boolean; enabled: boolean }) {
+  const { accountScope, source, account } = useLive()
   const fills = useFills().data?.fills
   const seen = useRef<{ scope: number; last: number } | null>(null)
   useEffect(() => {
@@ -90,12 +92,12 @@ function FillWatcher({ sound }: { sound: boolean }) {
     const fresh = newFills(fills, seen.current.last)
     if (!fresh.length) return
     seen.current.last = newestFill(fills)
-    for (const fill of fresh.slice(-3)) {
+    for (const fill of fresh) {
       const { title, body } = fillMessage(fill)
-      notify(title, body, sound)
+      notify(title, body, sound, { kind: "fill", scope: `${source}:${account}`, id: `fill:${fill.id}:${fill.time}`, quiet: !enabled || fresh.indexOf(fill) < fresh.length - 3 })
     }
-    if (fresh.length > 3) toasts.push("More fills", `${fresh.length - 3} earlier fills are on the Orders page.`)
-  }, [fills, accountScope, sound])
+    if (enabled && fresh.length > 3) toasts.push("More fills", `${fresh.length - 3} earlier fills are on the Orders page.`)
+  }, [fills, accountScope, sound, source, account, enabled])
   return null
 }
 
@@ -160,19 +162,45 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
 }
 
 export function AlertsButton() {
-  const settings = useAlertSettings()
+  const { source, account } = useLive()
+  const scope = `${source}:${account}`
+  const list = useNotificationHistory(scope)
   const [open, setOpen] = useState(false)
-  const count = settings.prices.length
-  return <>
-    <button type="button" aria-label={count ? `Alerts, ${count} set` : "Alerts"} title="Alerts" onClick={() => setOpen(true)}
-      className="relative flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted hover:bg-raised hover:text-foreground">
+  const [settings, setSettings] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useOutsideClose(ref, open, () => setOpen(false))
+  useEffect(() => {
+    const reload = (event: StorageEvent) => { if (event.key === "openport.notification-history") notificationHistory.reload() }
+    window.addEventListener("storage", reload)
+    return () => window.removeEventListener("storage", reload)
+  }, [])
+  const unread = list.filter((entry) => !entry.read).length
+  return <div ref={ref} className="sm:relative">
+    <button type="button" aria-label={`Notifications, ${unread} unread`} title="Notifications" aria-expanded={open} aria-controls="notification-center"
+      onClick={() => setOpen(!open)} className="relative flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted hover:bg-raised hover:text-foreground">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15L6 16Z" /><path d="M10 20.5a2 2 0 0 0 4 0" />
       </svg>
-      {count > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-accent px-1 text-[9px] font-medium leading-4 text-background">{count}</span>}
+      {unread > 0 && <span className="absolute -right-1.5 -top-1.5 min-w-4 rounded-full bg-accent px-1 text-[9px] font-medium leading-4 text-background">{unread}</span>}
     </button>
-    {open && <AlertsDialog onClose={() => setOpen(false)} />}
-  </>
+    {open && <section id="notification-center" aria-label="Notification history" className="notification-drawer absolute inset-x-3 top-full z-30 mt-2 max-w-[calc(100vw-1.5rem)] sm:left-auto sm:right-0 sm:w-96 rounded-lg border border-border bg-panel p-3 shadow-chart"
+      onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); ref.current?.querySelector("button")?.focus() } }}>
+      <h2 className="text-sm font-medium text-foreground">Notifications · {unread} unread</h2>
+      <p className="my-2 text-[11px] text-muted">Observed in this browser · {source} / {account}. Times below are receipt times. Recent 200 events across accounts.</p>
+      <div className="mb-2 flex flex-wrap gap-2">
+        <button className="trade-button" onClick={() => notificationHistory.markAllRead(scope)} disabled={!unread}>Mark all read</button>
+        <button className="trade-button" onClick={() => notificationHistory.clear(scope)} disabled={!list.length}>Clear</button>
+        <button className="trade-button" onClick={() => { setOpen(false); setSettings(true) }}>Alert settings</button>
+      </div>
+      <ol className="max-h-[55dvh] overflow-y-auto">{[...list].reverse().map((entry) => <li key={entry.id} className={`border-t border-border py-3 ${entry.read ? "text-muted" : "text-foreground"}`}>
+        <div className="text-xs font-medium">{!entry.read && <span aria-label="Unread">● </span>}{entry.title}</div>
+        <p className="mt-1 break-words text-xs">{entry.body}</p>
+        <time className="mt-1 block text-[10px] text-faint" dateTime={entry.received}>Received {new Date(entry.received).toLocaleString()}</time>
+      </li>)}</ol>
+      {!list.length && <p className="py-3 text-xs text-muted">No notifications observed yet.</p>}
+    </section>}
+    {settings && <AlertsDialog onClose={() => setSettings(false)} />}
+  </div>
 }
 
 /** Alerts inside the terminal, newest last, each for a few seconds. */

@@ -9,6 +9,7 @@ import { ChainView } from "./ChainView"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 vi.mock("../components/PriceChart", () => ({ PriceChart: () => null }))
+vi.mock("../components/OrderTicket", () => ({ OrderTicket: ({ selection }: { selection: { cell: string } }) => <p data-testid="ticket">{selection.cell} ticket</p> }))
 const held = vi.hoisted(() => ({ data: undefined as unknown }))
 const planned = vi.hoisted(() => ({ data: undefined as unknown }))
 vi.mock("../api/trading", () => ({ usePortfolio: () => held, useAccount: () => planned }))
@@ -90,5 +91,64 @@ it("marks a non-whitelisted underlying above the chain", async () => {
   } finally {
     await act(async () => root.unmount())
     planned.data = undefined; client.clear(); vi.unstubAllGlobals()
+  }
+})
+
+it("expands and collapses additional expiries without replacing the selected chain", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  localStorage.clear()
+  vi.mocked(useLive).mockReturnValue(liveState({ ...status, trading: undefined }, null, "open"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+  const later = { ...selection.expiry, id: "2026-11-20PM", expiry: "2026-11-20" }
+  client.setQueryData(["summary", "SPX", 1], { ...summary, expiries: [...summary.expiries, later] })
+  client.setQueryData(["chain", "SPX", selection.expiry.id, .05, 1], chain)
+  client.setQueryData(["chain", "SPX", later.id, 0, 1], { ...chain, expiry: later })
+  const host = document.createElement("div"), root = createRoot(host)
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ChainView symbol="SPX" expiry={selection.expiry.id} onExpiry={() => {}} /></QueryClientProvider>))
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Stack expiries")!.click())
+    expect(host.querySelectorAll('table[aria-label="Option chain"]')).toHaveLength(1)
+    const expand = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(later.id))!
+    await act(async () => expand.click())
+    expect(host.querySelectorAll('table[aria-label="Option chain"]')).toHaveLength(2)
+    await act(async () => expand.click())
+    expect(host.querySelectorAll('table[aria-label="Option chain"]')).toHaveLength(1)
+  } finally {
+    await act(async () => root.unmount()); client.clear(); localStorage.clear(); vi.unstubAllGlobals()
+  }
+})
+
+it("keeps picked legs on Escape and clears the ticket and legs when the saved mode changes elsewhere", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  localStorage.clear()
+  localStorage.setItem("openport.chain.SPX", JSON.stringify({ mode: "strategy" }))
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+  client.setQueryData(["summary", "SPX", 1], summary)
+  client.setQueryData(["chain", "SPX", selection.expiry.id, .05, 1], chain)
+  const host = document.createElement("div"), root = createRoot(host)
+  const ask = () => [...host.querySelectorAll("button[aria-pressed]")].find((cell) => cell.getAttribute("aria-label")?.startsWith("buy 7000 call at ask")) as HTMLButtonElement
+  const legs = () => host.querySelector('[aria-label="Strategy legs"]')
+  const saveMode = async (mode: string, event: string) => {
+    localStorage.setItem("openport.chain.SPX", JSON.stringify({ mode }))
+    await act(async () => { window.dispatchEvent(new Event(event)) })
+  }
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ChainView symbol="SPX" expiry={selection.expiry.id} onExpiry={() => {}} /></QueryClientProvider>))
+    await act(async () => ask().click())
+    expect(legs()?.textContent).toContain("1 of 4 legs")
+    await act(async () => ask().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
+    expect(legs()?.textContent).toContain("1 of 4 legs")
+    await saveMode("single", "storage")
+    expect(legs()).toBeNull()
+    await act(async () => ask().click())
+    expect(host.querySelector('[data-testid="ticket"]')?.textContent).toBe("ask ticket")
+    await saveMode("strategy", "openport:workspace")
+    expect(host.querySelector('[data-testid="ticket"]')).toBeNull()
+    await saveMode("single", "storage")
+    expect(host.querySelector('[data-testid="ticket"]')).toBeNull()
+    expect(legs()).toBeNull()
+  } finally {
+    await act(async () => root.unmount()); client.clear(); localStorage.clear(); vi.unstubAllGlobals()
   }
 })

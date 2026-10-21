@@ -1,3 +1,4 @@
+import { reviewTicketKey } from "../lib/keyboard"
 import { ActionDestination, useActionDestination } from "../api/action-destination"
 import { useActionApi } from "../api/action-client"
 import { useWalk } from "./WalkFields"
@@ -84,7 +85,7 @@ export function OrderTicket({ selection, quote, trading, onClose, variant = "dia
   const title = "Paper order"
   const destination = useActionDestination()
   const body = <ActionDestination value={destination}><TicketBody selection={selection} quote={quote} trading={trading} onClose={onClose} variant={variant} smile={smile} surface={surface} tags={tags} note={note} /></ActionDestination>
-  if (variant === "dialog") return <Dialog title={title} onClose={onClose}>{body}</Dialog>
+  if (variant === "dialog") return <Dialog sheet title={title} onClose={onClose}>{body}</Dialog>
   return (
     <aside aria-label="Order ticket" className="flex max-h-[calc(100dvh-7rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-panel shadow-chart">
       <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-2.5">
@@ -346,7 +347,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
       {planNotice && <p role="status" className="text-sm text-warn">{planNotice}</p>}
     {dayLocked && <p role="status" className="text-sm text-warn">{dayLockNotice}</p>}
     {buyOnlyBlock && <p role="status" className="text-sm text-warn">{rules?.plan ?? "This plan"} is buy-only: sells may only close contracts you hold{held > 0 ? ` (${held} long)` : ""}.</p>}
-    <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void submit() }}>
+    <form onKeyDownCapture={reviewTicketKey} className="space-y-4" onSubmit={(event) => { event.preventDefault(); void submit() }}>
       <fieldset disabled={submitted || pending} className="grid min-w-0 grid-cols-2 gap-3 disabled:opacity-70">
         <legend className="sr-only">Order details</legend>
         <div ref={first} className="trade-label">Side
@@ -456,8 +457,8 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
         </>}
       </dl>
       {stopRequired && <p role="status" className={missingStop ? "text-sm text-warn" : "text-xs text-muted"}>Stop-loss required by this plan.{missingStop ? " Add a protective stop before submitting." : ""}</p>}
-      <OrderPreviewPanel sizing={!selection.closing && !(closes && q <= Math.abs(held))} preview={preview} onSize={(size) => setQuantity(String(size))} disabled={submitted || pending}
-        onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} />
+      <div data-ticket-review tabIndex={-1} role="region" aria-label="Order review"><OrderPreviewPanel sizing={!selection.closing && !(closes && q <= Math.abs(held))} preview={preview} onSize={(size) => setQuantity(String(size))} disabled={submitted || pending}
+        onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} /></div>
       {!!(rules?.fill_latency_ms || rules?.impact_ticks) && <p className="text-xs text-muted">The preview uses current quotes. It cannot predict the later quote or the full cost of sweeping additional size blocks.</p>}
       {!!rules?.slippage_ticks && <p className="text-xs text-muted">Quoted price estimates exclude slippage; the server preview includes it.</p>}
       <details className="text-xs">

@@ -1,3 +1,4 @@
+import { shortcutAllowed } from "../lib/keyboard"
 import { ActionDestination, useActionDestination } from "../api/action-destination"
 import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
@@ -92,7 +93,7 @@ export function RealizedCell({ realised, fees, lifetime }: { realised: string; f
     {lifetime && lifetime.round_trips > 1 && <div className="mt-1 text-[11px] text-muted">lifetime {signedMoney(lifetime.net)}</div>}
   </td>
 }
-function Positions({ positions, onClose, onExits, onExercise, onSettle, onAbandon, onInstruct, orders = [], selected, onSelect, groups = [] }: {
+export function Positions({ positions, onClose, onExits, onExercise, onSettle, onAbandon, onInstruct, orders = [], selected, onSelect, groups = [] }: {
   positions: Position[]; onClose?: (position: Position) => void; onExercise?: (position: Position) => void
   /** Set, change or cancel a held contract's stop-loss and take-profit. */
   onExits?: (position: Position) => void
@@ -110,7 +111,12 @@ function Positions({ positions, onClose, onExits, onExercise, onSettle, onAbando
   return <Table label="Positions" left={picking ? 2 : 1} headers={[...(picking ? ["Pick"] : []), "Contract", "Qty", "Avg price", "Mark / age", "Market value", "Unrealized", "P&L %", "Realized", "Today", "Dollar delta", "Vega", "Theta", ""]}>
     {positions.map((position) => {
       const change = position.unrealised != null ? ratio(position.unrealised, position.basis.replace("-", "")) : null
-      return <tr key={position.symbol}>
+      return <tr key={position.symbol} tabIndex={0} aria-label={`${contractLabel(position)} position${onClose && !position.awaiting_settlement ? "; F to close" : ""}`}
+        onKeyDown={(event) => {
+          if (event.key.toLowerCase() === "f" && shortcutAllowed(event.nativeEvent) && onClose && !position.awaiting_settlement) {
+            event.preventDefault(); event.stopPropagation(); onClose(position)
+          }
+        }}>
         {picking && <td><input type="checkbox" className="accent-[var(--accent)]" aria-label={`Pick ${contractLabel(position)} to close together`}
           checked={selected.has(position.symbol)} disabled={position.awaiting_settlement || (underlying != null && position.underlying !== underlying)}
           onChange={(e) => onSelect(position.symbol, e.target.checked)} /></td>}

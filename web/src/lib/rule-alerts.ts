@@ -5,6 +5,9 @@ export interface RuleAlert { id: string; title: string; body: string }
 export function ruleAlerts(account: Account, risk: Risk): RuleAlert[] {
   const result: RuleAlert[] = []
   const e = account.evaluation
+  if (e.status === "failed")
+    result.push({ id: `evaluation-failed-${e.attempt}-${e.decided_at ?? e.day}`, title: "Evaluation rule breached",
+      body: e.decision ?? "The server marked this paper evaluation as failed." })
   const scaled = e.size_scaling?.history.at(-1)
   if (scaled?.day === e.day)
     result.push({ id: `account-scaled-${e.attempt}-${scaled.day}`, title: "Account size increased",

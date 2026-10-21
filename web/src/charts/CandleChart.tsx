@@ -1,3 +1,5 @@
+import { indicators, type Studies } from "../lib/studies"
+import { drawingIndex, type Drawing, type DrawingPoint } from "../lib/drawings"
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from "react"
 import type { Candle, CandleInterval } from "../api/types"
 import { barTime, clampWindow, priceDomain, sessionBreak, timeTicks, type ChartLevel } from "../lib/candles"
@@ -18,6 +20,9 @@ interface Props {
   label: string
   /** Fixed width, for rendering without layout (tests). */
   width?: number
+  studies?: Studies
+  drawings?: readonly Drawing[]
+  onDrawPoint?: (point: DrawingPoint) => void
 }
 
 const margin = { top: 8, right: 66, bottom: 22, left: 4 }
@@ -62,7 +67,7 @@ function pins(domain: readonly [number, number], levels: readonly ChartLevel[], 
 /// Dragging or a sideways swipe pans; pinching or scrolling with Ctrl or Cmd held
 /// zooms, so plain scrolling still moves the page; a double click returns to the
 /// latest bars.
-export function CandleChart({ bars, interval, levels = [], band, height, formatPrice, label, width: fixedWidth }: Props) {
+export function CandleChart({ bars, interval, levels = [], band, height, formatPrice, label, width: fixedWidth, studies, drawings = [], onDrawPoint }: Props) {
   const [ref, size] = useSize<HTMLDivElement>()
   const width = fixedWidth ?? size.width
   const plotW = Math.max(0, width - margin.left - margin.right)
@@ -88,6 +93,8 @@ export function CandleChart({ bars, interval, levels = [], band, height, formatP
     return [Math.min(range[0], band.lo - pad), Math.max(range[1], band.hi + pad)] as [number, number]
   }, [visible, band])
   const y = useMemo(() => domain ? linear(domain, [bottom, margin.top]) : null, [domain, bottom])
+  const computed = useMemo(() => indicators(bars, studies?.period), [bars, studies?.period])
+  const times = useMemo(() => bars.map((bar) => bar.t), [bars])
   const xAt = (index: number) => margin.left + (index - win.start + 0.5) * step
 
   // Wheel gestures need a non-passive listener to keep them from the page.
@@ -190,6 +197,14 @@ export function CandleChart({ bars, interval, levels = [], band, height, formatP
             onPointerLeave={() => { if (!drag.current) setHover(null) }}
             onPointerDown={(event) => {
               if (event.button !== 0) return
+              if (onDrawPoint && y && bars.length) {
+                const rect = event.currentTarget.getBoundingClientRect()
+                const px = event.clientX - rect.left, py = event.clientY - rect.top
+                if (px < margin.left || px > margin.left + barsW || py < margin.top || py > bottom) return
+                const index = Math.max(win.start, Math.min(win.end - 1, win.start + Math.floor((px - margin.left) / step)))
+                onDrawPoint({ time: bars[index]!.t, price: Number(y.invert(py).toFixed(4)) })
+                return
+              }
               event.currentTarget.setPointerCapture(event.pointerId)
               drag.current = { x: event.clientX, offset: win.offset }
             }}
@@ -229,6 +244,23 @@ export function CandleChart({ bars, interval, levels = [], band, height, formatP
                 </g>
               )}
               {candles}
+              {y && studies && (["sma", "ema", "upper", "lower", "vwap"] as const).map((name, i) => {
+                if (!(name === "upper" || name === "lower" ? studies.bollinger : studies[name])) return null
+                let path = "", connected = false
+                for (let index = win.start; index < win.end; index++) {
+                  const value = computed[index]?.[name]
+                  if (value == null || !Number.isFinite(value)) { connected = false; continue }
+                  path += `${connected ? "L" : "M"}${xAt(index)},${y(value)} `; connected = true
+                }
+                return <path key={name} aria-label={`${name} study`} d={path} fill="none" stroke={`var(--chart-${i + 3})`} strokeWidth={1.5} />
+              })}
+              {y && drawings.map((drawing) => {
+                if (drawing.kind === "horizontal") return <line key={drawing.id} aria-label={`Drawn level ${drawing.price}`} x1={margin.left} x2={right}
+                  y1={y(drawing.price)} y2={y(drawing.price)} stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="5 3" />
+                const start = drawingIndex(times, drawing.start.time), end = drawingIndex(times, drawing.end.time)
+                return start == null || end == null ? null : <line key={drawing.id} aria-label="Drawn trendline" x1={xAt(start)} x2={xAt(end)}
+                  y1={y(drawing.start.price)} y2={y(drawing.end.price)} stroke="var(--accent)" strokeWidth={1.5} />
+              })}
               {y && levels.map((level) => inRange(level.price) ? (
                 <g key={`${level.kind}${level.price}${level.label}`} aria-label={level.label}>
                   <line x1={margin.left} x2={right} y1={y(level.price)} y2={y(level.price)} style={{ stroke: levelColors[level.kind] }} strokeDasharray="6 4" strokeWidth={1.2} />
