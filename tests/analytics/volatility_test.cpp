@@ -316,6 +316,28 @@ TEST(EventVolatility, ExactIntradayEventBetweenAmAndPmKeepsOrdinaryIntervalVaria
   EXPECT_NEAR(result[0].variance_premium, .0004, 1e-12);
   EXPECT_NEAR(result[0].percent, 2, 1e-12);
 }
+TEST(EventVolatility, EventAtSettlementInstantSolvesWithTheSessionItIsAssignedTo) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 9, 21}, 16, 0);
+  add_expiry(m, v, {2026, 9, 22}, .0001);
+  add_expiry(m, v, {2026, 9, 23}, .0006);
+  const std::vector<EventLabel> events{{{2026, 9, 22}, "News", "exact", md::new_york_to_utc({2026, 9, 22}, 16, 0)}};
+  const auto result = event_volatility(m, v, events);
+  ASSERT_EQ(result.size(), 1u);
+  EXPECT_EQ(result[0].session, (md::Date{2026, 9, 23}));
+  ASSERT_TRUE(result[0].bracketed);
+  EXPECT_EQ(result[0].near, 0u); EXPECT_EQ(result[0].next, 1u);
+  EXPECT_NEAR(result[0].percent, 2, 1e-12);
+  EXPECT_TRUE(result[0].reason.empty());
+  // A before-open event is still inside the same morning's AM settlement.
+  UnderlyingMetrics am; VolatilityMetrics amv;
+  am.as_of = md::new_york_to_utc({2026, 9, 23}, 16, 0);
+  add_expiry(am, amv, {2026, 9, 24}, .0001);
+  add_expiry(am, amv, {2026, 9, 25}, .0006, 9);
+  const auto morning = event_volatility(am, amv, std::vector<EventLabel>{{{2026, 9, 25}, "Earnings", "before_open"}});
+  ASSERT_TRUE(morning[0].bracketed);
+  EXPECT_EQ(morning[0].near, 0u); EXPECT_EQ(morning[0].next, 1u);
+}
 TEST(EventVolatility, MissingBracketsCompetingEventsAndNegativePremiumsStayUnavailable) {
   UnderlyingMetrics m; VolatilityMetrics v;
   m.as_of = md::new_york_to_utc({2026, 9, 21}, 16, 0);

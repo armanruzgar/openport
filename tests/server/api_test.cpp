@@ -575,6 +575,21 @@ TEST(Api, EventVolatilityReadsCurrentAccountCalendarsAndDeduplicatesImports) {
   EXPECT_EQ(get(source, "/api/underlyings/SPX/volatility?account=practice")["event_volatility"].size(), 2u);
   EXPECT_EQ(source.event_reads, 1);
 }
+TEST(Api, EventVolatilityKeepsOneEventPerDateAndSessionAcrossSources) {
+  test::SyntheticChain chain;
+  VolatilitySource source;
+  source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(analytics::analyze(chain.book.underlyings().at("SPX"), chain.book, chain.as_of));
+  source.calendar = {{"earnings", "2026-09-25", "SPX", "after_close", "Earnings"}};
+  auto plan = std::make_shared<server::TradingView>();
+  plan->config.rules.events = {{"earnings", "2026-09-25", "SPX", "after_close", "Q3 results"},
+      {"earnings", "2026-09-25", "SPX", "after_close", "Earnings"}};
+  source.plan = plan;
+  const auto events = get(source, "/api/underlyings/SPX/volatility?account=practice")["event_volatility"];
+  std::vector<std::string> labels;
+  for (const auto& e : events) if (e["session"] == "2026-09-28") labels.push_back(e["label"]);
+  ASSERT_EQ(labels.size(), 1u);
+  EXPECT_EQ(labels[0], "Earnings; Q3 results · AMC");
+}
 }  // namespace
 
 namespace {

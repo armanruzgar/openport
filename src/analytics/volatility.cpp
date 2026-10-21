@@ -363,7 +363,8 @@ namespace {
 md::Timestamp event_boundary(const EventLabel& event) {
   if (event.timing == "exact") return event.time;
   if (event.timing == "after_close") return md::new_york_to_utc(event.date, md::regular_close_hour(event.date), 0) + 1;
-  return md::new_york_to_utc(event.date, 9, 30);
+  // Before the open, so an AM settlement at 09:30 already reflects it.
+  return md::new_york_to_utc(event.date, 9, 30) - 1;
 }
 double business_weight(md::Timestamp from, md::Timestamp to) {
   double result = 0;
@@ -391,8 +392,10 @@ std::vector<EventVolatility> event_volatility(const UnderlyingMetrics& metrics,
     if (boundary <= metrics.as_of) continue;
     EventVolatility result;
     result.event = event; result.session = event_session(event);
-    const auto next = std::lower_bound(order.begin(), order.end(), boundary,
-        [&](auto i, auto time) { return metrics.slices[i].expiry_time < time; });
+    // An event at an expiry's settlement instant falls after it, as event_session puts
+    // an exact event at the close into the next session.
+    const auto next = std::upper_bound(order.begin(), order.end(), boundary,
+        [&](auto time, auto i) { return time < metrics.slices[i].expiry_time; });
     if (next == order.begin() || next == order.end()) {
       result.reason = "event_not_bracketed"; out.push_back(result); continue;
     }
@@ -412,7 +415,7 @@ std::vector<EventVolatility> event_volatility(const UnderlyingMetrics& metrics,
     const auto nb = na + business_weight(near.expiry_time, far.expiry_time);
     const auto competing = std::count_if(events.begin(), events.end(), [&](const auto& other) {
       const auto time = event_boundary(other);
-      return time > metrics.as_of && time <= far.expiry_time;
+      return time > metrics.as_of && time < far.expiry_time;
     });
     if (competing > 1) result.reason = "multiple_events_in_solve";
     else if (!std::isfinite(wa) || !std::isfinite(wb) || wa < 0 || wb < 0) result.reason = "unusable_variance";

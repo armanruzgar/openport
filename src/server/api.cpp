@@ -675,13 +675,22 @@ void add_event_volatility(json& response, const std::shared_ptr<const Underlying
     events.push_back({date, e.label.empty() ? e.kind : e.label,
         e.kind == "news" ? "exact" : e.session.empty() ? "before_open" : e.session, e.kind == "news" ? time : 0});
   }
-  // A calendar entry imported into the plan is still one event.
-  std::sort(events.begin(), events.end(), [](const auto& a, const auto& b) {
-    return std::tie(a.date, a.timing, a.time, a.label) < std::tie(b.date, b.timing, b.time, b.label);
+  // One event can arrive from several sources (a calendar entry imported into the plan,
+  // or labelled differently by two feeds). Events on one date that resolve to one
+  // session are one move to the solve, so they are kept once with their labels joined.
+  std::stable_sort(events.begin(), events.end(), [](const auto& a, const auto& b) {
+    return std::tuple(a.date, analytics::event_session(a), a.time, a.timing, a.label) <
+        std::tuple(b.date, analytics::event_session(b), b.time, b.timing, b.label);
   });
-  events.erase(std::unique(events.begin(), events.end(), [](const auto& a, const auto& b) {
-    return a.date == b.date && a.timing == b.timing && a.time == b.time && a.label == b.label;
-  }), events.end());
+  std::vector<analytics::EventLabel> unique;
+  for (auto& e : events) {
+    if (unique.empty() || unique.back().date != e.date || analytics::event_session(unique.back()) != analytics::event_session(e)) {
+      unique.push_back(std::move(e)); continue;
+    }
+    auto& kept = unique.back().label;
+    if (("; " + kept + "; ").find("; " + e.label + "; ") == std::string::npos) kept += "; " + e.label;
+  }
+  events = std::move(unique);
   auto label = [](const analytics::EventLabel& e) {
     return e.label + (e.timing == "before_open" ? " · BMO" : e.timing == "after_close" ? " · AMC" : "");
   };
