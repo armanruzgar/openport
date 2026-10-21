@@ -542,7 +542,7 @@
           "name": "max_candidates",
           "in": "query",
           "required": false,
-          "description": "Candidates valued before the search stops, marked truncated.",
+          "description": "Candidates valued; when more are listed, an even sample across structures and expiries is valued and the result is marked truncated.",
           "schema": {
             "type": "integer",
             "minimum": 1,
@@ -29589,10 +29589,12 @@
             }
           },
           "considered": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Bounded candidates listed (net short calls are counted in unbounded instead)."
           },
           "evaluated": {
-            "type": "integer"
+            "type": "integer",
+            "description": "Candidates valued: all listed, or an even sample of max_candidates."
           },
           "unbounded": {
             "type": "integer"

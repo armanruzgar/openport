@@ -31,6 +31,8 @@ struct StrategySearchRequest {
 
 inline constexpr std::size_t kMaxSearchCandidates = 25'000;
 inline constexpr std::size_t kMaxSearchExpiries = 4;
+/// Candidates listed before valuing; beyond max_candidates an even sample of them is valued.
+inline constexpr std::size_t kMaxListedCandidates = 200'000;
 /// Strikes per expiry considered, nearest the spot and the target first.
 inline constexpr std::size_t kMaxSearchStrikes = 40;
 
@@ -45,8 +47,9 @@ inline constexpr std::size_t kMaxSearchStrikes = 40;
 /// smile IV (plus the user's change), remaining life, carry and discounting
 /// shrinking with it. Distributions are lognormal on the at-the-money implied
 /// variance to that time (implied_variance_until): forward at spot for the
-/// risk-neutral one, mean at the target price for the user's. A cancelled search
-/// returns what it valued so far, marked truncated.
+/// risk-neutral one, mean at the target price for the user's. More candidates
+/// than max_candidates are sampled at an even stride, marked truncated; a
+/// cancelled search returns what it valued so far, also marked truncated.
 [[nodiscard]] nlohmann::json search_strategies(const analytics::UnderlyingMetrics& metrics,
     const StrategySearchRequest& request, const std::atomic_bool* cancel = nullptr);
 

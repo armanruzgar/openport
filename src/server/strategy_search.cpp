@@ -316,10 +316,18 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
   std::size_t considered = 0, evaluated = 0, unbounded = 0, over_budget = 0;
   bool truncated = false;
   const auto sign = [](const Leg& leg) { return leg.buy ? leg.ratio : -leg.ratio; };
+  // Every bounded candidate is listed first; past max_candidates an even stride
+  // through the list is valued, so each structure and expiry keeps its share.
+  std::vector<Candidate> listed;
   const auto score = [&](Candidate candidate) {
-    if (truncated) return;
-    if (evaluated >= request.max_candidates || (cancel && (evaluated % 256) == 0 && cancel->load())) { truncated = true; return; }
-    ++considered;
+    if (listed.size() >= kMaxListedCandidates) { truncated = true; return; }
+    double calls = candidate.shares / 100.0;
+    for (const auto& leg : candidate.legs) if (leg.type == OptionType::Call) calls += sign(leg);
+    // A net short call position loses without bound as the price rises.
+    if (calls < -1e-9) { ++unbounded; return; }
+    listed.push_back(std::move(candidate));
+  };
+  const auto value = [&](Candidate candidate) {
     md::Timestamp at = close;
     double net = candidate.shares * spot / 100, calls = candidate.shares / 100.0;
     for (const auto& leg : candidate.legs) {
@@ -328,8 +336,6 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
       net += sign(leg) * (request.mid ? q.mid : leg.buy ? q.ask : q.bid);
       if (leg.type == OptionType::Call) calls += sign(leg);
     }
-    // A net short call position loses without bound as the price rises.
-    if (calls < -1e-9) { ++unbounded; return; }
     ++evaluated;
     auto& [neutral, user] = distributions[at];
     if (neutral.center == 0) {
@@ -439,6 +445,13 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
           }
       }
 
+  const std::size_t stride = std::max<std::size_t>(1, (listed.size() + request.max_candidates - 1) / request.max_candidates);
+  truncated |= stride > 1;
+  considered = listed.size();
+  for (std::size_t i = 0; i < listed.size(); i += stride) {
+    if (cancel && (evaluated % 256) == 0 && cancel->load()) { truncated = true; break; }
+    value(std::move(listed[i]));
+  }
   const auto key = [&](const Scored& s) {
     return request.rank == "risk_neutral" ? s.expected_neutral : request.rank == "pop" ? s.pop_user
         : request.rank == "return_on_risk" ? s.return_on_risk : s.expected_user;

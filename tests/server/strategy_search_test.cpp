@@ -168,7 +168,14 @@ TEST(StrategySearch, BudgetsAndCandidateCapsBoundTheSearch) {
   for (const auto& c : tight["candidates"]) EXPECT_LE(c["max_loss"].get<double>(), 300);
   const auto capped = server::search_strategies(metrics, parse({{"target", "5000"}, {"budget", "100000"}, {"max_candidates", "5"}}));
   EXPECT_TRUE(capped["truncated"]);
-  EXPECT_EQ(capped["evaluated"], 5);
+  EXPECT_LE(capped["evaluated"].get<int>(), 5);
+  EXPECT_GT(capped["evaluated"].get<int>(), 0);
+  // The sample spans the structures rather than stopping inside the first.
+  std::set<std::string> sampled;
+  const auto wide = server::search_strategies(metrics, parse({{"target", "5000"}, {"budget", "100000"}, {"max_candidates", "40"}, {"limit", "100"}}));
+  for (const auto& c : wide["candidates"]) sampled.insert(c["structure"]);
+  EXPECT_GE(sampled.size(), 3U);
+  EXPECT_GT(wide["considered"].get<int>(), wide["evaluated"].get<int>());
   std::atomic_bool cancel{true};
   const auto cancelled = server::search_strategies(metrics, parse({{"target", "5000"}, {"budget", "100000"}}), &cancel);
   EXPECT_TRUE(cancelled["truncated"]);
