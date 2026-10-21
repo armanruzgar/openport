@@ -111,6 +111,12 @@ describe("plan objectives in the terminal", () => {
     const plain = render(<DashboardView />, account)
     for (const text of ["Objectives to pass", "Daily loss limit", "Closed balance", "if every position closed"]) expect(plain).not.toContain(text)
   })
+  it("measures progress to a closed-balance target on the balance, not on equity", () => {
+    // $150 of closed profit toward $10,000, while equity is $267.50 up.
+    const html = render(<DashboardView />, planned)
+    expect(html).toContain("$9,850.00 to go on the closed balance · 1.5%")
+    expect(html).toMatch(/aria-label="Progress to profit target"[^>]*aria-valuenow="2"/)
+  })
   it("announces a locked day and a decision's code and liquidation cost", () => {
     const html = render(<DashboardView />, locked)
     expect(html).toContain("Trading locked until the next trading day")

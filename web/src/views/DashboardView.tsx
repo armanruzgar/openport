@@ -76,7 +76,9 @@ function Dashboard({ trading }: { trading: TradingStatus }) {
   const target = r.profit_target
   // A pass liquidates at the bid, so equity can end just below the target it reached.
   const reached = e.status === "passed"
-  const targetProgress = target ? (reached ? 1 : ratio(profit, target)) : null
+  // A closed-balance plan measures the target on the balance, which the remaining amount follows; profit is on equity.
+  const targetProgress = target ? (reached ? 1 : r.profit_basis === "balance" && e.target_remaining != null
+    ? ratio(subtractMoney(target, e.target_remaining), target) : ratio(profit, target)) : null
   // The high-water mark the floor follows: end-of-day plans take it from closes.
   const peakLabel = r.drawdown_mode === "end_of_day" ? "Peak close" : "Peak"
   const floorRange = e.floor != null ? subtractMoney(e.peak, e.floor) : null

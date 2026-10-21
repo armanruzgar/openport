@@ -12,6 +12,10 @@ vi.mock("../components/PriceChart", () => ({ PriceChart: () => null }))
 const held = vi.hoisted(() => ({ data: undefined as unknown }))
 const planned = vi.hoisted(() => ({ data: undefined as unknown }))
 vi.mock("../api/trading", () => ({ usePortfolio: () => held, useAccount: () => planned }))
+vi.mock("../components/OrderTicket", async (original) => ({ ...await original<typeof import("../components/OrderTicket")>(),
+  OrderTicket: ({ quote }: { quote: { bid: number | null } | null }) => <p>Ticket bid {quote?.bid ?? "none"}</p> }))
+vi.mock("../components/StrategyTicket", () => ({
+  StrategyTicket: ({ legs }: { legs: { strike: number; quote?: { bid: number | null } }[] }) => <p>{legs.map((leg) => `Leg ${leg.strike} bid ${leg.quote?.bid}`).join("; ")}</p> }))
 
 it("toggles liquidity columns independently of Greeks", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
@@ -90,5 +94,41 @@ it("marks a non-whitelisted underlying above the chain", async () => {
   } finally {
     await act(async () => root.unmount())
     planned.data = undefined; client.clear(); vi.unstubAllGlobals()
+  }
+})
+
+it("keeps quoting a ticket and strategy legs from the whole chain once the strike window leaves them out", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+  client.setQueryData(["summary", "SPX", 1], summary)
+  const row = (strike: number, bid: number) => ({ ...chain.strikes[0]!, strike, call: { ...quote, symbol: `SPXW  261016C0${strike}000`, bid },
+    put: { ...quote, symbol: `SPXW  261016P0${strike}000`, bid } })
+  // The ±5% window holds both strikes; ±2% only the nearer one. The whole chain has moved on since.
+  client.setQueryData(["chain", "SPX", selection.expiry.id, .05, 1], { ...chain, strikes: [row(7000, 4.5), row(7300, 1.5)] })
+  client.setQueryData(["chain", "SPX", selection.expiry.id, .02, 1], { ...chain, strikes: [row(7000, 4.5)] })
+  client.setQueryData(["chain", "SPX", selection.expiry.id, 0, 1], { ...chain, strikes: [row(7000, 4.5), row(7300, 1.25)] })
+  const host = document.createElement("div")
+  const root = createRoot(host)
+  const press = (find: (button: HTMLButtonElement) => boolean) => act(async () => [...host.querySelectorAll("button")].find(find)!.click())
+  const cell = (label: string) => press((button) => button.getAttribute("aria-label")?.startsWith(label) ?? false)
+  const text = (label: string) => press((button) => button.textContent === label)
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ChainView symbol="SPX" expiry={selection.expiry.id} onExpiry={() => {}} /></QueryClientProvider>))
+    await cell("buy 7300 call at ask")
+    expect(host.textContent).toContain("Ticket bid 1.5")
+    await text("±2%")
+    expect(host.textContent).toContain("Ticket bid 1.25")
+    await text("±5%")
+    await text("Strategy")
+    await cell("buy 7300 call at ask")
+    await cell("sell 7000 call at bid")
+    await text("Review")
+    expect(host.textContent).toContain("Leg 7300 bid 1.5; Leg 7000 bid 4.5")
+    await text("±2%")
+    expect(host.textContent).toContain("Leg 7300 bid 1.25; Leg 7000 bid 4.5")
+  } finally {
+    await act(async () => root.unmount())
+    client.clear(); vi.unstubAllGlobals()
   }
 })

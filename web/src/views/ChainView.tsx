@@ -106,8 +106,11 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
     return best
   }, [data, forward])
   const agreement = useMemo(() => (data ? vendorAgreement(data.strikes, forward) : null), [data, forward])
-  // Legs follow the chain's latest quotes, fetching the chains of legs in other expiries.
-  const otherExpiries = [...new Set(legs.map((leg) => leg.expiry))].filter((id) => id !== selected)
+  // Legs follow the chain's latest quotes, fetching the chains of legs in other expiries, and
+  // the selected expiry's whole chain once a leg or the ticket is outside the strike window.
+  const outside = data != null && [...legs.filter((leg) => leg.expiry === selected).map((leg) => leg.strike),
+    ...(ticket && ticket.expiry.id === selected ? [ticket.strike] : [])].some((strike) => !data.strikes.some((row) => row.strike === strike))
+  const otherExpiries = [...new Set([...legs.map((leg) => leg.expiry), ...(outside && selected ? [selected] : [])])].filter((id) => id !== selected || outside)
   const others = useQueries({ queries: otherExpiries.map((id) => ({
     queryKey: ["chain", symbol, id, 0, version],
     queryFn: ({ signal }: { signal: AbortSignal }) => api.chain(symbol, id, 0, signal),
@@ -236,7 +239,7 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
         <OrderTicket
           key={`${ticket.symbol}/${ticket.cell}`}
           selection={ticket} trading={live.trading} variant={docked ? "panel" : "dialog"} smile={data?.strikes}
-          quote={data?.strikes.find((row) => row.strike === ticket.strike)?.[ticket.optionType] ?? null}
+          quote={chains.get(selected)?.strikes.find((row) => row.strike === ticket.strike)?.[ticket.optionType] ?? null}
           onClose={() => setTicket(null)} />
       </div>}
       </div>
