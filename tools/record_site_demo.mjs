@@ -103,7 +103,8 @@ async function focus(locator) {
 }
 try {
   for (let i = 0; ; i++) {
-    if (server.exitCode !== null) throw new Error(log);
+    // A server killed by a signal (an abort during startup) has a signalCode and no exitCode.
+    if (server.exitCode !== null || server.signalCode !== null) throw new Error(log);
     try { await api('/api/status'); break; } catch (e) { if (i === 120) throw e; await pause(500); }
   }
   browser = await chromium.launch({ headless: true, env: { ...process.env, HOME: homedir() } });

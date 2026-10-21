@@ -22,10 +22,12 @@ class FakeReplay:
     """The replay routes the soak calls. The day ends after `snapshots` pauses; the
     probe's quote and what an order does can be scripted."""
 
-    def __init__(self, snapshots=3, quote=(2.90, 3.10), fills=False, finish_before_probe=False):
-        self.base = "http://fake-replay"
+    def __init__(self, snapshots=3, quote=(2.90, 3.10), fills=False, finish_before_probe=False,
+                 accepting=True, status=None, refuse=None):
+        self.base, self.timeout = "http://fake-replay", 180
         self.snapshots, self.quote, self.fills = snapshots, quote, fills
         self.finish_before_probe = finish_before_probe
+        self.accepting, self.status, self.refuse = accepting, status, refuse or {}
         self.paused, self.polls, self.finished = False, 0, False
         self.started, self.orders, self.cancelled = None, [], []
         self.run_id = "run-123"
@@ -52,7 +54,9 @@ class FakeReplay:
         if path == "/api/replay" and method == "GET":
             return 200, {"replay": {"finished": self.finished}}
         if path == "/api/replay/status":
-            return 200, {"underlyings": [{"symbol": "SPX", "options": 10, "paper": {"accepting": True}}]}
+            if self.status:
+                return self.status
+            return 200, {"underlyings": [{"symbol": "SPX", "options": 10, "paper": {"accepting": self.accepting}}]}
         if path == "/api/replay/underlyings/SPX/summary":
             return 200, {"expiries": [{"id": "2026-09-17PM"}, {"id": "2026-09-18PM"}]}
         if path.startswith("/api/replay/underlyings/SPX/chain"):
@@ -67,6 +71,8 @@ class FakeReplay:
             return 200, {"time": "t", "valuation_complete": True, "equity": "100000.00",
                          "positions": [{"symbol": s, "quantity": q, "fresh": True} for s, q in held.items() if q]}
         if path == "/api/replay/orders" and method == "POST":
+            if body["client_order_id"] in self.refuse:
+                return 422, {"error": {"code": self.refuse[body["client_order_id"]], "message": "synthetic refusal"}}
             if self.finish_before_probe and body["client_order_id"].startswith("probe-"):
                 return 403, {"error": {"code": "REPLAY_READ_ONLY", "message": "The replay has finished"}}
             order = dict(body, id=str(len(self.orders) + 1), paused=self.paused, filled_quantity=0, status="working")
@@ -110,7 +116,50 @@ class DemoSoakTest(unittest.TestCase):
         with patch.object(demo_soak, "Client", return_value=FakeReplay(snapshots=0)) as client, \
                 patch.object(demo_soak.time, "sleep"), redirect_stdout(io.StringIO()):
             self.assertEqual(demo_soak.main(["http://fake-replay", "--timeout", "420"]), 0)
-        client.assert_called_once_with("http://fake-replay", timeout=420)
+        client.assert_called_once_with("http://fake-replay", timeout=420, token=None)
+
+    def test_token_is_sent_as_a_bearer_credential(self):
+        with patch.object(demo_soak, "Client", return_value=FakeReplay(snapshots=0)) as client, \
+                patch.object(demo_soak.time, "sleep"), redirect_stdout(io.StringIO()):
+            self.assertEqual(demo_soak.main(["http://fake-replay", "--token", "s3cret"]), 0)
+        client.assert_called_once_with("http://fake-replay", timeout=180, token="s3cret")
+        for token, expected in ((None, None), ("s3cret", "Bearer s3cret")):
+            with self.subTest(token=token), patch.object(demo_soak.urllib.request, "urlopen") as urlopen:
+                response = urlopen.return_value.__enter__.return_value
+                response.status, response.read.return_value = 201, b'{"replay": {}}'
+                demo_soak.Client("http://fake-replay", token=token).call("POST", "/api/replay", {"demo": "reversal"})
+                self.assertEqual(urlopen.call_args.args[0].get_header("Authorization"), expected)
+
+    def test_readiness_wait_gives_up_at_the_timeout(self):
+        clock = [0.0]
+        def sleep(seconds):
+            clock[0] += seconds
+        replay = FakeReplay(accepting=False)
+        replay.timeout = 5
+        with patch.object(demo_soak.time, "sleep", sleep), patch.object(demo_soak.time, "monotonic", lambda: clock[0]), \
+                self.assertRaisesRegex(demo_soak.SoakError, "SPX did not accept orders within 5 s"):
+            run(replay)
+        self.assertLessEqual(clock[0], 5.5)
+        self.assertEqual(replay.orders, [])
+
+    def test_an_error_from_replay_status_is_reported_not_a_traceback(self):
+        missing = (404, {"error": {"code": "NO_REPLAY", "message": "No replay is running"}})
+        stderr = io.StringIO()
+        with patch.object(demo_soak, "Client", return_value=FakeReplay(status=missing)), \
+                patch.object(demo_soak.time, "sleep"), redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+            self.assertEqual(demo_soak.main(["http://fake-replay"]), 2)
+        self.assertIn("GET /api/replay/status: HTTP 404", stderr.getvalue())
+        self.assertIn("NO_REPLAY", stderr.getvalue())
+
+    def test_a_condor_leg_that_does_not_fill_fails_the_soak_before_probing(self):
+        replay = FakeReplay(refuse={"condor-short-put": "BUYING_POWER"})
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with patch.object(demo_soak, "Client", return_value=replay), patch.object(demo_soak.time, "sleep"), \
+                redirect_stdout(stdout), redirect_stderr(stderr):
+            self.assertEqual(demo_soak.main(["http://fake-replay", "--json"]), 2)
+        self.assertIn("the condor did not form: short put (BUYING_POWER) did not fill", stderr.getvalue())
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertFalse(any(order["client_order_id"].startswith("probe-") for order in replay.orders))
 
     def test_invalid_timeout_is_rejected_before_starting_replay(self):
         for value in ("0", "-1", "nan", "inf"):
