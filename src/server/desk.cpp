@@ -4,10 +4,12 @@
 #include "openport/server/plans.hpp"
 
 #include "openport/pricing/black.hpp"
+#include "openport/providers/demo.hpp"
 #include "openport/trading/format.hpp"
 #include "openport/server/run.hpp"
 #include "metric_cache.hpp"
 #include "run_json.hpp"
+#include "paper_json.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -357,6 +359,11 @@ BetaEstimate estimate_beta(const std::vector<md::Bar>& asset, const std::vector<
   if (!std::isfinite(estimate.beta)) estimate.beta = 0;
   else estimate.source = "estimated";
   return estimate;
+}
+
+Valuation contract_valuation(const std::string& symbol, const md::OptionContract& contract,
+                             const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
+  return valuation_for(symbol, contract, metrics);
 }
 
 bool same_index(std::string_view a, std::string_view b) {
@@ -2036,7 +2043,21 @@ bool Desk::active() const {
     return !account.archived && account.session && (!account.session->snapshot()->positions.empty() || !account.session->snapshot()->open_orders.empty());
   });
 }
+void Desk::observe_flow(const md::Event& event) {
+  if (!options_.flow) return;
+  if (const auto* trade = std::get_if<md::OptionTrade>(&event)) {
+    if (const auto* option = book_.option(trade->id)) options_.flow->add(*trade, *option);
+  } else if (const auto* volume = std::get_if<md::OptionVolume>(&event)) {
+    // Only the demo market, which publishes volume but no trades, gets simulated prints.
+    if (capabilities_.trades || !providers::simulated_provider(provider_)) return;
+    const auto* option = book_.option(volume->id);
+    if (!option || !std::isfinite(option->volume) || md::trading_date(option->volume_ts) != md::trading_date(volume->ts)) return;
+    if (const auto print = simulated_print(*volume, *option, volume->contracts - option->volume))
+      options_.flow->add(*print, *option, true);
+  }
+}
 void Desk::observe(const md::Event& event) {
+  observe_flow(event);  // before the book applies it: a print meets the quote standing before it
   book_.apply(event);
   if (const auto* quote = std::get_if<md::UnderlyingQuote>(&event); quote && options_.candles) {
     const auto& underlying = book_.underlyings().at(quote->symbol);

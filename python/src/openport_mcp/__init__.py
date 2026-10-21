@@ -225,6 +225,33 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.probability(symbol, days, prices))
 
     @server.tool()
+    def flow(symbol: str, limit: int = 50, type: Literal["call", "put"] | None = None,
+             only: Literal["sweep", "block", "multi_leg"] | None = None, replay: bool = False) -> dict:
+        """Recent option prints classified at bid/ask/mid/outside, with net premium by expiry and strike.
+        source "none" means the feed delivers no trades; "simulated" prints come only from the demo market."""
+        target = selected(replay=replay)
+        return result(target, lambda: target.flow(symbol, limit, type, only=only))
+
+    @server.tool()
+    def earnings(symbol: str | None = None) -> dict:
+        """Earnings implied (front straddle) versus realized moves and how often the straddle priced more."""
+        return result(client, lambda: client.earnings(symbol))
+
+    @server.tool()
+    def analysis_portfolios() -> dict:
+        """Imported outside portfolios (needs an admin token). Analysis only: they are not paper accounts and cannot be traded."""
+        return result(client, client.analysis_portfolios)
+
+    @server.tool()
+    def analysis_risk(portfolio: str, view: Literal["holdings", "profile", "grid"] = "holdings",
+                      underlying: str | None = None) -> dict:
+        """An imported portfolio's holdings and Greeks, risk profile or scenario grid. Read only."""
+        if view == "holdings":
+            return result(client, lambda: client.analysis_portfolio(portfolio))
+        params = {"underlying": underlying} if view == "profile" and underlying else {}
+        return result(client, lambda: client.analysis_risk(portfolio, view, **params))
+
+    @server.tool()
     def exposure(symbol: str, replay: bool = False, convention: ExposureConvention = "long_calls_short_puts",
                  slice: ExposureSlice = "all", expiries: int = 8, window: float = 0.08) -> dict:
         """Derived OI-weighted GEX, VEX, DEX, daily charm and vomma, with walls/flips.

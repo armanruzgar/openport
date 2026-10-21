@@ -281,7 +281,8 @@ int run(int argc, char** argv) {
   std::unique_ptr<md::RecordingSink> recorder;
   if (!record_file.empty())
     recorder = std::make_unique<md::RecordingSink>(record_file,
-        md::RecordingHeader{std::string(provider->name()), caps, subscription, md::now(), false, provider->market_controls()},
+        md::RecordingHeader{std::string(provider->name()), caps, subscription, md::now(), false, provider->market_controls(),
+                            provider->trade_venues()},
         queue, md::RecordingSink::Options{});
   const auto started = std::chrono::steady_clock::now();
   // Stop while the queue is still alive, including exceptions during startup/output.

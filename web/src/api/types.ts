@@ -780,3 +780,240 @@ export interface ExPostVrp {
 export interface DrillObjective { id: string; type: "max_net_vega" | "min_floor_room" | "flat_by" | "max_loss"; limit: number; at?: string }
 export interface DrillGrade { score: number | null; passed: number; total: number; complete_run: boolean; basis: string; objectives: { id: string; type: string; passed: boolean | null; observed: number | null }[] }
 export interface ScenarioPack { version: 1; scenario: { id: string; title: string; [key: string]: unknown }; seed: string; plan: string; challenge?: { id: string; title: string } }
+/** One option print on the tape; see FlowTape. Simulated prints come only from the demo market. */
+export interface FlowPrint {
+  sequence: number
+  time: string
+  symbol: string
+  expiry: string
+  strike: number
+  type: "call" | "put"
+  price: number
+  size: number
+  premium: number
+  bid: number | null
+  ask: number | null
+  quote_time: string | null
+  side: "bid" | "ask" | "mid" | "outside" | "unquoted"
+  aggressor: "buy" | "sell" | null
+  venue: number | null
+  sweep: boolean
+  block: boolean
+  group: number | null
+  simulated: boolean
+}
+export interface FlowTotals {
+  call_net: number
+  put_net: number
+  net: number
+  bought: number
+  sold: number
+  unclassified: number
+  contracts: number
+  prints: number
+}
+export interface FlowExpiry {
+  expiry: string
+  call_net: number
+  put_net: number
+  net: number
+  bought: number
+  sold: number
+  unclassified: number
+  contracts: number
+  prints: number
+}
+export interface FlowStrike {
+  expiry: string
+  strike: number
+  call_net: number
+  put_net: number
+  net: number
+  bought: number
+  sold: number
+  unclassified: number
+  contracts: number
+  prints: number
+}
+/** GET /api/underlyings/{symbol}/flow. source "none" means the feed has no trades; message says so. */
+export interface Flow {
+  symbol: string
+  provider: string
+  trades: boolean
+  source: "feed" | "simulated" | "none"
+  message: string | null
+  as_of: string | null
+  block_size: number
+  capacity: number
+  retained: number
+  total: number
+  evicted: number
+  /** Feed-wide: trades the event queue dropped under overload, never on the tape. */
+  dropped_trades: number
+  matched: number
+  totals: FlowTotals
+  expiries: FlowExpiry[]
+  strikes: FlowStrike[]
+  prints: FlowPrint[]
+  model: string
+}
+export interface FlowQuery {
+  type?: "call" | "put"
+  side?: FlowPrint["side"][]
+  only?: "sweep" | "block" | "multi_leg"
+  min_premium?: number
+  limit?: number
+}
+
+/** Moves are fractions of spot; realized is signed. */
+export interface EarningsMove {
+  symbol: string
+  date: string
+  session: "before_open" | "after_close"
+  label: string | null
+  source: "recorded" | "imported"
+  implied: number | null
+  implied_at: string | null
+  expiry: string | null
+  strike: number | null
+  straddle: number | null
+  spot: number | null
+  realized: number | null
+  before: string | null
+  after: string | null
+  close_before: number | null
+  close_after: number | null
+  priced: "over" | "under" | null
+}
+export interface EarningsSummary {
+  events: number
+  over: number
+  under: number
+  imported: number
+  over_rate: number | null
+  mean_implied: number | null
+  mean_realized: number | null
+}
+export interface EarningsHistory {
+  symbol: string | null
+  moves: EarningsMove[]
+  summary: EarningsSummary
+  error: string | null
+  model: string
+}
+export interface EarningsImport {
+  added: number
+  skipped: string[]
+}
+
+/** Imported outside portfolios: analysis only, never paper accounts, never traded. */
+export interface AnalysisPortfolioSummary {
+  id: string
+  name: string
+  format: string
+  imported: string
+  holdings: number
+  analysis_only: true
+  read_only: true
+}
+export interface AnalysisPortfolios {
+  portfolios: AnalysisPortfolioSummary[]
+  formats: string[]
+  note: string
+  error: string | null
+}
+export type AnalysisFormat = "auto" | "generic" | "tastytrade" | "schwab" | "ibkr"
+export interface AnalysisHolding {
+  symbol: string
+  quantity: number
+  source: string
+  cost: number | null
+  underlying: string
+  type: "call" | "put" | "shares"
+  expiry: string | null
+  strike: number | null
+  multiplier: number
+  mark: number | null
+  value: number | null
+  unrealised: number | null
+  delta: number | null
+  gamma: number | null
+  vega: number | null
+  theta: number | null
+  status: "priced" | "unpriced" | "no_market_data" | "not_in_chain" | "expired"
+}
+export interface AnalysisExposureRow {
+  underlying: string
+  dollar_delta: number | null
+  dollar_gamma_1pct: number | null
+  vega: number | null
+  theta: number | null
+}
+export interface AnalysisExposure {
+  aggregate: Omit<AnalysisExposureRow, "underlying">
+  underlyings: AnalysisExposureRow[]
+  complete: boolean
+}
+export interface AnalysisPortfolio {
+  portfolio: string
+  name: string
+  analysis_only: true
+  read_only: true
+  note: string
+  as_of: string | null
+  unpriced: string[]
+  complete: boolean
+  id: string
+  format: string
+  imported: string
+  holdings: AnalysisHolding[]
+  skipped: string[]
+  value: number | null
+  cost: number | null
+  unrealised: number | null
+  exposure: AnalysisExposure
+  views: string[]
+}
+export interface AnalysisBeta {
+  underlying: string
+  beta: number | null
+  source: string | null
+  observations: number
+}
+export interface AnalysisProfile {
+  portfolio: string
+  name: string
+  analysis_only: true
+  read_only: true
+  note: string
+  as_of: string | null
+  unpriced: string[]
+  complete: boolean
+  view: "profile"
+  underlying: string | null
+  benchmark: string | null
+  reference: string
+  spot: Num
+  vol_points: number
+  percent: number[]
+  prices: Num[]
+  curves: { days: number; time: string; pnl: Num[]; clamped: boolean }[]
+  betas: AnalysisBeta[]
+  model: string
+}
+export interface AnalysisGrid {
+  portfolio: string
+  name: string
+  analysis_only: true
+  read_only: true
+  note: string
+  as_of: string | null
+  unpriced: string[]
+  complete: boolean
+  view: "grid"
+  spot_percent: number[]
+  vol_points: number[]
+  pnl: Num[][]
+  clamped: boolean[][]
+  model: string
+}

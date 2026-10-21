@@ -524,3 +524,25 @@ def test_journal_practice_calls_preserve_explicit_targets_and_uint64_seeds(stub)
     client.for_replay().note("1", "review", ["chased"], mistakes=["early exit"])
     assert stub.requests[-1][1] == "/api/replay/trades/1/note?account=main"
     assert stub.requests[-1][3] == {"note": "review", "tags": ["chased"], "mistakes": ["early exit"]}
+@pytest.mark.parametrize("method,arguments,verb,path,schema", [
+    ("flow", ("SPX", 50, "call", ["bid", "ask"]), "GET", "/api/underlyings/SPX/flow", "Flow"),
+    ("earnings", ("AAPL",), "GET", "/api/earnings", "EarningsHistory"),
+    ("import_earnings", ("symbol,date,session,implied_move,realized_move\n",), "POST", "/api/earnings/import", "EarningsImport"),
+    ("analysis_portfolios", (), "GET", "/api/analysis/portfolios", "AnalysisPortfolios"),
+    ("import_portfolio", ("IRA", "symbol,quantity\nSPY,1\n"), "POST", "/api/analysis/portfolios", "AnalysisPortfolio"),
+    ("analysis_portfolio", ("ira",), "GET", "/api/analysis/portfolios/ira", "AnalysisPortfolio"),
+    ("analysis_risk", ("ira", "grid"), "GET", "/api/analysis/portfolios/ira/risk/grid", "AnalysisGrid"),
+    ("delete_analysis_portfolio", ("ira",), "DELETE", "/api/analysis/portfolios/ira", "AnalysisDeleted"),
+])
+def test_flow_earnings_and_analysis_routes_are_never_account_scoped(stub, method, arguments, verb, path, schema):
+    from conftest import shaped
+    original = stub.respond
+    def respond(request_method, target, headers, body):
+        original(request_method, target, headers, body)
+        return 200, shaped(schema)
+    stub.respond = respond
+    getattr(Client(stub.url, "secret", "practice"), method)(*arguments)
+    request_method, target, _headers, _body = stub.requests[-1]
+    assert request_method == verb
+    assert urlsplit(target).path == path
+    assert "account" not in parse_qs(urlsplit(target).query)

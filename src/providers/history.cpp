@@ -136,6 +136,7 @@ std::filesystem::path import_day(const ImportDay& request, HistorySource& source
   md::RecordingHeader header;
   header.provider = request.provider;
   header.imported = true;
+  header.trade_venues = source.trade_venues();
   header.subscription = request.subscription;
   header.started = windows.front().begin;
   header.capabilities.realtime = true;

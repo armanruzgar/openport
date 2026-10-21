@@ -75,6 +75,11 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
 ///   GET /api/underlyings/{symbol}/volatility
 ///   GET /api/underlyings/{symbol}/surface[?expiries=12][&window=0.2]
 ///   GET /api/underlyings/{symbol}/candles[?interval=5m][&limit=500]
+///   GET /api/underlyings/{symbol}/flow[?limit=200][&type=call|put][&side=bid,ask,mid,outside,unquoted]
+///       [&expiry=ID][&min_size=N][&min_premium=USD][&only=sweep|block|multi_leg]
+/// Flow: the option tape (FlowTape), newest first, with net premium by expiry and
+/// strike over the filtered prints; source is feed, simulated (the demo market's
+/// labelled prints) or none, with a message when there is nothing to show.
 /// Candles: {symbol, interval, bars: [{t, o, h, l, c}]}, oldest first, where t is
 /// the bar's start in Unix seconds of market-data time; interval is 1m, 5m, 15m,
 /// 30m, 1h (starting at half past) or 1d (starting at the 09:30 ET open), and

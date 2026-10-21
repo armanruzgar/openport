@@ -12,6 +12,7 @@
 #include "openport/md/provider.hpp"
 #include "openport/md/recording.hpp"
 #include "openport/server/candles.hpp"
+#include "openport/server/flow.hpp"
 #include "openport/server/paper.hpp"
 #include "openport/trading/dividends.hpp"
 #include "openport/analytics/volatility.hpp"
@@ -84,6 +85,9 @@ class Desk {
     std::string write_mode = "open";
     analytics::AnalyticsOptions analytics;
     std::shared_ptr<CandleStore> candles;
+    /// Time and sales: the feed's option prints, or the demo market's labelled
+    /// simulated ones. Null keeps no tape.
+    std::shared_ptr<FlowTape> flow;
     std::function<void(std::string_view, const EquitySample&)> equity_sample;
   };
   struct PendingCommand {
@@ -146,6 +150,7 @@ class Desk {
   void create_account(const TradingCommand& command, TradingReply& reply);
   void manage_account(const TradingCommand& command, TradingReply& reply);
   void observe_trading(const md::Event& event);
+  void observe_flow(const md::Event& event);
   void publish_trading();
   void record_input(const std::string& input, const std::string& actor = "system", bool at_account_time = false);
   /// Whether a reproducible run records `command` as an input: every one a trader sends but a preview.

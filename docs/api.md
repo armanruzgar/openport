@@ -33,6 +33,13 @@ halt reaches the regular close. See [stress scenarios](scenarios.md#events).
 | `GET /api/underlyings/{symbol}/series?fields=mfiv30,atm30,rr25&from=&to=&interval=1d` | Selected metric history at `1m` or `1d`; bounded date ranges, null gaps and per-value sources ([fields and limits](volatility.md#series-api)) |
 | `GET /api/underlyings/{symbol}/candles?interval=5m` | OHLC bars at 1m, 5m, 15m, 30m, 1h or 1d, oldest first |
 | `GET /api/underlyings/{symbol}/probability?days=0,1,7,30&prices=` | Probability cones (one and two standard deviations) from the at-the-money term structure, and each price's odds of finishing above or below it or touching it by each horizon ([model](paper-trading.md#risk-profile-and-probabilities)) |
+| `GET /api/underlyings/{symbol}/flow?limit=200&type=&side=&expiry=&min_size=&min_premium=&only=` | The option tape, newest first, with net premium by expiry and strike over the filtered prints; `source` is `feed`, `simulated` (demo only) or `none` with a `message` ([flow](flow.md)) |
+| `GET /api/earnings?symbol=` | Earnings implied versus realized moves, recorded or imported, with the over-priced rate ([earnings](volatility.md#earnings-implied-versus-realized)) |
+| `POST /api/earnings/import` | Seed past moves from `{ "csv": "..." }`; requires admin; rows are labelled imported |
+| `DELETE /api/earnings/imported` | Remove every imported move; requires admin |
+| `GET /api/analysis/portfolios`, `GET /api/analysis/portfolios/{id}` | Analysis-only portfolios: holdings valued now, Greeks by underlying, the risk views available ([analysis](analysis.md)); require admin, like every analysis-portfolio route |
+| `POST /api/analysis/portfolios`, `DELETE /api/analysis/portfolios/{id}` | Import `{ "name", "csv", "format" }` or delete; require admin |
+| `GET /api/analysis/portfolios/{id}/risk/profile`, `.../risk/grid` | Risk profile and scenario grid of an analysis portfolio; require admin |
 | `WS /ws` | A small tick each second with versions, so clients refetch only what changed; at most 256 open sessions, after which an upgrade gets 503 with `Retry-After: 5` |
 
 Exposure `convention` is `long_calls_short_puts` (the default), `short_all`, or

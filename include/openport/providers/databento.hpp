@@ -118,6 +118,8 @@ class DatabentoProvider final : public md::Provider {
 
   [[nodiscard]] std::string_view name() const noexcept override { return "databento"; }
   [[nodiscard]] md::Capabilities capabilities() const noexcept override;
+  /// OPRA trades carry their publisher id.
+  [[nodiscard]] bool trade_venues() const noexcept override { return options_.trades; }
 
   void start(const md::Subscription& subscription, md::EventSink& sink) override;
   void stop() override;

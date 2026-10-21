@@ -36,6 +36,10 @@ struct OptionTrade {
   Timestamp ts = 0;
   double price = 0.0;
   double size = 0.0;
+  /// The venue that printed it, in the provider's own numbering (Databento's
+  /// publisher id, ThetaData's exchange code); zero when the provider does not say.
+  /// Only compared for equality, to tell one exchange's prints from another's.
+  std::uint16_t venue = 0;
 };
 
 /// Cumulative contracts traded in the trading date of ts; not an increment.

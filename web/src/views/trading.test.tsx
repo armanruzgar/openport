@@ -313,11 +313,12 @@ describe("paper trading fixtures", () => {
     expect(html).not.toContain("at bid")
   })
   it("routes the simulator pages, keeps old Portfolio links and numbers the sidebar", () => {
-    expect(primaryViews).toEqual(["dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "brief", "payouts"])
+    expect(primaryViews).toEqual(["dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "brief", "payouts", "analysis"])
     expect(parseRoute("#/SPX/portfolio").view).toBe("positions")
     expect(formatRoute({ view: "positions", symbol: "SPX", expiry: null })).toBe("#/SPX/positions")
-    expect(navigableViews(true, false)).toEqual(["dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "brief"])
-    expect(navigableViews(false, true)).toEqual(["chain", "brief"])
+    expect(navigableViews(true, false)).toEqual(["dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "brief", "analysis"])
+    // Analysis portfolios need no paper account: an analytics-only server offers them too.
+    expect(navigableViews(false, true)).toEqual(["chain", "brief", "analysis"])
     const sidebar = render(<Sidebar view="positions" onView={() => {}} open={false} onClose={() => {}} />)
     expect(sidebar).toContain('title="Positions (3)"')
     // The simulator funds no one: Payouts appears only for an account that is already funded.

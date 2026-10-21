@@ -20,6 +20,7 @@ struct RecordingHeader {
   Timestamp started = 0;
   bool imported = false;
   bool market_controls = false; ///< version 4 heartbeat and halt events
+  bool trade_venues = false;    ///< version 5: option trades may carry a venue
 };
 
 struct RecordedEvent {

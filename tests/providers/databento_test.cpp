@@ -81,6 +81,7 @@ TEST(Databento, MapsDefinitionsQuotesTradesAndOpenInterest) {
   stamp(trade, db::RType::Mbp0, 4242, 1'790'000'001'000'000'000);
   trade.price = 45 * kScale / 10;
   trade.size = 3;
+  trade.hd.publisher_id = 27;
   feed(mapper, trade);
 
   db::StatMsg open_interest{};
@@ -112,6 +113,7 @@ TEST(Databento, MapsDefinitionsQuotesTradesAndOpenInterest) {
   ASSERT_EQ(trades.size(), 1u);
   EXPECT_DOUBLE_EQ(trades[0].price, 4.5);
   EXPECT_DOUBLE_EQ(trades[0].size, 3.0);
+  EXPECT_EQ(trades[0].venue, 27);  // the printing exchange's publisher id
 
   const auto oi = sink.all<md::OpenInterest>();
   ASSERT_EQ(oi.size(), 1u);

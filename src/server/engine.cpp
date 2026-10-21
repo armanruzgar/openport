@@ -26,6 +26,8 @@ Engine::Options driver_options(md::Provider& provider, const md::Subscription& s
     options.candles = std::make_shared<CandleStore>();
     options.clock = [replay] { return replay->time(); };
   }
+  // Every engine keeps its own tape: a replay must never show the live feed's prints.
+  options.flow = std::make_shared<FlowTape>(options.flow ? options.flow->options() : FlowTape::Options{});
   if (options.sandboxes && (provider.name() != "demo" || !options.paper_enabled || options.paper_journal.empty()))
     throw std::invalid_argument("Sandboxes require --provider demo and a paper journal");
   if (auto* demo = dynamic_cast<providers::DemoProvider*>(&provider)) {
@@ -112,7 +114,8 @@ void Engine::start() {
       recording.clock = options_.clock;
       recorder_ = std::make_unique<md::RecordingSink>(
           options_.record_file, md::RecordingHeader{std::string(provider_.name()),
-          provider_.capabilities(), subscription_, status_.started, false, provider_.market_controls()}, queue_, std::move(recording));
+          provider_.capabilities(), subscription_, status_.started, false, provider_.market_controls(),
+          provider_.trade_venues()}, queue_, std::move(recording));
     }
     if (!options_.record_dir.empty() && options_.record_file.empty()) {
       auto recording = options_.recording;

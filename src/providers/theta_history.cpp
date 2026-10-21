@@ -60,6 +60,8 @@ std::string clock_text(md::Timestamp time) {
 class ThetaHistory final : public HistorySource {
  public:
   ThetaHistory(net::HttpClient& http, HistoryWait wait) : http_(http), wait_(std::move(wait)) {}
+  /// Its trade rows can name the exchange.
+  bool trade_venues() const noexcept override { return true; }
 
   void prepare(const ImportDay& request, HistoryWindow day, md::EventSink& sink) override {
     request_ = request;
@@ -152,7 +154,9 @@ class ThetaHistory final : public HistorySource {
         const auto size = number(row, "size");
         if (price <= 0 || size <= 0) throw std::runtime_error("ThetaData history: incomplete trade");
         const auto id = row_id(chain, row, sink);
-        sink.publish(md::OptionTrade{id, time, price, size});
+        // ThetaData's exchange code, when a row carries one; otherwise the venue is unknown.
+        const auto exchange = row.contains("exchange") && row["exchange"].is_number_unsigned() ? row["exchange"].get<std::uint64_t>() : 0;
+        sink.publish(md::OptionTrade{id, time, price, size, static_cast<std::uint16_t>(exchange <= 0xffff ? exchange : 0)});
       }
     }
     std::erase_if(interest_, [&](const auto& observation) {

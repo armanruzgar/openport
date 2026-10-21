@@ -50,6 +50,8 @@ class HistorySource {
   virtual void read(HistoryWindow window, md::EventSink& sink) = 0;
   /// Original capture time during publish, or zero when only event time is available.
   [[nodiscard]] virtual md::Timestamp receipt_time() const noexcept { return 0; }
+  /// Whether its trades can carry a venue, so the import writes a v5 recording.
+  [[nodiscard]] virtual bool trade_venues() const noexcept { return false; }
 };
 
 using ImportProgress = std::function<void(std::size_t completed, std::size_t total,

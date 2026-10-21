@@ -157,8 +157,9 @@ void DatabentoMapper::on_cmbp1(const db::Cmbp1Msg& msg) {
 void DatabentoMapper::on_trade(const db::TradeMsg& msg) {
   md::InstrumentId id = 0;
   if (!lookup(msg.hd.instrument_id, id)) return;
+  // OPRA publisher ids name the exchange that printed the trade.
   sink_.publish(md::OptionTrade{id, nanos(msg.hd.ts_event), price(msg.price),
-                                static_cast<double>(msg.size)});
+                                static_cast<double>(msg.size), msg.hd.publisher_id});
   const auto ts = nanos(msg.hd.ts_event);
   if (ts <= 0) return;
   const auto date = md::trading_date(ts);

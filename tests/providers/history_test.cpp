@@ -67,6 +67,8 @@ TEST(HistoryImport, ThetaSavedResponsesRoundTripWithMarketClocksDefinitionsAndFi
   const md::RecordingReader reader(path);
   EXPECT_EQ(reader.header().provider, "thetadata");
   EXPECT_TRUE(reader.header().imported);
+  EXPECT_TRUE(reader.header().trade_venues);  // a v5 import, so older builds refuse it at the header
+  EXPECT_FALSE(reader.header().market_controls);
   EXPECT_EQ(reader.header().started, md::new_york_to_utc({2026, 9, 22}, 9, 30));
   EXPECT_EQ(reader.header().capabilities.poll_interval.count(), 0);
   const auto records = read(path);
@@ -89,6 +91,8 @@ TEST(HistoryImport, ThetaSavedResponsesRoundTripWithMarketClocksDefinitionsAndFi
   const auto trades = events_of<md::OptionTrade>(records);
   ASSERT_EQ(trades.size(), 2U);
   EXPECT_EQ(trades[0].ts, quotes[0].ts + 1'125'000'000);
+  EXPECT_EQ(trades[0].venue, 5);  // the row's exchange code
+  EXPECT_EQ(trades[1].venue, 0);  // none given
   const auto volumes = events_of<md::OptionVolume>(records);
   ASSERT_EQ(volumes.size(), 2U);
   EXPECT_EQ(volumes[0].contracts, 3);

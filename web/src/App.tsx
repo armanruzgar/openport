@@ -25,6 +25,7 @@ import { defaultExpiry } from "./lib/expiry"
 import { BriefView } from "./views/BriefView"
 import { DashboardView } from "./views/DashboardView"
 import { EngineView } from "./views/EngineView"
+import { AnalysisView } from "./views/AnalysisView"
 import { BacktestView } from "./views/BacktestView"
 import { PlaybooksView } from "./views/PlaybooksView"
 import { JournalView } from "./views/JournalView"
@@ -100,6 +101,7 @@ export function App() {
     : view === "rules" ? <RulesView />
     : view === "payouts" ? <PayoutsView />
     : view === "engine" ? <EngineView />
+    : view === "analysis" ? <AnalysisView />
     : view === "replay" ? <ReplayView onNavigate={(next) => navigate({ view: next })} />
     : !symbol ? (
       <Empty>

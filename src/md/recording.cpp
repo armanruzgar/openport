@@ -22,7 +22,7 @@
 namespace openport::md {
 namespace {
 constexpr std::array<char, 8> kMagic{'O', 'P', 'R', 'E', 'C', '\r', '\n', '\0'};
-constexpr std::uint32_t kVersion = 4;
+constexpr std::uint32_t kVersion = 5;
 constexpr std::size_t kMaxRecord = 1024 * 1024;
 using Bytes = std::vector<char>;
 static_assert(std::variant_size_v<Event> == 12, "update the recording codec for new event types");
@@ -104,10 +104,10 @@ class Decoder {
     bytes_ = bytes_.subspan(length);
     return value;
   }
-  bool empty() const { return bytes_.empty(); }
   void finish() const {
     if (!bytes_.empty()) invalid("unexpected trailing fields");
   }
+  [[nodiscard]] bool empty() const noexcept { return bytes_.empty(); }
 
  private:
   std::span<const char> bytes_;
@@ -133,11 +133,14 @@ Bytes encode_header(const RecordingHeader& h) {
   e.number<std::int32_t>(h.subscription.max_expiries);
   e.number(h.subscription.strike_window);
   e.number(h.started);
-  if (h.imported || h.market_controls) e.byte(h.imported);
+  if (h.imported || h.market_controls || h.trade_venues) e.byte(h.imported);
+  // Version 5 names market controls itself: venues do not imply heartbeats or halts.
+  if (h.trade_venues) e.byte(h.market_controls);
   if (data.size() > kMaxRecord) invalid("header exceeds 1 MiB limit");
   Bytes prefix(kMagic.begin(), kMagic.end());
   Encoder p(prefix);
-  p.number(h.market_controls ? kVersion : h.imported ? std::uint32_t{3} : std::uint32_t{2});
+  // The oldest version that holds the session, so unchanged providers write unchanged files.
+  p.number(h.trade_venues ? kVersion : h.market_controls ? std::uint32_t{4} : h.imported ? std::uint32_t{3} : std::uint32_t{2});
   p.number(static_cast<std::uint32_t>(data.size()));
   prefix.insert(prefix.end(), data.begin(), data.end());
   return prefix;
@@ -164,7 +167,8 @@ RecordingHeader decode_header(std::span<const char> data, std::uint32_t version)
   h.subscription.strike_window = d.number<double>();
   h.started = d.number<Timestamp>();
   if (version >= 3) h.imported = d.byte(1);
-  h.market_controls = version >= 4;
+  h.market_controls = version == 4 || (version >= 5 && d.byte(1));
+  h.trade_venues = version >= 5;
   d.finish();
   return h;
 }
@@ -228,6 +232,8 @@ void encode_event(Bytes& bytes, Timestamp received, const Event& event) {
           } else if constexpr (std::is_same_v<T, OptionTrade>) {
             e.number(v.price);
             e.number(v.size);
+            // An optional trailing field (v5): trades without a venue keep their old bytes.
+            if (v.venue != 0) e.number(v.venue);
           } else if constexpr (std::is_same_v<T, OpenInterest> || std::is_same_v<T, OptionVolume>) {
             e.number(v.contracts);
           } else if constexpr (std::is_same_v<T, VendorGreeks>) {
@@ -271,10 +277,13 @@ RecordedEvent decode_event(std::span<const char> bytes, std::uint32_t version) {
       out.event = OptionQuote{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>(),
                               d.number<double>(),       d.number<double>(),    d.number<double>()};
       break;
-    case 2:
-      out.event = OptionTrade{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>(),
-                              d.number<double>()};
+    case 2: {
+      OptionTrade v{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>(),
+                    d.number<double>()};
+      if (version >= 5 && !d.empty()) v.venue = d.number<std::uint16_t>();
+      out.event = v;
       break;
+    }
     case 3:
       out.event = OpenInterest{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>()};
       break;
@@ -351,7 +360,8 @@ struct FileDescriptor {
 struct RecordingSink::Impl {
   Impl(const std::filesystem::path& path, const RecordingHeader& header, EventSink& sink,
        Options opts)
-      : downstream(sink), options(std::move(opts)), market_controls(header.market_controls), path_(path) {
+      : downstream(sink), options(std::move(opts)), market_controls(header.market_controls),
+        trade_venues(header.trade_venues), path_(path) {
     if (options.frame_bytes == 0 || options.frame_bytes > 4 * 1024 * 1024 ||
         options.flush_interval <= std::chrono::milliseconds(0) ||
         options.flush_interval > std::chrono::seconds(1))
@@ -457,6 +467,7 @@ struct RecordingSink::Impl {
   EventSink& downstream;
   Options options;
   const bool market_controls;
+  const bool trade_venues;
   FileDescriptor file;
   mutable std::mutex mutex;
   std::condition_variable ready;
@@ -510,6 +521,8 @@ void RecordingSink::publish(Event event) {
       if (!p.market_controls && (std::holds_alternative<SnapshotHeartbeat>(event) ||
                                 std::holds_alternative<TradingHalt>(event)))
         invalid("SnapshotHeartbeat and TradingHalt require a v4 header with market_controls enabled");
+      if (const auto* trade = std::get_if<OptionTrade>(&event); trade && trade->venue != 0 && !p.trade_venues)
+        invalid("an OptionTrade venue requires a v5 header with trade_venues enabled");
       encode_event(p.pending, p.options.clock(), event);
       p.index(event);
       ++p.counters.events;

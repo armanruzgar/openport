@@ -2,6 +2,7 @@
 #include "openport/server/sandboxes.hpp"
 #include "metric_cache.hpp"
 #include "series_api.hpp"
+#include "flow_api.hpp"
 #include "openport/trading/events.hpp"
 
 #include <algorithm>
@@ -869,6 +870,7 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   if (view == "candles") return candles_response(source, symbol, query);
   if (view == "series") return series_response(source, symbol, query);
   if (view == "surface-history") return surface_history_response(source, symbol, query);
+  if (view == "flow") return flow_response(source, symbol, query);
   const auto metrics = source.metrics(symbol);
   if (!metrics) return error(404, "no data for " + symbol + " yet");
 

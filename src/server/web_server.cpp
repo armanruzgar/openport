@@ -336,6 +336,10 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   }
   const bool create_sandbox = request.method == "POST" && request.target.substr(0, request.target.find('?')) == "/api/sandboxes";
   if (create_sandbox && !policy.sandboxes) return api_error(404, "NOT_FOUND", "Sandboxes are not offered");
+  // Imported portfolios are someone's outside holdings: admin only, reads included,
+  // so they are never public market data. Open loopback writes still reach them.
+  const auto route = std::string_view(request.target).substr(0, request.target.find('?'));
+  const bool analysis = route == "/api/analysis/portfolios" || route.starts_with("/api/analysis/portfolios/");
   std::vector<std::string> scopes;
   std::string name, sandbox;
   if (!request.authorization.empty()) {
@@ -370,9 +374,9 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     }
     // Reads are public unless --require-token, so a stale token saved in a browser tab
     // cannot hide the market data; writes still reject it.
-    if (name.empty() && (!read || policy.require_token))
+    if (name.empty() && (!read || policy.require_token || analysis))
       return api_error(403, "WRITE_TOKEN_REQUIRED", "A valid bearer token is required");
-  } else if (create_sandbox || (!policy.require_token && read) || open_writes(policy)) {
+  } else if (create_sandbox || (!policy.require_token && read && !analysis) || open_writes(policy)) {
     name = "loopback";
     scopes = {"admin"};
   } else {
@@ -381,6 +385,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     return api_error(403, "WRITE_TOKEN_REQUIRED", "A valid bearer token is required");
   }
   const auto has = [&](std::string_view scope) { return std::find(scopes.begin(), scopes.end(), scope) != scopes.end(); };
+  if (analysis && !has("admin")) return api_error(403, "SCOPE_REQUIRED", "Analysis portfolios require an admin token");
   std::string_view path(request.target);
   path = path.substr(0, path.find('?'));
   // The routes read the account through the same parser, so no spelling of the
@@ -744,8 +749,28 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   void read() {
     if (stopped_) return;
     parser_.emplace();
-    parser_->body_limit(64 * 1024);
+    // The header is checked against the larger limit; on_header narrows it by route.
+    body_limit_ = kBodyLimit;
+    parser_->body_limit(kImportBodyLimit);
     stream_.expires_after(shared_.read_timeout);
+    http::async_read_header(stream_, buffer_, *parser_,
+                            beast::bind_front_handler(&HttpSession::on_header, shared_from_this()));
+  }
+
+  void on_header(beast::error_code ec, std::size_t bytes) {
+    if (stopped_ || ec) return on_read(ec, bytes);
+    // A broker's positions export is larger than any other body; the import still
+    // caps it at kAnalysisMaxHoldings.
+    const auto& header = parser_->get();
+    const auto target = std::string_view(header.target().data(), header.target().size());
+    if (header.method() == http::verb::post && target.substr(0, target.find('?')) == "/api/analysis/portfolios") {
+      body_limit_ = kImportBodyLimit;
+    } else {
+      // A declared length is checked once, at the header; chunks against the new limit.
+      if (const auto length = parser_->content_length(); length && *length > kBodyLimit)
+        return on_read(http::error::body_limit, 0);
+      parser_->body_limit(kBodyLimit);
+    }
     http::async_read(stream_, buffer_, *parser_,
                      beast::bind_front_handler(&HttpSession::on_read, shared_from_this()));
   }
@@ -753,7 +778,8 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   void on_read(beast::error_code ec, std::size_t) {
     if (stopped_ || ec == http::error::end_of_stream) return close();
     if (ec == http::error::body_limit) {
-      send_api(api_error(400, "INVALID_REQUEST", "Body exceeds 64 KiB"), 11, false);
+      send_api(api_error(400, "INVALID_REQUEST",
+          body_limit_ == kImportBodyLimit ? "Body exceeds 4 MiB" : "Body exceeds 64 KiB"), 11, false);
       return;
     }
     if (ec) return;
@@ -1021,7 +1047,10 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   std::shared_ptr<HttpSession> awaiting_;
   beast::tcp_stream stream_;
   beast::flat_buffer buffer_;
+  static constexpr std::uint64_t kBodyLimit = 64 * 1024;
+  static constexpr std::uint64_t kImportBodyLimit = 4 * 1024 * 1024;
   std::optional<http::request_parser<http::string_body>> parser_;
+  std::uint64_t body_limit_ = kBodyLimit;
   Shared& shared_;
   bool stopped_ = false;
 };

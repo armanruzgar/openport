@@ -92,6 +92,8 @@ class MetricsSource {
   /// Price history for charts and realized volatility; nullptr when absent.
   [[nodiscard]] virtual const CandleStore* candles() const { return nullptr; }
   [[nodiscard]] virtual const SeriesStore* series() const { return nullptr; }
+  /// The option tape; nullptr when this source keeps none.
+  [[nodiscard]] virtual const FlowTape* flow() const { return nullptr; }
   /// False means unavailable or full. Completion runs on the engine thread;
   /// network callers must dispatch it onto their own executor.
   virtual bool post_trading(TradingCommand, TradingCompletion) { return false; }
@@ -159,6 +161,7 @@ class Engine final : public MetricsSource {
   [[nodiscard]] std::vector<trading::PlanEvent> event_calendar() const override { return options_.event_calendar; }
   [[nodiscard]] const CandleStore* candles() const override { return options_.candles.get(); }
   [[nodiscard]] const SeriesStore* series() const override { return options_.series.get(); }
+  [[nodiscard]] const FlowTape* flow() const override { return options_.flow.get(); }
   bool post_trading(TradingCommand command, TradingCompletion completion) override;
   [[nodiscard]] md::RecordingStats recording_stats() const;
   [[nodiscard]] std::string recording_error() const;

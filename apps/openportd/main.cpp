@@ -52,6 +52,8 @@
 #include "openport/server/sandboxes.hpp"
 #include "openport/server/web_policy.hpp"
 #include "openport/trading/journal.hpp"
+#include "openport/server/analysis.hpp"
+#include "openport/server/earnings.hpp"
 #include "openport/server/event_calendar.hpp"
 #include "startup.hpp"
 
@@ -181,6 +183,9 @@ int usage(const char* error = nullptr) {
       "series: --series-dir DIR (default series beside candle-dir), --no-series\n"
       "        --backfill-series FILE... [--force] rebuilds recording minutes offline and exits\n"
       "events: YYYY-MM-DD,Label lines for volatility session moves; labels are 1-160 bytes\n"
+      "earnings: --event-calendar earnings events record the front straddle's implied move\n"
+      "          before each and the realized move after, in ~/.openport/earnings.json\n"
+      "analysis: imported portfolios are kept in ~/.openport/analysis (memory only for replay/demo)\n"
       "rate: assumed flat zero rate in [-0.05, 0.25], default 0.04 (4%%)\n"
       "allowed origins: exact http[s]://host[:port], in addition to same-origin\n"
       "allowed hosts: names the server answers to besides IP addresses, localhost and the\n"
@@ -671,6 +676,15 @@ int run(int argc, char** argv) {
   if (const auto error = candles->error(); !error.empty())
     std::fprintf(stderr, "openportd: %s\n", error.c_str());
 
+  // Earnings history and analysis portfolios live beside the candles; replay and the
+  // demo keep them in memory, and never record simulated earnings moves.
+  const auto state_directory = offline || candle_directory.empty()
+      ? std::filesystem::path{} : std::filesystem::absolute(candle_directory).parent_path();
+  server::EarningsStore earnings(state_directory.empty() ? std::filesystem::path{} : state_directory / "earnings.json");
+  server::AnalysisPortfolios analysis(state_directory.empty() ? std::filesystem::path{} : state_directory / "analysis");
+  if (const auto error = earnings.error(); !error.empty()) std::fprintf(stderr, "openportd: %s\n", error.c_str());
+  if (const auto error = analysis.error(); !error.empty()) std::fprintf(stderr, "openportd: %s\n", error.c_str());
+
   server::Engine::Options engine_options;
   const auto notification_config = server::load_notification_config(settings.notify_config, [](const char* name) {
     const auto* value = std::getenv(name);
@@ -799,8 +813,10 @@ int run(int argc, char** argv) {
   const auto token_file = settings.token_file.empty() ? nullptr : std::make_shared<server::TokenFile>(settings.token_file, settings.write_token);
   server::WebServer web(
       settings.address, settings.port, settings.web_root,
-      [&engine, &replays, &backtests, &settings](const server::ApiRequest& request, server::ApiCompletion complete) {
+      [&engine, &replays, &backtests, &settings, &earnings, &analysis](const server::ApiRequest& request, server::ApiCompletion complete) {
         if (auto response = server::event_calendar_read(request, settings.event_calendar)) { complete(std::move(*response)); return; }
+        if (auto response = server::earnings_request(request, earnings)) { complete(std::move(*response)); return; }
+        if (auto response = server::analysis_request(request, analysis, engine)) { complete(std::move(*response)); return; }
         if (backtests.handle(request, engine, complete)) return;
         if (replays.handle(request, complete)) return;
         server::handle_api_async(request, engine, std::move(complete));
@@ -835,6 +851,8 @@ int run(int argc, char** argv) {
   std::string dividends_error;
   std::string candle_error;
   std::string breaker_error;
+  std::string earnings_error;
+  std::uint64_t ticks = 0;
   auto report = [](const std::string& error, std::string& reported) {
     if (!error.empty() && error != reported) std::fprintf(stderr, "openportd: %s\n", error.c_str());
     reported = error;
@@ -855,6 +873,9 @@ int run(int argc, char** argv) {
     if (holidays) report(holidays->error(), holidays_error);
     if (dividends) report(dividends->error(), dividends_error);
     report(candles->error(), candle_error);
+    // Each minute: implied moves before the calendar's earnings events, realized ones after.
+    if (!offline && ++ticks % 60 == 0) earnings.observe(engine, settings.event_calendar);
+    report(earnings.error(), earnings_error);
   }
   std::printf("\nshutting down\n");
   web.stop();

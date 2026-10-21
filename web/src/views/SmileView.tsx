@@ -6,6 +6,7 @@ import { LineChart, type Series } from "../charts/LineChart"
 import { VolatilityDetails, VolatilitySummary } from "../components/VolatilityMetrics"
 import { VolatilityHistory } from "../components/VolatilityHistory"
 import { ProbabilityPanel } from "../components/ProbabilityPanel"
+import { EarningsPanel } from "../components/EarningsPanel"
 import { volatilityTerm, volPoints } from "../lib/volatility"
 import { SviTable } from "../components/SviTable"
 import { Empty, Panel, Segmented } from "../components/ui"
@@ -183,6 +184,7 @@ export function SmileView({ symbol }: { symbol: string }) {
         </div>
       </Panel>
       <ProbabilityPanel symbol={symbol} />
+      <EarningsPanel symbol={symbol} />
     </div>
   )
 }

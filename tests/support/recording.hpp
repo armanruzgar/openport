@@ -119,6 +119,7 @@ inline void exact_event(const md::Event& expected, const md::Event& actual) {
             } else if constexpr (std::is_same_v<T, md::OptionTrade>) {
               exact_double(e.price, a.price);
               exact_double(e.size, a.size);
+              EXPECT_EQ(e.venue, a.venue);
             } else if constexpr (std::is_same_v<T, md::OpenInterest> || std::is_same_v<T, md::OptionVolume>) {
               exact_double(e.contracts, a.contracts);
             } else if constexpr (std::is_same_v<T, md::VendorGreeks>) {
