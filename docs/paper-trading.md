@@ -2918,8 +2918,11 @@ no additional prices or market timestamps are fabricated.
 
 `var95` and `var99` are the empirical inverse-CDF loss quantiles. `es95` and
 `es99` average the upper 5%/1% probability mass, weighting the boundary observation
-fractionally. Values are nonnegative dollar losses. A thin 99% tail may contain
-only a few observations; the UI always shows the count. These are historical
+fractionally. Values are nonnegative dollar losses. The 95% figures need at
+least 20 observations and the 99% figures at least 100: below that the 1% tail
+holds less than one observation, so both would only repeat the worst loss.
+`var99` and `es99` are then null and `tail99_reason` says why (it is null when
+they are reported). The UI always shows the count. These are historical
 estimates, not guaranteed loss bounds. The model omits liquidity, intraday paths,
 dividends paid during the horizon and physical settlement; beyond expiry it uses
 intrinsic value at the shocked price.
@@ -2969,14 +2972,20 @@ order tags and current trade/group annotations. Delivered shares retain their
 originating option's tags. A fungible position shared by several tags counts in
 each scope, rather than inventing lot ownership. Retagging cannot erase entry
 order tags. A tagged order joining an existing fungible position reserves the
-whole position in its new scope before acceptance. Untagged closing orders
+whole position in its new scope before acceptance. The check values that scope
+over the same positions with and without the order, so a tagged order that only
+reduces an untagged book already over the scope's cap still passes, while one
+that adds to it is refused. Untagged closing orders
 still count against the held position's scopes. Manually traded untagged shares
 are covered by the aggregate/underlying caps, and by a scope if their trade is
 annotated with it.
 
 The risk response publishes `scopes` keyed by `tag:NAME` or `playbook:ID`,
 expanded reachable Greek ranges, gross short vega and nullable cap utilisation.
-Grid exposure is calculated when its cap is enabled. The editor supports all
+Grid exposure is calculated when its cap is enabled. Each grid is remembered
+per thread under its exact inputs (positions, their usable valuations, share
+prices and the grid configuration), so repeated order checks reuse it without
+changing any value. The editor supports all
 caps and scopes. Breach reasons are `GAMMA_LIMIT`, `THETA_LIMIT`,
 `GRID_LOSS_LIMIT` and `SHORT_VEGA_LIMIT`. As with delta/vega, an already excessive
 bucket permits an order that does not increase its worst reachable exposure.
