@@ -1,0 +1,13 @@
+{$DEMO_HOST} {
+	# Cookie-based authentication protects HTTP and WebSocket handshakes while
+	# leaving OpenPort's Bearer Authorization header available for sandbox tokens.
+	forward_auth {$AUTH_UPSTREAM} {
+		uri /api/authz/forward-auth
+		header_up -Authorization
+		header_up Host {upstream_hostport}
+	}
+	reverse_proxy openport:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+	header Referrer-Policy no-referrer
+}
