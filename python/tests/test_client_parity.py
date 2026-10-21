@@ -43,6 +43,10 @@ CALLS = [
     ("list_replays",), ("start_replay",), ("control_replay",), ("stop_replay",), ("replay_history",),
     ("get_replay", "{run_id}"), ("delete_replay", "{run_id}"), ("verify_replay", "{run_id}"),
     ("replay_verification", "{run_id}"), ("reload_tokens",),
+    ("scenario_packs",), ("scenario_pack", "{id}"), ("import_scenario_pack", {}),
+    ("transfer_cash", "test", "1.00"), ("halt_underlying", "SPY", 5),
+    ("risk_history",), ("risk_scenarios",),
+    ("volatility_history", "{symbol}"), ("surface_history", "{symbol}"), ("volatility_scanner",),
 ]
 
 
