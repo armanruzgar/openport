@@ -432,10 +432,25 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.get_playbook(playbook_id, version))
 
     @server.tool()
-    def pass_odds(days: int = 20, samples: int = 1000, playbook: str | None = None, seed: str | None = None, account: str | None = None, replay: bool = False) -> dict:
-        """Seeded historical pass estimate, not a prediction. Requires sufficient history."""
+    def pass_odds(days: int = 20, samples: int = 1000, playbook: str | None = None, seed: str | None = None, account: str | None = None, replay: bool = False,
+                  economics: bool = False, payout_odds: float | None = None, payout: str | None = None) -> dict:
+        """Seeded historical pass estimate, not a prediction. Requires sufficient history. economics=True adds expected value and a break-even pass rate."""
         target = selected(account, replay)
-        return result(target, lambda: target.pass_odds(days, samples, playbook=playbook, seed=seed))
+        return result(target, lambda: target.pass_odds(days, samples, playbook=playbook, seed=seed, economics=economics,
+                                                       payout_odds=payout_odds, payout=payout))
+
+    @server.tool()
+    def rules_compare(plans: list[str] | None = None, rules: list[dict] | None = None, include_current: bool = True,
+                      account: str | None = None) -> dict:
+        """Replay the live account's recorded attempt against presets or custom rule sets side by side. Read-only."""
+        target = selected(account, False)
+        return result(target, lambda: target.rules_compare(plans, rules, include_current=include_current))
+
+    @server.tool()
+    def validate_rule_pack(pack: dict) -> dict:
+        """Check a versioned rule pack (openport.rule-pack) and return it normalized. Nothing is stored."""
+        target = selected(None, False)
+        return result(target, lambda: target.validate_rule_pack(pack))
 
     @server.tool()
     def strategy_template(symbol: str, expiry: str, template: dict, account: str | None = None, replay: bool = False) -> dict:
