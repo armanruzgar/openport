@@ -184,7 +184,15 @@ struct PayoutQuote {
   md::Date best_day_date;
   Money consistency_needed;      ///< Additional cycle profit needed, rounded up to whole cents.
   std::optional<Money> buffer_balance;  ///< Starting balance plus buffer, while it applies.
+  /// What a payout review finds now, with the step a request now would take;
+  /// absent without a review or offending trades.
+  std::optional<PayoutReviewOutcome> review;
+  Money forfeit;  ///< Profit a request now forfeits with the payout: withdrawn too, not paid.
+  /// PayoutFloor::Reset: the balance the account restarts at after the payout.
+  std::optional<Money> reset_balance;
 };
+/// The trades a payout review finds offending in the cycle, each with its offences.
+[[nodiscard]] std::vector<ReviewTrade> review_offences(const Evaluation& evaluation, const AccountRules& rules, Money cycle_profit);
 [[nodiscard]] PayoutQuote payout_quote(const TradingSnapshot& snapshot, const AccountRules& rules);
 /// The held book's risk profile (see risk_profile) as a snapshot publishes it: its
 /// equity, the plan floor under a drawdown rule, the soft floor and its fresh share
@@ -251,6 +259,11 @@ struct OpeningRuleInputs {
     const std::vector<CounterExposure>& others);
 [[nodiscard]] Decision volume_share_check(const std::string& symbol, Quantity held, Quantity opening,
     std::int64_t percent, std::optional<std::int64_t> volume);
+/// The opening-order cap on the minute before: opening contracts × 100 at most
+/// percent × that minute's volume. Without a known minute's volume the order is
+/// refused, MINUTE_VOLUME as well, since the cap cannot be checked.
+[[nodiscard]] Decision minute_volume_check(const std::string& symbol, Quantity opening, std::int64_t percent,
+    std::optional<std::int64_t> volume);
 /// Advice on accepted terms that are rarely meant: STOP_AS_LIMIT (a bracket stop
 /// given only a limit price rests as a limit exit), STOP_REACHED (its trigger is
 /// already reached, so it fires at once), TARGET_REACHED (the take-profit is already

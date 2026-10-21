@@ -254,25 +254,69 @@ inline void from_json(const Json& j, Limits& l) {
   j.at("max_valuation_age").get_to(l.max_valuation_age);
   added_field(j, "tag_overrides", l.tag_overrides); added_field(j, "playbook_overrides", l.playbook_overrides);
 }
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Guardrails, soft_floor, soft_floor_percent, max_opening_trades, cooldown_loss, cooldown_minutes, profit_lock)
+inline void to_json(Json& j, const Guardrails& g) {
+  j = Json{{"soft_floor", g.soft_floor}, {"soft_floor_percent", g.soft_floor_percent}, {"max_opening_trades", g.max_opening_trades},
+           {"cooldown_loss", g.cooldown_loss}, {"cooldown_minutes", g.cooldown_minutes}, {"profit_lock", g.profit_lock}};
+  // The discipline guardrails appear only when set, so other settings keep their bytes.
+  if (g.loss_streak != 0) j["loss_streak"] = g.loss_streak;
+  if (g.size_creep_percent != 0) j["size_creep_percent"] = g.size_creep_percent;
+  if (g.size_creep_window != 0) j["size_creep_window"] = g.size_creep_window;
+  if (g.size_creep_block) j["size_creep_block"] = true;
+}
+inline void from_json(const Json& j, Guardrails& g) {
+  j.at("soft_floor").get_to(g.soft_floor); j.at("soft_floor_percent").get_to(g.soft_floor_percent);
+  j.at("max_opening_trades").get_to(g.max_opening_trades); j.at("cooldown_loss").get_to(g.cooldown_loss);
+  j.at("cooldown_minutes").get_to(g.cooldown_minutes); j.at("profit_lock").get_to(g.profit_lock);
+  for (const auto* key : {"loss_streak", "size_creep_percent", "size_creep_window"})
+    if (const auto it = j.find(key); it != j.end() && !it->is_number_integer())
+      throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded discipline guardrails must be integers");
+  added_field(j, "loss_streak", g.loss_streak); added_field(j, "size_creep_percent", g.size_creep_percent);
+  added_field(j, "size_creep_window", g.size_creep_window); added_field(j, "size_creep_block", g.size_creep_block);
+}
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(TiltFlag, time, code, message)
 inline void to_json(Json& j, const GuardrailState& g) {
   j = Json{{"opening_trades", g.opening_trades}, {"cooldown_until", g.cooldown_until},
            {"latched", g.latched}, {"owns_kill", g.owns_kill}};
   if (g.trade_limit_order != 0) j["trade_limit_order"] = g.trade_limit_order;
+  if (g.losing_closes != 0) j["losing_closes"] = g.losing_closes;
+  if (!g.opening_sizes.empty()) j["opening_sizes"] = g.opening_sizes;
+  if (!g.tilt.empty()) j["tilt"] = g.tilt;
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(KillChange, time, action, reason, previous, actor)
 inline void from_json(const Json& j, GuardrailState& g) {
   added_field(j, "opening_trades", g.opening_trades); added_field(j, "cooldown_until", g.cooldown_until);
   added_field(j, "latched", g.latched); added_field(j, "owns_kill", g.owns_kill);
   added_field(j, "trade_limit_order", g.trade_limit_order);
+  added_field(j, "losing_closes", g.losing_closes); added_field(j, "opening_sizes", g.opening_sizes);
+  added_field(j, "tilt", g.tilt);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ScenarioConfig, spot_percent, vol_points, vol_floor)
+inline constexpr std::array<const char*, 3> kReviewSteps{"warning", "forfeit", "cap"};
+inline constexpr std::array<const char*, 3> kPayoutFloors{"keep", "reset", "starting_balance"};
+template <class E, std::size_t N>
+void named_to_json(Json& j, E value, const std::array<const char*, N>& names);
+template <class E, std::size_t N>
+void named_from_json(const Json& j, E& value, const std::array<const char*, N>& names);
+inline void to_json(Json& j, ReviewStep v) { named_to_json(j, v, kReviewSteps); }
+inline void from_json(const Json& j, ReviewStep& v) { named_from_json(j, v, kReviewSteps); }
+inline void to_json(Json& j, PayoutFloor v) { named_to_json(j, v, kPayoutFloors); }
+inline void from_json(const Json& j, PayoutFloor& v) { named_from_json(j, v, kPayoutFloors); }
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(PayoutReview, min_hold_seconds, max_trade_percent, open_loss, ladder, cap)
+inline void from_json(const Json& j, PayoutReview& r) {
+  for (const auto* key : {"min_hold_seconds", "max_trade_percent"})
+    if (!j.at(key).is_number_integer()) throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded payout review limits must be integers");
+  j.at("min_hold_seconds").get_to(r.min_hold_seconds); j.at("max_trade_percent").get_to(r.max_trade_percent);
+  j.at("open_loss").get_to(r.open_loss); j.at("ladder").get_to(r.ladder); j.at("cap").get_to(r.cap);
+}
 inline void to_json(Json& j, const PayoutRules& p) {
   j = Json{{"qualifying_profit", p.qualifying_profit}, {"qualifying_days", p.qualifying_days},
            {"withdrawal_percent", p.withdrawal_percent}, {"split_percent", p.split_percent}, {"minimum", p.minimum}, {"caps", p.caps}};
   if (!p.consistency_percents.empty()) j["consistency_percents"] = p.consistency_percents;
   if (p.buffer != Money{}) j["buffer"] = p.buffer;
   if (p.buffer_payouts != 0) j["buffer_payouts"] = p.buffer_payouts;
+  if (p.review) j["review"] = *p.review;
+  if (p.after_payout != PayoutFloor::Keep) j["after_payout"] = p.after_payout;
+  if (p.reset_percent != 100) j["reset_percent"] = p.reset_percent;
 }
 inline void from_json(const Json& j, PayoutRules& p) {
   j.at("qualifying_profit").get_to(p.qualifying_profit); j.at("qualifying_days").get_to(p.qualifying_days);
@@ -290,6 +334,10 @@ inline void from_json(const Json& j, PayoutRules& p) {
       (!it->is_number_integer() || *it < 0 || *it > 100))
     throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded buffer_payouts must be an integer from 0 to 100");
   added_field(j, "buffer_payouts", p.buffer_payouts);
+  added_field(j, "review", p.review); added_field(j, "after_payout", p.after_payout);
+  if (const auto it = j.find("reset_percent"); it != j.end() && (!it->is_number_integer() || *it < 1 || *it > 100))
+    throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded reset_percent must be an integer from 1 to 100");
+  added_field(j, "reset_percent", p.reset_percent);
 }
 inline void to_json(Json& j, MarginMode mode) { j = mode == MarginMode::Portfolio ? "portfolio" : "strategy"; }
 inline void from_json(const Json& j, MarginMode& mode) {
@@ -321,6 +369,9 @@ inline constexpr std::array<const char*, 2> kProfitBases{"equity", "balance"};
 inline constexpr std::array<const char*, 4> kDailyLossBases{"equity", "balance", "higher", "peak"};
 inline constexpr std::array<const char*, 2> kBreachActions{"lock", "fail"};
 inline constexpr std::array<const char*, 2> kConsistencyBases{"total", "positive_days"};
+inline constexpr std::array<const char*, 2> kDrawdownBases{"equity", "balance"};
+inline constexpr std::array<const char*, 3> kOpenLossBases{"amount", "day_profit", "drawdown_room"};
+inline constexpr std::array<const char*, 3> kOpenLossActions{"flatten", "block_adds", "fail"};
 inline void to_json(Json& j, ProfitBasis v) { named_to_json(j, v, kProfitBases); }
 inline void from_json(const Json& j, ProfitBasis& v) { named_from_json(j, v, kProfitBases); }
 inline void to_json(Json& j, DailyLossBasis v) { named_to_json(j, v, kDailyLossBases); }
@@ -329,6 +380,17 @@ inline void to_json(Json& j, BreachAction v) { named_to_json(j, v, kBreachAction
 inline void from_json(const Json& j, BreachAction& v) { named_from_json(j, v, kBreachActions); }
 inline void to_json(Json& j, ConsistencyBasis v) { named_to_json(j, v, kConsistencyBases); }
 inline void from_json(const Json& j, ConsistencyBasis& v) { named_from_json(j, v, kConsistencyBases); }
+inline void to_json(Json& j, DrawdownBasis v) { named_to_json(j, v, kDrawdownBases); }
+inline void from_json(const Json& j, DrawdownBasis& v) { named_from_json(j, v, kDrawdownBases); }
+inline void to_json(Json& j, OpenLossBasis v) { named_to_json(j, v, kOpenLossBases); }
+inline void from_json(const Json& j, OpenLossBasis& v) { named_from_json(j, v, kOpenLossBases); }
+inline void to_json(Json& j, OpenLossAction v) { named_to_json(j, v, kOpenLossActions); }
+inline void from_json(const Json& j, OpenLossAction& v) { named_from_json(j, v, kOpenLossActions); }
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(OpenLossCap, basis, amount, percent, action)
+inline void from_json(const Json& j, OpenLossCap& c) {
+  if (!j.at("percent").is_number_integer()) throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded open-loss percent must be an integer");
+  j.at("basis").get_to(c.basis); j.at("amount").get_to(c.amount); j.at("percent").get_to(c.percent); j.at("action").get_to(c.action);
+}
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(ScalingStep, profit, contracts)
 inline void from_json(const Json& j, ScalingStep& step) {
   j.at("profit").get_to(step.profit);
@@ -384,7 +446,8 @@ inline Json optional_rule_defaults() {
                {"scaling", d.scaling}, {"size_scaling", d.size_scaling},
               {"events", d.events}, {"news_before_minutes", d.news_before_minutes}, {"news_after_minutes", d.news_after_minutes},
               {"news_action", d.news_action}, {"hold_restrictions", d.hold_restrictions}, {"hold_cutoff", d.hold_cutoff},
-              {"hold_calendar", d.hold_calendar}};
+              {"hold_calendar", d.hold_calendar}, {"drawdown_basis", d.drawdown_basis}, {"open_loss_cap", d.open_loss_cap},
+              {"minute_volume_percent", d.minute_volume_percent}, {"best_position_percent", d.best_position_percent}};
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(FeeSchedule, open, close, leg_cap, clearing, regulatory, index, exercise)
 inline void to_json(Json& j, const AccountRules& r) {
@@ -414,7 +477,8 @@ inline void to_json(Json& j, const AccountRules& r) {
                   {"scaling", r.scaling}, {"size_scaling", r.size_scaling},
               {"events", r.events}, {"news_before_minutes", r.news_before_minutes}, {"news_after_minutes", r.news_after_minutes},
               {"news_action", r.news_action}, {"hold_restrictions", r.hold_restrictions}, {"hold_cutoff", r.hold_cutoff},
-              {"hold_calendar", r.hold_calendar}};
+              {"hold_calendar", r.hold_calendar}, {"drawdown_basis", r.drawdown_basis}, {"open_loss_cap", r.open_loss_cap},
+              {"minute_volume_percent", r.minute_volume_percent}, {"best_position_percent", r.best_position_percent}};
   static const auto defaults = optional_rule_defaults();
   for (auto it = all.begin(); it != all.end(); ++it)
     if (it.value() != defaults.at(it.key())) j[it.key()] = it.value();
@@ -451,7 +515,7 @@ inline void from_json(const Json& j, AccountRules& r) {
   added_field(j, "inside_fill_percent", r.inside_fill_percent);
   for (const auto* key : {"min_hold_seconds", "microscalp_seconds", "microscalp_percent", "min_trades", "trade_consistency_percent", "consistency_percent", "min_trading_days", "min_profitable_days", "day_end_minutes",
                           "house_margin_percent", "pm_vol_shock", "max_volume_percent", "max_contracts_held", "max_trade_risk_percent",
-                          "time_limit_days", "inactivity_days", "max_resets"})
+                          "time_limit_days", "inactivity_days", "max_resets", "minute_volume_percent", "best_position_percent"})
     if (const auto it = j.find(key); it != j.end() && !it->is_number_integer())
       throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded rule counts must be integers");
   added_field(j, "lock_at_start", r.lock_at_start); added_field(j, "profit_basis", r.profit_basis);
@@ -493,6 +557,8 @@ inline void from_json(const Json& j, AccountRules& r) {
   added_field(j, "news_after_minutes", r.news_after_minutes); added_field(j, "news_action", r.news_action);
   added_field(j, "hold_restrictions", r.hold_restrictions); added_field(j, "hold_cutoff", r.hold_cutoff);
   added_field(j, "hold_calendar", r.hold_calendar);
+  added_field(j, "drawdown_basis", r.drawdown_basis); added_field(j, "open_loss_cap", r.open_loss_cap);
+  added_field(j, "minute_volume_percent", r.minute_volume_percent); added_field(j, "best_position_percent", r.best_position_percent);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(SessionConfig, initial_cash, fee_per_contract, limits, scenarios, rules, guardrails)
 inline void from_json(const Json& j, SessionConfig& c) {
@@ -527,7 +593,20 @@ inline void from_json(const Json& j, EvaluationDay& d) {
   added_field(j, "low_at", d.low_at); added_field(j, "high_at", d.high_at);
   added_field(j, "executions", d.executions); added_field(j, "locked", d.locked);
 }
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Payout, number, time, day, amount, trader_share, balance)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(ReviewTrade, id, pnl, held, closed, open_loss, offences)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(PayoutReviewOutcome, step, trades, forfeited)
+inline void to_json(Json& j, const Payout& p) {
+  j = Json{{"number", p.number}, {"time", p.time}, {"day", p.day}, {"amount", p.amount}, {"trader_share", p.trader_share},
+           {"balance", p.balance}};
+  // A review's outcome and a reset appear only when they happened, so other payouts keep their bytes.
+  if (p.review) j["review"] = *p.review;
+  if (p.removed != Money{}) j["removed"] = p.removed;
+}
+inline void from_json(const Json& j, Payout& p) {
+  j.at("number").get_to(p.number); j.at("time").get_to(p.time); j.at("day").get_to(p.day);
+  j.at("amount").get_to(p.amount); j.at("trader_share").get_to(p.trader_share); j.at("balance").get_to(p.balance);
+  added_field(j, "review", p.review); added_field(j, "removed", p.removed);
+}
 /// A decision's code, unless its status implies it (a pass on the target, a
 /// failure on the floor), as every decision recorded before codes does.
 inline bool implied_code(EvaluationStatus status, Reason code) {
@@ -567,6 +646,12 @@ inline void to_json(Json& j, const Evaluation& e) {
   if (!e.holding_violations.empty()) j["holding_violations"] = e.holding_violations;
   if (!e.event_actions.empty()) j["event_actions"] = e.event_actions;
   if (e.event_checked != 0) j["event_checked"] = e.event_checked;
+  if (e.day_close_balance) j["day_close_balance"] = *e.day_close_balance;
+  if (!e.open_loss_symbols.empty()) j["open_loss_symbols"] = e.open_loss_symbols;
+  if (!e.open_loss_trades.empty()) j["open_loss_trades"] = e.open_loss_trades;
+  if (e.position_excess != Money{}) j["position_excess"] = e.position_excess;
+  if (e.best_position) j["best_position"] = *e.best_position;
+  if (!e.cycle_trades.empty()) j["cycle_trades"] = e.cycle_trades;
 }
 inline void from_json(const Json& j, Evaluation& e) {
   j.at("attempt").get_to(e.attempt); j.at("started").get_to(e.started); j.at("starting_balance").get_to(e.starting_balance);
@@ -593,6 +678,10 @@ inline void from_json(const Json& j, Evaluation& e) {
   added_field(j, "size_scaling", e.size_scaling);
   added_field(j, "holding_violations", e.holding_violations);
   added_field(j, "event_actions", e.event_actions); added_field(j, "event_checked", e.event_checked);
+  added_field(j, "day_close_balance", e.day_close_balance);
+  added_field(j, "open_loss_symbols", e.open_loss_symbols); added_field(j, "open_loss_trades", e.open_loss_trades);
+  added_field(j, "position_excess", e.position_excess); added_field(j, "best_position", e.best_position);
+  added_field(j, "cycle_trades", e.cycle_trades);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AttemptFee, amount, kind)
 inline void to_json(Json& j, const AttemptSummary& a) {
@@ -779,6 +868,8 @@ struct State {
     std::size_t fills, closures, stock_fills, dividends;
     std::uint64_t attempt, first_fill, first_stock_fill;
     SharedMap<std::string, std::string> groups;
+    Timestamp cycle_started = 0;
+    std::size_t open_loss_trades = 0;
   };
   std::optional<TradeObjectives> trade_objectives;
   std::string actor = "system"; ///< Transient command context, not persisted as account state.

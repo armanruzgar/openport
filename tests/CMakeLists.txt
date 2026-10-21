@@ -107,6 +107,7 @@ target_sources(openport_tests PRIVATE
   trading/alert_test.cpp
   trading/funded_test.cpp
   trading/plan_rules_test.cpp
+  trading/prop_rules_test.cpp
   trading/trade_rules_test.cpp
   trading/time_rules_test.cpp
   trading/event_rules_test.cpp

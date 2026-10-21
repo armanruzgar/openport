@@ -36,10 +36,11 @@ enum class Reason {
   MAX_CONTRACTS_HELD, STOP_REQUIRED, MAX_TRADE_RISK,
   TIME_LIMIT, INACTIVITY, INSTRUMENT_NOT_ALLOWED, OUTSIDE_PLAN_HOURS,
   FLAT_TIME, OVERNIGHT_HOLD, SCALING_LIMIT, TRADE_CONSISTENCY, MIN_TRADES, MIN_HOLD, MICROSCALPING,
-  HEDGING, COUNTER_POSITION, MAX_VOLUME_SHARE, NEWS_BLACKOUT, HOLD_RESTRICTED, RESET_LIMIT, GAMMA_LIMIT, THETA_LIMIT, GRID_LOSS_LIMIT, SHORT_VEGA_LIMIT
+  HEDGING, COUNTER_POSITION, MAX_VOLUME_SHARE, NEWS_BLACKOUT, HOLD_RESTRICTED, RESET_LIMIT, GAMMA_LIMIT, THETA_LIMIT, GRID_LOSS_LIMIT, SHORT_VEGA_LIMIT,
+  OPEN_LOSS_CAP, MINUTE_VOLUME, BEST_POSITION, LOSS_STREAK, SIZE_CREEP
 };
 /// The last Reason; recorded codes are strings, so new codes append here.
-inline constexpr Reason kLastReason = Reason::SHORT_VEGA_LIMIT;
+inline constexpr Reason kLastReason = Reason::SIZE_CREEP;
 [[nodiscard]] std::string_view to_string(Reason reason) noexcept;
 
 class TradingError : public std::runtime_error {
@@ -518,7 +519,23 @@ struct Guardrails {
   Money cooldown_loss;
   std::int64_t cooldown_minutes = 0;
   Money profit_lock;
+  /// Discipline (opt-in): this many losing closes in a row start the cooldown too.
+  std::int64_t loss_streak = 0;
+  /// An opening order larger than this percentage of the rolling median of the
+  /// last `size_creep_window` opening orders (zero: 20) is size creep: a tilt flag,
+  /// and a refusal with `size_creep_block`. Zero disables it.
+  std::int64_t size_creep_percent = 0;
+  std::int64_t size_creep_window = 0;
+  bool size_creep_block = false;
   bool operator==(const Guardrails&) const = default;
+};
+/// A discipline guardrail that noticed something, kept for the trading day and journaled
+/// as a `tilt_flag` event: LOSS_STREAK (losing closes in a row) or SIZE_CREEP.
+struct TiltFlag {
+  Timestamp time = 0;
+  Reason code = Reason::NONE;
+  std::string message;
+  bool operator==(const TiltFlag&) const = default;
 };
 /// One change of the account's kill latch: `trip` (latched, or a new reason
 /// replacing `previous`), `reset` (cleared by a reset, or an account reset, with
@@ -537,6 +554,9 @@ struct GuardrailState {
   Timestamp cooldown_until = 0;
   std::vector<Reason> latched;
   OrderId trade_limit_order = 0; ///< The order that reached the limit may finish its partial fills.
+  std::int64_t losing_closes = 0;  ///< Losing closes in a row, counted while loss_streak is set.
+  std::vector<Quantity> opening_sizes;  ///< Recent opening order sizes, oldest first, while size creep is on.
+  std::vector<TiltFlag> tilt;  ///< Today's tilt flags, oldest first; rollover clears them.
 };
 /// Stored settings retain the historical allowance of 100 percent.
 void validate_guardrails(const Guardrails& rules, bool stored = false);
@@ -557,6 +577,25 @@ struct ScenarioConfig {
 /// monitored on every transaction; the mode only controls the ratchet. A static
 /// floor never moves: it stays at the starting balance less the drawdown.
 enum class DrawdownMode { Intraday, EndOfDay, Static };
+/// What the drawdown floor follows and is checked against: fully marked equity,
+/// or the closed balance (open P&L left out, as some funded phases measure it).
+enum class DrawdownBasis { Equity, Balance };
+/// What an open-loss cap measures one position's open loss against: a fixed
+/// amount, a percentage of the start-of-day profit balance (the day's opening
+/// closed balance above the starting balance; the drawdown room while there is
+/// none), or a percentage of the drawdown room (the day's opening equity above
+/// the floor in force).
+enum class OpenLossBasis { Amount, DayProfit, DrawdownRoom };
+/// What a position past its open-loss cap does: the account closes it, adding to
+/// it is refused until it is back within the cap, or the attempt fails.
+enum class OpenLossAction { Flatten, BlockAdds, Fail };
+struct OpenLossCap {
+  OpenLossBasis basis = OpenLossBasis::Amount;
+  Money amount;              ///< Amount basis: the largest open loss one position may carry.
+  std::int64_t percent = 0;  ///< Percentage bases, 1-100.
+  OpenLossAction action = OpenLossAction::Flatten;
+  bool operator==(const OpenLossCap&) const = default;
+};
 /// An evaluation passes on its target; a funded account pays out instead.
 enum class Phase { Evaluation, Funded, Verification };
 enum class MarginMode { Strategy, Portfolio };
@@ -587,6 +626,26 @@ enum class AccountType { Margin, Cash, Ira };
 /// `qualifying_profit` of net realised profit; each payout needs
 /// `qualifying_days` of them since the previous one. Percentages are whole
 /// numbers so every amount stays exact.
+/// What a payout review does when the cycle has offending trades: record a
+/// warning, forfeit their profit (removed from the account with the payout), or
+/// forfeit it and cap the payout at PayoutReview::cap.
+enum class ReviewStep { Warning, Forfeit, Cap };
+/// Trades reviewed at each payout: positive closed whole trades of the cycle
+/// that were held under `min_hold_seconds`, made more than `max_trade_percent`
+/// of the cycle's profit, or breached the open-loss cap. The nth review that
+/// finds any takes the nth ladder step; the last repeats.
+struct PayoutReview {
+  std::int64_t min_hold_seconds = 0;
+  std::int64_t max_trade_percent = 0;
+  bool open_loss = false;
+  std::vector<ReviewStep> ladder{ReviewStep::Warning, ReviewStep::Forfeit, ReviewStep::Cap};
+  Money cap;
+  bool operator==(const PayoutReview&) const = default;
+};
+/// The drawdown floor after a payout: kept as it is, the account reset to
+/// `reset_percent` of the starting balance with a fresh floor below it, or the
+/// floor raised to the starting balance (and locked there).
+enum class PayoutFloor { Keep, Reset, StartingBalance };
 struct PayoutRules {
   Money qualifying_profit;
   std::int64_t qualifying_days = 0;
@@ -597,6 +656,9 @@ struct PayoutRules {
   std::vector<std::int64_t> consistency_percents;  ///< Best day's share of cycle profit; last repeats, empty disables.
   Money buffer;                 ///< Keep starting balance plus this amount; zero disables.
   std::int64_t buffer_payouts = 0;  ///< First N payouts; zero applies to every payout.
+  std::optional<PayoutReview> review;  ///< Absent: payouts review no trades.
+  PayoutFloor after_payout = PayoutFloor::Keep;
+  std::int64_t reset_percent = 100;  ///< PayoutFloor::Reset: 1-100% of the starting balance.
   bool operator==(const PayoutRules&) const = default;
 };
 
@@ -724,9 +786,19 @@ struct AccountRules {
   /// Captured at create/reset when holding rules are on; never consult a live
   /// exchange schedule to decide these rules after the attempt has started.
   std::optional<std::vector<md::ScheduledDay>> hold_calendar;
+  // Optional prop rules (off by default; a plan without them keeps its journal bytes).
+  DrawdownBasis drawdown_basis = DrawdownBasis::Equity;
+  std::optional<OpenLossCap> open_loss_cap;
+  /// An opening order's contracts per leg, at most this percentage of the
+  /// contract's volume in the minute before, 1-1000; checked at acceptance.
+  std::int64_t minute_volume_percent = 0;
+  /// Profit of one closed whole trade above this percentage of the profit target
+  /// does not count toward it, 1-100; evaluation and verification only.
+  std::int64_t best_position_percent = 0;
   [[nodiscard]] bool evaluation() const {
     return profit_target > Money{} || max_drawdown > Money{} || daily_loss_limit > Money{} ||
-           time_limit_days > 0 || inactivity_days > 0 || no_overnight || !hold_restrictions.empty();
+           time_limit_days > 0 || inactivity_days > 0 || no_overnight || !hold_restrictions.empty() ||
+           open_loss_cap.has_value();
   }
   [[nodiscard]] bool practice() const {
     return !evaluation() && phase == Phase::Evaluation && evaluation_fee == Money{} && reset_fee == Money{} &&

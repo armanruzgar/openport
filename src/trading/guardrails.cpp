@@ -11,6 +11,13 @@ void validate_guardrails(const Guardrails& g, bool stored) {
       g.max_opening_trades < 0 || g.cooldown_loss < Money{} || g.cooldown_minutes < 0 ||
       g.cooldown_minutes > 1440 || g.profit_lock < Money{})
     throw TradingError(Reason::INVALID_LIMITS, "Guardrails must be nonnegative; floor percent is 0-99 and cooldown at most 1440 minutes");
+  if (g.loss_streak < 0 || g.loss_streak > 100 || (g.loss_streak > 0 && g.cooldown_minutes == 0))
+    throw TradingError(Reason::INVALID_LIMITS, "A losing streak of 1-100 closes starts the cooldown, so it needs cooldown_minutes");
+  if (g.size_creep_percent < 0 || (g.size_creep_percent > 0 && (g.size_creep_percent <= 100 || g.size_creep_percent > 10000)) ||
+      g.size_creep_window < 0 || (g.size_creep_window != 0 && (g.size_creep_window < 3 || g.size_creep_window > 100)) ||
+      ((g.size_creep_window != 0 || g.size_creep_block) && g.size_creep_percent == 0))
+    throw TradingError(Reason::INVALID_LIMITS, "Size creep is 101-10000% of the rolling median of the last 3-100 opening orders "
+                       "(zero: 20); its window and block need a percentage");
 }
 Limits tightened_limits(const Limits& current, const Limits& requested) {
   auto result = requested;
@@ -56,6 +63,13 @@ Guardrails tightened_guardrails(const Guardrails& current, const Guardrails& req
   result.cooldown_minutes = std::max(current.cooldown_minutes, requested.cooldown_minutes);
   result.cooldown_loss = earlier(current.cooldown_loss, requested.cooldown_loss);
   result.profit_lock = earlier(current.profit_lock, requested.profit_lock);
+  result.loss_streak = earlier(current.loss_streak, requested.loss_streak);
+  result.size_creep_percent = earlier(current.size_creep_percent, requested.size_creep_percent);
+  // A block is stricter than a warning; the window is not, so the requested one applies.
+  const auto& creep = current.size_creep_percent == 0 || requested.size_creep_percent != 0 ? requested : current;
+  result.size_creep_window = result.size_creep_percent == 0 ? 0 : creep.size_creep_window;
+  result.size_creep_block = result.size_creep_percent != 0 &&
+      ((current.size_creep_percent != 0 && current.size_creep_block) || (requested.size_creep_percent != 0 && requested.size_creep_block));
   return result;
 }
 }  // namespace openport::trading

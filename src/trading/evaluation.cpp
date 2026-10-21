@@ -142,6 +142,21 @@ std::vector<Objective> objectives_with(const Evaluation& e, const AccountRules& 
     }
     out.push_back(std::move(o));
   }
+  if (rules.phase != Phase::Funded && rules.best_position_percent > 0 && rules.profit_target > Money{}) {
+    const auto cap = best_position_cap(rules);
+    const auto counted = profit - e.position_excess;
+    Objective o{Reason::BEST_POSITION, e.position_excess == Money{} || counted >= rules.profit_target, std::nullopt,
+                static_cast<double>(rules.best_position_percent), "No profitable closed whole trade yet"};
+    if (e.best_position) {
+      o.actual = e.best_position->pnl.dollars() / rules.profit_target.dollars() * 100;
+      o.message = "Best trade " + e.best_position->id + ", net " + dollars(e.best_position->pnl) + "; at most " + dollars(cap) +
+          " (" + std::to_string(rules.best_position_percent) + "% of the target) of one trade counts" +
+          (e.position_excess > Money{} ? ": " + dollars(e.position_excess) + " above it is left out, " + dollars(counted) +
+                                         " of the " + dollars(rules.profit_target) + " target counted"
+                                       : "");
+    }
+    out.push_back(std::move(o));
+  }
   if (!needs_days(rules)) return out;
   const auto stats = with_today(finished ? *finished : finished_day_stats(e, rules), e, rules, now);
   if (rules.min_trading_days > 0) {
@@ -202,9 +217,11 @@ EvaluationStatus evaluate_equity(Evaluation& evaluation, const AccountRules& rul
   return EvaluationStatus::Active;
 }
 void evaluation_rollover(Evaluation& evaluation, const AccountRules& rules) {
+  const auto close = rules.drawdown_basis == DrawdownBasis::Balance
+      ? evaluation.day_close_balance.value_or(evaluation.day_close_equity) : evaluation.day_close_equity;
   if (evaluation.status == EvaluationStatus::Active && rules.drawdown_mode == DrawdownMode::EndOfDay &&
-      evaluation.day_close_equity > evaluation.peak) {
-    evaluation.peak = evaluation.day_close_equity;
+      close > evaluation.peak) {
+    evaluation.peak = close;
     const auto floor = evaluation_floor(rules, evaluation.peak, evaluation.floor_locked, evaluation.starting_balance);
     evaluation.floor = evaluation.size_scaling ? std::max(evaluation.floor, floor) : floor;
   }
@@ -268,14 +285,17 @@ PlanVerdict evaluate_with(Evaluation& e, const AccountRules& rules, const PlanIn
   PlanVerdict verdict;
   if (e.status != EvaluationStatus::Active) return verdict;
   if (const auto timed = evaluate_time_rules(e, rules, now.time); timed.decided()) return timed;
-  ratchet(e, rules, now.equity);
+  // A balance basis follows and checks the closed balance: open P&L never touches the floor.
+  const bool balance_floor = rules.drawdown_basis == DrawdownBasis::Balance;
+  const auto measured = balance_floor ? now.balance : now.equity;
+  ratchet(e, rules, measured);
   if (!rules.evaluation()) return verdict;
-  if (rules.max_drawdown > Money{} && now.equity <= e.floor) {
+  if (rules.max_drawdown > Money{} && measured <= e.floor) {
     verdict.status = EvaluationStatus::Failed;
     verdict.code = Reason::DRAWDOWN_FLOOR;
     verdict.level = e.floor;
-    verdict.message = "Equity " + dollars(now.equity) + " reached the drawdown floor " + dollars(e.floor) + " (peak " +
-                      dollars(e.peak) + ", max drawdown " + dollars(rules.max_drawdown) + ")";
+    verdict.message = (balance_floor ? "The closed balance " : "Equity ") + dollars(measured) + " reached the drawdown floor " +
+                      dollars(e.floor) + " (peak " + dollars(e.peak) + ", max drawdown " + dollars(rules.max_drawdown) + ")";
     return verdict;
   }
   if (e.day_lock == Reason::NONE)
@@ -365,6 +385,30 @@ Decision plan_entry_check(const AccountRules& rules, std::string_view underlying
     }
   }
   return {};
+}
+std::optional<Money> open_loss_limit(const Evaluation& e, const AccountRules& rules, const PlanInputs& now) {
+  if (!rules.open_loss_cap) return std::nullopt;
+  const auto& cap = *rules.open_loss_cap;
+  if (cap.basis == OpenLossBasis::Amount) return cap.amount;
+  const auto share = [&](Money base) {
+    if (base <= Money{}) return Money{};
+    // Whole cents, rounded down, of the percentage.
+    const Wide cents = static_cast<Wide>(base.micros()) * cap.percent / 100 / 10'000;
+    return Money::from_micros(static_cast<std::int64_t>(cents * 10'000));
+  };
+  const auto room = [&]() -> std::optional<Money> {
+    if (rules.max_drawdown <= Money{}) return std::nullopt;
+    return share(e.day_open_equity - e.floor);
+  };
+  if (cap.basis == OpenLossBasis::DrawdownRoom) return room();
+  // The start-of-day profit balance; without profit yet, the drawdown room stands in.
+  const auto profit = day_open_balance(e, now) - e.starting_balance;
+  if (profit > Money{}) return share(profit);
+  return room();
+}
+Money best_position_cap(const AccountRules& rules) {
+  return Money::from_micros(static_cast<std::int64_t>(
+      static_cast<Wide>(rules.profit_target.micros()) * rules.best_position_percent / 100));
 }
 std::string day_lock_message(Reason lock) {
   if (lock == Reason::DAILY_LOSS_LIMIT)
@@ -471,6 +515,183 @@ PassOdds pass_odds(const Evaluation& current, const AccountRules& rules, Money e
   if (!passed.empty()) {
     std::sort(passed.begin(), passed.end());
     result.median_days_to_pass = (passed[(passed.size() - 1) / 2] + passed[passed.size() / 2]) / 2.0;
+  }
+  return result;
+}
+RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const std::vector<ReplayTrade>& trades,
+    Money starting_balance, const AccountRules& rules) {
+  RuleReplay result;
+  Evaluation e;
+  e.attempt = recorded.attempt;
+  e.started = recorded.started;
+  e.starting_balance = starting_balance;
+  e.peak = starting_balance;
+  e.floor = evaluation_floor(rules, starting_balance, e.floor_locked, starting_balance);
+  e.day_open_equity = e.day_close_equity = starting_balance;
+  if (rules.drawdown_basis == DrawdownBasis::Balance) e.day_close_balance = starting_balance;
+  e.cycle_started = recorded.started;
+  // The rule set moves by the recorded dollar P&L, withdrawals added back, from its
+  // own starting balance; a lock flattens it, so later days move from the lock's level.
+  Money shift = starting_balance - recorded.starting_balance;
+  Money realised_total;
+  std::size_t next_trade = 0;
+  std::vector<ReplayTrade> sorted = trades;
+  std::stable_sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.closed < b.closed; });
+  const auto take_trades = [&](Timestamp until) {
+    for (; next_trade < sorted.size() && sorted[next_trade].closed <= until; ++next_trade) {
+      const auto& trade = sorted[next_trade];
+      ++e.closed_trades;
+      if (trade.pnl > Money{} && (!e.best_trade || trade.pnl > e.best_trade->pnl)) e.best_trade = BestTrade{trade.id, trade.pnl};
+      if (rules.microscalp_percent > 0 && trade.held < rules.microscalp_seconds * md::kNanosPerSecond)
+        e.short_profit = e.short_profit + std::max(Money{}, trade.pnl);
+      if (rules.best_position_percent > 0 && trade.pnl > Money{}) {
+        if (!e.best_position || trade.pnl > e.best_position->pnl) e.best_position = BestTrade{trade.id, trade.pnl};
+        e.position_excess = e.position_excess + std::max(Money{}, trade.pnl - best_position_cap(rules));
+      }
+    }
+  };
+  struct Day { md::Date day; Money open, close, realised; std::optional<Money> low, high; Timestamp low_at = 0, high_at = 0;
+               std::uint64_t executions = 0; bool today = false; Timestamp close_at = 0; };
+  std::vector<Day> path;
+  for (const auto& d : recorded.days)
+    path.push_back({d.day, d.open_equity, d.close_equity, d.realised, d.low_equity, d.high_equity, d.low_at, d.high_at,
+                    d.executions > 0 ? d.executions : d.realised != Money{} ? 1u : 0u, false, 0});
+  if (recorded.started > 0) {
+    const auto realised = now.net_realised - recorded.day_open_realised;
+    path.push_back({recorded.day, recorded.day_open_equity, now.equity, realised, recorded.day_low_equity, recorded.day_high_equity,
+                    recorded.day_low_at, recorded.day_high_at,
+                    recorded.day_executions > 0 ? recorded.day_executions : realised != Money{} ? 1u : 0u, true, now.time});
+  }
+  const auto withdrawn = [&](md::Date day) {
+    Money total;
+    for (const auto& payout : recorded.payouts) if (payout.day <= day) total = total + payout.amount;
+    return total;
+  };
+  std::optional<md::Date> decided;
+  for (std::size_t i = 0; i < path.size(); ++i) {
+    const auto& day = path[i];
+    e.day = day.day;
+    e.day_open_realised = realised_total;
+    e.day_lock = Reason::NONE;
+    const auto added = withdrawn(day.day);
+    const auto value = [&](Money recorded_value) { return recorded_value + shift + added; };
+    const auto open_balance = starting_balance + realised_total;
+    e.day_open_equity = value(day.open);
+    e.day_close_equity = e.day_open_equity;
+    e.day_low_equity = e.day_high_equity = e.day_open_equity;
+    e.day_executions = day.executions;
+    // Calendar rules read the observation's time; days without one are taken at noon New York time.
+    const auto noon = md::new_york_to_utc(day.day, 12, 0);
+    std::string outcome = decided ? "after" : "active";
+    Money close = value(day.close);
+    const auto observe = [&](Money equity, Money balance, bool flat, Timestamp time, Timestamp shown) {
+      if (decided || e.day_lock != Reason::NONE) return;
+      take_trades(time);
+      if (equity < *e.day_low_equity) e.day_low_equity = equity;
+      if (equity > *e.day_high_equity) e.day_high_equity = equity;
+      e.day_close_equity = equity;
+      if (rules.drawdown_basis == DrawdownBasis::Balance) e.day_close_balance = balance;
+      const PlanInputs inputs{equity, balance, realised_total + (balance - open_balance), flat, time};
+      const auto verdict = evaluate_plan(e, rules, inputs);
+      if (rules.max_drawdown > Money{}) {
+        const auto room = (rules.drawdown_basis == DrawdownBasis::Balance ? balance : equity) - e.floor;
+        if (!result.closest_floor || room < *result.closest_floor) result.closest_floor = room;
+      }
+      if (verdict.decided()) {
+        e.status = verdict.status;
+        decided = day.day;
+        result.status = verdict.status;
+        result.code = verdict.code;
+        result.message = verdict.message;
+        result.decided_day = day.day;
+        result.decided_at = shown;
+        result.decided_equity = equity;
+        outcome = verdict.status == EvaluationStatus::Passed ? "passed" : "failed";
+      } else if (verdict.lock) {
+        e.day_lock = verdict.code;
+        result.locked_days.push_back(day.day);
+        outcome = "locked";
+        close = verdict.level;
+      }
+    };
+    const auto first = day.low_at > 0 && day.high_at > 0 ? std::min(day.low_at, day.high_at) : noon;
+    observe(e.day_open_equity, open_balance, false, first, 0);
+    const bool low_first = day.low_at <= day.high_at;
+    const auto extreme = [&](bool low) {
+      const auto& level = low ? day.low : day.high;
+      const auto at = low ? day.low_at : day.high_at;
+      if (level && at > 0) observe(value(*level), open_balance, false, at, at);
+    };
+    extreme(low_first);
+    extreme(!low_first);
+    const auto close_balance = open_balance + day.realised;
+    const auto end = day.today ? now.time : std::max({day.low_at, day.high_at, noon});
+    observe(close, close_balance, day.today ? now.flat : true, end, day.today ? now.time : 0);
+    if (outcome == "locked") shift = shift + (close - value(day.close));
+    realised_total = realised_total + day.realised;
+    result.days.push_back({day.day, outcome, close, rules.max_drawdown > Money{} ? e.floor : Money{}});
+    if (!day.today && !decided) {
+      EvaluationDay finished;
+      finished.day = day.day;
+      finished.open_equity = e.day_open_equity;
+      finished.close_equity = close;
+      finished.realised = day.realised;
+      finished.executions = day.executions;
+      finished.locked = e.day_lock;
+      e.day_close_equity = close;
+      evaluation_rollover(e, rules);
+      finished.peak = e.peak;
+      finished.floor = e.floor;
+      e.days.push_back(finished);
+      result.days.back().floor = rules.max_drawdown > Money{} ? e.floor : Money{};
+    }
+  }
+  return result;
+}
+
+ChallengeEconomics challenge_economics(const std::vector<EconomicsStep>& steps, double payout_odds, Money payout) {
+  if (steps.empty()) throw std::invalid_argument("Challenge economics needs at least one program step");
+  if (!(payout_odds >= 0 && payout_odds <= 1)) throw std::invalid_argument("Payout odds must be from 0 to 1");
+  ChallengeEconomics result;
+  result.payout_odds = payout_odds;
+  result.payout = payout.dollars();
+  const auto run = [&](double first_pass, std::vector<EconomicsStepResult>* out) {
+    // Value from the funded step backwards: each step pays its costs, then reaches
+    // the next with its eventual pass odds.
+    double value = payout_odds * payout.dollars();
+    double cost_total = 0;
+    double reach = 1;
+    std::vector<EconomicsStepResult> results;
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+      const auto& step = steps[i];
+      const double p = i == 0 ? first_pass : step.pass;
+      const auto attempts = step.max_resets > 0 ? step.max_resets + 1 : 100;
+      double fail_all = 1, expected_resets = 0, miss = 1;
+      for (std::int64_t k = 1; k < attempts; ++k) { miss *= 1 - p; expected_resets += miss; }
+      for (std::int64_t k = 0; k < attempts; ++k) fail_all *= 1 - p;
+      const double cost = step.first_cost.dollars() + step.reset_cost.dollars() * expected_resets;
+      results.push_back({step.plan, p, 1 - fail_all, cost, 1 + expected_resets});
+      cost_total += reach * cost;
+      reach *= 1 - fail_all;
+    }
+    if (out) *out = results;
+    return std::pair{reach * value - cost_total, std::pair{cost_total, reach * value}};
+  };
+  const auto [value, parts] = run(steps.front().pass, &result.steps);
+  result.expected_value = value;
+  result.expected_cost = parts.first;
+  result.expected_payout = parts.second;
+  // The value rises with the first step's pass odds (costs fall, the payout's odds rise).
+  const auto at = [&](double p) { return run(p, nullptr).first; };
+  if (at(1) > 0 && at(0) < 0) {
+    double low = 0, high = 1;
+    for (int i = 0; i < 60; ++i) {
+      const double middle = (low + high) / 2;
+      (at(middle) < 0 ? low : high) = middle;
+    }
+    result.break_even_pass = high;
+  } else if (at(0) >= 0) {
+    result.break_even_pass = 0;
   }
   return result;
 }
