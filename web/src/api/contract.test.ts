@@ -283,3 +283,15 @@ it("describes joint requests and reports while retaining single schemas", () => 
   expect(schemas.BacktestComparison.properties.combined.properties.includes_joint.const).toBe(true)
   expect(schemas.BacktestResult.properties.rule_trips.items.properties.playbook.type).toBe("string")
 })
+
+it("declares journal practice wire fields and fixed mistake picks", () => {
+  const schemas = spec.components.schemas
+  for (const name of ["Trade", "ShareTrade", "TradeNote", "TradeNoteResponse"]) {
+    expect(schemas[name]!.properties!.mistakes).toBeDefined()
+  }
+  for (const name of ["ReplayState", "ReplayHistory", "ReplayDemo"]) {
+    expect(wireType(schemas[name]!.properties!.events!)).toBe("ScenarioMark[]")
+    expect(wireType(schemas[name]!.properties!.objectives!)).toBe("DrillObjective[]")
+  }
+  for (const name of ["replay_from", "trade", "pack"]) expect(wireType(schemas.ReplayStart!.properties![name]!)).toBe("string")
+})

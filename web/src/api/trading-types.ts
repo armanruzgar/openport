@@ -475,6 +475,7 @@ export interface SettlementsResponse {
   settlements: SettlementRecord[]
 }
 export interface Trade {
+  entry_order?: string
   id: string
   attempt: number
   entry_context?: FillContext | null
@@ -529,11 +530,13 @@ export interface Trade {
   fills: string[]
   /** The trader's note ("" for none) and tags; absent from older servers. */
   note?: string
+  mistakes?: string[]
   tags?: string[]
 }
 /** How a round trip ended: the trader's own order, a bracket exit, a flatten, a playbook's close, a reducer liquidation, or a closure. */
 export type TradeExit = "order" | "stop_loss" | "take_profit" | "flatten" | "playbook" | "system" | "settlement" | "exercise" | "assignment" | "abandon" | "reset"
 export interface TradeNote {
+  mistakes?: string[]
   note: string
   tags: string[]
 }
@@ -582,6 +585,7 @@ export interface ShareTrade {
   fills: string[]
   /** The trader's note ("" for none) and tags, as on option trades; absent from older servers. */
   note?: string
+  mistakes?: string[]
   tags?: string[]
 }
 /** One change in shares held, and how it came about. */

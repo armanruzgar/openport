@@ -1,3 +1,4 @@
+import { scenarioMarkers } from "../lib/practice"
 import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "../api/client"
@@ -11,7 +12,7 @@ import { Panel } from "./ui"
 
 const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
 export function IntradayEquity({ account }: { account: Account }) {
-  const { accountScope, trading } = useLive()
+  const { accountScope, trading, replay } = useLive()
   const history = useQuery({ queryKey: ["trading", accountScope, "equity", trading?.account_version], queryFn: ({ signal }) => api.equity(signal),
     enabled: !!trading?.enabled || !!account.damaged, refetchInterval: 30_000, retry: false })
   const [selected, setSelected] = useState("")
@@ -19,6 +20,8 @@ export function IntradayEquity({ account }: { account: Account }) {
   const samples = history.data?.samples ?? []
   const days = [...new Set([account.evaluation.day, ...samples.map((s) => s.day)])].sort().reverse()
   const chart = intradayEquity(samples, day, day === account.evaluation.day ? account.evaluation.attempt : undefined)
+  const points = chart.series.flatMap(s => s.points.map(p => p.x))
+  chart.markers.push(...scenarioMarkers(replay?.events ?? [], Math.min(...points), Math.max(...points)))
   return <Panel title="Intraday equity" actions={<label className="text-xs text-muted">Day <select aria-label="Equity day" className="trade-input" value={day} onChange={(event) => setSelected(event.target.value)}>{days.map((date) => <option key={date}>{date}</option>)}</select></label>}>
     <TradingError error={history.error} />
     {history.data?.error && <p className="text-xs text-warn">Equity history storage: {history.data.error}{history.data.error_time ? ` · ${history.data.error_time}` : ""}{history.data.error_market_time ? ` · market ${history.data.error_market_time}` : ""}{history.data.error_recovered ? " · storage recovered" : " · storage not recovered"}</p>}

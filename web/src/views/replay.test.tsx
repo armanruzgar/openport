@@ -237,3 +237,23 @@ it("keeps F32 requests on the replay route with their exact wire fields", async 
   await api.restartReplay("old-run", "10:30:15", "open")
   expect(fetcher).toHaveBeenLastCalledWith("/api/replay", expect.objectContaining({ method: "POST", body: JSON.stringify({ restart: "old-run", at: "10:30:15" }) }))
 })
+
+it("keeps replay-from-trade and pack controls global even when viewing history", async () => {
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ replay, packs: [] }), { status: 200 }))
+  vi.stubGlobal("fetch", fetcher)
+  dataSource.set("history:source")
+  await api.replayFromTrade("source", "7", "open")
+  expect(fetcher).toHaveBeenLastCalledWith("/api/replay", expect.objectContaining({ method: "POST", body: JSON.stringify({ replay_from: "source", trade: "7" }) }))
+  await api.scenarioPacks()
+  expect(fetcher).toHaveBeenLastCalledWith("/api/replay/packs", expect.anything())
+  await api.startScenarioPack("challenge", "open")
+  expect(fetcher).toHaveBeenLastCalledWith("/api/replay", expect.objectContaining({ method: "POST", body: JSON.stringify({ pack: "challenge", paused: true }) }))
+})
+
+it("imports raw pack text without rounding a uint64 scenario default seed", async () => {
+  const fetcher = vi.fn(async () => new Response("{}", { status: 201 }))
+  vi.stubGlobal("fetch", fetcher)
+  const raw = '{"version":1,"scenario":{"seed":18446744073709551615},"seed":"0","plan":"practice"}'
+  await api.importScenarioPack(raw, "open")
+  expect(fetcher).toHaveBeenLastCalledWith("/api/replay/packs", expect.objectContaining({ method: "POST", body: raw }))
+})

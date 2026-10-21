@@ -1,3 +1,4 @@
+import type { ScenarioPack } from "./types"
 import { announceDestination, checkWriteDestination } from "./destination"
 import type { BacktestComparison, BacktestListing, BacktestState, BacktestStart } from "./backtest-types"
 import type { Playbook, PlaybooksResponse, PassOdds } from "./playbook-types"
@@ -90,7 +91,7 @@ export async function downloadFile(path: string, filename: string) {
 }
 export const downloadCsv = downloadFile
 
-function write<T>(path: string, method: "POST" | "PUT" | "PATCH" | "DELETE", mode: WriteMode, body?: unknown) {
+function write<T>(path: string, method: "POST" | "PUT" | "PATCH" | "DELETE", mode: WriteMode, body?: unknown, rawJson = false) {
   const headers: Record<string, string> = { Accept: "application/json", "Content-Type": "application/json" }
   if (mode === "disabled") return Promise.reject(new ApiError(403, "Trading writes are disabled by the server.", "WRITE_DISABLED"))
   if (mode === "token") {
@@ -98,7 +99,7 @@ function write<T>(path: string, method: "POST" | "PUT" | "PATCH" | "DELETE", mod
     if (!token) return Promise.reject(new ApiError(403, "Enter a write token to continue.", "WRITE_TOKEN_REQUIRED"))
     headers.Authorization = `Bearer ${token}`
   }
-  return request<T>(path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+  return request<T>(path, { method, headers, ...(body === undefined ? {} : { body: rawJson ? String(body) : JSON.stringify(body) }) })
 }
 
 /** Account mutations require the destination captured by the action's caller.
@@ -251,6 +252,11 @@ export const api = {
     get<ExposureMatrix>(`${underlying(symbol)}/exposure?expiries=${expiries}&window=${window}`, signal),
   surface: (symbol: string, expiries: number, window: number, signal?: AbortSignal) =>
     get<Surface>(`${underlying(symbol)}/surface?expiries=${expiries}&window=${window}`, signal),
+  scenarioPacks: (signal?: AbortSignal) => get<{ packs: ScenarioPack[] }>("/api/replay/packs", signal),
+  importScenarioPack: (pack: ScenarioPack | string, mode: WriteMode) => write<ScenarioPack>("/api/replay/packs", "POST", mode, pack, typeof pack === "string"),
+  downloadScenarioPack: (id: string) => downloadFile(`/api/replay/packs/${encodeURIComponent(id)}`, `${id}-pack.json`),
+  startScenarioPack: (pack: string, mode: WriteMode) => write<ReplayResult>("/api/replay", "POST", mode, { pack, paused: true }),
+  replayFromTrade: (id: string, trade: string, mode: WriteMode) => write<ReplayResult>("/api/replay", "POST", mode, { replay_from: id, trade }),
   replay: (signal?: AbortSignal) => get<ReplayListing>("/api/replay", signal),
   startReplay: (source: ReplaySource, speed: number, mode: WriteMode, options: ReplayStart = {}) =>
     write<{ replay: ReplayState }>("/api/replay", "POST", mode, { ...source, speed, ...options }),

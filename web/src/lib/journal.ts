@@ -14,6 +14,7 @@ const dollars = (value: string | null | undefined) => {
   const parsed = value == null ? NaN : Number(value)
   return Number.isFinite(parsed) ? parsed : 0
 }
+const tradeUnderlying = (trade: JournalTrade) => isShares(trade) ? trade.symbol : trade.underlying
 export const tradeNet = (trade: JournalTrade) => dollars(trade.net)
 
 export interface JournalStats {
@@ -79,6 +80,7 @@ export function newYorkDate(iso: string): { date: string; weekday: number } | nu
 }
 
 const newYorkHour = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hourCycle: "h23" })
+const newYorkEntryTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
 /**
  * ISO timestamp -> the engine's trading date and its weekday (1 = Monday): a weekday's New York date until 17:00,
  * when its curb session ends; after that, and over the weekend, the next weekday, whose overnight session opens that
@@ -144,7 +146,7 @@ export function parseTags(text: string): string[] {
   return [...new Set(text.split(",").map((tag) => tag.trim().toLowerCase()).filter(Boolean))]
 }
 
-export type Dimension = "duration" | "weekday" | "month" | "tag"
+export type Dimension = "duration" | "weekday" | "month" | "tag" | "time" | "dte" | "delta" | "iv" | "underlying" | "template" | "playbook" | "coach"
 export type Side = "all" | "call" | "put"
 export const durationBuckets = [
   { label: "< 1m", max: 60 }, { label: "1–5m", max: 300 }, { label: "5–15m", max: 900 },
@@ -154,40 +156,92 @@ export const durationBuckets = [
 const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
-/** `winRate` is wins over decided trades, as everywhere: a breakeven is neither a win nor a loss. */
-export interface Bucket { label: string; net: number; trades: number; wins: number; losses: number; winRate: number | null }
-/** Closed trades grouped by holding time, the weekday or month of the trading date they closed on (an overnight close counts toward the session's day), or tag (a trade counts under each of its tags). Shares and mixed call/put groups count only under All. */
-export function tradeBuckets(trades: readonly JournalTrade[], dimension: Dimension, side: Side = "all"): Bucket[] {
-  const tags = dimension === "tag" ? [...tradeTags(trades), "untagged"] : []
-  const labels = dimension === "duration" ? durationBuckets.map((b) => b.label) : dimension === "weekday" ? weekdays : dimension === "month" ? months : tags
-  const out = labels.map((label) => ({ label, net: 0, trades: 0, wins: 0, losses: 0, winRate: null as number | null }))
-  const count = (bucket: Bucket | undefined, net: number) => {
-    if (!bucket) return
-    bucket.net += net
-    bucket.trades++
-    if (net > 0) bucket.wins++
-    else if (net < 0) bucket.losses++
+export const dimensions: { value: Dimension; label: string }[] = [
+  { value: "duration", label: "Hold time" }, { value: "weekday", label: "Weekday" }, { value: "month", label: "Month" },
+  { value: "tag", label: "Tag" }, { value: "time", label: "Entry time (ET)" }, { value: "dte", label: "Entry DTE" },
+  { value: "delta", label: "Entry |delta|" }, { value: "iv", label: "Entry IV" }, { value: "underlying", label: "Underlying" },
+  { value: "template", label: "Strategy template" }, { value: "playbook", label: "Playbook" }, { value: "coach", label: "Coach flag" },
+]
+export const mistakePicks = ["chased", "oversized", "moved stop", "revenge", "broke plan", "early exit", "A+ setup"] as const
+export interface ScenarioMark { type: string; time: string; end?: string; symbols?: string[] }
+export interface CoachContext { events?: ScenarioMark[]; brokenOrders?: Set<string> }
+export function coachFlags(trade: JournalTrade, peers: readonly JournalTrade[], context: CoachContext = {}): string[] {
+  if (trade.status !== "closed") return []
+  const flags: string[] = []
+  if (!isShares(trade)) {
+    const r = trade.review
+    if (r?.mfe != null && Number(r.mfe) > 0 && r.give_back != null && Number(r.give_back) > Number(r.mfe) * .5) flags.push("Gave back >50%")
+    if (r?.heat != null && r.heat > 1) flags.push("Heat >1R")
+    if ((trade.entry_order ?? trade.strategy_id) && context.brokenOrders?.has((trade.entry_order ?? trade.strategy_id)!)) flags.push("Broke playbook rule")
   }
-  for (const trade of trades) {
-    if (trade.status !== "closed" || !trade.closed || (side !== "all" && (isShares(trade) || (trade.journalGroup?.side ?? trade.type) !== side))) continue
-    if (dimension === "tag") {
-      const own = trade.tags?.length ? trade.tags : ["untagged"]
-      for (const tag of own) count(out[labels.indexOf(tag)], tradeNet(trade))
-      continue
-    }
-    let index = -1
-    if (dimension === "duration") {
-      const seconds = trade.duration_seconds ?? 0
-      index = durationBuckets.findIndex((b) => seconds < b.max)
-    } else {
-      const day = closingDay(trade)
-      if (!day) continue
-      index = dimension === "weekday" ? day.weekday - 1 : Number(day.date.slice(5, 7)) - 1
-    }
-    count(out[index], tradeNet(trade))
+  if (context.events?.some(e => (!e.symbols?.length || e.symbols.includes(tradeUnderlying(trade))) &&
+    Date.parse(e.time) <= Date.parse(trade.closed!) && Date.parse(e.end ?? e.time) >= Date.parse(trade.opened))) flags.push("Held through scenario event")
+  const size = (t: JournalTrade) => isShares(t) ? t.max_shares : t.max_quantity
+  const sizes = peers.filter(t => t.status === "closed" && isShares(t) === isShares(trade) && tradeUnderlying(t) === tradeUnderlying(trade)).map(size).sort((a, b) => a - b)
+  const middle = Math.floor(sizes.length / 2)
+  const median = sizes.length ? (sizes[middle]! + sizes[Math.floor((sizes.length - 1) / 2)]!) / 2 : 0
+  if (sizes.length >= 3 && median > 0 && size(trade) > 2 * median) flags.push("Size >2× median")
+  return flags
+}
+/** Descriptive association, not a counterfactual estimate of avoiding a mistake. */
+export function mistakeCosts(trades: readonly JournalTrade[]) {
+  const closed = trades.filter(t => t.status === "closed")
+  return mistakePicks.map(label => {
+    const withTag = closed.filter(t => t.mistakes?.includes(label))
+    const withoutTag = closed.filter(t => !t.mistakes?.includes(label))
+    return { label, with: journalStats(withTag), without: journalStats(withoutTag) }
+  })
+}
+export interface Bucket {
+  label: string; net: number; trades: number; wins: number; losses: number; winRate: number | null
+  expectancy: number | null; averageR: number | null; profitFactor: number | null; giveBack: number | null
+}
+function entryLabels(t: JournalTrade, dimension: Dimension): string[] {
+  const c = isShares(t) ? null : t.entry_context
+  const bucket = (value: number | null | undefined, bounds: number[], labels: string[]) =>
+    value == null || !Number.isFinite(value) ? "Unknown" : labels[bounds.findIndex(b => value < b)] ?? "Unknown"
+  if (dimension === "time") {
+    const time = Date.parse(t.opened)
+    const parts = Number.isFinite(time) ? newYorkEntryTime.formatToParts(time) : []
+    const minute = parts.length ? Number(parts.find(p => p.type === "hour")?.value) * 60 + Number(parts.find(p => p.type === "minute")?.value) : null
+    return [bucket(minute, [570, 630, 720, 840, 960, Infinity], ["Before 09:30", "09:30–10:30", "10:30–12:00", "12:00–14:00", "14:00–16:00", "After 16:00"])]
   }
-  for (const bucket of out) bucket.winRate = bucket.wins + bucket.losses ? bucket.wins / (bucket.wins + bucket.losses) : null
-  return out
+  if (dimension === "dte") return [bucket(c?.years == null ? null : c.years * 365, [1, 8, 31, Infinity], ["<1 DTE", "1–7 DTE", "8–30 DTE", "31+ DTE"])]
+  if (dimension === "delta") return [bucket(c?.delta == null ? null : Math.abs(c.delta), [.2, .4, .6, .8, Infinity], ["<0.20", "0.20–0.40", "0.40–0.60", "0.60–0.80", "0.80+"])]
+  if (dimension === "iv") return [bucket(c?.iv, [.15, .25, .40, Infinity], ["<15%", "15–25%", "25–40%", "40%+"])]
+  if (dimension === "underlying") return [tradeUnderlying(t)]
+  if (dimension === "playbook") return t.tags?.filter(v => v.startsWith("playbook:")).map(v => v.slice(9).split("@v")[0]!).filter(Boolean) || []
+  if (dimension === "template") return (t.tags ?? []).filter(v => /^(put|call)-(credit|debit|calendar|diagonal)-|^iron-(condor|butterfly)-|^(long|short)-(straddle|strangle)-|^long-(put|call)-butterfly-/.test(v))
+  return []
+}
+/** Closed trades only. Breakevens count in expectancy; win rate excludes them. */
+export function tradeBuckets(trades: readonly JournalTrade[], dimension: Dimension, side: Side = "all", context: CoachContext = {}): Bucket[] {
+  const fixed = dimension === "duration" ? durationBuckets.map(b => b.label) : dimension === "weekday" ? weekdays : dimension === "month" ? months : dimension === "tag" ? [...tradeTags(trades), "untagged"] : []
+  const groups = new Map<string, JournalTrade[]>(fixed.map(label => [label, []]))
+  for (const t of trades) {
+    if (t.status !== "closed" || !t.closed || (side !== "all" && (isShares(t) || (t.journalGroup?.side ?? t.type) !== side))) continue
+    const day = closingDay(t)
+    let labels = dimension === "tag" ? (t.tags?.length ? t.tags : ["untagged"])
+      : dimension === "duration" ? [durationBuckets.find(b => (t.duration_seconds ?? 0) < b.max)!.label]
+      : dimension === "weekday" ? [day ? weekdays[day.weekday - 1] : undefined]
+      : dimension === "month" ? [day ? months[Number(day.date.slice(5, 7)) - 1] : undefined]
+      : dimension === "coach" ? coachFlags(t, trades, context) : entryLabels(t, dimension)
+    if (!labels.length) labels = [dimension === "coach" ? "No flags" : "Unknown"]
+    for (const label of new Set(labels)) if (label) {
+      const members = groups.get(label)
+      if (members) members.push(t)
+      else groups.set(label, [t])
+    }
+  }
+  return [...groups].map(([label, members]) => {
+    const s = journalStats(members)
+    const reviews = members.filter((t): t is JournalOptionTrade => !isShares(t)).map(t => t.review)
+    const rs = reviews.flatMap(r => r?.r_multiple == null ? [] : [r.r_multiple])
+    const backs = reviews.flatMap(r => r?.give_back == null ? [] : [Number(r.give_back)])
+    const average = (values: number[]) => values.length ? values.reduce((a, b) => a + b, 0) / values.length : null
+    return { label, net: s.net, trades: s.trades, wins: s.wins, losses: s.losses, winRate: s.winRate,
+      expectancy: s.trades ? s.net / s.trades : null, averageR: average(rs), profitFactor: s.profitFactor, giveBack: average(backs) }
+  })
 }
 
 /** 290 -> "4m 50s"; 7500 -> "2h 5m"; 273600 -> "3d 4h". */
@@ -310,6 +364,8 @@ export function wholeEntries(groups: readonly TradeGroup[]): JournalOptionTrade[
       buying_power: group.whole?.buying_power ?? first.strategy_buying_power ?? undefined,
       return_on_buying_power: group.whole ? group.whole.return_on_buying_power ?? null : first.strategy_return_on_buying_power ?? null,
       tags: [...new Set(group.trades.flatMap((t) => t.tags ?? []))],
+      mistakes: [...new Set(group.trades.flatMap((t) => t.mistakes ?? []))],
+      review: group.whole?.review ?? first.strategy_review ?? first.review,
     }
   })
 }
