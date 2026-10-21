@@ -2,8 +2,10 @@
 #include "metric_cache.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <fstream>
+#include <optional>
 #include <set>
 
 namespace openport::server {
@@ -108,7 +110,34 @@ json surface_snapshot_json(const SurfaceSnapshot& snapshot) {
       {"slot", snapshot.slot}, {"spot", number(snapshot.spot)}, {"model", "svi"}, {"expiries", expiries}};
 }
 
-void SeriesStore::load_surfaces(const std::filesystem::path& path) {
+void SeriesStore::load_surfaces(const std::vector<std::filesystem::path>& paths) {
+  // Month files older than the retention window stay on disk but are not indexed.
+  const auto month_index = [](const std::string& stem) -> std::optional<int> {
+    int year = 0, month = 0;
+    if (stem.size() < 9 || stem[stem.size() - 3] != '-') return std::nullopt;
+    const auto* text = stem.data() + stem.size() - 7;
+    if (std::from_chars(text, text + 4, year).ptr != text + 4 || std::from_chars(text + 5, text + 7, month).ptr != text + 7 ||
+        month < 1 || month > 12) return std::nullopt;
+    return year * 12 + month - 1;
+  };
+  std::map<std::string, int> newest;
+  for (const auto& path : paths) {
+    const auto stem = path.stem().string();
+    if (const auto index = month_index(stem)) {
+      auto& value = newest.try_emplace(stem.substr(0, stem.size() - 8), *index).first->second;
+      value = std::max(value, *index);
+    }
+  }
+  for (const auto& path : paths) {
+    const auto stem = path.stem().string();
+    const auto index = month_index(stem);
+    if (index && *index < newest.at(stem.substr(0, stem.size() - 8)) - kSurfaceLoadMonths) continue;
+    load_surface_file(path);
+  }
+  for (const auto& [symbol, values] : surfaces_) { (void)values; evict_surfaces(symbol); }
+}
+
+void SeriesStore::load_surface_file(const std::filesystem::path& path) {
   try {
     const auto stem = path.stem().string();
     if (stem.size() < 9) throw std::runtime_error("invalid surface filename");
@@ -122,10 +151,18 @@ void SeriesStore::load_surfaces(const std::filesystem::path& path) {
       const auto date = md::new_york_time(snapshot.time).date;
       if (md::format_date(date).substr(0, 7) != stem.substr(stem.size() - 7)) throw std::runtime_error("surface month mismatch");
       last_write_ = std::max(last_write_, snapshot.time);
+      // Files written before close records were rewritten in place can repeat a slot; the last line wins.
       surfaces_[symbol][{date, snapshot.slot}] = std::move(snapshot);
     }
     if (input.bad()) throw std::runtime_error("cannot read surfaces");
   } catch (const std::exception& e) { damaged_.insert(path); error_ = path.string() + ": " + e.what(); }
+}
+
+void SeriesStore::evict_surfaces(const std::string& symbol) {
+  auto& values = surfaces_[symbol];
+  if (values.empty()) return;
+  const auto cutoff = md::date_from_days(md::days_since_epoch(values.rbegin()->first.first) - kSurfaceRetentionDays);
+  values.erase(values.begin(), values.lower_bound({cutoff, std::string{}}));
 }
 
 bool SeriesStore::insert_surface(const std::string& symbol, const SurfaceSnapshot& snapshot, bool force) {
@@ -136,6 +173,8 @@ bool SeriesStore::insert_surface(const std::string& symbol, const SurfaceSnapsho
   const auto date = md::new_york_time(snapshot.time).date;
   const auto key = std::make_pair(date, snapshot.slot);
   auto& values = surfaces_[symbol];
+  if (!values.empty() &&
+      md::days_since_epoch(date) < md::days_since_epoch(values.rbegin()->first.first) - kSurfaceRetentionDays) return false;
   const auto found = values.find(key);
   if (found != values.end() && snapshot.time != found->second.time &&
       (snapshot.slot != "close" || snapshot.time < found->second.time)) return false;
@@ -153,11 +192,39 @@ bool SeriesStore::insert_surface(const std::string& symbol, const SurfaceSnapsho
       const auto path = directory_ / (symbol + '-' + md::format_date(date).substr(0, 7) + ".surfaces");
       if (damaged_.contains(path)) throw std::runtime_error("refusing to append to damaged file " + path.string());
       j["schema"] = 1; j["market_ns"] = snapshot.time;
-      std::ofstream output(path, std::ios::app);
-      output << j.dump() << '\n'; output.flush();
-      if (!output) { damaged_.insert(path); throw std::runtime_error("cannot write " + path.string()); }
+      if (found == values.end()) {
+        std::ofstream output(path, std::ios::app);
+        output << j.dump() << '\n'; output.flush();
+        if (!output) { damaged_.insert(path); throw std::runtime_error("cannot write " + path.string()); }
+      } else {
+        // A replaced slot (the close, re-sampled until the bell, or a forced correction)
+        // is rewritten in place so each session keeps one record per slot on disk.
+        std::string kept;
+        {
+          std::ifstream input(path);
+          if (!input) throw std::runtime_error("cannot read " + path.string());
+          for (std::string line; std::getline(input, line);) {
+            const auto row = json::parse(line);
+            const auto time = row.at("market_ns").get<md::Timestamp>();
+            if (row.at("slot") == key.second && md::new_york_time(time).date == key.first) continue;
+            kept += line + '\n';
+          }
+          if (input.bad()) throw std::runtime_error("cannot read " + path.string());
+        }
+        auto temporary = path;
+        temporary += ".tmp";
+        {
+          std::ofstream output(temporary, std::ios::trunc | std::ios::binary);
+          output << kept << j.dump() << '\n'; output.flush();
+          if (!output) throw std::runtime_error("cannot write " + temporary.string());
+        }
+        std::error_code ec;
+        std::filesystem::rename(temporary, path, ec);
+        if (ec) throw std::runtime_error("cannot replace " + path.string() + ": " + ec.message());
+      }
     }
     values[key] = snapshot;
+    evict_surfaces(symbol);
     last_write_ = std::max(last_write_, snapshot.time);
     return true;
   } catch (const std::exception& e) { error_ = "series: " + std::string(e.what()); return false; }
@@ -199,8 +266,12 @@ ApiResponse surface_history_response(const MetricsSource& source, const std::str
   if (from > to || to - from > 366 * md::kNanosPerDay) return bad("surface range must be ordered and at most 366 days");
   const auto rows = source.series() ? source.series()->surfaces(symbol, from, std::min(to, as_of)) : std::vector<SurfaceSnapshot>{};
   json snapshots = json::array(), comparisons = json::array();
-  if (!query.contains("compare") || query.at("compare") != "true")
-    for (const auto& row : rows) snapshots.push_back(surface_snapshot_json(row));
+  // Each snapshot carries every expiry's fit, so long ranges return only the newest ones.
+  const bool listing = !query.contains("compare") || query.at("compare") != "true";
+  const bool truncated = listing && rows.size() > kSurfaceHistoryLimit;
+  if (listing)
+    for (auto row = rows.begin() + static_cast<std::ptrdiff_t>(truncated ? rows.size() - kSurfaceHistoryLimit : 0); row != rows.end(); ++row)
+      snapshots.push_back(surface_snapshot_json(*row));
   const auto today = md::new_york_time(as_of).date;
   for (const auto& [label, offset] : std::vector<std::pair<std::string, int>>{{"prior_close", 1}, {"week", 7}, {"month", 30}}) {
     auto date = md::date_from_days(md::days_since_epoch(today) - offset);
@@ -216,6 +287,7 @@ ApiResponse surface_history_response(const MetricsSource& source, const std::str
     comparisons.push_back({{"label", label}, {"date", md::format_date(date)},
         {"snapshot", match == rows.end() ? json(nullptr) : surface_snapshot_json(*match)}});
   }
-  return {200, json{{"symbol", symbol}, {"enabled", source.series() != nullptr}, {"snapshots", snapshots}, {"comparisons", comparisons}}.dump()};
+  return {200, json{{"symbol", symbol}, {"enabled", source.series() != nullptr}, {"snapshots", snapshots},
+      {"limit", kSurfaceHistoryLimit}, {"truncated", truncated}, {"comparisons", comparisons}}.dump()};
 }
 }  // namespace openport::server

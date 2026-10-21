@@ -253,7 +253,8 @@ with `--backfill-series`.
 `GET /api/underlyings/{symbol}/surface-history` returns `snapshots` and three
 `comparisons`: `prior_close`, `week`, and `month`. `from`/`to` accept ISO timestamps
 or New York dates (45 days by default, at most 366 days); `compare=true` omits the
-range list. One week means seven calendar days and one month means the preceding
+range list. The range list holds at most `limit` (400) snapshots, the newest in the
+range; `truncated: true` says older ones were left out, so narrow `from` to read them. One week means seven calendar days and one month means the preceding
 calendar month, clamping the day at month end. Non-session targets roll back to
 the previous business session. The exact target session must have a close sample;
 missing history is null, never a substitute from a more distant recorded date.
@@ -270,13 +271,17 @@ its calibrated range. This compares the same contract over time, not constant
 maturity; expiry ageing and forward changes are part of the comparison. Failed
 fits remain absent; grid violations remain labelled diagnostics.
 
-Snapshots are append-only versioned JSON lines in `SYMBOL-YYYY-MM.surfaces` beside
-the minute CSVs in `--series-dir`. Intraday slots keep the first sample; the close
-slot keeps the latest eligible sample. `--force` can correct the retained sample
+Snapshots are versioned JSON lines in `SYMBOL-YYYY-MM.surfaces` beside the minute
+CSVs in `--series-dir`, one line per session slot. Intraday slots keep the first
+sample; the close slot keeps the latest eligible sample. New slots are appended; a
+replaced slot (the close re-sampled until the bell, or a `--force` correction) rewrites
+that month file through a temporary file, so a session never stores more than one close. `--force` can correct the retained sample
 at its actual timestamp. Repeated identical backfills do not append fitting-time
 noise. Restart restores the same records and full parameter precision. Torn or
 invalid files report a series error and refuse further appends, preserving the
-readable prefix. All retained surface records are currently indexed in memory;
-storage and memory grow with recorded sessions and expiries. `--no-series`
+readable prefix. Only month files within 13 months of a symbol's newest file are
+loaded, and only snapshots within 400 days of its newest snapshot stay in memory;
+older files stay on disk untouched, and older snapshots are not accepted. Disk use
+still grows with recorded sessions and expiries. `--no-series`
 disables this collection too. `enabled: false` and empty arrays identify sources
 without a series store; they do not imply that an old surface was observed.

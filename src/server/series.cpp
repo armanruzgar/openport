@@ -41,10 +41,12 @@ SeriesStore::SeriesStore(std::filesystem::path directory)
   if (directory_.empty()) return;
   try {
     std::filesystem::create_directories(directory_);
+    std::vector<std::filesystem::path> surfaces;
     for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
       if (entry.path().extension() == ".csv") load(entry.path());
-      else if (entry.path().extension() == ".surfaces") load_surfaces(entry.path());
+      else if (entry.path().extension() == ".surfaces") surfaces.push_back(entry.path());
     }
+    load_surfaces(surfaces);
   } catch (const std::exception& e) { error_ = "series: " + std::string(e.what()); }
 }
 

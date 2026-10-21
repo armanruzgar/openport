@@ -151,9 +151,11 @@ class Client:
         """Stored observations; signed skew ranks are returned by volatility()."""
         return self._market(symbol, "series", fields=_list(fields), interval=interval, **{"from": from_, "to": to})
 
-    def surface_history(self, symbol: str, *, compare: bool = False,
+    def surface_history(self, symbol: str, *, compare: bool = True,
                         from_: str | None = None, to: str | None = None) -> JSON:
-        """Recorded SVI parameters; compare selects prior-close, week and month snapshots."""
+        """Recorded SVI parameters. By default only the prior-close, week and month
+        comparisons; compare=False lists the range too, at most ``limit`` newest
+        snapshots with ``truncated`` set when older ones were left out."""
         return self._market(symbol, "surface-history", compare="true" if compare else "false", **{"from": from_, "to": to})
 
     def volatility_scanner(self) -> JSON:

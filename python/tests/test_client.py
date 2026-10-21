@@ -493,6 +493,10 @@ def test_volatility_history_queries_and_account_calendar_scope(stub):
     client.surface_history("SPX", compare=True, from_="2026-09-01", to="2026-09-22")
     target = stub.requests[-1][1]
     assert "compare=true" in target and "from=2026-09-01" in target
+    client.surface_history("SPX")
+    assert "compare=true" in stub.requests[-1][1]
+    client.surface_history("SPX", compare=False)
+    assert "compare=false" in stub.requests[-1][1]
     client.volatility_history("SPX", fields=["rr25", "bf25"], interval="1d")
     assert "fields=rr25%2Cbf25" in stub.requests[-1][1]
     client.volatility("SPX")

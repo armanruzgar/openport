@@ -348,6 +348,10 @@ export interface SurfaceHistory {
   symbol: string
   enabled: boolean
   snapshots: SurfaceSnapshot[]
+  /** Most range snapshots returned; the newest are kept. */
+  limit: number
+  /** Older snapshots in the range were left out. */
+  truncated: boolean
   comparisons: { label: "prior_close" | "week" | "month"; date: string; snapshot: SurfaceSnapshot | null }[]
 }
 

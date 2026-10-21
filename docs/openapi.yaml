@@ -5204,7 +5204,7 @@
       ],
       "get": {
         "summary": "Stored SVI parameters at actual market sample times",
-        "description": "Stored SVI parameters at actual market sample times. Default range is the last 45 days; from/to accept ISO timestamps or New York dates, ordered and at most 366 days. compare=true omits the range list and returns the prior close, one calendar week and one calendar month targets, rolled back over non-sessions. Missing target sessions are null; no nearest stored date is substituted. Close snapshots appear only once the session is complete at market as_of. Failed fits and finite-grid diagnostics remain visible.",
+        "description": "Stored SVI parameters at actual market sample times. Default range is the last 45 days; from/to accept ISO timestamps or New York dates, ordered and at most 366 days. The range list holds at most `limit` (400) snapshots, the newest ones; `truncated` is true when older snapshots in the range were left out. compare=true omits the range list and returns the prior close, one calendar week and one calendar month targets, rolled back over non-sessions. Missing target sessions are null; no nearest stored date is substituted. Close snapshots appear only once the session is complete at market as_of. Failed fits and finite-grid diagnostics remain visible.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -25039,6 +25039,12 @@
               "$ref": "#/components/schemas/SurfaceSnapshot"
             }
           },
+          "limit": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
           "comparisons": {
             "type": "array",
             "items": {
@@ -25050,6 +25056,8 @@
           "symbol",
           "enabled",
           "snapshots",
+          "limit",
+          "truncated",
           "comparisons"
         ]
       },

@@ -16,6 +16,12 @@
 namespace openport::server {
 /// Retained minute starts lie in (newest - retention, newest], per symbol.
 inline constexpr md::Timestamp kSeriesMinuteRetention = 45 * md::kNanosPerDay;
+/// Surface snapshots older than this before a symbol's newest one are not indexed.
+inline constexpr int kSurfaceRetentionDays = 400;
+/// Surface month files this many months before a symbol's newest file are not loaded.
+inline constexpr int kSurfaceLoadMonths = 13;
+/// surface-history returns at most this many range snapshots, the newest ones.
+inline constexpr std::size_t kSurfaceHistoryLimit = 400;
 
 inline constexpr std::array<std::string_view, 22> kSeriesFields{
     "spot", "forward", "mfiv9", "mfiv30", "mfiv93", "mfiv182", "mfiv365",
@@ -50,6 +56,8 @@ struct SurfaceSnapshot {
 /// Duplicate minutes keep their first row; force appends a replacement only if changed.
 /// Keeps 45 days of minutes and all daily close rows in memory. Older disk-backed
 /// minutes are read on demand; older memory-only minutes are discarded.
+/// Surface snapshots keep one record per session slot; a replaced record is rewritten
+/// in place, and only kSurfaceRetentionDays of snapshots stay indexed.
 class SeriesStore {
  public:
   explicit SeriesStore(std::filesystem::path directory = {});
@@ -64,7 +72,9 @@ class SeriesStore {
   [[nodiscard]] std::vector<SurfaceSnapshot> surfaces(const std::string& symbol,
       md::Timestamp from, md::Timestamp to) const;
  private:
-  void load_surfaces(const std::filesystem::path& path);
+  void load_surfaces(const std::vector<std::filesystem::path>& paths);
+  void load_surface_file(const std::filesystem::path& path);
+  void evict_surfaces(const std::string& symbol);
   void load(const std::filesystem::path& path);
   void read_file(const std::filesystem::path& path, const std::function<void(const SeriesRow&)>& visit) const;
   [[nodiscard]] std::map<md::Timestamp, SeriesRow> read_minutes(const std::string& symbol,

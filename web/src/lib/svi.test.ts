@@ -88,7 +88,7 @@ describe("SSVI surface curves", () => {
 
 it("samples stored curves at their original tenor/forward and matches exact expiry ids", () => {
   const stored = { ...expiry, forward: 5100, svi_years: 1, points: [], calendar_ok: false }
-  const history = { symbol: "SPX", enabled: true, snapshots: [], comparisons: [
+  const history = { symbol: "SPX", enabled: true, snapshots: [], limit: 400, truncated: false, comparisons: [
     { label: "prior_close" as const, date: "2026-09-21", snapshot: { as_of: "2026-09-21T19:59:00Z", date: "2026-09-21", slot: "close", spot: 5100, model: "svi" as const, expiries: [stored] } },
     { label: "week" as const, date: "2026-09-15", snapshot: null },
   ] }

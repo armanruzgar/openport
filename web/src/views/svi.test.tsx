@@ -20,7 +20,7 @@ describe("SVI view", () => {
   it("shows unavailable comparison dates and an accessible same-expiry selector", () => {
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity } } })
     client.setQueryData(["surface", "SPX", 6, .1, 1], surface)
-    client.setQueryData(["surface-history", "SPX", 0], { symbol: "SPX", enabled: true, snapshots: [], comparisons: [
+    client.setQueryData(["surface-history", "SPX", 0], { symbol: "SPX", enabled: true, snapshots: [], limit: 400, truncated: false, comparisons: [
       { label: "prior_close", date: "2026-09-21", snapshot: null }, { label: "week", date: "2026-09-15", snapshot: null },
       { label: "month", date: "2026-08-21", snapshot: null },
     ] })
