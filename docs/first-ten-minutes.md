@@ -103,3 +103,18 @@ Under **Trade history**, click the `SPX Sep 16 5975P` row (`liquidated: target`)
   best day at half the profit. [Plans and rules](paper-trading.md#account-rules-and-evaluations).
 - Connect your own data: [providers and configuration](configuration.md).
 - [Features](features.md) lists everything the terminal and simulator do.
+
+## Practise the decision again
+
+In the finished trade's Journal review, use **Replay from here** to start a fresh
+paused account five minutes before entry with the same source, seed, date and plan.
+Pick any mistake/setup labels separately from free-text tags, then compare Journal
+reports by entry DTE, delta, IV, time or template. Scenario event markers show where
+the authored move happened on the trade and equity charts.
+
+For a scored full-session drill, clear **Start at**, choose **Morning crush**, and
+play to the end. Finished runs show the machine objectives, score and personal
+best. The partial-session walk-through above is intentionally unscored. **Today's
+practice** returns weaker recent scores sooner with fresh seeds. Export a scenario
+pack to share the drill; add a challenge to fix its seed and plan. All results are
+paper practice, not evidence of live performance.

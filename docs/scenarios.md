@@ -527,3 +527,104 @@ or analytics book.
 write policy is disabled permits listing and reading history but refuses replay
 starts, controls and deletions. Loopback without a token uses the existing open
 write policy; a non-loopback server without a token is read-only.
+
+## Scored drills
+
+The optional `objectives` array sits next to `goal`. It contains at most 16
+objectives with unique, nonempty `id`s (at most 80 bytes). The free-text goal is
+still guidance; only these declared objectives affect the score:
+
+```json
+"objectives": [
+  {"id": "reduce-vega", "type": "max_net_vega", "at": "10:15", "limit": 1000},
+  {"id": "protect-room", "type": "min_floor_room", "limit": 25},
+  {"id": "flat", "type": "flat_by", "at": "15:45"},
+  {"id": "loss-budget", "type": "max_loss", "limit": 500}
+]
+```
+
+- `max_net_vega`: absolute net position vega, dollars per volatility point, must
+  stay at or below `limit` from `at` onward. It is net exposure, not gross vega.
+- `min_floor_room`: marked equity minus the current evaluation floor must never
+  fall below `limit` percent of the plan's drawdown allowance. Bounds: 0–100.
+  A plan without a drawdown floor cannot grade this objective.
+- `flat_by`: no held options or shares from `at` onward. Working orders alone do
+  not fail it, but any later fill that opens a holding does. It has no `limit`.
+- `max_loss`: marked equity must never lose more than `limit` dollars relative
+  to the initial balance, including fees and unrealised P&L.
+
+Other limits are finite nonnegative numbers up to one billion. Timed objectives
+use `HH:MM` in New York and optionally `session` (one-based, default 1). Deadlines
+resolve with the same session windows as authored events: regular-session times
+scale proportionally on early closes. Continuous objectives cannot
+have `at` or `session` fields.
+
+Grading reads every committed journal state, including state deltas, after the run
+ends. A breach remains a breach after risk recovers. Missing required evidence or
+an unreached deadline is unknown, not a pass. A complete run earns 100 times the
+fraction of objectives passed, with equal weights. A stopped, interrupted,
+start-at or restarted run has no headline score. Resetting the account or changing
+its plan during the run also withholds the score. These are risk constraints;
+staying out of the market can satisfy them. A high score does not establish an
+edge or profitability. Morning crush, Afternoon waterfall and Range bleed include
+objectives. Their source hashes changed; older runs need their original build or
+source for verification.
+
+Finished replay history stores the derived score, individual observations and
+actual completion wall time. The UI shows the best complete score per scenario
+among retained history. Deleting history can lower that best. Scores across
+seeds and plans are practice feedback, not a fair competitive ranking.
+
+**Today's practice** returns low recent scores after one day (below 60), three
+days (60–79), or seven days (80–100), with untried scenarios interleaved. Losing underlying groups in the currently
+selected Journal, with at least three closed option trades, bring matching-symbol
+drills back after one day and raise their priority. It offers
+up to five scenarios with machine objectives and fresh uint64 seeds, avoiding retained seeds for that
+scenario. Complete scored runs count once per actual New York completion day
+for a streak; yesterday keeps the streak alive until today ends. Simulated market
+dates never advance a streak. History is shared by this self-hosted installation,
+so “personal” means its retained replay history, not a separate user profile.
+
+## Scenario packs and challenges
+
+`GET /api/replay/packs` exports the catalogue as `{"packs":[...]}`.
+`GET /api/replay/packs/{id}` downloads one pack as a JSON attachment without
+browser number conversion. Imports send the file text unchanged, preserving large
+integer default seeds inside the scenario as well as the outer seed string.
+`POST /api/replay/packs` imports one pack, at most 64 KiB:
+
+```json
+{
+  "version": 1,
+  "scenario": {"id": "my-drill", "title": "My drill", "...": "complete scenario fields"},
+  "seed": "7",
+  "plan": "practice",
+  "challenge": {"id": "vega-day-one", "title": "Vega day one"}
+}
+```
+
+Replace the abbreviated `scenario` with a complete scenario document, including
+any objectives. `challenge` is optional. Seed strings preserve the full uint64
+range. The plan must be an unlocked evaluation or practice plan. Imports require
+replay/admin access, demo mode and writable replay storage; they persist under
+`scenario-packs/` beside the account journals and appear immediately. A scenario
+ID with different existing content is refused: choose a new ID. There are no URLs,
+remote includes or executable hooks in a pack. `--scenario-dir` still works.
+
+In **Replay → Scenario packs**, load a JSON file or paste a pack, import it, then
+export or start it. Exported JSON can be edited to choose a seed/plan or add a
+challenge. `POST /api/replay {"pack":"my-drill","paused":true}` starts the fixed
+scenario, seed, scenario date and plan; only `paused` and `speed` may vary. A
+challenge definition is recorded inside the journal's run input and included in
+its existing verification receipt. Verification checks that the definition agrees
+with the actual source, seed, date and initial plan, and recomputes drill results.
+Challenge inputs also embed the exact scenario source text under `scenario_source`;
+verification checks its SHA-256 and uses it without needing the original file path.
+
+Share the pack, journal, its `.json` playback sidecar and verification receipt. Others can run
+`openportd --verify-run RUN.jsonl` with the matching build/calendar. A receipt alone
+is not a signed attestation and cannot replace the journal or source. Without the
+playback sidecar, verification still checks transactions but withholds a full-run
+drill score because start-at/restart eligibility is unknown. Ordinary custom runs
+and older challenges without embedded source still need their original source file. See
+[replay history](api.md#journal-practice-additions) for verification and source availability.

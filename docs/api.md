@@ -416,3 +416,35 @@ The account's `costs` reports amounts paid by kind, `total`, `resets_used`,
 and `fee_kind`. Attempts expose their starting charge and phase in `rules`.
 See [program costs](paper-trading.md#program-costs-and-reset-limits-f64) for precise
 identity, purchase, historical-journal and illustrative-pricing semantics.
+
+### Journal practice additions
+
+- `PUT /api/trades/{id}/note` also accepts `mistakes`, a separate array of at most
+  seven fixed picks (`chased`, `oversized`, `moved stop`, `revenge`, `broke plan`,
+  `early exit`, `A+ setup`). Replacement semantics apply; omitted clears it.
+  Trades and note replies return the picks. Option trades include `entry_order`
+  for joining playbook adherence. CSV includes both fields where applicable.
+- `POST /api/replay {"replay_from":"RUN_ID","trade":"1"}` creates a fresh
+  paused account five minutes before that source trade, bounded by the session
+  open. It preserves the source input, seed, date, revision and initial plan,
+  without prior orders. It requires durable history and unchanged source data.
+  Unknown runs return 404; missing/changed sources return 409
+  `REPLAY_NOT_RESTARTABLE`; invalid trade IDs return 400. The previous replay is
+  retired only after the new one starts successfully.
+- `GET /api/replay/packs` returns `{"packs":[...]}`; `GET /api/replay/packs/{id}`
+  downloads a single pack without converting its JSON integers in the browser. `POST` imports one version-1
+  pack containing complete `scenario` JSON, decimal-string `seed`, `plan`, and
+  optional `challenge: {id,title}`. Writes require replay/admin scope and writable
+  demo replay storage. Same-ID different source content is rejected. Start with
+  `POST /api/replay {"pack":"SCENARIO_ID","paused":true}`; only `speed` and
+  `paused` may accompany the pack ID. See [scenario packs](scenarios.md#scenario-packs-and-challenges).
+
+Replay listings/states include resolved scenario `events` and `objectives`.
+Finished history can include `drill`, `personal_best` and real-wall-time
+`completed_at`; these are separate from market `time`. Scores are derived practice
+metrics, absent on older runs and null for incomplete runs/evidence. Verification
+receipts retain challenge definitions under `run.inputs[].challenge`, embed their
+exact `scenario_source` for portable verification, and recompute
+`run.drill` from the committed journal. Share the journal, playback `.json` sidecar
+and source as well as the receipt to run `--verify-run`; the sidecar establishes
+full-run eligibility, and a receipt is not a signed credential.
