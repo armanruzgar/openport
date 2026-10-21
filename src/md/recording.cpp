@@ -107,6 +107,7 @@ class Decoder {
   void finish() const {
     if (!bytes_.empty()) invalid("unexpected trailing fields");
   }
+  [[nodiscard]] bool empty() const noexcept { return bytes_.empty(); }
 
  private:
   std::span<const char> bytes_;
@@ -226,6 +227,8 @@ void encode_event(Bytes& bytes, Timestamp received, const Event& event) {
           } else if constexpr (std::is_same_v<T, OptionTrade>) {
             e.number(v.price);
             e.number(v.size);
+            // An optional trailing field: trades without a venue keep their old bytes.
+            if (v.venue != 0) e.number(v.venue);
           } else if constexpr (std::is_same_v<T, OpenInterest> || std::is_same_v<T, OptionVolume>) {
             e.number(v.contracts);
           } else if constexpr (std::is_same_v<T, VendorGreeks>) {
@@ -269,10 +272,13 @@ RecordedEvent decode_event(std::span<const char> bytes, std::uint32_t version) {
       out.event = OptionQuote{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>(),
                               d.number<double>(),       d.number<double>(),    d.number<double>()};
       break;
-    case 2:
-      out.event = OptionTrade{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>(),
-                              d.number<double>()};
+    case 2: {
+      OptionTrade v{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>(),
+                    d.number<double>()};
+      if (!d.empty()) v.venue = d.number<std::uint16_t>();
+      out.event = v;
       break;
+    }
     case 3:
       out.event = OpenInterest{d.number<InstrumentId>(), d.number<Timestamp>(), d.number<double>()};
       break;

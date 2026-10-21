@@ -38,6 +38,7 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
       md::ContractDefinition{id, contract},
       md::OptionQuote{id, hi, nan, -0.0, tiny, inf},
       md::OptionTrade{id, lo, -inf, -huge},
+      md::OptionTrade{id, hi, 1.25, 7, std::numeric_limits<std::uint16_t>::max()},
       md::OpenInterest{id, hi, nan},
       md::OptionVolume{id, lo, tiny},
       md::VendorGreeks{id, lo, nan, huge, -tiny, -0.0, inf, -inf},
@@ -92,6 +93,21 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
   EXPECT_TRUE(reader.diagnostic().empty());
   reader.rewind();
   ASSERT_TRUE(reader.next());
+}
+
+TEST(Recording, TradesWithoutAVenueKeepTheirEarlierBytes) {
+  test::RecordingFile plain, venued;
+  test::record_events(plain.path, {md::OptionTrade{1, 2, 3, 4}});
+  test::record_events(venued.path, {md::OptionTrade{1, 2, 3, 4, 9}});
+  md::RecordingReader reader(venued.path);
+  const auto record = reader.next();
+  ASSERT_TRUE(record);
+  EXPECT_EQ(std::get<md::OptionTrade>(record->event).venue, 9);
+  md::RecordingReader old(plain.path);
+  const auto unchanged = old.next();
+  ASSERT_TRUE(unchanged);
+  EXPECT_EQ(std::get<md::OptionTrade>(unchanged->event).venue, 0);
+  EXPECT_TRUE(reader.diagnostic().empty() && old.diagnostic().empty());
 }
 
 TEST(Recording, EmptySessionAndFalseCapabilitiesAreClean) {
