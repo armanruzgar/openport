@@ -116,6 +116,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/tastytrade.cpp
     providers/dxlink.cpp
     providers/schwab.cpp
+    providers/alpaca.cpp
   )
   add_library(openport::providers ALIAS openport_providers)
   if(OPENPORT_BUILD_TESTS AND OPENPORT_SANITIZE)

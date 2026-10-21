@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "openport/providers/alpaca.hpp"
 #include "openport/providers/cboe.hpp"
 #include "openport/providers/massive.hpp"
 #include "openport/providers/options.hpp"
@@ -67,6 +68,7 @@ std::vector<std::string_view> provider_names() {
       "tradier",
       "tastytrade",
       "schwab",
+      "alpaca",
       "replay",
       "demo",
   };
@@ -88,6 +90,10 @@ void validate_subscription(std::string_view provider, const md::Subscription& su
       (subscription.max_expiries != 0 || subscription.strike_window != 0))
     throw std::invalid_argument("replay: --expiries and --window must be zero; "
                                 "the recording already contains the original subscription filters");
+  if (provider == "alpaca")
+    for (const auto& symbol : subscription.underlyings)
+      if (md::is_index_underlying(symbol))
+        throw std::invalid_argument("alpaca: no index options such as " + symbol + "; use an equity or ETF such as SPY");
   if (provider == "databento" &&
       (subscription.max_expiries != 0 || subscription.strike_window != 0))
     throw std::invalid_argument(
@@ -127,6 +133,20 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
                            environment("SCHWAB_REFRESH_TOKEN")};
     options.poll_seconds = seconds_option(config, "poll_seconds", std::chrono::seconds(0));
     return std::make_unique<SchwabProvider>(std::move(options));
+  }
+  if (config.name == "alpaca") {
+    validate_keys(config, {"feed", "stock_feed", "poll_seconds", "requests_per_minute"});
+    AlpacaProvider::Options options;
+    options.key_id = environment("APCA_API_KEY_ID");
+    options.secret_key = environment("APCA_API_SECRET_KEY");
+    const auto feed = option_or(config, "feed", "indicative");
+    if (feed != "indicative" && feed != "opra") throw std::invalid_argument("alpaca: feed must be indicative or opra");
+    options.feed = feed == "opra" ? AlpacaProvider::Feed::Opra : AlpacaProvider::Feed::Indicative;
+    options.stock_feed = option_or(config, "stock_feed", options.stock_feed);
+    options.requests_per_minute = parse_integer(option_or(config, "requests_per_minute", "200"),
+                                                "alpaca requests_per_minute", 1, 10000);
+    options.poll_seconds = seconds_option(config, "poll_seconds", std::chrono::seconds(0));
+    return std::make_unique<AlpacaProvider>(std::move(options));
   }
   if (config.name == "demo") {
     validate_keys(config, {"days", "speed", "revision"});
