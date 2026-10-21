@@ -27,3 +27,6 @@ __pycache__/
 
 # Release builds (tools/release.sh)
 /dist/
+
+# Python editable-install metadata
+*.egg-info/
