@@ -113,7 +113,10 @@ export const alertMetrics: Record<AlertScope, { value: string; label: string }[]
     { value: "term_ratio", label: "9d/30d IV ratio" }],
   account: [{ value: "equity", label: "Equity" }, { value: "day_pnl", label: "Day P&L" }, { value: "unrealised", label: "Unrealised P&L" },
     { value: "floor_room", label: "Room to the floor" }, { value: "buying_power", label: "Buying power" },
-    { value: "dollar_delta", label: "Dollar delta" }, { value: "vega", label: "Vega" }, { value: "theta", label: "Theta" }],
+    { value: "dollar_delta", label: "Dollar delta" }, { value: "vega", label: "Vega" }, { value: "theta", label: "Theta" },
+    { value: "dollar_gamma_1pct", label: "Dollar gamma / 1%" }, { value: "delta_utilisation", label: "Delta utilisation (ratio)" },
+    { value: "vega_utilisation", label: "Vega utilisation (ratio)" }, { value: "grid_loss", label: "Worst held-book grid loss ($)" },
+    { value: "floor_touch_probability", label: "Max single-barrier floor-touch odds (ratio)" }],
 }
 const metricLabel = (alert: Pick<Alert, "scope" | "metric">) =>
   alertMetrics[alert.scope]?.find((m) => m.value === alert.metric)?.label.toLowerCase() ?? alert.metric

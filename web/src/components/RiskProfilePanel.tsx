@@ -74,12 +74,14 @@ export function RiskProfilePanel({ underlyings }: { underlyings: string[] }) {
   const [benchmark, setBenchmark] = useState<"SPY" | "SPX">("SPY")
   const [dates, setDates] = useState<(number | "expiry")[]>([0, 1, "expiry"])
   const [iv, setIv] = useState(0)
+  const [termScaled, setTermScaled] = useState(false)
   const [range, setRange] = useState(10)
   const [betaText, setBetaText] = useState("")
   const betas = parseBetas(betaText)
   const underlying = underlyings.includes(scope) ? scope : ""
   const query: RiskProfileQuery = {
     ...(underlying ? { underlying } : { benchmark, betas: betas ?? {} }),
+    ...(termScaled ? { term_scaled: true } : {}),
     days: dateChoices.map((c) => c.value).filter((v) => dates.includes(v)), iv, range,
   }
   const profile = useQuery({
@@ -109,6 +111,7 @@ export function RiskProfilePanel({ underlyings }: { underlyings: string[] }) {
       <label className="flex flex-col gap-1 text-muted">IV change (vol points)
         <input aria-label="IV change in vol points" type="number" className="trade-input w-24" step={1} min={-50} max={100} value={iv}
           onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v) && Math.abs(v) <= 100) setIv(v) }} /></label>
+      <label className="flex gap-2 text-muted"><input type="checkbox" checked={termScaled} onChange={(e) => setTermScaled(e.target.checked)} />Term-scaled IV shock</label>
       <label className="flex flex-col gap-1 text-muted">Range
         <select aria-label="Profile range" className="trade-input" value={range} onChange={(e) => setRange(Number(e.target.value))}>
           {[3, 5, 10, 20, 40].map((r) => <option key={r} value={r}>±{r}%</option>)}

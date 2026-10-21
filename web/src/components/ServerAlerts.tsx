@@ -105,6 +105,7 @@ export function ServerAlerts() {
     <p className="text-xs text-muted">Watch options, spreads, Greeks, implied volatility and account measures.
       {forwards ? " The server checks them with the browser closed and forwards each firing to the configured channels below."
         : " The server checks them with each market update. External forwarding requires an enabled alert channel; demo and replay also require include_simulated in the server notification config."}</p>
+    {scope === "account" && <p className="text-xs text-muted">Utilisation and odds use ratios (0.8 = 80%). Floor-touch odds are the largest modelled single-underlying barrier probability by today's close, not joint portfolio odds. Unavailable valuations do not fire.</p>}
     <form className="grid grid-cols-2 gap-2" onSubmit={(event) => { event.preventDefault(); void add() }}>
       <label className="trade-label">Watch
         <select className="trade-input" aria-label="Alert scope" value={scope} onChange={(e) => choose(e.target.value as AlertScope)}>

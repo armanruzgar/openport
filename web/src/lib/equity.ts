@@ -32,3 +32,17 @@ export function intradayEquity(samples: readonly EquitySample[], day: string, at
   })
   return { series, markers }
 }
+
+/** Observed Greeks only; unavailable valuations and gaps break the line. */
+export function riskHistory(samples: readonly EquitySample[], metric: keyof import("../api/trading-types").EquityRisk, day?: string): Series[] {
+  const rows = samples.filter((s) => (!day || s.day === day) && Number.isFinite(Date.parse(s.time)))
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+  const points: Series["points"] = []
+  rows.forEach((row, i) => {
+    const x = Date.parse(row.time), previous = rows[i - 1]
+    if (previous && (x - Date.parse(previous.time) > 90_000 || previous.attempt !== row.attempt)) points.push({ x: x - 1, y: null })
+    const value = row.risk?.[metric]
+    points.push({ x, y: value != null && Number.isFinite(value) ? value : null })
+  })
+  return points.some((p) => p.y != null) ? [{ id: metric, label: metric.replaceAll("_", " "), color: "var(--chart-1)", points, dots: true }] : []
+}

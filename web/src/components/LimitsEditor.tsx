@@ -3,7 +3,7 @@ import { PendingSettingsNotice } from "./PendingSettingsNotice"
 import { useRef, useState } from "react"
 import { ApiError } from "../api/client"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
-import type { Limits, Risk, TradingStatus } from "../api/trading-types"
+import type { Limits, Risk, RiskCaps, TradingStatus } from "../api/trading-types"
 import { validMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
@@ -31,11 +31,23 @@ const fields: { key: keyof ReturnType<typeof draftOf>; label: string; money?: bo
   { key: "max_quote_age_seconds", label: "Max quote age (seconds)", integer: true },
   { key: "max_valuation_age_seconds", label: "Max valuation age (seconds)", integer: true },
 ]
+const extraCaps = [["dollar_gamma_1pct", "Dollar gamma / 1%"], ["theta", "Absolute theta / day"],
+  ["worst_grid_loss", "Worst reachable grid loss ($)"], ["short_vega", "Gross short vega / point"]] as const
+function CapInputs({ value, change, label }: { value: RiskCaps; change: (next: RiskCaps) => void; label: string }) {
+  return <div className="grid grid-cols-2 gap-2">{extraCaps.map(([key, title]) => <label key={key} className="trade-label">{title}
+    <input aria-label={`${label} ${title}`} className="trade-input" type="number" min={0} step="any" placeholder="Off" value={value[key] ?? ""}
+      onChange={(e) => change({ ...value, [key]: e.target.value === "" ? null : Number(e.target.value) })} /></label>)}</div>
+}
+function scopeDraft(limits: Limits) {
+  return (['tag_overrides', 'playbook_overrides'] as const).flatMap((kind) => Object.entries(limits[kind] ?? {}).map(([name, caps]) => ({ kind, name, caps })))
+}
 export function LimitsEditor({ initial, trading, onClose }: { initial: Risk; trading: TradingStatus; onClose: () => void }) {
   const api = useActionApi()
   const [revision, setRevision] = useState(initial.limits_revision)
   const [draft, setDraft] = useState(() => draftOf(initial.pending_limits ?? initial.limits))
   const [overrides, setOverrides] = useState(() => overridesOf(initial.pending_limits ?? initial.limits))
+  const [extra, setExtra] = useState(() => initial.pending_limits ?? initial.limits)
+  const [scopes, setScopes] = useState(() => scopeDraft(initial.pending_limits ?? initial.limits))
   const [error, setError] = useState<unknown>()
   const [pending, setPending] = useState(false)
   const busy = useRef(false)
@@ -46,16 +58,21 @@ export function LimitsEditor({ initial, trading, onClose }: { initial: Risk; tra
   const validOverrides = overrides.every(({ symbol, delta, vega }) => /^[A-Z0-9.]{1,16}$/.test(symbol) &&
     [delta, vega].every((value) => value.trim() !== "" && Number.isFinite(Number(value)) && Number(value) >= 0)) &&
     new Set(overrides.map(({ symbol }) => symbol)).size === overrides.length
-  const valid = validOverrides && fields.every(({ key, money, integer }) => money ? validMoney(draft[key]) : draft[key].trim() !== "" && Number.isFinite(Number(draft[key])) && Number(draft[key]) >= 0 && (!integer || Number.isSafeInteger(Number(draft[key]))))
+  const capsValid = (caps: RiskCaps) => Object.values(caps).every((v) => v == null || (Number.isFinite(v) && v >= 0))
+  const validScopes = scopes.every((s) => s.name.trim() !== "" && capsValid(s.caps)) && new Set(scopes.map((s) => `${s.kind}:${s.name}`)).size === scopes.length
+  const valid = validScopes && capsValid(extra.aggregate) && capsValid(extra.per_underlying) &&
+    Object.values(extra.underlying_overrides ?? {}).every(capsValid) && validOverrides && fields.every(({ key, money, integer }) => money ? validMoney(draft[key]) : draft[key].trim() !== "" && Number.isFinite(Number(draft[key])) && Number(draft[key]) >= 0 && (!integer || Number.isSafeInteger(Number(draft[key]))))
   async function save() {
     if (busy.current || !valid || conflict || writeBlocked(trading, token)) return
     busy.current = true; setPending(true); setError(undefined)
     const limits: Limits = {
       max_order_contracts: Number(draft.max_order_contracts), price_band_absolute: draft.price_band_absolute,
       price_band_relative: Number(draft.price_band_relative), max_daily_loss: draft.max_daily_loss,
-      aggregate: { dollar_delta: Number(draft.aggregate_delta), vega: Number(draft.aggregate_vega) },
-      per_underlying: { dollar_delta: Number(draft.underlying_delta), vega: Number(draft.underlying_vega) },
-      underlying_overrides: Object.fromEntries(overrides.map(({ symbol, delta, vega }) => [symbol, { dollar_delta: Number(delta), vega: Number(vega) }])),
+      aggregate: { ...extra.aggregate, dollar_delta: Number(draft.aggregate_delta), vega: Number(draft.aggregate_vega) },
+      per_underlying: { ...extra.per_underlying, dollar_delta: Number(draft.underlying_delta), vega: Number(draft.underlying_vega) },
+      underlying_overrides: Object.fromEntries(overrides.map(({ symbol, delta, vega }) => [symbol, { ...extra.underlying_overrides?.[symbol], dollar_delta: Number(delta), vega: Number(vega) }])),
+      tag_overrides: Object.fromEntries(scopes.filter((s) => s.kind === "tag_overrides").map((s) => [s.name, s.caps])),
+      playbook_overrides: Object.fromEntries(scopes.filter((s) => s.kind === "playbook_overrides").map((s) => [s.name, s.caps])),
       max_quote_age_seconds: Number(draft.max_quote_age_seconds), max_valuation_age_seconds: Number(draft.max_valuation_age_seconds),
     }
     try { await api.updateLimits(revision, limits, trading.write); if (sameSession()) onClose() }
@@ -67,7 +84,7 @@ export function LimitsEditor({ initial, trading, onClose }: { initial: Risk; tra
     busy.current = true; setPending(true)
     try {
       const latest = await api.risk()
-      if (sameSession()) { setRevision(latest.limits_revision); setDraft(draftOf(latest.pending_limits ?? latest.limits)); setOverrides(overridesOf(latest.pending_limits ?? latest.limits)); setError(undefined) }
+      if (sameSession()) { setRevision(latest.limits_revision); setDraft(draftOf(latest.pending_limits ?? latest.limits)); setOverrides(overridesOf(latest.pending_limits ?? latest.limits)); setExtra(latest.pending_limits ?? latest.limits); setScopes(scopeDraft(latest.pending_limits ?? latest.limits)); setError(undefined) }
     } catch (failure) { if (sameSession()) setError(failure) }
     finally { busy.current = false; if (sameSession()) setPending(false) }
   }
@@ -77,6 +94,11 @@ export function LimitsEditor({ initial, trading, onClose }: { initial: Risk; tra
     <WriteAccess trading={trading} />
     <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void save() }}>
       <fieldset disabled={pending} className="grid min-w-0 grid-cols-2 gap-3"><legend className="sr-only">Limits</legend>{fields.map(({ key, label, integer }) => <label key={key} className="trade-label">{label}<input className="trade-input" inputMode={integer ? "numeric" : "decimal"} value={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.value })} required /></label>)}</fieldset>
+      <fieldset disabled={pending} className="space-y-3"><legend className="text-sm font-medium">Additional exposure caps</legend>
+        <p className="text-xs text-muted">Blank disables a cap; zero allows no exposure. Short vega is gross across contracts, so long wings do not offset it.</p>
+        <h4 className="text-xs">Aggregate</h4><CapInputs label="Aggregate" value={extra.aggregate} change={(caps) => setExtra({ ...extra, aggregate: caps })} />
+        <h4 className="text-xs">Per underlying</h4><CapInputs label="Per underlying" value={extra.per_underlying} change={(caps) => setExtra({ ...extra, per_underlying: caps })} />
+      </fieldset>
       <fieldset disabled={pending} className="space-y-3 min-w-0"><legend className="text-sm font-medium">Underlying overrides</legend>
         <p className="text-xs text-muted">Each row replaces the common cap for that symbol. Removing it returns to the common cap; any loosening waits for rollover.</p>
         <div className="overflow-x-auto"><table className="w-full text-xs"><thead><tr><th>Underlying</th><th>Dollar delta</th><th>Vega</th><th><span className="sr-only">Actions</span></th></tr></thead>
@@ -86,6 +108,24 @@ export function LimitsEditor({ initial, trading, onClose }: { initial: Risk; tra
           </tr>)}</tbody></table></div>
         <button type="button" className="trade-button" onClick={() => setOverrides([...overrides, { symbol: "", delta: draft.underlying_delta, vega: draft.underlying_vega }])}>Add underlying override</button>
         {!validOverrides && <p className="text-xs text-warn">Use unique symbols (1–16 uppercase letters, digits or dots) and nonnegative numeric caps.</p>}
+      </fieldset>
+      {overrides.map((row) => <fieldset key={row.symbol} disabled={pending}><legend className="text-xs">{row.symbol || "Underlying"} additional caps</legend>
+        <CapInputs label={row.symbol} value={extra.underlying_overrides?.[row.symbol] ?? { dollar_delta: Number(row.delta), vega: Number(row.vega) }}
+          change={(caps) => setExtra({ ...extra, underlying_overrides: { ...extra.underlying_overrides, [row.symbol]: caps } })} /></fieldset>)}
+      <fieldset disabled={pending} className="space-y-3"><legend className="text-sm font-medium">Tag and playbook caps</legend>
+        <p className="text-xs text-muted">Tags match exactly; playbook IDs cover every version. Shared fungible positions count in each matching scope, including their entry tags.</p>
+        {scopes.map((scope, index) => {
+          const update = (next: typeof scope) => setScopes(scopes.map((s, i) => i === index ? next : s))
+          return <div key={index} className="space-y-2 rounded border border-border p-2">
+            <div className="grid grid-cols-2 gap-2"><label className="trade-label">Scope<select className="trade-input" value={scope.kind} onChange={(e) => update({ ...scope, kind: e.target.value as typeof scope.kind })}>
+              <option value="tag_overrides">Trade tag</option><option value="playbook_overrides">Playbook ID</option></select></label>
+              <label className="trade-label">Name<input className="trade-input" value={scope.name} onChange={(e) => update({ ...scope, name: e.target.value })} /></label>
+              {(['dollar_delta', 'vega'] as const).map((key) => <label key={key} className="trade-label">{key.replaceAll('_', ' ')}<input className="trade-input" type="number" min={0} step="any" value={scope.caps[key]} onChange={(e) => update({ ...scope, caps: { ...scope.caps, [key]: Number(e.target.value) } })} /></label>)}
+            </div><CapInputs label={scope.name} value={scope.caps} change={(caps) => update({ ...scope, caps })} />
+            <button type="button" className="trade-button" onClick={() => setScopes(scopes.filter((_, i) => i !== index))}>Remove scope</button>
+          </div>
+        })}
+        <button type="button" className="trade-button" onClick={() => setScopes([...scopes, { kind: "tag_overrides", name: "", caps: { ...extra.aggregate } }])}>Add scoped cap</button>
       </fieldset>
       <TradingError error={error} />
       {conflict && <div className="space-y-2 text-sm"><p>The limits changed elsewhere. Reload the current limits, review your changes and save again.</p><button type="button" className="trade-button" disabled={pending} onClick={() => void reload()}>Reload current limits (replace edits)</button></div>}

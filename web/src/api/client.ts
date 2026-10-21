@@ -120,6 +120,7 @@ export function riskProfilePath(query: RiskProfileQuery): string {
   if (query.underlying) params.set("underlying", query.underlying)
   else if (query.benchmark) params.set("benchmark", query.benchmark)
   if (query.days?.length) params.set("days", query.days.join(","))
+  if (query.term_scaled) params.set("term_scaled", "true")
   if (query.iv) params.set("iv", String(query.iv))
   if (query.range != null) params.set("range", String(query.range))
   if (query.steps != null) params.set("steps", String(query.steps))
@@ -187,6 +188,8 @@ export const api = {
   orders: (status: "open" | "all" = "all", signal?: AbortSignal) => get<OrdersResponse>(scoped(`/api/orders?status=${status}`), signal),
   settlements: (signal?: AbortSignal) => get<SettlementsResponse>(scoped("/api/settlements"), signal),
   fills: (signal?: AbortSignal) => get<FillsResponse>(scoped("/api/fills"), signal),
+  riskHistory: (signal?: AbortSignal) => get<import("./trading-types").HistoricalRisk>(scoped("/api/risk/history"), signal),
+  scenarios: (query: string, signal?: AbortSignal) => get<import("./trading-types").ScenarioAnalysis>(scoped(`/api/risk/scenarios?${query}`), signal),
   risk: (signal?: AbortSignal) => get<Risk>(scoped("/api/risk"), signal),
   riskProfile: (query: RiskProfileQuery, signal?: AbortSignal) => get<RiskProfile>(scoped(riskProfilePath(query)), signal),
   order: (id: string, signal?: AbortSignal) => get<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), signal),
