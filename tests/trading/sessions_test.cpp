@@ -24,6 +24,27 @@ void tick(TradingSession& s, ScriptedMarket& f, Timestamp time, std::string_view
 }
 const Order& order(const TradingSession& s, OrderId id) { return s.snapshot()->recent_orders.at(static_cast<std::size_t>(id - 1)); }
 
+TEST(TradingSessions, SingleNamePausesBlockCachedBooksAndWaitForReopeningQuotes) {
+  ScriptedMarket f, other;
+  other.contract = *md::parse_osi("SPY261022C00500000");
+  TradingSession s(roomy(), f.time); f.seed(s); other.seed(s);
+  ASSERT_TRUE(s.submit(f.limit("rest", 1, "3.90"), f.time).decision.ok());
+  const auto end = f.time + 5 * md::kNanosPerSecond;
+  ASSERT_TRUE(s.halt_underlying("SPX", end, f.time).decision.ok());
+  EXPECT_EQ(s.submit(f.market("cached"), f.time).decision.code, Reason::MARKET_HALTED);
+  auto parent = other.market("parent"); parent.then = {f.market("")};
+  ASSERT_TRUE(s.submit(parent, f.time).decision.ok());
+  EXPECT_EQ(s.snapshot()->recent_orders.back().reason.code, Reason::MARKET_HALTED);
+  tick(s, f, f.time + md::kNanosPerSecond, "3.70", "3.80");
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Working);
+  EXPECT_EQ(s.snapshot()->waiting.at(1).code, "MARKET_HALTED");
+  s.on_quotes({}, {}, end);
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Working);
+  EXPECT_EQ(s.submit(f.market("old"), end).decision.code, Reason::STALE_QUOTE);
+  tick(s, f, end, "3.70", "3.80");
+  EXPECT_EQ(order(s, 1).status, OrderStatus::Filled);
+}
+
 TEST(TradingSessions, ExpiringEtfOptionsTradeAQuarterHourAfterTheClose) {
   constexpr md::Date expiry{2026, 10, 22};
   ScriptedMarket f;

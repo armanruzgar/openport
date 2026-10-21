@@ -71,6 +71,23 @@ TEST(TradingJournal, AmRetirementKeepsClosingDataThroughRecoveryAndSettlement) {
   EXPECT_EQ(TradingSession::recover(FileJournal::read(file.path)).snapshot_json(), session.snapshot_json());
 }
 
+TEST(TradingJournal, PinRiskRecoveryPreservesTheDrawAndSettlement) {
+  TemporaryJournal file;
+  test::ScriptedMarket f;
+  f.contract = *md::parse_osi("SPY260922C00500000");
+  SessionConfig config; config.rules.pin_risk = true; config.rules.pin_risk_seed = 123;
+  config.limits.aggregate = {1e12, 1e12}; config.limits.per_underlying = {1e12, 1e12};
+  TradingSession s(config, f.time, FileJournal::create(file.path));
+  f.seed(s, "0.10", "0.11");
+  ASSERT_TRUE(s.submit(f.market("pin", 10, Side::Sell), f.time).decision.ok());
+  auto recovered = TradingSession::recover(FileJournal::read(file.path));
+  const auto settle = f.contract.expiry_time();
+  ASSERT_TRUE(s.settle(f.symbol(), Money::parse("499.95"), settle).decision.ok());
+  ASSERT_TRUE(recovered.settle(f.symbol(), Money::parse("499.95"), settle).decision.ok());
+  EXPECT_EQ(recovered.snapshot_json(), s.snapshot_json());
+  EXPECT_EQ(TradingSession::recover(FileJournal::read(file.path)).snapshot_json(), s.snapshot_json());
+}
+
 TEST(TradingJournal, EveryReasonRoundTripsIncludingScalingAndCalendarCodes) {
   EXPECT_EQ(static_cast<int>(Reason::NEWS_BLACKOUT), static_cast<int>(Reason::MAX_VOLUME_SHARE) + 1);
   EXPECT_EQ(static_cast<int>(Reason::HOLD_RESTRICTED), static_cast<int>(Reason::NEWS_BLACKOUT) + 1);

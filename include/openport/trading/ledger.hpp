@@ -44,6 +44,8 @@ class Ledger {
   void withdraw(Money amount);
   /// Capital credit, never realised profit or a fill.
   void add_capital(Money amount);
+  /// Interest or borrow charges: cash and realised profit, without changing positions.
+  void accrue(Money amount);
   /// A dividend on held shares: cash and realised P&L move by `amount`, which is
   /// negative when short shares pay it.
   void receive_dividend(const std::string& symbol, Money amount);

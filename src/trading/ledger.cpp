@@ -91,6 +91,10 @@ void Ledger::settle(const std::string& symbol, Money intrinsic, Money fee) {
   positions_.erase(it);
   account_ = next;
 }
+void Ledger::accrue(Money amount) {
+  const Account next{account_.cash + amount, account_.realised + amount, account_.fees};
+  account_ = next;
+}
 void Ledger::add_capital(Money amount) {
   if (amount <= Money{}) throw TradingError(Reason::INVALID_MONEY, "Capital credit must be positive");
   account_.cash = account_.cash + amount;

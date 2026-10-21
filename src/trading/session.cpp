@@ -172,12 +172,21 @@ Money mid(const QuoteObservation& q) {
 }
 /// A markable quote's mark: its mid, or halfway to the ask when nobody bids.
 Money mark_of(const QuoteObservation& q) { return q.bid ? mid(q) : q.ask->prorate(1, 2); }
+Timestamp halt_end(const State& s, const std::string& underlying) {
+  Timestamp end = 0;
+  for (const auto& symbol : {underlying, std::string("*")})
+    if (const auto it = s.market_halts.find(symbol); it != s.market_halts.end()) end = std::max(end, it->second);
+  return end;
+}
 Decision quote_check(const State& s, const std::string& symbol) {
+  const auto contract = s.contracts.find(symbol);
+  const auto end = contract == s.contracts.end() ? 0 : halt_end(s, contract->second.underlying);
+  if (s.time < end) return failure(Reason::MARKET_HALTED, "Underlying trading is halted");
   const auto it = s.books.find(symbol);
   if (it == s.books.end() || !valid_quote(it->second.quote))
     return failure(Reason::INVALID_QUOTE, "A noncrossed positive two-sided quote with both sizes is required");
   const auto time = it->second.quote.time;
-  if (time > s.time || observation_time(s.contracts.at(symbol), s.time) - time > s.config.limits.max_quote_age)
+  if (time < end || time > s.time || observation_time(s.contracts.at(symbol), s.time) - time > s.config.limits.max_quote_age)
     return failure(Reason::STALE_QUOTE, "Quote is outside the configured market-time freshness window");
   return {};
 }
@@ -207,6 +216,11 @@ bool marked_now(const State& s, const std::string& symbol) {
 bool kept_within(const Order& o) { return o.role != OrderRole::Normal || o.reduce_only; }
 /// A fresh quote that shows only an ask, as a far option nobody bids for does.
 bool asks_only(const State& s, const std::string& symbol) {
+  if (const auto it = s.contracts.find(symbol); it != s.contracts.end()) {
+    const auto end = halt_end(s, it->second.underlying);
+    const auto book = s.books.find(symbol);
+    if (s.time < end || (book != s.books.end() && book->second.quote.time < end)) return false;
+  }
   const auto it = s.books.find(symbol);
   return it != s.books.end() && !valid_quote(it->second.quote) && marked_now(s, symbol);
 }
@@ -370,8 +384,10 @@ Quantity shares_held(const State& s, const std::string& symbol) {
 /// stock market is open, or of its last close while it is not (the 16:00 close
 /// stays current while the options trade on to 16:15, and overnight).
 std::optional<Money> stock_price(const State& s, const std::string& symbol, Timestamp at) {
+  const auto end = halt_end(s, symbol);
+  if (at < end) return std::nullopt;
   const auto it = s.stock_marks.find(symbol);
-  if (it == s.stock_marks.end() || it->second.time > at) return std::nullopt;
+  if (it == s.stock_marks.end() || it->second.time < end || it->second.time > at) return std::nullopt;
   const auto session = md::stock_session(at);
   const auto observed = session.open || session.market_time == md::kInvalidTimestamp ? at : std::min(at, session.market_time);
   if (observed - it->second.time > s.config.limits.max_quote_age) return std::nullopt;
@@ -1242,6 +1258,7 @@ TradingSnapshot snapshot_of(const State& s) {
   out.payouts_received = s.payouts_received;
   out.stock_fills = s.stock_fills;
   out.dividends = s.dividends;
+  out.cash_flows = s.cash_flows;
   out.closing_prints = s.closing_prints;
   out.annotations = s.annotations;
   out.day_notes = s.day_notes;
@@ -2335,7 +2352,7 @@ void count_execution(State& s, const Order& order) {
 /// Stale marks, an invalid quote or a missing valuation hold a fill back until a
 /// later batch brings the data; they say nothing about the order itself.
 bool data_gap(Reason code) {
-  return code == Reason::STALE_QUOTE || code == Reason::INVALID_QUOTE || code == Reason::MISSING_VALUATION;
+  return code == Reason::STALE_QUOTE || code == Reason::INVALID_QUOTE || code == Reason::MISSING_VALUATION || code == Reason::MARKET_HALTED;
 }
 void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> incoming) {
   // Read here; every write goes through mut() below, after which `o` is not read.
@@ -3353,6 +3370,9 @@ std::optional<OrderWait> waiting_for(const State& s, const Order& o, bool data_c
   const auto& r = o.request;
   const auto symbols = order_symbols(r);
   for (const auto& symbol : symbols) if (!s.contracts.contains(symbol)) return std::nullopt;
+  for (const auto& symbol : symbols)
+    if (s.time < halt_end(s, s.contracts.at(symbol).underlying))
+      return wait("MARKET_HALTED", "Underlying trading is halted; waits for reopening quotes");
   if (o.status == OrderStatus::Armed) {
     if (extended(r) && !trades_now(o, s.contracts.at(symbols.front()), s.time))
       return wait("SESSION_CLOSED", "Waits for the next trading session");
@@ -3605,6 +3625,12 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
       continue;
     }
     const Money strike = Money::from_double(c.strike);
+    if (rules.pin_risk && position.quantity < 0 && *price >= strike - Money::parse("0.10") && *price <= strike + Money::parse("0.10"))
+      add("PIN_RISK", true, c.underlying, symbol,
+          "Simulated pin risk: short " + contract_name(c) + " expires today within $0.10 of the strike. "
+          "Each contract has a seeded 25% chance of contrary exercise, modelling after-hours uncertainty before the 17:30 ET cutoff. "
+          "Out-of-money shorts can deliver shares; in-money shorts may not. No after-hours price is observed or invented.",
+          (*price - strike).dollars(), 0.10);
     const Money intrinsic = std::max(Money{}, c.type == pricing::OptionType::Call ? *price - strike : strike - *price);
     if (intrinsic >= Money::from_micros(10'000)) expiring.push_back({symbol, *price, intrinsic});
   }
@@ -4589,6 +4615,10 @@ Json state_change(const State& before, const State& after) {
   // Indicators are written once there is one, and never emptied again.
   if (before.indicators.empty() && !after.indicators.empty()) changes["indicators"] = Json{{"v", after.indicators}};
   else if (auto change = field_change(before.indicators, after.indicators)) changes["indicators"] = std::move(*change);
+  if (before.cash_flows.empty() && !after.cash_flows.empty()) changes["cash_flows"] = Json{{"v", after.cash_flows}};
+  else if (auto change = field_change(before.cash_flows, after.cash_flows)) changes["cash_flows"] = std::move(*change);
+  if (before.market_halts.empty() && !after.market_halts.empty()) changes["market_halts"] = Json{{"v", after.market_halts}};
+  else if (auto change = field_change(before.market_halts, after.market_halts)) changes["market_halts"] = std::move(*change);
   // Alerts likewise, once the account has created one.
   if (before.alerts.created == 0 && after.alerts.created > 0) changes["alerts"] = Json{{"v", after.alerts}};
   else if (auto change = field_change(before.alerts, after.alerts)) changes["alerts"] = std::move(*change);
@@ -5769,6 +5799,20 @@ CommandResult TradingSession::reset_kill(std::string reason, Timestamp time) {
     return CommandResult{};
   });
 }
+namespace {
+std::uint64_t mix(std::uint64_t x);
+Quantity pin_assignments(const State& s, const md::OptionContract& contract, Quantity contracts, bool in_money) {
+  auto seed = mix(static_cast<std::uint64_t>(s.evaluation.started) ^
+                  mix(static_cast<std::uint64_t>(s.config.rules.pin_risk_seed)));
+  for (const unsigned char c : "pin " + contract.osi_symbol() + " " + md::format_date(contract.expiry)) seed = mix(seed ^ c);
+  Quantity assigned = 0;
+  for (Quantity i = 0; i < contracts; ++i) {
+    const bool contrary = ((seed = mix(seed)) >> 62) == 0;
+    assigned += static_cast<Quantity>(in_money != contrary);
+  }
+  return assigned;
+}
+}  // namespace
 CommandResult TradingSession::settle(const std::string& symbol, Money settlement, Timestamp time,
                                      std::optional<SettlementSource> source) {
   return impl_->transact(time, "settlement", [&](State& s, Events& events) {
@@ -5781,8 +5825,13 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     const auto quantity = held(s, symbol);
     // A long instructed not to be exercised expires worthless.
     const bool unexercised = quantity > 0 && s.do_not_exercise.contains(symbol);
-    const Money intrinsic = unexercised ? Money{}
-        : std::max(Money{}, it->second.type == pricing::OptionType::Call ? settlement - strike : strike - settlement);
+    const Money exercise_value = it->second.type == pricing::OptionType::Call ? settlement - strike : strike - settlement;
+    const bool pin = s.config.rules.pin_risk && quantity < 0 && physical(it->second) &&
+        exercise_value >= Money::parse("-0.10") && exercise_value <= Money::parse("0.10");
+    const auto assigned = pin ? -pin_assignments(s, it->second, -quantity, exercise_value >= Money::from_micros(10'000)) : quantity;
+    // Pin assignments close the option at zero and deliver at the strike. This
+    // also accounts correctly for contrary exercise of an out-of-money option.
+    const Money intrinsic = unexercised || pin ? Money{} : std::max(Money{}, exercise_value);
     // The last stretch ends at intrinsic value, at expiry with the settlement
     // as the underlying's price and the volatility unchanged.
     std::optional<Valuation> at_expiry;
@@ -5792,8 +5841,8 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
       at_expiry->years = 0;
     }
     end_stretch(s, symbol, intrinsic, at_expiry ? &*at_expiry : nullptr);
-    const bool delivers = physical(it->second) && intrinsic >= Money::from_micros(10'000);
-    const Money fee = delivers ? exercise_fee(s, quantity) : Money{};
+    const bool delivers = pin ? assigned != 0 : physical(it->second) && intrinsic >= Money::from_micros(10'000);
+    const Money fee = delivers ? exercise_fee(s, assigned) : Money{};
     s.settlements.push_back(settlement_record(s.ledger.positions().at(symbol), settlement, intrinsic, fee, time, source));
     s.ledger.settle(symbol, intrinsic, fee);
     if (fee > Money{}) s.explained[symbol].costs -= fee.dollars();
@@ -5805,19 +5854,26 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     sync_exits(s, symbol, events);
     Json settled{{"symbol", symbol}, {"reference", settlement}, {"intrinsic", intrinsic}};
     if (unexercised) settled["do_not_exercise"] = true;
+    if (pin) {
+      settled["pin_risk"] = true;
+      settled["assigned_contracts"] = -assigned;
+      settled["simulated"] = true;
+      settled["seed"] = s.config.rules.pin_risk_seed;
+    }
     event(events, "settlement", std::move(settled));
     // American equity and ETF options a cent or more in the money are exercised
     // or assigned: settled at intrinsic value, they deliver shares at the
     // settlement price, which together cost the strike.
     if (delivers) {
       const auto underlying = it->second.underlying;
-      const auto shares = delivered(it->second, quantity);
+      const auto shares = delivered(it->second, assigned);
+      const auto delivery_price = pin ? strike : settlement;
       if (const auto mark = s.stock_marks.find(underlying); mark == s.stock_marks.end() || mark->second.time <= time)
         s.stock_marks[underlying] = {settlement, time};
-      trade_shares(s, underlying, shares, settlement, StockSource::Delivery, symbol);
+      trade_shares(s, underlying, shares, delivery_price, StockSource::Delivery, symbol);
       if (s.config.rules.buying_power)
         s.stock_fills.mut(s.stock_fills.size() - 1).buying_power_after = buying_power(s).total.available;
-      event(events, "delivery", Json{{"symbol", symbol}, {"underlying", underlying}, {"shares", shares}, {"price", settlement}});
+      event(events, "delivery", Json{{"symbol", symbol}, {"underlying", underlying}, {"shares", shares}, {"price", delivery_price}});
     }
     return CommandResult{};
   }, source);
@@ -5895,6 +5951,32 @@ Money nearest_cent(Money amount) {
   if (2 * (rest < 0 ? -rest : rest) >= cent) rounded += micros < 0 ? -cent : cent;
   return Money::from_micros(rounded);
 }
+/// Actual/365 simple accrual on the last closing balance and marks, including
+/// skipped calendar days. Each posting rounds once to cents; no fabricated prices.
+void accrue_financing(State& s, std::int64_t days, Events& events) {
+  const auto& rules = s.config.rules;
+  const auto cash = s.ledger.account().cash;
+  const auto post = [&](std::string kind, std::string symbol, Money basis, std::int64_t rate, bool charge) {
+    if (rate == 0 || basis == Money{}) return;
+    auto amount = nearest_cent(basis.prorate(rate * days, 365 * 10000));
+    if (charge) amount = -amount;
+    if (amount == Money{}) return;
+    s.ledger.accrue(amount);
+    Attribution part; part.other = amount.dollars();
+    explain_part(s, symbol.empty() ? "cash" : symbol, part);
+    s.cash_flows.push_back({s.cash_flows.size() + 1, s.evaluation.attempt, s.time, s.day, std::move(kind),
+                            std::move(symbol), amount, basis, rate, days, {}});
+    event(events, "cash_flow", s.cash_flows.back());
+  };
+  if (cash > Money{}) post("credit_interest", {}, cash, rules.cash_credit_rate_bps, false);
+  else if (cash < Money{} && rules.margin == MarginMode::Portfolio && rules.account_type == AccountType::Margin)
+    post("debit_interest", {}, -cash, rules.margin_debit_rate_bps, true);
+  for (const auto& [symbol, stock] : s.ledger.stocks()) {
+    if (stock.shares >= 0) continue;
+    const auto mark = s.stock_marks.find(symbol);
+    if (mark != s.stock_marks.end()) post("borrow_fee", symbol, mark->second.price * -stock.shares, rules.stock_borrow_rate_bps, true);
+  }
+}
 /// On an ex-date the shares held into it are paid the dividend, and short shares
 /// pay it, in whole cents: once per symbol and date, into the new day's P&L as other.
 void pay_dividends(State& s, const std::vector<Dividend>& dividends, Events& events) {
@@ -5943,6 +6025,7 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
   const auto closing_time = impl_->state.time;
   return impl_->transact(time, "day_rollover", [&](State& s, Events& events) {
     const auto day = plan_trading_date(s.config.rules, time);
+    const auto days = md::days_since_epoch(day) - md::days_since_epoch(s.day);
     if (day <= s.day) return CommandResult{failure(Reason::INVALID_TIME, "Rollover requires a later trading date"), {}, 0};
     // advance already checked the actual date change. Do not classify positions
     // opened on the new date before this bookkeeping rollover as overnight holds.
@@ -6025,8 +6108,57 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     event(events, "day_rollover", Json{{"day", day}, {"equity", s.start_equity}});
     // Assignments arrive overnight, so the new day takes them, and then the
     // ex-date's dividends pay the shares held into it.
+    // Financing is new-day P&L. Its opening daily-loss base stays unchanged;
+    // charges can consume loss room and interest changes marked equity.
+    accrue_financing(s, days, events);
     assign_early(s, dividends, closing_time, events);
     pay_dividends(s, dividends, events);
+    return CommandResult{};
+  });
+}
+CommandResult TradingSession::halt_underlying(const std::string& symbol, Timestamp end, Timestamp time) {
+  const auto& s = impl_->state;
+  if (const auto it = s.market_halts.find(symbol); it != s.market_halts.end() && it->second >= end)
+    return {{}, {}, s.version};
+  if (symbol.empty() || time <= 0 || end <= time || end - time > md::kNanosPerDay)
+    throw TradingError(Reason::INVALID_TIME, "A market halt needs an underlying and an end within the next day");
+  return impl_->transact(time, "market_halt", [&](State& next, Events& events) {
+    next.market_halts[symbol] = end;
+    event(events, "market_halt", Json{{"underlying", symbol}, {"end", end}, {"simulated", true}});
+    return CommandResult{};
+  });
+}
+CommandResult TradingSession::transfer_cash(std::string client_id, Money amount, Timestamp time) {
+  if (client_id.empty() || client_id.size() > 64 ||
+      std::any_of(client_id.begin(), client_id.end(), [](unsigned char c) { return c < 32 || c == 127; }) ||
+      amount == Money{} || amount.micros() % 10000 != 0)
+    throw TradingError(Reason::INVALID_MONEY, "A transfer needs a client_id of 1-64 printable bytes and a nonzero amount in whole cents");
+  const auto& current = impl_->state;
+  for (const auto& flow : current.cash_flows) {
+    if (flow.attempt != current.evaluation.attempt || flow.client_id != client_id) continue;
+    return {flow.amount == amount ? Decision{} : failure(Reason::DUPLICATE_CLIENT_ID, "Transfer ID already used with another amount"),
+            {}, current.version};
+  }
+  return impl_->transact(time, "cash_transfer", [&](State& s, Events& events) {
+    const auto& rules = s.config.rules;
+    if (!rules.practice())
+      return CommandResult{failure(Reason::PLAN_LOCKED, "Cash transfers are available only on practice accounts; evaluation and funded plans use their plan capital and payouts"), {}, 0};
+    const auto snapshot = snapshot_of(s);
+    if (amount < Money{} && (!snapshot.valuation_complete || -amount > s.ledger.account().cash ||
+        -amount > snapshot.buying_power.available || snapshot.equity + amount <= Money{}))
+      return CommandResult{failure(Reason::BUYING_POWER, "Withdrawal requires complete marks, positive remaining equity and sufficient cash and unreserved buying power"), {}, 0};
+    if (amount > Money{}) s.ledger.add_capital(amount); else s.ledger.withdraw(-amount);
+    s.start_equity = s.start_equity + amount;
+    auto& e = s.evaluation;
+    e.starting_balance = e.starting_balance + amount;
+    e.day_open_equity = e.day_open_equity + amount;
+    e.day_close_equity = e.day_close_equity + amount;
+    e.peak = e.peak + amount;
+    if (e.day_low_equity) e.day_low_equity = *e.day_low_equity + amount;
+    if (e.day_high_equity) e.day_high_equity = *e.day_high_equity + amount;
+    s.cash_flows.push_back({s.cash_flows.size() + 1, e.attempt, time, s.day,
+                            amount > Money{} ? "deposit" : "withdrawal", {}, amount, {}, 0, 0, client_id});
+    event(events, "cash_flow", s.cash_flows.back());
     return CommandResult{};
   });
 }

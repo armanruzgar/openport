@@ -649,6 +649,11 @@ struct AccountRules {
   std::int64_t fill_latency_ms = 0; ///< Market-time delay before execution, from 0 to 60,000 ms.
   std::int64_t impact_ticks = 0;    ///< Extra adverse ticks per displayed-size block, from 0 to 10.
   std::int64_t inside_fill_percent = 0; ///< 1-100% from own side to far side; zero disables inside fills.
+  std::int64_t cash_credit_rate_bps = 0;   ///< Annual simple rate, basis points, actual/365 at rollover.
+  std::int64_t margin_debit_rate_bps = 0;  ///< Negative portfolio-margin cash only.
+  std::int64_t stock_borrow_rate_bps = 0;  ///< Short shares' closing marked notional.
+  bool pin_risk = false;      ///< Simulated contrary exercise for physical shorts within $0.10 of the strike.
+  std::int64_t pin_risk_seed = 0; ///< Nonnegative seed, mixed with attempt, OSI and expiry; 25% contrary odds.
   MarginMode margin = MarginMode::Strategy;
   AccountType account_type = AccountType::Margin;  ///< Cash and IRA accounts enforce buying power under strategy margin.
   /// A broker's house margin, in percent on top of Reg T's naked requirement and
@@ -714,6 +719,11 @@ struct AccountRules {
   [[nodiscard]] bool evaluation() const {
     return profit_target > Money{} || max_drawdown > Money{} || daily_loss_limit > Money{} ||
            time_limit_days > 0 || inactivity_days > 0 || no_overnight || !hold_restrictions.empty();
+  }
+  [[nodiscard]] bool practice() const {
+    return !evaluation() && phase == Phase::Evaluation && evaluation_fee == Money{} && reset_fee == Money{} &&
+           activation_fee == Money{} && min_trades == 0 && min_trading_days == 0 && min_profitable_days == 0 &&
+           consistency_percent == 0 && trade_consistency_percent == 0 && microscalp_percent == 0;
   }
   bool operator==(const AccountRules&) const = default;
 };

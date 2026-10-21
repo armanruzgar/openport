@@ -42,6 +42,39 @@ const MarkedStock* stock(const TradingSession& s, std::string_view symbol) {
 double day_pnl(const TradingSession& s) { return (s.snapshot()->equity - s.snapshot()->start_of_day_equity).dollars(); }
 
 
+TEST(TradingDelivery, PinRiskIsSeededOptionalAndDeliversAtTheStrike) {
+  for (const auto* osi : {"SPY260922C00510000", "SPY260922P00510000"}) {
+    const auto contract = *md::parse_osi(osi);
+    for (const auto* reference : {"509.95", "510.05"}) {
+      Spy f; f.spot = std::stod(reference);
+      auto config = roomy(); config.rules.pin_risk = true; config.rules.pin_risk_seed = 42;
+      TradingSession a(config, f.time), b(config, f.time);
+      for (auto* session : {&a, &b}) {
+        f.define(*session, contract); f.quote(*session, contract, "0.10", "0.11");
+        ASSERT_TRUE(session->submit(f.market("short", contract, 10, Side::Sell), f.time).decision.ok());
+        const auto warnings = session->warnings();
+        EXPECT_TRUE(std::any_of(warnings.begin(), warnings.end(), [](const auto& w) { return w.code == "PIN_RISK"; }));
+        const auto cash = session->snapshot()->account.cash;
+        ASSERT_TRUE(session->settle(contract.osi_symbol(), m(reference), contract.expiry_time()).decision.ok());
+        ASSERT_EQ(session->snapshot()->stocks.size(), 1U);
+        const auto shares = session->snapshot()->stocks[0].position.shares;
+        EXPECT_GT(std::abs(shares), 0); EXPECT_LT(std::abs(shares), 1000);
+        EXPECT_EQ(session->snapshot()->account.cash, cash - m("510") * shares);
+        EXPECT_EQ(session->snapshot()->stock_fills.back().price, m("510"));
+        EXPECT_EQ(session->settle(contract.osi_symbol(), m(reference), contract.expiry_time()).decision.code, Reason::ALREADY_SETTLED);
+      }
+      EXPECT_EQ(a.snapshot()->stocks[0].position.shares, b.snapshot()->stocks[0].position.shares);
+      TradingSession off(roomy(), f.time); f.define(off, contract); f.quote(off, contract, "0.10", "0.11");
+      ASSERT_TRUE(off.submit(f.market("short", contract, 10, Side::Sell), f.time).decision.ok());
+      const auto warnings = off.warnings();
+      EXPECT_FALSE(std::any_of(warnings.begin(), warnings.end(), [](const auto& w) { return w.code == "PIN_RISK"; }));
+      ASSERT_TRUE(off.settle(contract.osi_symbol(), m(reference), contract.expiry_time()).decision.ok());
+      const bool itm = contract.type == pricing::OptionType::Call ? m(reference) > m("510") : m(reference) < m("510");
+      EXPECT_EQ(off.snapshot()->stocks.empty(), !itm);
+    }
+  }
+}
+
 TEST(TradingDelivery, ExpiryShortfallRefusesOpeningsAllowsClosesAndRecovers) {
   for (const bool assignment : {false, true}) {
     SCOPED_TRACE(assignment);
