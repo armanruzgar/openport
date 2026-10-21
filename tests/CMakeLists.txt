@@ -42,6 +42,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/tradier_test.cpp
     providers/tastytrade_test.cpp
     providers/dxlink_test.cpp
+    providers/schwab_test.cpp
     server/api_test.cpp
     server/candles_test.cpp
     server/series_test.cpp

@@ -10,6 +10,7 @@
 #include "openport/providers/massive.hpp"
 #include "openport/providers/options.hpp"
 #include "openport/providers/replay.hpp"
+#include "openport/providers/schwab.hpp"
 #include "openport/providers/demo_feed.hpp"
 #include "openport/providers/thetadata.hpp"
 #include "openport/providers/tradier.hpp"
@@ -65,6 +66,7 @@ std::vector<std::string_view> provider_names() {
       "thetadata",
       "tradier",
       "tastytrade",
+      "schwab",
       "replay",
       "demo",
   };
@@ -117,6 +119,14 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
       throw std::invalid_argument("tastytrade: dxlink_time_unit must be unknown or milliseconds");
     options.timestamps_in_milliseconds = unit == "milliseconds";
     return std::make_unique<TastytradeProvider>(std::move(options));
+  }
+  if (config.name == "schwab") {
+    validate_keys(config, {"poll_seconds"});
+    SchwabProvider::Options options;
+    options.credentials = {environment("SCHWAB_CLIENT_ID"), environment("SCHWAB_CLIENT_SECRET"),
+                           environment("SCHWAB_REFRESH_TOKEN")};
+    options.poll_seconds = seconds_option(config, "poll_seconds", std::chrono::seconds(0));
+    return std::make_unique<SchwabProvider>(std::move(options));
   }
   if (config.name == "demo") {
     validate_keys(config, {"days", "speed", "revision"});

@@ -118,7 +118,7 @@ void PollingProvider::stop() {
   if (thread_.joinable()) thread_.join();
 }
 
-bool PollingProvider::sleep(std::chrono::seconds duration) {
+bool PollingProvider::sleep(std::chrono::milliseconds duration) {
   std::unique_lock lock(wake_mutex_);
   return !wake_.wait_for(lock, duration, [this] { return stopping_.load(); });
 }
