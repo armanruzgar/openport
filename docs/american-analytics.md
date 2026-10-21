@@ -194,7 +194,9 @@ new passes do not have identical successful-solve counts. A preliminary
 unnecessary European rollback work. No ITM-side omission or approximate EEP
 interpolation was needed.
 
-Reproduce the new timing and accuracy probe after building the core:
+Reproduce the new timing and accuracy probe after building the core (the probe
+is also the `openport_measure_american` CMake target, which adds `--models` and
+`--model lr|bs2002|baw`; see [closed-form alternatives](#closed-form-alternatives)):
 
 ```sh
 export DEVELOPER_DIR=/Library/Developer/CommandLineTools
@@ -229,3 +231,77 @@ is still 1%. Different quotes change the number of successful IV solves. The
 no-cash path has no measured slowdown; this cash workload adds about 15% to it.
 Run `/tmp/openport-american-measure --cash-dividends` with the build command
 above to reproduce the cash case.
+
+## Closed-form alternatives
+
+`openportd --american-model bs2002` or `baw` replaces step 3's lattice EEP with a
+closed form minus analytic BSM at the same inputs: Bjerksund and Stensland's
+(2002) two-step flat exercise boundary (with the bivariate normal of Genz 2004),
+or Barone-Adesi and Whaley's (1987) quadratic approximation, whose critical price
+is solved by Newton's method from Haug's seed. Puts use the put-call
+transformation. Both prices are floored at the BSM and intrinsic values. The tree
+remains in use wherever the closed forms do not apply: an expiry with known cash
+dividends before expiry, a nonpositive rate, zero vol or time, or a non-finite
+result. Each expiry reports the model that actually removed its EEP as
+`eep_model` (`leisen_reimer`, `bjerksund_stensland_2002` or `barone_adesi_whaley`;
+null when not de-Americanised). Run records include the choice only when it is not
+the default, so existing recordings keep their bytes and verify unchanged.
+
+**Leisen-Reimer stays the default**: neither closed form is as accurate as the
+31-step tree, and neither is meaningfully faster here, because the tree already
+prices the European leg from its terminal probabilities instead of a second
+rollback. Measured 2026-10-21 on this Mac (Release build, shared with other
+builds, so absolute times are noisy; ratios are the useful part).
+
+EEP against a converged 2001-step LR EEP over 5,400 contracts: S=100,
+K=70..130 by 2.5, T ∈ {7d, 30d, .25, .5, 1, 2}, vol ∈ {10, 20, 40%},
+r ∈ {1, 4.5%}, q ∈ {0, 1, 3%}, calls and puts (`openport_measure_american
+--models`). "IV error" solves BSM IV from the converged American price minus each
+model's EEP, as de-Americanisation does, and compares it to the generating vol.
+
+| Model | Max EEP error | Max OTM EEP error | Max OTM IV error | OTM IV solves failed | Mean time per EEP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Leisen-Reimer, 31 steps | $0.0921 | $0.0450 | 0.082 vp | 0 | 1.4 µs |
+| Bjerksund-Stensland 2002 | $0.2604 | $0.0973 | 0.203 vp | 88 | 5.1 µs |
+| Barone-Adesi-Whaley | $0.1530 | $0.1473 | 5.029 vp | 296 | 1.2 µs |
+
+A failed OTM solve means the closed form's EEP exceeded the option's whole time
+value, leaving a price below intrinsic. Google Benchmark
+(`openport_bench --benchmark_filter=EarlyExercise`, median of three, CPU time over a
+72-contract grid): LR 652 ns, BS2002 5,628 ns, BAW 848 ns per EEP. The
+bivariate normals make BS2002 the slowest.
+
+End to end on the regression chain above (1,001-step LR quotes, flat 4.5% curve,
+`--accuracy`):
+
+| Model | T | Corrected F error | Max corrected OTM IV error |
+| --- | ---: | ---: | ---: |
+| Leisen-Reimer | 0.25 | +0.001202% | 0.016712 vp |
+| Leisen-Reimer | 1.00 | -0.026917% | 0.086981 vp |
+| Bjerksund-Stensland 2002 | 0.25 | -0.020010% | 0.080009 vp |
+| Bjerksund-Stensland 2002 | 1.00 | -0.084037% | 0.167337 vp |
+| Barone-Adesi-Whaley | 0.25 | -0.001737% | 0.145610 vp |
+| Barone-Adesi-Whaley | 1.00 | -0.011693% | 0.173486 vp |
+
+Both closed forms exceed the 0.1 vol point IV acceptance tolerance at one year,
+which the tree meets. On the 12,028-option SPY-sized timing chain (`--model lr|bs2002|baw`,
+five warm-ups and 50 passes, median): LR 40.2 ms, BS2002 110.7 ms, BAW 46.8 ms,
+with no correction 23.9 ms. These ran alongside other builds and are noisier than
+the earlier table, but the ordering matched the per-EEP benchmark. The closed
+forms are offered for comparison and for experiments where their known biases
+are acceptable: BAW overprices long-dated options and BS2002, a lower bound,
+underprices them (by over $1 per $100 at three years and 60% vol in the tests).
+
+The approximations are validated in `tests/pricing/american_test.cpp`: the
+bivariate normal against closed forms and numerical integration; both prices
+against the 2001-step tree within 0.2% of strike up to a year and 40% vol;
+BS2002 as a lower bound of the tree; European and intrinsic floors; exact zero
+premium where exercise cannot pay; and every fallback to the lattice. Rebuild the
+probes with `cmake --build build --target openport_measure_american openport_bench`.
+
+References: Bjerksund and Stensland (2002), *Closed Form Valuation of American
+Options*, NHH discussion paper; Barone-Adesi and Whaley (1987), *Efficient
+Analytic Approximation of American Option Values*, Journal of Finance 42(2);
+Haug (2007), *The Complete Guide to Option Pricing Formulas*, 2nd ed., 3.1.3–3.1.4;
+Genz (2004), *Numerical computation of rectangular bivariate and trivariate normal
+and t probabilities*, Statistics and Computing 14.

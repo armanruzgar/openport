@@ -18,8 +18,24 @@ inline void from_json(const nlohmann::json& j, OrderChange& c) {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Dividend, symbol, ex_date, per_share)
 }
 namespace openport::analytics {
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AnalyticsOptions, parity_strikes, flip_range, flip_steps,
-    fallback_rate, deamericanize, min_days_for_rate, exposure_min_days, max_spot_age_minutes)
+inline void to_json(nlohmann::json& j, const AnalyticsOptions& o) {
+  j = nlohmann::json{{"parity_strikes", o.parity_strikes}, {"flip_range", o.flip_range}, {"flip_steps", o.flip_steps},
+      {"fallback_rate", o.fallback_rate}, {"deamericanize", o.deamericanize}, {"min_days_for_rate", o.min_days_for_rate},
+      {"exposure_min_days", o.exposure_min_days}, {"max_spot_age_minutes", o.max_spot_age_minutes}};
+  // Recorded only when chosen, so runs on the default tree keep their bytes.
+  if (o.american_model != pricing::AmericanModel::LeisenReimer) j["american_model"] = pricing::to_string(o.american_model);
+}
+inline void from_json(const nlohmann::json& j, AnalyticsOptions& o) {
+  j.at("parity_strikes").get_to(o.parity_strikes); j.at("flip_range").get_to(o.flip_range);
+  j.at("flip_steps").get_to(o.flip_steps); j.at("fallback_rate").get_to(o.fallback_rate);
+  j.at("deamericanize").get_to(o.deamericanize); j.at("min_days_for_rate").get_to(o.min_days_for_rate);
+  j.at("exposure_min_days").get_to(o.exposure_min_days); j.at("max_spot_age_minutes").get_to(o.max_spot_age_minutes);
+  if (const auto it = j.find("american_model"); it != j.end()) {
+    const auto model = pricing::parse_american_model(it->get<std::string>());
+    if (!model) throw std::invalid_argument("Unknown american_model " + it->get<std::string>());
+    o.american_model = *model;
+  }
+}
 }
 namespace openport::server {
 inline void to_json(nlohmann::json& j, const TradingCommand& c) {

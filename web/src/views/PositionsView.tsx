@@ -20,7 +20,7 @@ import { CloseStrategyDialog, Strategies } from "../components/StrategyActions"
 import { RiskPanel } from "../components/RiskPanel"
 import { RiskProfilePanel } from "../components/RiskProfilePanel"
 import { WhatIfPanel } from "../components/WhatIfPanel"
-import { ScenarioGrid } from "../components/ScenarioGrid"
+import { ScenarioPanel } from "../components/ScenarioGrid"
 import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
 import { Badge, Empty, PageHeader, Panel, Tile, toneOf, toneText } from "../components/ui"
 import { fixed, signedPercent } from "../lib/format"
@@ -300,7 +300,7 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
     </Panel>
     {data && trading.enabled && <Panel title="Risk profile"><RiskProfilePanel underlyings={[...new Set([
       ...data.positions.filter((p) => !p.awaiting_settlement).map((p) => p.underlying), ...(data.stocks ?? []).map((s) => s.symbol)])].sort()} /></Panel>}
-    {risk.data && <Panel title="Spot × volatility scenarios"><ScenarioGrid scenarios={risk.data.scenarios} /></Panel>}
+    {risk.data && <Panel title="Spot × volatility scenarios"><ScenarioPanel scenarios={risk.data.scenarios} /></Panel>}
     {trading.enabled && <Panel title="What-if"><WhatIfPanel positions={data?.positions ?? []}
       picked={data?.positions.filter((p) => picked.has(p.symbol)) ?? []} trading={trading} /></Panel>}
     <Panel title="Kill switch"><KillSwitch kill={risk.data?.kill ?? { latched: trading.kill_latched, reason: null }} trading={trading} /></Panel>

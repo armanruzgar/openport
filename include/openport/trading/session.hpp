@@ -192,6 +192,12 @@ struct PayoutQuote {
 /// contracts and shares. An incomplete valuation leaves it incomplete.
 [[nodiscard]] RiskProfile snapshot_profile(const TradingSnapshot& snapshot, const SessionConfig& config,
     const Valuations& valuations, const ProfileConfig& profile, double reference_spot, const std::string& underlying = {});
+/// The account's configured spot x vol grid recomputed from a snapshot under
+/// `smile` dynamics, as the snapshot's own grid is under sticky strike: the same
+/// positions, fresh share prices, time and valuation age. Analysis only; rules
+/// and the published snapshot keep sticky strike.
+[[nodiscard]] ScenarioGrid snapshot_scenarios(const TradingSnapshot& snapshot, const SessionConfig& config,
+    const Valuations& valuations, const SmileModel& smile);
 
 /// A position a flatten left open: the contracts still held, those its closes are
 /// still working on later quotes, and why the rest are not being closed (a refusal,

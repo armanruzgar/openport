@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "../tests/support/synthetic_chain.hpp"
 #include "openport/analytics/chain_analytics.hpp"
 #include "openport/analytics/chain_book.hpp"
+#include "openport/pricing/american.hpp"
 #include "openport/pricing/binomial.hpp"
 #include "openport/pricing/black.hpp"
 #include "openport/pricing/implied_vol.hpp"
@@ -167,5 +169,29 @@ void BM_AmericanLeisenReimer(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations());
 }
 BENCHMARK(BM_AmericanLeisenReimer)->Arg(101)->Arg(501)->Arg(1001)->Unit(benchmark::kMicrosecond);
+
+// One de-Americanisation EEP per contract, cycling through a strike/tenor grid of
+// calls and puts so no single input's branch dominates. Arg is the AmericanModel.
+void BM_EarlyExercisePremium(benchmark::State& state) {
+  using openport::pricing::AmericanModel;
+  const auto model = static_cast<AmericanModel>(state.range(0));
+  std::vector<openport::pricing::BsmInputs> inputs;
+  for (double t : {0.05, 0.25, 1.0, 2.0})
+    for (double k = 80; k <= 120; k += 5)
+      for (auto type : {OptionType::Call, OptionType::Put})
+        inputs.push_back({type, 100.0, k, t, 0.045, 0.015, 0.2});
+  std::size_t i = 0;
+  for (auto _ : state) {
+    const auto& in = inputs[i++ % inputs.size()];
+    benchmark::DoNotOptimize(openport::pricing::early_exercise_premium(
+        in, model, openport::analytics::kDeamericanizationSteps));
+  }
+  state.SetLabel(std::string(openport::pricing::to_string(model)));
+  state.SetItemsProcessed(state.iterations());
+}
+BENCHMARK(BM_EarlyExercisePremium)
+    ->Arg(static_cast<int>(openport::pricing::AmericanModel::LeisenReimer))
+    ->Arg(static_cast<int>(openport::pricing::AmericanModel::BjerksundStensland2002))
+    ->Arg(static_cast<int>(openport::pricing::AmericanModel::BaroneAdesiWhaley));
 
 }  // namespace

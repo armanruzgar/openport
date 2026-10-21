@@ -2,6 +2,7 @@ add_executable(openport_tests
   pricing/black_test.cpp
   pricing/implied_vol_test.cpp
   pricing/binomial_test.cpp
+  pricing/american_test.cpp
   md/time_test.cpp
   md/contract_test.cpp
   md/event_queue_test.cpp
@@ -9,6 +10,8 @@ add_executable(openport_tests
   analytics/chain_analytics_test.cpp
   analytics/svi_test.cpp
   analytics/ssvi_test.cpp
+  analytics/sabr_test.cpp
+  analytics/heston_test.cpp
   analytics/volatility_test.cpp
   analytics/realized_test.cpp
   analytics/volatility_history_test.cpp
@@ -96,6 +99,7 @@ target_sources(openport_tests PRIVATE
   trading/stress_test.cpp
   trading/exposure_limits_test.cpp
   trading/profile_test.cpp
+  trading/dynamics_test.cpp
   trading/warnings_test.cpp
   trading/risk_settlement_test.cpp
   trading/journal_test.cpp

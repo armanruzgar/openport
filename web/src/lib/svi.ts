@@ -1,4 +1,4 @@
-import type { SurfaceExpiry, SviFit, SsviFit, SurfaceHistory } from "../api/types"
+import type { SabrFit, SurfaceExpiry, SviFit, SsviFit, SurfaceHistory } from "../api/types"
 import type { Series } from "../charts/LineChart"
 import { days, expiryLabel, isNum } from "./format"
 
@@ -41,6 +41,45 @@ export function sampleSsvi(e: SurfaceExpiry, p: SsviFit | undefined, axis: "stri
   })
 }
 
+/** Hagan et al. (2002) lognormal SABR IV at k = ln(K/F), as the server computes it. */
+export function sabrVol(p: SabrFit, forward: number, k: number, years: number): number | null {
+  if (!(p.alpha > 0) || !(p.beta >= 0 && p.beta <= 1) || !(Math.abs(p.rho) < 1) || !(p.nu >= 0) ||
+    !(forward > 0) || !(years > 0) || !Number.isFinite(k)) return null
+  const a = p.alpha * forward ** (p.beta - 1)
+  const omb = 1 - p.beta
+  const shift = Math.exp(k * omb / 2)
+  const lead = a / (shift * (1 + omb ** 2 / 24 * k ** 2 + omb ** 4 / 1920 * k ** 4))
+  const z = -p.nu / a * shift * k
+  let ratio = 1
+  if (Math.abs(z) < 1e-6) ratio = 1 - p.rho * z / 2 + (2 - 3 * p.rho ** 2) * z * z / 12
+  else {
+    const argument = (Math.sqrt(1 - 2 * p.rho * z + z * z) + z - p.rho) / (1 - p.rho)
+    if (!(argument > 0)) return null
+    ratio = z / Math.log(argument)
+  }
+  const correction = 1 + (omb ** 2 / 24 * a * a / (shift * shift) + p.rho * p.beta * p.nu * a / (4 * shift) +
+    (2 - 3 * p.rho ** 2) / 24 * p.nu ** 2) * years
+  const iv = lead * ratio * correction
+  return iv > 0 && Number.isFinite(iv) ? iv : null
+}
+
+/** Hagan's expansion is not safe far from its quotes: clip to the window and calibration range. */
+export function sampleSabr(e: SurfaceExpiry, axis: "strike" | "moneyness", display?: DisplayRange): Series["points"] {
+  const fit = e.sabr
+  if (!fit || fit.status !== "ok" || !isNum(e.forward) || e.forward <= 0) return []
+  const ks = e.points.map((p) => p.k).filter(isNum)
+  const hasWindow = isNum(display?.spot) && display.spot > 0 && display.window > 0 && display.window < 1
+  if (!hasWindow && ks.length < 2) return []
+  const lo = Math.max(hasWindow ? Math.log(display.spot! * (1 - display.window) / e.forward) : Math.min(...ks), fit.min_k ?? -Infinity)
+  const hi = Math.min(hasWindow ? Math.log(display.spot! * (1 + display.window) / e.forward) : Math.max(...ks), fit.max_k ?? Infinity)
+  const years = e.svi_years ?? (e.days ?? 0) / 365
+  if (!(hi > lo) || !(years > 0)) return []
+  return Array.from({ length: 241 }, (_, i) => {
+    const k = lo + (hi - lo) * i / 240
+    return { x: axis === "strike" ? e.forward! * Math.exp(k) : k, y: sabrVol(fit, e.forward!, k, years) }
+  })
+}
+
 /** Uniform in k, clipped to the selected window and calibration range.
  * Sampling is independent of quoted strike spacing, including on a strike axis. */
 export function sampleSvi(e: SurfaceExpiry, axis: "strike" | "moneyness", display?: DisplayRange): Series["points"] {
@@ -76,7 +115,8 @@ export function comparisonSeries(current: SurfaceExpiry | undefined, history: Su
   return curves
 }
 
-export function smileSeries(expiries: SurfaceExpiry[], axis: "strike" | "moneyness", mode: SmileMode, display?: DisplayRange, ssvi?: SsviFit): Series[] {
+/** SABR is an overlay on any mode: dotted, drawn only for expiries that carry a fit. */
+export function smileSeries(expiries: SurfaceExpiry[], axis: "strike" | "moneyness", mode: SmileMode, display?: DisplayRange, ssvi?: SsviFit, sabr = false): Series[] {
   return expiries.flatMap((e, i) => {
     const base = { label: `${expiryLabel(e.id)} · ${days(e.days)}`, color: smileColor(i) }
     const series: Series[] = []
@@ -91,6 +131,10 @@ export function smileSeries(expiries: SurfaceExpiry[], axis: "strike" | "moneyne
     if (mode === "ssvi" || mode === "all") {
       const points = sampleSsvi(e, ssvi, axis, display)
       if (points.length) series.push({ ...base, id: `${e.id}-ssvi`, label: `${base.label} SSVI`, dashed: true, points })
+    }
+    if (sabr) {
+      const points = sampleSabr(e, axis, display)
+      if (points.length) series.push({ ...base, id: `${e.id}-sabr`, label: `${base.label} SABR`, dotted: true, points })
     }
     return series
   })

@@ -130,6 +130,7 @@ export function riskProfilePath(query: RiskProfileQuery): string {
   if (query.steps != null) params.set("steps", String(query.steps))
   const betas = Object.entries(query.betas ?? {}).map(([symbol, beta]) => `${symbol}:${beta}`)
   if (betas.length) params.set("betas", betas.join(","))
+  if (query.dynamics && query.dynamics !== "sticky_strike") params.set("dynamics", query.dynamics)
   return `/api/risk/profile${params.size ? `?${params}` : ""}`
 }
 /** GET /api/underlyings/{symbol}/flow's query; defaults are left to the server. */
@@ -205,6 +206,9 @@ export const api = {
   riskHistory: (signal?: AbortSignal) => get<import("./trading-types").HistoricalRisk>(scoped("/api/risk/history"), signal),
   scenarios: (query: string, signal?: AbortSignal) => get<import("./trading-types").ScenarioAnalysis>(scoped(`/api/risk/scenarios?${query}`), signal),
   risk: (signal?: AbortSignal) => get<Risk>(scoped("/api/risk"), signal),
+  /** The risk read with its spot x vol grid recomputed under other smile dynamics. */
+  riskScenarios: (dynamics: import("./trading-types").SmileDynamics, signal?: AbortSignal) =>
+    get<Risk>(scoped(`/api/risk?dynamics=${dynamics}`), signal),
   riskProfile: (query: RiskProfileQuery, signal?: AbortSignal) => get<RiskProfile>(scoped(riskProfilePath(query)), signal),
   order: (id: string, signal?: AbortSignal) => get<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), signal),
   submitOrder: (order: NewOrder, mode: WriteMode) => accountWrite<SubmitOrderResponse>(scoped("/api/orders"), "POST", mode, order),
@@ -271,8 +275,9 @@ export const api = {
   exposure: (symbol: string, expiries: number, window: number, signal?: AbortSignal,
     convention: ExposureConvention = "long_calls_short_puts", slice: ExposureSlice = "all") =>
     get<ExposureMatrix>(`${underlying(symbol)}/exposure?expiries=${expiries}&window=${window}&convention=${convention}&slice=${slice}`, signal),
-  surface: (symbol: string, expiries: number, window: number, signal?: AbortSignal) =>
-    get<Surface>(`${underlying(symbol)}/surface?expiries=${expiries}&window=${window}`, signal),
+  /** sabrBeta adds the optional SABR overlay: a fixed beta in [0, 1], or "fit". */
+  surface: (symbol: string, expiries: number, window: number, signal?: AbortSignal, sabrBeta?: number | "fit") =>
+    get<Surface>(`${underlying(symbol)}/surface?expiries=${expiries}&window=${window}${sabrBeta == null ? "" : `&sabr_beta=${sabrBeta}`}`, signal),
   scenarioPacks: (signal?: AbortSignal) => get<{ packs: ScenarioPack[] }>("/api/replay/packs", signal),
   importScenarioPack: (pack: ScenarioPack | string, mode: WriteMode) => write<ScenarioPack>("/api/replay/packs", "POST", mode, pack, typeof pack === "string"),
   downloadScenarioPack: (id: string) => downloadFile(`/api/replay/packs/${encodeURIComponent(id)}`, `${id}-pack.json`),

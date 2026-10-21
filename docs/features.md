@@ -41,7 +41,10 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 - **Smile and term structure**: out-of-the-money smiles with SVI fits and arbitrage
   checks, ATM term structure on a square-root-of-time axis, and each expiry's
   forward, rate and source. Forwards come from put-call parity; equity-option IV
-  accounts for American exercise.
+  accounts for American exercise. An optional SABR overlay (fixed or fitted β)
+  adds per-expiry Hagan fits with the same arbitrage checks, fitted only on
+  request. A research-only Heston calibration is available through the API for
+  comparison. [SVI, SSVI, SABR and Heston](svi.md).
 - **Surface history**: recorded per-expiry SVI parameters at three intraday slots
   and the close, with same-expiry comparisons to the prior close, week and month.
   Actual sample times, unavailable dates and fit checks remain visible. [Details](svi.md).
@@ -76,6 +79,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   and stay labelled imported. [Earnings](volatility.md#earnings-implied-versus-realized).
 - Pricing includes Black-76, Black-Scholes-Merton, a safeguarded IV solver,
   Cox-Ross-Rubinstein and Leisen-Reimer trees. [Architecture](architecture.md).
+  Bjerksund-Stensland (2002) and Barone-Adesi-Whaley closed forms can replace the
+  tree's early exercise premium (`--american-model`); the tree stays the default
+  because it measured more accurate and no slower ([results](american-analytics.md#closed-form-alternatives)).
 
 ## Trading terminal
 
@@ -348,6 +354,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   and modelled touch probabilities. Risk profiles plot P&L today, on later dates
   and at first expiry with an IV offset, for one underlying or the book beta-weighted
   to SPY/SPX. Each date marks floor crossings and estimated touch odds.
+- The grid and profiles can also move each smile along its fitted SSVI surface
+  (sticky moneyness or sticky delta) to show how skew changes P&L on big moves;
+  rules and margin stay sticky strike. [Smile dynamics](paper-trading.md#smile-dynamics).
 - Volatility probability cones estimate finishing beyond or touching chosen prices
   by chosen dates. These are labelled model estimates, not predictions.
   [Profiles and probabilities](paper-trading.md#risk-profile-and-probabilities).

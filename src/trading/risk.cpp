@@ -154,7 +154,125 @@ ScenarioGrid cached_grid(const Ledger& ledger, const Valuations& valuations, con
   grids.emplace(std::move(key), grid);
   return grid;
 }
+/// The surface for a contract under non-sticky-strike dynamics, noting an
+/// underlying that has none in `missing`.
+const SmileSurface* surface_for(const SmileModel& smile, const std::string& underlying,
+    std::vector<std::string>& missing) {
+  if (smile.dynamics == SmileDynamics::StickyStrike) return nullptr;
+  if (smile.surfaces) {
+    if (const auto it = smile.surfaces->find(underlying); it != smile.surfaces->end()) return &it->second;
+  }
+  if (std::find(missing.begin(), missing.end(), underlying) == missing.end()) {
+    missing.push_back(underlying);
+    std::sort(missing.begin(), missing.end());
+  }
+  return nullptr;
+}
+double forward_d1(double k, double vol, double years) {
+  return (-k + 0.5 * vol * vol * years) / (vol * std::sqrt(years));
+}
 }  // namespace
+std::string_view to_string(SmileDynamics dynamics) noexcept {
+  switch (dynamics) {
+    case SmileDynamics::StickyStrike: return "sticky_strike";
+    case SmileDynamics::StickyMoneyness: return "sticky_moneyness";
+    case SmileDynamics::StickyDelta: return "sticky_delta";
+  }
+  return "sticky_strike";
+}
+std::optional<SmileDynamics> parse_smile_dynamics(std::string_view text) noexcept {
+  if (text == "sticky_strike") return SmileDynamics::StickyStrike;
+  if (text == "sticky_moneyness") return SmileDynamics::StickyMoneyness;
+  if (text == "sticky_delta") return SmileDynamics::StickyDelta;
+  return std::nullopt;
+}
+double SmileSurface::theta(double years) const {
+  if (thetas.empty() || !(years >= 0) || !std::isfinite(years)) return std::numeric_limits<double>::quiet_NaN();
+  const auto& [first_years, first_theta] = thetas.front();
+  if (years <= first_years) return first_theta * years / first_years;
+  for (std::size_t i = 1; i < thetas.size(); ++i) {
+    const auto& [t1, theta1] = thetas[i];
+    if (years <= t1) {
+      const auto& [t0, theta0] = thetas[i - 1];
+      return t1 > t0 ? std::lerp(theta0, theta1, (years - t0) / (t1 - t0)) : theta1;
+    }
+  }
+  return thetas.back().second * years / thetas.back().first;
+}
+double SmileSurface::iv(double k, double years) const {
+  if (!(years > 0)) return std::numeric_limits<double>::quiet_NaN();
+  return analytics::ssvi_iv(parameters, k, theta(years), years);
+}
+namespace detail {
+std::optional<double> decreasing_root(const std::function<std::optional<double>(double)>& f, double start, double at) {
+  double lo = start, hi = start, at_lo = at;
+  bool bracketed = false;
+  for (double width = 0.01; !bracketed && width <= 8; width *= 2) {
+    // A positive value lies left of the root.
+    const double probe = at > 0 ? start + width : start - width;
+    const auto value = f(probe);
+    if (!value) return std::nullopt;
+    // An exact zero is the root; bisecting toward it would take the wrong side.
+    if (*value == 0) return probe;
+    if ((*value > 0) != (at > 0)) {
+      (at > 0 ? hi : lo) = probe;
+      if (at <= 0) at_lo = *value;
+      bracketed = true;
+    } else {
+      (at > 0 ? lo : hi) = probe;
+    }
+  }
+  if (!bracketed) return std::nullopt;
+  for (int i = 0; i < 200 && hi - lo > 1e-13 * (1 + std::abs(lo)); ++i) {
+    const double middle = (lo + hi) / 2;
+    const auto value = f(middle);
+    if (!value) return std::nullopt;
+    if (*value == 0) return middle;
+    if ((*value > 0) == (at_lo > 0)) lo = middle;
+    else hi = middle;
+  }
+  return (lo + hi) / 2;
+}
+}  // namespace detail
+std::optional<double> scenario_vol(const SmileModel& model, const SmileSurface* surface,
+    double smile_iv, double strike, double forward, double years, double shocked_forward,
+    double shocked_years, double shift) {
+  if (model.dynamics == SmileDynamics::StickyStrike || !surface) return smile_iv + shift;
+  // Once expired the price is intrinsic and the volatility does not matter.
+  if (!(shocked_years > 0) || !(years > 0)) return smile_iv + shift;
+  const double base_k = std::log(strike / forward);
+  const double moved_k = std::log(strike / shocked_forward);
+  const double base = surface->iv(base_k, years);
+  if (!std::isfinite(base) || !std::isfinite(moved_k)) return std::nullopt;
+  // The contract's own smile on the new date, through its market IV today.
+  auto smile = [&](double k) { return surface->iv(k, shocked_years) - base + smile_iv; };
+  if (model.dynamics == SmileDynamics::StickyMoneyness) {
+    const double moved = smile(moved_k);
+    if (!std::isfinite(moved)) return std::nullopt;
+    return moved + shift;
+  }
+  // Sticky delta: find k* on the smile whose forward delta at its own vol equals
+  // the contract's at the shocked vol sigma_b(k*) + shift. The root of
+  // gap(k) = d1(k, b(k)) - d1(K/F', b(k) + shift) is bracketed outward from K/F'.
+  auto gap = [&](double k) -> std::optional<double> {
+    const double b = smile(k);
+    if (!(b > 0) || !std::isfinite(b)) return std::nullopt;
+    if (!(b + shift > 0)) return std::nullopt;
+    return forward_d1(k, b, shocked_years) - forward_d1(moved_k, b + shift, shocked_years);
+  };
+  const auto at = gap(moved_k);
+  if (!at) {
+    // A shocked vol at or below zero: no delta to match; the caller floors it.
+    const double b = smile(moved_k);
+    return std::isfinite(b) ? std::optional<double>(b + shift) : std::nullopt;
+  }
+  if (*at == 0) return smile(moved_k) + shift;
+  const auto root = detail::decreasing_root(gap, moved_k, *at);
+  if (!root) return std::nullopt;
+  const double moved = smile(*root);
+  if (!std::isfinite(moved)) return std::nullopt;
+  return moved + shift;
+}
 Timestamp observation_time(const md::OptionContract& contract, Timestamp now) {
   const auto session = md::trading_session(contract.root, now);
   const auto observed = session.open || session.market_time == md::kInvalidTimestamp ? now : std::min(now, session.market_time);
@@ -369,13 +487,15 @@ void validate_scenarios(const ScenarioConfig& c) {
   if (!valid) throw TradingError(Reason::INVALID_SCENARIO, "Invalid or oversized spot/vol/time grid");
 }
 ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
-    const ScenarioConfig& config, Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices) {
+    const ScenarioConfig& config, Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices,
+    const SmileModel& smile) {
   validate_scenarios(config);
   if (config.days == std::vector<double>{0} && !config.beta_weighted && !config.term_scaled) {
     ScenarioGrid result;
     struct ValuedPosition {
       const Position* position;
       const Valuation* valuation;
+      const SmileSurface* surface;
     };
     std::vector<ValuedPosition> positions;
     positions.reserve(ledger.positions().size());
@@ -385,21 +505,26 @@ ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
         result.complete = false;  // Validation above guarantees at least one cell.
         continue;
       }
-      positions.push_back({&p, &it->second});
+      positions.push_back({&p, &it->second, surface_for(smile, p.contract.underlying, result.surface_fallback)});
     }
     for (double spot : config.spot_percent) {
       for (double vol : config.vol_points) {
         ScenarioCell cell{spot, vol, 0, false};
-        for (const auto& [position, valuation] : positions) {
+        for (const auto& [position, valuation, surface] : positions) {
           const auto& p = *position;
           const auto& v = *valuation;
-          const double shocked_vol = v.smile_iv + vol / 100;
-          cell.clamped |= shocked_vol < config.vol_floor;
+          const auto shocked_vol = scenario_vol(smile, surface, v.smile_iv, p.contract.strike, v.forward, v.years,
+              v.forward * (1 + spot / 100), v.years, vol / 100);
+          if (!shocked_vol) {
+            result.complete = false;
+            continue;
+          }
+          cell.clamped |= *shocked_vol < config.vol_floor;
           // Avoid subtraction and floor artifacts: zero shock is exactly zero.
           if (spot == 0 && vol == 0) continue;
           const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
           const double shocked = pricing::black_price(p.contract.type, v.forward * (1 + spot / 100),
-              p.contract.strike, v.years, std::max(config.vol_floor, shocked_vol), v.discount);
+              p.contract.strike, v.years, std::max(config.vol_floor, *shocked_vol), v.discount);
           const double pnl = static_cast<double>(p.quantity) * 100 * (shocked - base);
           if (!std::isfinite(pnl) || !std::isfinite(cell.pnl + pnl)) result.complete = false;
           else cell.pnl += pnl;
@@ -422,11 +547,14 @@ ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
     if (!result.complete) for (auto& cell : result.cells) cell.pnl = 0;
     return result;
   }
+  // Time, beta-weighted and term-scaled grids are risk profile columns, so the
+  // chosen dynamics move each contract's IV there exactly as the profile does.
   ProfileConfig profile;
   profile.percent = config.spot_percent;
   profile.days = config.days;
   profile.vol_floor = config.vol_floor;
   profile.term_scaled = config.term_scaled;
+  profile.smile = smile;
   if (config.beta_weighted) profile.betas = config.betas;
   else {
     for (const auto& [symbol, p] : ledger.positions()) profile.betas[p.contract.underlying] = 1;
@@ -439,6 +567,7 @@ ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
     columns.push_back(risk_profile(ledger, valuations, profile, 0, {}, {}, {}, now, max_age, stock_prices));
     result.complete &= columns.back().complete;
   }
+  result.surface_fallback = columns.front().surface_fallback;
   for (std::size_t day = 0; day < config.days.size(); ++day)
     for (std::size_t spot = 0; spot < config.spot_percent.size(); ++spot)
       for (std::size_t vol = 0; vol < config.vol_points.size(); ++vol) {
@@ -470,6 +599,7 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
     const Position* position;
     const Valuation* valuation;
     double beta;
+    const SmileSurface* surface;
   };
   struct Shares {
     double shares, price, beta;
@@ -486,7 +616,7 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
       continue;
     }
     clamped |= !config.term_scaled && it->second.smile_iv + config.vol_points / 100 < config.vol_floor;
-    held.push_back({&p, &it->second, beta->second});
+    held.push_back({&p, &it->second, beta->second, surface_for(config.smile, p.contract.underlying, result.surface_fallback)});
   }
   for (const auto& [symbol, stock] : ledger.stocks()) {
     const auto beta = config.betas.find(symbol);
@@ -510,7 +640,7 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
       const auto [it, added] = valued.try_emplace(percent);
       if (!added) return it->second;
       double total = 0;
-      for (const auto& [position, valuation, beta] : held) {
+      for (const auto& [position, valuation, beta, surface] : held) {
         // Avoid subtraction and floor artifacts: no change at all is exactly zero.
         if (percent == 0 && days == 0 && config.vol_points == 0) continue;
         const auto& p = *position;
@@ -526,7 +656,14 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
         }
         const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
         const double scale = config.term_scaled ? std::sqrt(30.0 / std::max(1.0, life * 365.0)) : 1;
-        const double sigma = v.smile_iv + config.vol_points * scale / 100;
+        double sigma = v.smile_iv + config.vol_points * scale / 100;
+        if (surface) {
+          // The surface moves the smile; the (term-scaled) shock applies on top.
+          const auto moved = scenario_vol(config.smile, surface, v.smile_iv, p.contract.strike, v.forward, v.years,
+              forward * move, life, config.vol_points * scale / 100);
+          if (!moved) return it->second;
+          sigma = *moved;
+        }
         curve.clamped |= sigma < config.vol_floor;
         const double shocked = pricing::black_price(p.contract.type, forward * move, p.contract.strike, life,
             std::max(config.vol_floor, sigma), discount);

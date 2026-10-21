@@ -390,6 +390,7 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
     double dividend = kNaN;
     bool deamericanized = false;
     std::vector<Dividend> dividends;
+    pricing::AmericanModel eep_model;
   };
   std::vector<Fitted> fitted;
   std::vector<double> long_rates;
@@ -437,7 +438,8 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
                       {},
                       kNaN,
                       false,
-                      {}});
+                      {},
+                      options.american_model});
   }
 
   // Short expiries borrow the rate term structure's level from the long ones.
@@ -524,9 +526,11 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
         if (!state || !state->two_sided()) return;
         if (!std::isfinite(vol)) vol = other;
         if (!(vol > 0) || !std::isfinite(vol)) return;
-        const double premium = pricing::binomial_early_exercise_premium(
+        auto used = options.american_model;
+        const double premium = pricing::early_exercise_premium(
             {state->contract.type, out.spot, strike, f.years, rate, dividend, vol},
-            kDeamericanizationSteps, cash);
+            options.american_model, kDeamericanizationSteps, cash, &used);
+        if (used != options.american_model) f.eep_model = used;
         f.premiums[id] = premium;
       };
       correct(call, pair.call, cv, pv);
@@ -562,6 +566,7 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
     sm.rate_source = f.rate_source;
     if (f.rate_source == "curve") sm.rate_curve_symbol = options.discount_curve->symbol();
     sm.deamericanized = f.deamericanized;
+    sm.eep_model = f.eep_model;
     sm.dividends = std::move(f.dividends);
     if (!sm.forward.ok) {
       // Keep unanchored slices visible with missing analytics and receipt coverage.

@@ -3,6 +3,10 @@ add_executable(openport_bench
 )
 target_link_libraries(openport_bench PRIVATE openport::core openport::options benchmark::benchmark_main)
 
+# American EEP accuracy and analyze() timing by model; see docs/american-analytics.md.
+add_executable(openport_measure_american measure_american.cpp)
+target_link_libraries(openport_measure_american PRIVATE openport::core openport::options)
+
 add_executable(openport_measure_svi measure_svi.cpp)
 target_link_libraries(openport_measure_svi PRIVATE openport::options)
 if(OPENPORT_BUILD_PROVIDERS)

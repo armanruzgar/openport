@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import type { Surface, SviFit, SsviFit } from "../api/types"
 import { SviTable } from "../components/SviTable"
+import { SabrTable } from "../components/SabrTable"
 import { SmileView } from "./SmileView"
 
 vi.mock("../api/live", () => ({ useLive: () => ({ version: () => 1 }) }))
@@ -68,3 +69,21 @@ it("reports a failed SSVI surface and missing ATM expiry without fabricating par
   expect(html).toContain("quotes must bracket ATM")
   expect(html).not.toContain("NaN")
 })
+it("offers the SABR overlay off by default and tabulates its fits and diagnostics", () => {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity } } })
+  client.setQueryData(["surface", "SPX", 6, .1, 1], { ...surface, calendar_violations: [] })
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><SmileView symbol="SPX" /></QueryClientProvider>)
+  client.clear()
+  expect(html).toContain('aria-label="SABR overlay"')
+  expect(html).toContain(">No SABR</button>")
+  expect(html).not.toContain("SABR parameters and arbitrage diagnostics")
+  const sabr = { alpha: 1.2, beta: .5, rho: -.55, nu: 1.7, beta_calibrated: false, rmse_vol_points: .031, points: 41,
+    status: "ok" as const, reason: null, fit_ms: 2, butterfly_min_g: -.01, butterfly_k: -.3, butterfly_ok: false, min_k: -.3, max_k: .1 }
+  const table = renderToStaticMarkup(<SabrTable beta={.5} violations={[{ earlier: "2027-01-15PM", later: "2027-02-15PM", k: .05, vol_points: .7 }]}
+    expiries={[{ ...surface.expiries[0]!, sabr }, { ...surface.expiries[2]!, sabr: null, sabr_status: "too_few_points", sabr_reason: "need at least five distinct two-sided OTM IV points" }]} />)
+  for (const text of ["β fixed at 0.50", "α 1.20000", "ρ -0.5500", "ν 1.7000", "0.0310", "Butterfly violation", "calendar: 0.7 vp at k=0.05", "Too few points", "need at least five distinct"])
+    expect(table).toContain(text)
+  expect(table).not.toContain("NaN")
+  expect(renderToStaticMarkup(<SabrTable beta={undefined} violations={[]} expiries={surface.expiries} />)).toBe("")
+})
+

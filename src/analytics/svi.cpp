@@ -395,15 +395,12 @@ double half_spread_at(const std::vector<SviHalfSpread>& quotes, double k) {
 }
 }  // namespace
 
-std::vector<SviCalendarViolation> svi_calendar(std::span<const SviFit> fits) {
-  std::vector<std::size_t> order;
-  for (std::size_t i = 0; i < fits.size(); ++i)
-    if (fits[i].status == SviStatus::Ok) order.push_back(i);
-  std::stable_sort(order.begin(), order.end(), [&](auto a, auto b) { return fits[a].years < fits[b].years; });
+std::vector<SviCalendarViolation> detail::calendar(std::vector<CalendarSlice> slices) {
+  std::stable_sort(slices.begin(), slices.end(), [](const auto& a, const auto& b) { return a.years < b.years; });
   std::vector<SviCalendarViolation> result;
-  for (std::size_t j = 1; j < order.size(); ++j) {
-    const auto& earlier = fits[order[j - 1]];
-    const auto& later = fits[order[j]];
+  for (std::size_t j = 1; j < slices.size(); ++j) {
+    const auto& earlier = slices[j - 1];
+    const auto& later = slices[j];
     const double lo = std::max(earlier.min_k, later.min_k);
     const double hi = std::min(earlier.max_k, later.max_k);
     if (!std::isfinite(lo) || !std::isfinite(hi) || lo > hi) continue;
@@ -415,18 +412,28 @@ std::vector<SviCalendarViolation> svi_calendar(std::span<const SviFit> fits) {
       const double k = lo + (hi - lo) * i / kGridSteps;
       // Express both total variances at the later tenor, so the tolerance is
       // an IV increase there, not a comparison of the two annualized smiles.
-      const double increase = 100 * (svi_iv(earlier.parameters, k, later.years) -
-                                     svi_iv(later.parameters, k, later.years));
-      const double tolerance = std::max({floor, half_spread_at(earlier.half_spreads, k),
-                                         half_spread_at(later.half_spreads, k)});
+      const double increase = 100 * (earlier.iv(k, later.years) - later.iv(k, later.years));
+      const double tolerance = std::max({floor, half_spread_at(*earlier.half_spreads, k),
+                                         half_spread_at(*later.half_spreads, k)});
       // Do not turn roundoff at the tolerance boundary into a violation.
       if (increase > tolerance + 1e-12 && increase > worst) {
         worst = increase; location = k; used_tolerance = tolerance;
       }
     }
-    if (std::isfinite(location)) result.push_back({order[j - 1], order[j], location, worst, used_tolerance});
+    if (std::isfinite(location)) result.push_back({earlier.index, later.index, location, worst, used_tolerance});
   }
   return result;
+}
+
+std::vector<SviCalendarViolation> svi_calendar(std::span<const SviFit> fits) {
+  std::vector<detail::CalendarSlice> slices;
+  for (std::size_t i = 0; i < fits.size(); ++i) {
+    const auto& fit = fits[i];
+    if (fit.status != SviStatus::Ok) continue;
+    slices.push_back({i, fit.years, fit.min_k, fit.max_k, fit.rmse_vol_points, &fit.half_spreads,
+                      [&fit](double k, double years) { return svi_iv(fit.parameters, k, years); }});
+  }
+  return detail::calendar(std::move(slices));
 }
 
 }  // namespace openport::analytics

@@ -225,6 +225,155 @@ build timings (ms):
 No time is added to the engine analytics pass. The first surface response pays
 calibration cost on its API worker; repeated responses still pay serialization cost.
 
+## SABR: an optional per-expiry overlay
+
+SABR (Hagan, Kumar, Lesniewski and Woodward 2002) models the forward with a
+stochastic volatility, dF=αF^β dW, dα=να dZ, dW·dZ=ρ dt. OpenPort evaluates
+the paper's lognormal (Black) implied-volatility expansion, Eq. (2.17a), at
+k=log(K/F):
+
+\[
+IV(k)=\frac{\alpha}{(FK)^{(1-\beta)/2}\left[1+\frac{(1-\beta)^2}{24}k^2+\frac{(1-\beta)^4}{1920}k^4\right]}
+\cdot\frac{z}{x(z)}\cdot\left[1+\left(\frac{(1-\beta)^2\alpha^2}{24(FK)^{1-\beta}}+
+\frac{\rho\beta\nu\alpha}{4(FK)^{(1-\beta)/2}}+\frac{2-3\rho^2}{24}\nu^2\right)T\right],
+\]
+
+with z=(ν/α)(FK)^((1−β)/2) log(F/K) and x(z)=log((√(1−2ρz+z²)+z−ρ)/(1−ρ)), evaluated for z<0 as the equal
+log((1+ρ)/(√(1−2ρz+z²)−z+ρ)), which avoids cancellation at large |z|. For
+|z|<1e-6 the ratio z/x(z) is its series 1−ρz/2+(2−3ρ²)z²/12. A non-positive or
+non-finite result is no IV. The expansion is asymptotic, not an exact price, and
+is well known to imply a negative density at low strikes for long tenors and
+large ν, so it is fitted and drawn only for comparison.
+
+**It is not on the analytics path.** The engine never fits SABR. The surface API
+fits it only when a request includes `sabr_beta`, and caches the fits beside
+SVI's for the same immutable snapshot, by beta choice and expiry prefix. Missing
+fits run on the background fit worker outside the cache lock, exactly as for
+Heston below (one per snapshot, 503 `FIT_BUSY` with Retry-After otherwise). Nothing else reads them: Greeks, exposure, volatility metrics, rules and
+scenarios use the market smile, SVI and SSVI as before.
+
+### Calibration
+
+Each expiry is fitted alone, on exactly SVI's eligible OTM points and normalised
+quote weights, minimising the same weighted total-variance squared residuals.
+β is fixed by the request (`sabr_beta=0, 0.1, …, 1`; the terminal offers 1 and ½), the
+usual practice because β and ρ are nearly collinear on one smile; `sabr_beta=fit`
+also calibrates β∈[0,1]. α is searched as the scale-free a=αF^(β−1), with which
+every factor of F cancels and the smile depends on k alone; the response reports
+α itself. Bounds: a∈[1e-4,10], |ρ|≤1−1e-7, ν∈[1e-4,50]. Seeds: a at the ATM IV
+(interpolated linearly in k as for SSVI, else the nearest quote), ρ∈{−.75,−.4,0,.4},
+ν∈{.3,1,3,8} and, when fitting β, β∈{.25,.75}. The best four seeds are refined by
+bounded Nelder–Mead in (log a, ρ, log ν[, β]), at most 1,000 iterations each. A
+refinement converges when every simplex coordinate width is below 1e-8, or below
+1e-5 with the loss spread within 1e-13 relative (a flat direction, such as ρ once ν
+reaches its floor). At least five distinct points are needed. As with SVI this is a
+deterministic local search with no global-optimum claim; failures return null
+parameters with a reason.
+
+### Arbitrage checks
+
+The same two finite-grid diagnostics as SVI, never a certificate:
+
+- **Butterfly**: Gatheral's g(k) on 2,001 points over the calibration range, with
+  w=IV²T and its k derivatives by central differences (h=1e-4). A negative g, a
+  non-positive w or an undefined value fails. A test confirms that a flagged
+  point also fails call-price convexity.
+- **Calendar**: consecutive successful SABR expiries, compared exactly as SVI's
+  calendar check (same grid, tolerance and reporting), as `sabr_calendar_violations`.
+
+### API and display
+
+`/api/underlyings/{symbol}/surface?sabr_beta=1` (or a number in [0,1], or `fit`)
+adds `sabr` to each expiry, `{alpha,beta,rho,nu,beta_calibrated,rmse_vol_points,`
+`points,status,reason,fit_ms,butterfly_min_g,butterfly_k,butterfly_ok,min_k,max_k}`
+with full-precision parameters, or null on failure; `sabr_status`, `sabr_reason`
+and `sabr_fit_ms` keep failure information; each point adds decimal `sabr_iv`; the
+top level adds `sabr_beta` and `sabr_calendar_violations`. Without `sabr_beta`
+none of these keys appear and the response is unchanged. An invalid value, a β
+off the 0.1 grid (which bounds the overlays cached per snapshot to twelve) or more
+than 60 `expiries` with `sabr_beta` is 400.
+
+The Volatility view's SABR control is off by default (No SABR / SABR β=1 / β=½ /
+β fit). When on, it draws a dotted curve per fitted expiry over its quoted range
+only, beside whichever market/SVI/SSVI curves are shown, and a table of α, β, ρ,
+ν, RMSE and the butterfly and calendar flags.
+
+### Validation and timing
+
+Tests cover the ATM limit against Hagan's Eq. (2.18), continuity through the
+series branch, scale invariance in F, the β=1, ν=0 Black limit, exact recovery
+with fixed β=1 and ½ (positive and negative ρ), small noise with fixed and fitted
+β, determinism and input order, flat smiles, invalid and degenerate inputs, a
+known negative-density case cross-checked against call-price convexity, calendar
+crossings, API fields, opt-in behaviour and invalid parameters, and the browser's
+port of the formula against server values.
+
+On the SVI workload above (`openport_measure_svi`, 2026-10-21, a busy shared
+machine: the SSVI row measured 77 ms in the same run against 40 ms in the table,
+so treat these as upper bounds): one 250-point SABR fit with β=1 took 18 ms
+median, with β fitted 107 ms; 60 fits plus the calendar check 1.7 s; the full
+cold API with `sabr_beta=1` over 60 expiries 1.3 s against 0.95 s without. The
+workload's smiles are SVI-shaped, so these time the overlay, not its accuracy.
+The terminal requests six expiries by default.
+
+## Heston: a research comparison through the API
+
+`GET /api/underlyings/{symbol}/heston[?expiries=8]` calibrates one Heston (1993)
+parameter set, dv=κ(θ−v)dt+ξ√v dZ with spot-variance correlation ρ and initial
+variance v0, to the leading expiries, for comparison with SVI and SSVI. It is a
+research tool only: there is no terminal view, and nothing in analytics, rules,
+scenarios or the smile display uses it. The first request for a snapshot and
+expiry count queues the fit on a single background fit worker, never an HTTP I/O
+thread, and answers when it finishes; the fit runs outside the cache lock that
+surface, volatility and risk reads share, and is then cached beside the other fits.
+While one deferred fit for a snapshot is queued or running, another request for
+that snapshot that needs a fit gets 503 `FIT_BUSY` with `Retry-After: 2`, as does
+any such request when four fits are already queued. Cached answers return at once.
+
+**Pricing.** Undiscounted calls on the forward use Lewis's (2001) single integral
+C=F−√(FK)/π ∫₀^∞ Re[e^{iux}φ(u−i/2)]/(u²+¼) du with x=log(F/K), and the
+characteristic function in the "little Heston trap" form of Albrecher et al.
+(2007), which avoids the complex-log branch jump. Its β−d and log terms are
+O(ξ²); they are rewritten algebraically (β−d=−ξ²(iu+u²)/(β+d), and log1p by
+series for small arguments), so the small-ξ limit is exact rather than roundoff
+divided by ξ². The integral uses 16-point Gauss–Legendre panels starting 0.5 wide
+at the origin, where 1/(u²+¼) peaks, and doubling to a width that holds about four
+periods of e^{iux}, up to U=10/√w+30 for the tenor's total variance w. Puts follow
+from parity.
+
+**Calibration.** SVI's eligible OTM quotes for expiries at least a week away, kept
+within three ATM standard deviations (|k|≤3·IV_atm·√T, beyond which prices near
+roundoff and vegas near zero would dominate), thinned evenly in k to at most 25
+per expiry, with SVI's normalised weights and equal expiry weight. The objective
+is vega-weighted price residuals, a first-order IV residual. Bounded Nelder–Mead
+in (log v0, log κ, log θ, log ξ, ρ) with v0,θ∈[1e-4,4], κ∈[0.05,20], ξ∈[0.01,5],
+|ρ|≤0.999, from 18 fixed seeds (v0 and θ at the shortest and longest ATM IV²,
+κ∈{.5,2,6}, ξ∈{.3,1}, ρ∈{−.7,−.3,.2}), refining the best two for at most 3,000
+iterations until log-parameter widths are below 1e-6. Reported RMSE inverts each
+fitted price to its IV exactly, per expiry and overall (root mean square over
+expiries, as SSVI). Feller's condition 2κθ≥ξ² is reported, not imposed. At least
+two usable expiries are needed; skipped expiries keep a reason.
+
+**Robustness and limits.** Tests recover an exact synthetic surface to 6e-6 vol
+points with every parameter to five digits, fit noisy quotes within their noise,
+match full-truncation Euler Monte Carlo prices within four standard errors, and
+match Black–Scholes at the mean variance as ξ→0. On real-shaped smiles the
+parameters are weakly identified: on the SVI benchmark workload below, κ settles
+at its 0.05 bound with θ≈0.56, trading mean reversion against long-run variance
+while the fitted surface stays within 0.05–0.2 vol points. Read the surface and
+its RMSE beside SVI and SSVI (each expiry includes their RMSE), not individual
+parameters. One parameter set cannot match short-dated equity-index skew well;
+that is a property of the model, which is why it is offered for comparison only.
+
+Response: `status`, `reason`, `parameters` `{v0,kappa,theta,xi,rho}` (full
+precision; null unless `ok`), `feller`, `rmse_vol_points`, `points`, `fit_ms`,
+`model`, and `expiries[]` with `id, expiry, days, forward, points,
+rmse_vol_points, reason, svi_rmse_vol_points, ssvi_rmse_vol_points`.
+
+On the SVI workload above (`openport_measure_svi`, 2026-10-21, a busy shared machine),
+the eight leading expiries (four of them a week or more away) took 2.2 s median.
+A synthetic three-expiry surface fits in about 0.2–0.4 s in the tests.
+
 ## References
 
 - Gatheral (2004), *A parsimonious arbitrage-free implied volatility parameterization
@@ -238,6 +387,14 @@ calibration cost on its API worker; repeated responses still pay serialization c
   [*Arbitrage-free SVI volatility surfaces*](https://arxiv.org/abs/1204.0646),
   Quantitative Finance 14(1), 59–71. Density diagnostic: Lemma 2.2; Axel Vogt example:
   a=−0.0410, b=0.1331, ρ=0.3060, m=0.3586, σ=0.4153.
+- Hagan, Kumar, Lesniewski & Woodward (2002), *Managing smile risk*, Wilmott
+  Magazine, September, 84–108: Eqs. (2.17a) and (2.18).
+- Heston (1993), *A closed-form solution for options with stochastic volatility
+  with applications to bond and currency options*, Review of Financial Studies 6(2).
+- Lewis (2001), *A simple option formula for general jump-diffusion and other
+  exponential Lévy processes*, OptionCity working paper.
+- Albrecher, Mayer, Schoutens & Tistaert (2007), *The little Heston trap*, Wilmott
+  Magazine, January, 83–92.
 
 ## Historical surface snapshots
 

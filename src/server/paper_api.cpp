@@ -3,6 +3,7 @@
 #include "openport/server/sandboxes.hpp"
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
+#include "metric_cache.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1264,8 +1265,11 @@ json kill_json(const TradingSnapshot& s) {
   return {{"latched", s.risk.kill_latched}, {"reason", nullable(s.risk.kill_reason)},
           {"reset_blocked", decision_json(s.kill_reset)}, {"history", std::move(history)}};
 }
-json risk_json(const TradingView& view) {
+/// `grid` replaces the snapshot's sticky-strike grid with one recomputed under `dynamics`.
+json risk_json(const TradingView& view, const ScenarioGrid* grid = nullptr,
+               SmileDynamics dynamics = SmileDynamics::StickyStrike) {
   const auto& s = *view.snapshot;
+  const auto& scenarios = grid ? *grid : s.scenarios;
   json underlyings = json::object();
   for (const auto& [symbol, bucket] : s.risk.underlyings) underlyings[symbol] = bucket_json(bucket);
   json scopes = json::object();
@@ -1275,8 +1279,8 @@ json risk_json(const TradingView& view) {
   for ([[maybe_unused]] double spot : view.config.scenarios.spot_percent) {
     json row = json::array(), clamps = json::array();
     for ([[maybe_unused]] double vol : view.config.scenarios.vol_points) {
-      const auto& cell = s.scenarios.cells.at(index++);
-      row.push_back(s.scenarios.complete ? number(cell.pnl) : json(nullptr));
+      const auto& cell = scenarios.cells.at(index++);
+      row.push_back(scenarios.complete ? number(cell.pnl) : json(nullptr));
       clamps.push_back(cell.clamped);
     }
     pnl.push_back(std::move(row)); clamped.push_back(std::move(clamps));
@@ -1296,7 +1300,35 @@ json risk_json(const TradingView& view) {
           {"complete", s.risk.complete}, {"daily_loss", s.risk.daily_loss.str()},
           {"kill", kill_json(s)}, {"aggregate", bucket_json(s.risk.aggregate)}, {"underlyings", underlyings}, {"scopes", scopes},
           {"scenarios", {{"spot_percent", view.config.scenarios.spot_percent}, {"vol_points", view.config.scenarios.vol_points},
-                         {"pnl", pnl}, {"clamped", clamped}, {"complete", s.scenarios.complete}}}};
+                         {"pnl", pnl}, {"clamped", clamped}, {"complete", scenarios.complete},
+                         {"dynamics", to_string(dynamics)}, {"surface_fallback", scenarios.surface_fallback}}}};
+}
+
+/// SSVI surfaces for the underlyings a smile-dynamics read moves, from each one's
+/// cached surface fit; the first such read for a snapshot fits it on this worker.
+/// An underlying without analytics or a successful fit is left out (sticky strike).
+SmileSurfaces smile_surfaces(const MetricsSource& source, const std::set<std::string>& underlyings) {
+  SmileSurfaces result;
+  for (const auto& symbol : underlyings) {
+    const auto metrics = source.metrics(symbol);
+    if (!metrics) continue;
+    const auto cache = surface_cache(metrics);
+    analytics::SsviFit fit;
+    {
+      const std::lock_guard lock(cache->mutex);
+      if (!cache->ssvi) cache->ssvi = analytics::fit_ssvi(metrics->slices);
+      fit = *cache->ssvi;
+    }
+    if (fit.status != analytics::SviStatus::Ok) continue;
+    SmileSurface surface{fit.parameters, {}};
+    for (std::size_t i = 0; i < fit.expiries.size() && i < metrics->slices.size(); ++i)
+      if (std::isfinite(fit.expiries[i].theta) && metrics->slices[i].years > 0)
+        surface.thetas.emplace_back(metrics->slices[i].years, fit.expiries[i].theta);
+    // Repaired thetas are nondecreasing in T, so sorting by T keeps them so.
+    std::sort(surface.thetas.begin(), surface.thetas.end());
+    if (!surface.thetas.empty()) result.emplace(symbol, std::move(surface));
+  }
+  return result;
 }
 
 int reason_status(Reason reason) {
@@ -2708,6 +2740,13 @@ json historical_risk_json(const TradingView& view, const MetricsSource& source) 
     {"model", "Derived 1-day historical simulation, up to 252 completed closes per factor; at least 20 paired returns for 95% and 100 for 99%. Black-76 sticky strike with one calendar day of decay; ATM variant adds observed 30d ATM IV changes uniformly by tenor. Empirical inverse-CDF VaR and fractional upper-tail ES in dollars, floored at zero. No liquidity, path or settlement simulation. Stress margin is the held-book requirement after the instantaneous shock, excluding working orders."}};
 }
 
+/// Prose for a model string: "sticky strike", "sticky moneyness" or "sticky delta".
+std::string dynamics_label(SmileDynamics dynamics) {
+  auto text = std::string(to_string(dynamics));
+  std::replace(text.begin(), text.end(), '_', ' ');
+  return text;
+}
+
 /// GET /api/risk/profile: the held book's value across moves of one underlying, or
 /// of a benchmark with every underlying beta-weighted to it, on several dates.
 ApiResponse risk_profile_response(const std::map<std::string, std::string>& query, const MetricsSource& source, std::string account, bool grid = false) {
@@ -2718,6 +2757,7 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
   double vol_points = 0, range = 10;
   int steps = 41;
   std::map<std::string, double> given;
+  SmileDynamics dynamics = SmileDynamics::StickyStrike;
   bool valid = true;
   for (const auto& [key, value] : query) {
     if (key == "account" && valid_account(value)) account = value;
@@ -2741,6 +2781,10 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
         vols.push_back(vol);
       }
       valid &= vols.size() <= 21;
+    } else if (key == "dynamics") {
+      const auto parsed = parse_smile_dynamics(value);
+      valid &= parsed.has_value();
+      if (parsed) dynamics = *parsed;
     } else if (key == "iv") valid &= query_decimal(value, vol_points) && std::abs(vol_points) <= 100;
     else if (key == "range") valid &= query_decimal(value, range) && range > 0 && range <= 99;
     else if (key == "steps") {
@@ -2843,6 +2887,10 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
                      {"dollar_delta", dollar_delta ? number(*dollar_delta) : json(nullptr)},
                      {"weighted_dollar_delta", dollar_delta && !beta.source.empty() ? number(*dollar_delta * beta.beta) : json(nullptr)}});
   }
+  // Other dynamics move each smile along its underlying's fitted SSVI surface.
+  SmileSurfaces surfaces;
+  if (dynamics != SmileDynamics::StickyStrike) surfaces = smile_surfaces(source, held);
+  config.smile = {dynamics, &surfaces};
   if (grid) {
     if (!query.contains("range") && !query.contains("steps")) config.percent = view->config.scenarios.spot_percent;
     if (config.percent.size() * config.days.size() * vols.size() > 20000)
@@ -2877,7 +2925,9 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
     return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"time", md::format_timestamp(s.time)},
         {"mode", beta_weighted ? "beta" : "parallel"}, {"benchmark", reference}, {"betas", betas},
         {"term_scaled", term_scaled}, {"slices", slices}, {"complete", complete},
-        {"model", "Derived Black-76 sticky-strike scenarios; time reduces carry and remaining life. Term scaling uses sqrt(30/max(1,remaining days)). Trading rules retain their configured parallel, zero-day grid."}}.dump()};
+        {"dynamics", to_string(dynamics)}, {"surface_fallback", columns.empty() ? json::array() : json(columns.front().surface_fallback)},
+        {"model", std::string("Derived Black-76 ") + dynamics_label(dynamics) + " scenarios; time reduces carry and remaining life. "
+                  "Term scaling uses sqrt(30/max(1,remaining days)). Trading rules retain their configured parallel, zero-day, sticky-strike grid."}}.dump()};
   }
   const auto profile = snapshot_profile(s, view->config, view->valuations, config, spot, underlying);
   json prices = json::array();
@@ -2900,8 +2950,12 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
       {"weighted_dollar_delta", weighted_complete ? number(weighted) : json(nullptr)},
       {"weighted_delta", weighted_complete && spot > 0 ? number(weighted / spot) : json(nullptr)},
       {"complete", profile.complete}, {"term_scaled", term_scaled},
-      {"model", "Black-76 on each contract's smile IV plus the offset, sticky strike; remaining life and carry shrink by the days; "
-                "each underlying moves its beta times the reference's percent move; when term_scaled is true the IV offset is multiplied by sqrt(30/max(1,remaining days))"}}.dump()};
+      {"dynamics", to_string(dynamics)}, {"surface_fallback", profile.surface_fallback},
+      {"model", std::string("Black-76 on each contract's smile IV ") +
+          (dynamics == SmileDynamics::StickyStrike ? "plus the offset, sticky strike"
+              : std::string("moved along its underlying's fitted SSVI surface (") + dynamics_label(dynamics) + ") plus the offset") +
+          "; remaining life and carry shrink by the days; each underlying moves its beta times the reference's percent move; "
+          "when term_scaled is true the IV offset is multiplied by sqrt(30/max(1,remaining days))"}}.dump()};
 }
 }  // namespace
 
@@ -2931,6 +2985,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   Timestamp cursor_time = 0;
   std::uint64_t cursor_ordinal = 0;
   bool valid_query = pairs.has_value(), archived = false;
+  SmileDynamics dynamics = SmileDynamics::StickyStrike;
   for (const auto& [key, value] : pairs.value_or(std::map<std::string, std::string>{})) {
     if ((key == "limit" || key == "cursor") && path == "/api/account/equity") {
       const auto positive = [](std::string_view text, auto& number) {
@@ -2952,6 +3007,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       else if (key == "from") since = parsed; else until = parsed;
     } else if (key == "archived" && path == "/api/accounts" && (value == "true" || value == "false")) archived = value == "true";
     else if (key == "account" && path != "/api/accounts" && valid_account(value)) account = value;
+    else if (key == "dynamics" && path == "/api/risk" && parse_smile_dynamics(value)) dynamics = *parse_smile_dynamics(value);
     else if (key == "status" && path == "/api/orders" && (value == "open" || value == "all")) status = value;
     else if (key == "client_order_id" && path == "/api/orders" && valid_client_order_id(value)) client_order_id = value;
     else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "open" || value == "closed" || value == "all")) status = value;
@@ -3024,7 +3080,14 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"settlements", records}}.dump()};
   }
   if (path == "/api/portfolio") return ApiResponse{200, portfolio_json(*view).dump()};
-  if (path == "/api/risk") return ApiResponse{200, risk_json(*view).dump()};
+  if (path == "/api/risk") {
+    if (dynamics == SmileDynamics::StickyStrike) return ApiResponse{200, risk_json(*view).dump()};
+    std::set<std::string> held;
+    for (const auto& p : s.positions) held.insert(p.position.contract.underlying);
+    const auto surfaces = smile_surfaces(source, held);
+    const auto grid = snapshot_scenarios(s, view->config, view->valuations, {dynamics, &surfaces});
+    return ApiResponse{200, risk_json(*view, &grid, dynamics).dump()};
+  }
   if (path == "/api/account") return ApiResponse{200, account_json(*view).dump()};
   if (path == "/api/trades") return ApiResponse{200, trades_json(*view, status, attempt == "current").dump()};
   if (path == "/api/alerts") {
@@ -3088,7 +3151,13 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (auto rejection = sandbox_visibility(request, source)) { complete(std::move(*rejection)); return; }
-  if (request.method == "GET") { complete(handle_api(request, source)); return; }
+  if (request.method == "GET") {
+    // A Heston or SABR fit takes up to seconds: it runs on the fit worker, never here.
+    DeferredRead deferred;
+    if (auto response = handle_api_or_defer(request, source, deferred)) complete(std::move(*response));
+    else run_deferred(std::move(deferred), std::move(complete));
+    return;
+  }
   if (request.target.starts_with("/api/notifications/")) {
     if (!source.notifications()) { complete(api_error(503, "NOTIFICATIONS_UNAVAILABLE", "Notifications are unavailable on this source")); return; }
     try {

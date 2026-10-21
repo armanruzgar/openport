@@ -126,7 +126,7 @@ class Stub:
             if view == "chain":
                 return 200, self.chain
             name = {"surface": "Surface", "exposure": "ExposureMatrix", "volatility": "Volatility", "candles": "Candles",
-                    "probability": "Probability", "surface-history": "SurfaceHistory", "series": "VolatilitySeries", "flow": "Flow"}.get(view, "Summary")
+                    "probability": "Probability", "surface-history": "SurfaceHistory", "series": "VolatilitySeries", "flow": "Flow", "heston": "Heston"}.get(view, "Summary")
             value = shaped(name, symbol="SPX", as_of=TIME)
             if name == "Summary":
                 value["expiries"] = [self.expiry]

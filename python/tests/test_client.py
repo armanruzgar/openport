@@ -199,6 +199,7 @@ def test_base_url_rejects_ambiguous_credentials(url):
     ("surface_history", ("SPX",), "GET", "/api/underlyings/SPX/surface-history", "SurfaceHistory"),
     ("volatility_history", ("SPX",), "GET", "/api/underlyings/SPX/series", "VolatilitySeries"),
     ("volatility_scanner", (), "GET", "/api/volatility/scanner", "VolatilityScanner"),
+    ("heston", ("SPX",), "GET", "/api/underlyings/SPX/heston", "Heston"),
     ("candles", ("SPX",), "GET", "/api/underlyings/SPX/candles", "Candles"),
     ("account", (), "GET", "/api/account", "Account"),
     ("portfolio", (), "GET", "/api/portfolio", "Portfolio"),
@@ -447,6 +448,27 @@ def test_sandbox_token_omits_account_by_default(stub):
     assert stub.requests[-1][2]["Authorization"] == "Bearer sandbox_secret"
     client.cancel_all()
     assert stub.requests[-1][1] == "/api/orders/cancel"
+
+
+def test_surface_requests_sabr_only_when_asked(stub):
+    client = Client(stub.url, "secret")
+    client.surface("SPX")
+    assert "sabr_beta" not in parse_qs(urlsplit(stub.requests[-1][1]).query)
+    client.surface("SPX", 6, 0.1, sabr_beta=0.5)
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"expiries": ["6"], "window": ["0.1"], "sabr_beta": ["0.5"]}
+    client.surface("SPX", sabr_beta="fit")
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query)["sabr_beta"] == ["fit"]
+
+
+def test_risk_reads_pass_smile_dynamics_only_when_chosen(stub):
+    client = Client(stub.url, "secret", "practice")
+    client.risk()
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"account": ["practice"]}
+    client.risk("sticky_delta")
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"dynamics": ["sticky_delta"], "account": ["practice"]}
+    client.risk_profile("SPX", dynamics="sticky_moneyness")
+    query = parse_qs(urlsplit(stub.requests[-1][1]).query)
+    assert query["dynamics"] == ["sticky_moneyness"] and query["underlying"] == ["SPX"]
 
 
 def test_reload_tokens_uses_live_admin_route_even_from_replay(stub):

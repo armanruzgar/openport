@@ -12,6 +12,7 @@
 
 #include "openport/analytics/chain_book.hpp"
 #include "openport/analytics/forward.hpp"
+#include "openport/pricing/american.hpp"
 
 namespace openport::analytics {
 
@@ -109,6 +110,9 @@ struct SliceMetrics : ExposureValues {
   std::string rate_source = "assumed";  ///< parity, term, curve, or assumed
   std::string rate_curve_symbol;
   bool deamericanized = false;
+  /// The EEP model the correction used: the configured one, or Leisen-Reimer
+  /// when cash dividends or any contract's inputs sent the expiry to the lattice.
+  pricing::AmericanModel eep_model = pricing::AmericanModel::LeisenReimer;
   std::vector<Dividend> dividends;  ///< cash payments used in the EEP correction
   double atm_iv = kNaN;
   std::vector<StrikeMetrics> strikes;
@@ -183,6 +187,9 @@ struct AnalyticsOptions {
   double fallback_rate = 0.04;  ///< flat rate when no eligible market-implied rate exists
   std::shared_ptr<const DiscountCurve> discount_curve;
   bool deamericanize = true;
+  /// How the EEP is estimated. Leisen-Reimer stays the default: the closed forms
+  /// are faster but not equivalent within the LR tolerance (docs/american-analytics.md).
+  pricing::AmericanModel american_model = pricing::AmericanModel::LeisenReimer;
   std::vector<Dividend> dividends;  ///< this underlying's known cash schedule
 
   /// Expiries shorter than this take their discount rate from the longer expiries
@@ -214,6 +221,7 @@ struct AnalyticsOptions {
 /// European expiries fit parity rates; short expiries borrow their median level.
 /// American expiries use the supplied European curve or fallback_rate, never a
 /// parity slope. One de-Americanisation pass removes same-tree Leisen-Reimer EEP
+/// (or, when configured, a closed-form EEP; see AnalyticsOptions::american_model)
 /// at first-pass IV/carry, then refits F and Black-76 IVs. One iteration suffices
 /// for the measured S=100, r=4.5%, q=1%, vol=20%, T={.25,1} grid: maximum forward
 /// residual 0.0271%, OTM IV residual 0.0870 vol points with 31 steps. See

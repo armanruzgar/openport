@@ -14,7 +14,7 @@ from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
                     Exposure, ExposureConvention, ExposureSlice, Volatility, Candles, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
-                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis)
+                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis, Heston)
 
 
 def _list(values) -> str | None:
@@ -159,8 +159,14 @@ class Client:
         return self._market(symbol, "exposure", expiries=expiries, window=window,
                             convention=convention, slice=slice)
 
-    def surface(self, symbol: str, expiries: int = 12, window: float = 0.2) -> Surface:
-        return self._market(symbol, "surface", expiries=expiries, window=window)
+    def surface(self, symbol: str, expiries: int = 12, window: float = 0.2,
+                sabr_beta: float | str | None = None) -> Surface:
+        """SVI and SSVI fits; sabr_beta (0 to 1 in steps of 0.1, or "fit") adds the optional SABR overlay."""
+        return self._market(symbol, "surface", expiries=expiries, window=window, sabr_beta=sabr_beta)
+
+    def heston(self, symbol: str, expiries: int | None = None) -> Heston:
+        """Research only: one Heston fit over the leading expiries, beside their SVI and SSVI RMSE."""
+        return self._market(symbol, "heston", expiries=expiries)
 
     def volatility(self, symbol: str) -> Volatility:
         return self._request("GET", "/underlyings/" + quote(symbol, safe="") + "/volatility", scoped=True)
@@ -252,8 +258,10 @@ class Client:
     def trades(self, status: str = "all", attempt: str = "current") -> Trades:
         return self._request("GET", "/trades", scoped=True, params={"status": status, "attempt": attempt})
 
-    def risk(self) -> Risk:
-        return self._request("GET", "/risk", scoped=True)
+    def risk(self, dynamics: str | None = None) -> Risk:
+        """Limits, Greeks and the spot x vol grid; dynamics ("sticky_moneyness" or "sticky_delta")
+        recomputes the grid moving each smile along its SSVI surface instead of sticky strike."""
+        return self._request("GET", "/risk", scoped=True, params={"dynamics": dynamics})
 
     def risk_history(self) -> HistoricalRisk:
         """Derived historical stress and one-day VaR/ES; incomplete inputs remain unavailable."""
@@ -261,21 +269,27 @@ class Client:
 
     def risk_scenarios(self, mode: str = "parallel", days: list[float] | None = None,
                        benchmark: str | None = None, vols: list[float] | None = None,
-                       term_scaled: bool = False, betas: dict[str, float] | None = None) -> ScenarioAnalysis:
-        """Read-only spot × vol × time grid; does not change trading-rule scenarios."""
+                       term_scaled: bool = False, betas: dict[str, float] | None = None,
+                       dynamics: str | None = None) -> ScenarioAnalysis:
+        """Read-only spot × vol × time grid; does not change trading-rule scenarios.
+        dynamics (sticky_strike, sticky_moneyness, sticky_delta) applies in every mode."""
         return self._request("GET", "/risk/scenarios", scoped=True, params={
             "mode": mode, "days": _list(days), "benchmark": benchmark, "vols": _list(vols),
             "term_scaled": "true" if term_scaled else "false",
-            "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
+            "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None,
+            "dynamics": dynamics})
 
     def risk_profile(self, underlying: str | None = None, benchmark: str | None = None,
                      days: list[float | str] | None = None, iv: float | None = None,
                      range: float | None = None, steps: int | None = None,
-                     betas: dict[str, float] | None = None, term_scaled: bool = False) -> RiskProfile:
+                     betas: dict[str, float] | None = None, term_scaled: bool = False,
+                     dynamics: str | None = None) -> RiskProfile:
         """The held book's P&L curves over dates, against one underlying or beta-weighted to SPY or SPX."""
         return self._request("GET", "/risk/profile", scoped=True, params={
             "underlying": underlying, "benchmark": benchmark, "days": _list(days), "iv": iv, "range": range,
-            "term_scaled": "true" if term_scaled else None, "steps": steps, "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
+            "term_scaled": "true" if term_scaled else None, "steps": steps,
+            "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None,
+            "dynamics": dynamics})
 
     def equity(self, start: str | None = None, end: str | None = None, *,
                limit: int | None = None, cursor: str | None = None) -> EquityHistory:

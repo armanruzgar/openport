@@ -1,5 +1,55 @@
-import type { Scenarios } from "../api/trading-types"
+import { useQuery } from "@tanstack/react-query"
+import { useState } from "react"
+import { api } from "../api/client"
+import { useLive } from "../api/live"
+import { sameAccountPlaceholder } from "../api/trading"
+import type { Scenarios, SmileDynamics } from "../api/trading-types"
 import { formatMoney, scenarioColour, scenarioScale } from "../lib/trading"
+import { TradingError } from "./TradingControls"
+
+export const dynamicsChoices: { value: SmileDynamics; label: string }[] = [
+  { value: "sticky_strike", label: "Sticky strike" },
+  { value: "sticky_moneyness", label: "Sticky moneyness" },
+  { value: "sticky_delta", label: "Sticky delta" },
+]
+
+/** Which smile dynamics a scenario read used, and any underlying that had no surface to move along. */
+export function DynamicsNote({ dynamics, fallback }: { dynamics?: SmileDynamics; fallback?: string[] }) {
+  if (!dynamics || dynamics === "sticky_strike") return <p className="text-[11px] text-muted">Sticky strike: each strike keeps its IV, as the account's rules value it.</p>
+  return <p className="text-[11px] text-muted">
+    {dynamics === "sticky_delta" ? "Sticky delta" : "Sticky moneyness"}: each smile moves with the forward along its fitted SSVI surface, from the contract's own IV
+    {dynamics === "sticky_delta" ? "; vol changes apply in delta space" : ""}. Analysis only: rules and margin stay sticky strike.
+    {fallback?.length ? <span className="text-warn"> No surface for {fallback.join(", ")}: sticky strike there.</span> : null}
+  </p>
+}
+
+export function DynamicsSelect({ value, onChange }: { value: SmileDynamics; onChange: (value: SmileDynamics) => void }) {
+  return <label className="flex flex-col gap-1 text-muted">Smile
+    <select aria-label="Smile dynamics" className="trade-input" value={value} onChange={(e) => onChange(e.target.value as SmileDynamics)}>
+      {dynamicsChoices.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+    </select></label>
+}
+
+/** The account's grid, or the same grid recomputed under another smile dynamics. */
+export function ScenarioPanel({ scenarios }: { scenarios: Scenarios }) {
+  const { accountScope, trading } = useLive()
+  const [dynamics, setDynamics] = useState<SmileDynamics>("sticky_strike")
+  const moved = useQuery({
+    queryKey: ["trading", accountScope, "risk-dynamics", trading?.account_version, dynamics],
+    queryFn: ({ signal }) => api.riskScenarios(dynamics, signal),
+    enabled: dynamics !== "sticky_strike", retry: false,
+    placeholderData: (previous, prior) => sameAccountPlaceholder(previous, prior?.queryKey, accountScope),
+  })
+  const shown = dynamics === "sticky_strike" ? scenarios : moved.data?.scenarios
+  return <div className="space-y-2">
+    <div className="text-xs"><DynamicsSelect value={dynamics} onChange={setDynamics} /></div>
+    <TradingError error={dynamics === "sticky_strike" ? null : moved.error} />
+    {shown ? <>
+      <ScenarioGrid scenarios={shown} />
+      <DynamicsNote dynamics={shown.dynamics} fallback={shown.surface_fallback} />
+    </> : !moved.error && <p className="text-sm text-muted">Moving smiles along their surfaces…</p>}
+  </div>
+}
 
 export function ScenarioGrid({ scenarios }: { scenarios: Scenarios }) {
   const scale = scenarioScale(scenarios.pnl)

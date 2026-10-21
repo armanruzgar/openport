@@ -219,6 +219,33 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   symbol; the backup reports delayed with a fallback label in status and the
   terminal. Paper trading keeps its freshness checks, and every fill names the feed
   that priced it (`feed` in the fills API and journal).
+### Pricing and volatility models
+
+- **Choose a closed-form American model.** `--american-model bs2002|baw` removes
+  the early exercise premium with Bjerksund-Stensland (2002) or Barone-Adesi-Whaley
+  instead of the 31-step Leisen-Reimer tree. The tree stays the default: measured
+  against a converged tree it was more accurate, and no slower. Expiries with cash
+  dividends always use the tree; each expiry reports its `eep_model`.
+- **Compare SABR with SVI.** The Volatility view can overlay per-expiry SABR fits
+  (Hagan lognormal, β fixed at 1 or ½, or fitted) with their parameters, RMSE and
+  the same butterfly and calendar checks. The surface API fits them only when
+  asked (`sabr_beta`, 0 to 1 in steps of 0.1, or `fit`; at most 60 expiries), so
+  nothing changes for analytics or other readers.
+- **Compare a Heston calibration (research, API only).**
+  `GET /api/underlyings/{symbol}/heston` fits one Heston parameter set to the
+  leading expiries and reports it beside each expiry's SVI and SSVI RMSE. Its
+  parameters are weakly identified on real smiles; nothing else uses it. Heston
+  and SABR fits run on a background worker, one per snapshot at a time, so they
+  never stall other API reads; a request for a snapshot already fitting gets 503
+  with `Retry-After`.
+
+### Risk
+
+- **See skew move with spot.** The spot × volatility grid and the risk profile can
+  reprice with sticky-moneyness or sticky-delta smiles along each underlying's
+  fitted SSVI surface (`dynamics=`), beside the default sticky strike. Underlyings
+  without a surface stay sticky strike and are named. Rules, margin and breach
+  estimates are unchanged.
 
 ## 0.4.0 (2026-10-06)
 

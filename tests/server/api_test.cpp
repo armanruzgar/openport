@@ -10,8 +10,11 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <thread>
+#include <optional>
 
 #include "openport/analytics/chain_analytics.hpp"
+#include "openport/analytics/svi.hpp"
 #include "openport/net/http.hpp"
 #include "openport/server/web_server.hpp"
 #include "support/american_chain.hpp"
@@ -295,6 +298,143 @@ TEST(Api, SurfaceHasLogMoneynessPoints) {
   EXPECT_TRUE(points[0]["k"].is_number());
 }
 
+TEST(Api, SurfaceAddsSabrOnlyWhenRequested) {
+  StubSource source;
+  const json plain = get(source, "/api/underlyings/SPX/surface");
+  EXPECT_FALSE(plain.contains("sabr_beta"));
+  EXPECT_FALSE(plain["expiries"][0].contains("sabr"));
+  EXPECT_FALSE(plain["expiries"][0]["points"][0].contains("sabr_iv"));
+  for (const auto* beta : {"1", "0.5", "fit"}) {
+    const json surface = get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + beta);
+    const json& expiry = surface["expiries"][0];
+    ASSERT_EQ(expiry["sabr_status"], "ok") << expiry["sabr_reason"];
+    const json& fit = expiry["sabr"];
+    EXPECT_GT(fit["alpha"].get<double>(), 0);
+    EXPECT_EQ(fit["beta_calibrated"], std::string_view(beta) == "fit");
+    if (std::string_view(beta) != "fit") EXPECT_DOUBLE_EQ(fit["beta"].get<double>(), std::stod(beta));
+    EXPECT_LT(fit["rmse_vol_points"].get<double>(), 1);
+    EXPECT_TRUE(fit["butterfly_ok"].is_boolean());
+    EXPECT_TRUE(expiry["points"][0]["sabr_iv"].is_number());
+    EXPECT_EQ(surface["sabr_beta"], std::string_view(beta) == "fit" ? json("fit") : json(std::stod(beta)));
+    EXPECT_TRUE(surface["sabr_calendar_violations"].is_array());
+    // The SVI and SSVI fields are unchanged by the overlay.
+    EXPECT_EQ(surface["expiries"][0]["svi"], plain["expiries"][0]["svi"]);
+    EXPECT_EQ(surface["ssvi"], plain["ssvi"]);
+  }
+  // Betas lie on a 0.1 grid, which bounds the overlays cached per snapshot.
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/surface?sabr_beta=0.50")["sabr_beta"], 0.5);
+  for (const auto* bad : {"1.5", "-0.1", "nan", "yes", "", "0.25", "0.55", "0.123"})
+    EXPECT_TRUE(get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + bad, 400).contains("error")) << bad;
+  get(source, "/api/underlyings/SPX/surface?sabr_beta=1&expiries=61", 400);
+  get(source, "/api/underlyings/SPX/surface?expiries=61", 200);
+  test::capture_contract("analytics", "GET", "/api/underlyings/SPX/surface?sabr_beta=0.5",
+                         server::handle_api({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.5"}, source));
+}
+
+/// Three SVI-shaped expiries, enough for a Heston fit.
+analytics::UnderlyingMetrics heston_metrics() {
+  analytics::UnderlyingMetrics m;
+  m.symbol = "SPX"; m.spot = 5000; m.version = 1;
+  m.as_of = md::new_york_to_utc({2026, 9, 23}, 16, 0);
+  for (int days : {14, 45, 120}) {
+    analytics::SliceMetrics slice;
+    slice.expiry = md::date_from_days(md::days_since_epoch({2026, 9, 23}) + days);
+    slice.expiry_time = md::new_york_to_utc(slice.expiry, 16, 0);
+    slice.years = days / 365.0;
+    slice.forward.forward = 5000; slice.forward.discount = 1; slice.forward.ok = true;
+    const analytics::SviParameters p{.015 * slice.years, .1 * slice.years, -.55, .025, .15};
+    for (int j = 0; j <= 30; ++j) {
+      const double k = -.3 * std::sqrt(slice.years / .25) + .45 * std::sqrt(slice.years / .25) * j / 30;
+      analytics::StrikeMetrics row;
+      row.strike = 5000 * std::exp(k);
+      row.iv = analytics::svi_iv(p, k, slice.years);
+      auto& side = k >= 0 ? row.call : row.put;
+      side.bid = 1; side.ask = 1.1; side.mid = 1.05;
+      side.bid_iv = row.iv - .002; side.ask_iv = row.iv + .002;
+      slice.strikes.push_back(row);
+    }
+    m.slices.push_back(slice);
+  }
+  return m;
+}
+
+TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
+  StubSource source(heston_metrics());
+  const json heston = get(source, "/api/underlyings/SPX/heston");
+  ASSERT_EQ(heston["status"], "ok") << heston["reason"];
+  for (const auto* key : {"v0", "kappa", "theta", "xi", "rho"}) EXPECT_GT(std::abs(heston["parameters"][key].get<double>()), 0) << key;
+  EXPECT_TRUE(heston["feller"].is_boolean());
+  EXPECT_LT(heston["rmse_vol_points"].get<double>(), 2);
+  EXPECT_NE(heston["model"].get<std::string>().find("nothing in OpenPort's analytics"), std::string::npos);
+  ASSERT_EQ(heston["expiries"].size(), 3U);
+  for (const auto& expiry : heston["expiries"]) {
+    EXPECT_GT(expiry["points"].get<int>(), 5);
+    EXPECT_LE(expiry["points"].get<int>(), 25);
+    EXPECT_TRUE(expiry["rmse_vol_points"].is_number());
+    EXPECT_TRUE(expiry["svi_rmse_vol_points"].is_number());
+    EXPECT_TRUE(expiry["ssvi_rmse_vol_points"].is_number());
+    EXPECT_TRUE(expiry["reason"].is_null());
+  }
+  // Cached per snapshot and expiry count.
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/heston"), heston);
+  const json one = get(source, "/api/underlyings/SPX/heston?expiries=1");
+  EXPECT_EQ(one["status"], "too_few_points");
+  EXPECT_TRUE(one["parameters"].is_null());
+  EXPECT_TRUE(one["feller"].is_null());
+  EXPECT_TRUE(one["rmse_vol_points"].is_null());
+  EXPECT_EQ(one["expiries"].size(), 1U);
+  get(source, "/api/underlyings/SPX/heston?expiries=0", 400);
+  test::capture_contract("analytics", "GET", "/api/underlyings/SPX/heston",
+                         server::handle_api({"GET", "/api/underlyings/SPX/heston"}, source));
+}
+
+TEST(Api, SlowFitsRunOnTheFitWorkerOnePerSnapshot) {
+  StubSource source(heston_metrics());
+  const auto caller = std::this_thread::get_id();
+  std::promise<std::pair<server::ApiResponse, std::thread::id>> first;
+  std::atomic<bool> first_done = false;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source, [&](server::ApiResponse response) {
+    first_done = true;
+    first.set_value({std::move(response), std::this_thread::get_id()});
+  });
+  // The flag clears only after the first completes, so until then the snapshot is busy.
+  const bool finished = first_done;
+  std::optional<server::ApiResponse> second;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source,
+                           [&](server::ApiResponse response) { second = std::move(response); });
+  ASSERT_TRUE(second) << "a busy or cached read completes on the calling thread";
+  if (!finished) {
+    EXPECT_EQ(second->status, 503);
+    EXPECT_EQ(second->retry_after, 2);
+    EXPECT_EQ(json::parse(second->body)["error"]["code"], "FIT_BUSY");
+  }
+  auto [response, thread] = first.get_future().get();
+  EXPECT_NE(thread, caller);
+  ASSERT_EQ(response.status, 200);
+  EXPECT_EQ(json::parse(response.body)["status"], "ok");
+  // Cached now: answered at once, on this thread, identically to the sync route.
+  std::optional<server::ApiResponse> cached;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source,
+                           [&](server::ApiResponse r) { cached = std::move(r); });
+  ASSERT_TRUE(cached);
+  EXPECT_EQ(cached->body, response.body);
+  EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/SPX/heston"}, source).body, response.body);
+
+  // A SABR overlay is deferred the same way; the plain surface is not.
+  StubSource chain;
+  std::promise<std::thread::id> sabr_thread;
+  std::string sabr_body;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.7"}, chain, [&](server::ApiResponse r) {
+    sabr_body = r.body;
+    sabr_thread.set_value(std::this_thread::get_id());
+  });
+  EXPECT_NE(sabr_thread.get_future().get(), caller);
+  EXPECT_EQ(json::parse(sabr_body)["sabr_beta"], 0.7);
+  bool plain_now = false;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/surface"}, chain, [&](server::ApiResponse) { plain_now = true; });
+  EXPECT_TRUE(plain_now);
+}
+
 TEST(Api, ErrorsAreJson) {
   StubSource source;
   EXPECT_TRUE(get(source, "/api/underlyings/QQQ/summary", 404).contains("error"));
@@ -522,6 +662,7 @@ TEST(Api, RateSourcesAndDeamericanisationAreIncludedInBothExpiryViews) {
       EXPECT_EQ(expiry["rate_curve_symbol"], curve ? json("SPX") : json(nullptr));
       EXPECT_EQ(expiry["rate_fitted"], false);
       EXPECT_EQ(expiry["deamericanized"], true);
+      EXPECT_EQ(expiry["eep_model"], "leisen_reimer");
     }
   }
   StubSource european;
@@ -530,6 +671,7 @@ TEST(Api, RateSourcesAndDeamericanisationAreIncludedInBothExpiryViews) {
   EXPECT_EQ(expiry["rate_source"], "parity");
   EXPECT_EQ(expiry["rate_fitted"], true);
   EXPECT_EQ(expiry["deamericanized"], false);
+  EXPECT_TRUE(expiry["eep_model"].is_null());
   EXPECT_TRUE(expiry["rate_curve_symbol"].is_null());
 }
 

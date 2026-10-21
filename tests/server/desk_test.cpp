@@ -155,6 +155,20 @@ TEST_P(DeskPhases, VolumeShareGateChecksKnownUnknownStaleVolumeAndOpeningContrac
   desk.stop();
 }
 
+TEST(Desk, RunRecordsNameAClosedFormAmericanModelOnlyWhenChosen) {
+  analytics::AnalyticsOptions options;
+  nlohmann::json recorded = options;
+  // The default tree adds no key, so earlier recordings keep their bytes.
+  EXPECT_FALSE(recorded.contains("american_model"));
+  EXPECT_EQ(recorded.get<analytics::AnalyticsOptions>().american_model, pricing::AmericanModel::LeisenReimer);
+  options.american_model = pricing::AmericanModel::BjerksundStensland2002;
+  recorded = options;
+  EXPECT_EQ(recorded["american_model"], "bjerksund_stensland_2002");
+  EXPECT_EQ(recorded.get<analytics::AnalyticsOptions>().american_model, pricing::AmericanModel::BjerksundStensland2002);
+  recorded["american_model"] = "crr";
+  EXPECT_THROW(static_cast<void>(recorded.get<analytics::AnalyticsOptions>()), std::invalid_argument);
+}
+
 TEST(Desk, RestingVolumeOrdersCancelOnZeroOrStaleVolumeOnlyWhenTheyCanFill) {
   for (const bool stale : {false, true}) {
     test::RecordingFile file;

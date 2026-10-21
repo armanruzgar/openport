@@ -121,6 +121,7 @@ struct Settings {
   std::string client_ip_header;
   int threads = 2;
   double rate = 0.04;
+  pricing::AmericanModel american_model = pricing::AmericanModel::LeisenReimer;
   std::vector<std::string> allowed_origins;
   std::vector<std::string> allowed_hosts;
 };
@@ -134,7 +135,8 @@ int usage(const char* error = nullptr) {
       "usage: openportd [--provider NAME] [--symbols SPX,SPY,QQQ,IWM,DIA] [--address ADDR] [--port N]\n"
       "                 [--scenario-dir DIR] [--web-root DIR] [--expiries N] [--window F] [--poll-seconds N]\n"
       "                 [--record-keep-days N] [--record-max-gb X]\n"
-      "                 [--record FILE] [--record-dir DIR] [--rate R] [--option KEY=VALUE]... [--allowed-origin ORIGIN]...\n"
+      "                 [--record FILE] [--record-dir DIR] [--rate R] [--american-model lr|bs2002|baw]\n"
+      "                 [--option KEY=VALUE]... [--allowed-origin ORIGIN]...\n"
       "                 [--fallback-provider NAME [--fallback-seconds N] [--fallback-option KEY=VALUE]...]\n"
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
@@ -570,6 +572,10 @@ int run(int argc, char** argv) {
       if (!input || input.peek() != std::char_traits<char>::eof() ||
           !std::isfinite(settings.rate) || settings.rate < -0.05 || settings.rate > 0.25)
         return usage("--rate must be a finite number in [-0.05, 0.25]");
+    } else if (arg == "--american-model") {
+      const auto model = pricing::parse_american_model(value);
+      if (!model) return usage("--american-model must be lr, bs2002 or baw");
+      settings.american_model = *model;
     } else if (arg == "--poll-seconds") {
       settings.provider.options["poll_seconds"] = value;
     } else if (arg == "--fallback-provider") {
@@ -640,6 +646,7 @@ int run(int argc, char** argv) {
     server::SeriesStore store(series_directory);
     analytics::AnalyticsOptions options;
     options.fallback_rate = settings.rate;
+    options.american_model = settings.american_model;
     std::size_t written = 0;
     for (const auto& file : settings.backfill_series)
       written += server::backfill_series(file, store, settings.force, options);
@@ -733,6 +740,7 @@ int run(int argc, char** argv) {
   event_options.worker = false;
   engine_options.event_stream = std::make_shared<server::Notifications>(server::NotificationConfig{}, nullptr, event_options);
   engine_options.analytics.fallback_rate = settings.rate;
+  engine_options.analytics.american_model = settings.american_model;
   engine_options.record_file = settings.record_file;
   engine_options.record_dir = settings.record_dir;
   engine_options.record_keep_days = settings.record_keep_days;

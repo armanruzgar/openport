@@ -73,7 +73,8 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
 ///   GET /api/underlyings/{symbol}/exposure[?expiries=8][&window=0.08]
 ///   GET /api/underlyings/{symbol}/series[?fields=mfiv30,atm30][&interval=1m|1d][&from=][&to=]
 ///   GET /api/underlyings/{symbol}/volatility
-///   GET /api/underlyings/{symbol}/surface[?expiries=12][&window=0.2]
+///   GET /api/underlyings/{symbol}/surface[?expiries=12][&window=0.2][&sabr_beta=0..1|fit]
+///   GET /api/underlyings/{symbol}/heston[?expiries=8]  (research only; see docs/svi.md)
 ///   GET /api/underlyings/{symbol}/candles[?interval=5m][&limit=500]
 ///   GET /api/underlyings/{symbol}/flow[?limit=200][&type=call|put][&side=bid,ask,mid,outside,unquoted]
 ///       [&expiry=ID][&min_size=N][&min_premium=USD][&only=sweep|block|multi_leg]
@@ -110,8 +111,9 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
 /// (borrowed from this underlying's longer European expiries), "curve" (another
 /// underlying's European parity curve), or "assumed" (flat fallback). rate_fitted
 /// remains true only for "parity". rate_curve_symbol names the curve (e.g. "SPX")
-/// for "curve", otherwise null. deamericanized reports EEP removal with an LR
-/// tree. Chain bid/ask/mid remain the raw market quotes; iv/bid_iv/ask_iv use
+/// for "curve", otherwise null. deamericanized reports EEP removal; eep_model names
+/// the model that removed it (leisen_reimer, the default tree, or a configured
+/// closed form) and is null when nothing was removed. Chain bid/ask/mid remain the raw market quotes; iv/bid_iv/ask_iv use
 /// premium-adjusted prices. Each option includes eep, the per-unit price premium
 /// used for those solves (null when not computed, zero when computed as zero).
 /// Greeks remain European Black-76 Greeks at the final smile IV, accurate OTM.

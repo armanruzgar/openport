@@ -17,6 +17,8 @@ export interface Series {
   band?: boolean
   dots?: boolean
   dashed?: boolean
+  /** A fine dotted stroke, distinct from dashed. */
+  dotted?: boolean
   /** Shade between the line and the bottom of the plot. */
   area?: boolean
 }
@@ -178,7 +180,7 @@ export function LineChart({ series, markers = [], references = [], height = 320,
               ) : null)}
             </g>
           ) : (
-            <path key={s.id} aria-label={s.label} d={path(s.points, (p) => p.y)} fill="none" style={{ stroke: s.color }} strokeWidth={1.6} strokeDasharray={s.dashed ? "5 3" : undefined} strokeLinejoin="round" />
+            <path key={s.id} aria-label={s.label} d={path(s.points, (p) => p.y)} fill="none" style={{ stroke: s.color }} strokeWidth={1.6} strokeDasharray={s.dashed ? "5 3" : s.dotted ? "1.5 3" : undefined} strokeLinejoin="round" />
           ))}
           {anchor && hoverX != null && (
             <line x1={layout.x(anchor.x)} x2={layout.x(anchor.x)} y1={margin.top} y2={height - margin.bottom} className="stroke-muted" strokeOpacity={0.5} />

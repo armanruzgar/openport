@@ -264,6 +264,25 @@
             "minimum": 0,
             "maximum": 1
           }
+        },
+        {
+          "name": "sabr_beta",
+          "in": "query",
+          "required": false,
+          "description": "Add per-expiry SABR fits (Hagan lognormal) with this fixed beta, 0 to 1 in steps of 0.1, or fit to calibrate beta too; at most 60 expiries. Omitted, no SABR is fitted or returned. Uncached fits run on a background fit worker.",
+          "schema": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "const": "fit",
+                "type": "string"
+              }
+            ]
+          }
         }
       ],
       "get": {
@@ -283,6 +302,83 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "FIT_BUSY: a Heston or SABR fit for this snapshot is already queued or running, or the fit queue is full. Retry-After gives the seconds to wait.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/underlyings/{symbol}/heston": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "expiries",
+          "in": "query",
+          "required": false,
+          "description": "Fit one Heston parameter set to this many leading expiries (default 8).",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/heston",
+        "description": "Research only: a Heston (1993) calibration over the leading expiries for comparison with SVI and SSVI. Nothing in analytics, rules or scenarios uses it. Fitted on the first request for a snapshot on a background fit worker, then cached.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Heston"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "FIT_BUSY: a Heston or SABR fit for this snapshot is already queued or running, or the fit queue is full. Retry-After gives the seconds to wait.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -671,6 +767,20 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "Recompute the configured spot x vol grid with this smile dynamics (default sticky_strike, the snapshot's own grid); see docs/paper-trading.md#smile-dynamics.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          }
         }
       ],
       "get": {
@@ -778,6 +888,20 @@
           "schema": {
             "type": "boolean",
             "default": false
+          }
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "How each contract's IV moves with the reference: sticky_strike (default, as rules use), or sticky_moneyness / sticky_delta along the underlying's fitted SSVI surface; an underlying without a surface stays sticky strike and is listed in surface_fallback.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
           }
         }
       ],
@@ -2880,6 +3004,20 @@
           "description": "Comma-separated SYMBOL:BETA overrides, each beta within 10 of zero.",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "How each contract's IV moves with the reference: sticky_strike (default, as rules use), or sticky_moneyness / sticky_delta along the underlying's fitted SSVI surface; an underlying without a surface stays sticky strike and is listed in surface_fallback.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
           }
         }
       ],
@@ -6262,6 +6400,20 @@
             "type": "boolean",
             "default": false
           }
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "How each contract's IV moves with the reference: sticky_strike (default, as rules use), or sticky_moneyness / sticky_delta along the underlying's fitted SSVI surface; an underlying without a surface stays sticky strike and is listed in surface_fallback.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          }
         }
       ],
       "get": {
@@ -7695,6 +7847,26 @@
               }
             ]
           },
+          "eep_model": {
+            "description": "The model that removed the early exercise premium: leisen_reimer (the default 31-step tree, and the fallback for cash dividends) or a configured closed form; null when nothing was removed.",
+            "anyOf": [
+              {
+                "const": "leisen_reimer",
+                "type": "string"
+              },
+              {
+                "const": "bjerksund_stensland_2002",
+                "type": "string"
+              },
+              {
+                "const": "barone_adesi_whaley",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "dividends": {
             "type": "array",
             "items": {
@@ -8358,6 +8530,255 @@
           "fit_ms"
         ]
       },
+      "SabrFit": {
+        "type": "object",
+        "properties": {
+          "alpha": {
+            "type": "number"
+          },
+          "beta": {
+            "type": "number"
+          },
+          "rho": {
+            "type": "number"
+          },
+          "nu": {
+            "type": "number"
+          },
+          "beta_calibrated": {
+            "type": "boolean"
+          },
+          "rmse_vol_points": {
+            "type": "number"
+          },
+          "points": {
+            "type": "number"
+          },
+          "status": {
+            "const": "ok",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fit_ms": {
+            "type": "number"
+          },
+          "butterfly_min_g": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "butterfly_k": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "butterfly_ok": {
+            "type": "boolean"
+          },
+          "min_k": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "max_k": {
+            "$ref": "#/components/schemas/Num"
+          }
+        },
+        "required": [
+          "alpha",
+          "beta",
+          "rho",
+          "nu",
+          "beta_calibrated",
+          "rmse_vol_points",
+          "points",
+          "status",
+          "reason",
+          "fit_ms",
+          "butterfly_min_g",
+          "butterfly_k",
+          "butterfly_ok",
+          "min_k",
+          "max_k"
+        ]
+      },
+      "Heston": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "spot": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "ok",
+                "type": "string"
+              },
+              {
+                "const": "too_few_points",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "v0": {
+                    "type": "number"
+                  },
+                  "kappa": {
+                    "type": "number"
+                  },
+                  "theta": {
+                    "type": "number"
+                  },
+                  "xi": {
+                    "type": "number"
+                  },
+                  "rho": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "v0",
+                  "kappa",
+                  "theta",
+                  "xi",
+                  "rho"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feller": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rmse_vol_points": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "points": {
+            "type": "number"
+          },
+          "fit_ms": {
+            "type": "number"
+          },
+          "expiries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "expiry": {
+                  "type": "string"
+                },
+                "days": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "forward": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "points": {
+                  "type": "number"
+                },
+                "rmse_vol_points": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "reason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "svi_rmse_vol_points": {
+                  "$ref": "#/components/schemas/Num"
+                },
+                "ssvi_rmse_vol_points": {
+                  "$ref": "#/components/schemas/Num"
+                }
+              },
+              "required": [
+                "id",
+                "expiry",
+                "days",
+                "forward",
+                "points",
+                "rmse_vol_points",
+                "reason",
+                "svi_rmse_vol_points",
+                "ssvi_rmse_vol_points"
+              ]
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "spot",
+          "as_of",
+          "version",
+          "status",
+          "reason",
+          "parameters",
+          "feller",
+          "rmse_vol_points",
+          "points",
+          "fit_ms",
+          "expiries",
+          "model"
+        ]
+      },
       "SurfaceExpiry": {
         "type": "object",
         "properties": {
@@ -8454,6 +8875,46 @@
           },
           "svi_max_k": {
             "$ref": "#/components/schemas/Num"
+          },
+          "sabr": {
+            "description": "Present only when sabr_beta is requested; null when the fit failed.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SabrFit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sabr_status": {
+            "anyOf": [
+              {
+                "const": "ok",
+                "type": "string"
+              },
+              {
+                "const": "too_few_points",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "sabr_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sabr_fit_ms": {
+            "type": "number"
           }
         },
         "required": [
@@ -8487,6 +8948,9 @@
             "$ref": "#/components/schemas/Num"
           },
           "ssvi_iv": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "sabr_iv": {
             "$ref": "#/components/schemas/Num"
           }
         },
@@ -8533,6 +8997,46 @@
             "$ref": "#/components/schemas/SsviFit"
           },
           "calendar_violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "earlier": {
+                  "type": "string"
+                },
+                "later": {
+                  "type": "string"
+                },
+                "k": {
+                  "type": "number"
+                },
+                "vol_points": {
+                  "type": "number"
+                },
+                "tolerance_vol_points": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "earlier",
+                "later",
+                "k"
+              ]
+            }
+          },
+          "sabr_beta": {
+            "description": "The requested SABR beta (a number) or fit; present only with sabr_beta.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "const": "fit",
+                "type": "string"
+              }
+            ]
+          },
+          "sabr_calendar_violations": {
             "type": "array",
             "items": {
               "type": "object",
@@ -16662,6 +17166,21 @@
           },
           "complete": {
             "type": "boolean"
+          },
+          "dynamics": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          },
+          "surface_fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Held underlyings priced sticky strike because no SSVI surface was available."
           }
         },
         "required": [
@@ -18111,6 +18630,21 @@
           },
           "model": {
             "type": "string"
+          },
+          "dynamics": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          },
+          "surface_fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Held underlyings priced sticky strike because no SSVI surface was available."
           },
           "term_scaled": {
             "type": "boolean"
@@ -30036,6 +30570,21 @@
           },
           "model": {
             "type": "string"
+          },
+          "dynamics": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          },
+          "surface_fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Held underlyings priced sticky strike because no SSVI surface was available."
           }
         },
         "required": [

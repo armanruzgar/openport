@@ -3,6 +3,8 @@ add_library(openport_core
   pricing/black.cpp
   pricing/implied_vol.cpp
   pricing/binomial.cpp
+  pricing/american.cpp
+  pricing/normal.cpp
   md/time.cpp
   md/contract.cpp
   analytics/chain_book.cpp
@@ -10,6 +12,8 @@ add_library(openport_core
   analytics/chain_analytics.cpp
   analytics/svi.cpp
   analytics/ssvi.cpp
+  analytics/sabr.cpp
+  analytics/heston.cpp
   analytics/volatility.cpp
   analytics/realized.cpp
   analytics/volatility_history.cpp

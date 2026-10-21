@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import type { SurfaceExpiry, SviFit, SsviFit } from "../api/types"
-import { comparisonSeries, sampleSvi, sampleSsvi, smileSeries, sviVol, ssviVol } from "./svi"
+import type { SabrFit, SurfaceExpiry, SviFit, SsviFit } from "../api/types"
+import { comparisonSeries, sabrVol, sampleSabr, sampleSvi, sampleSsvi, smileSeries, sviVol, ssviVol } from "./svi"
 
 const fit: SviFit = { a: .02, b: .1, rho: -.4, m: .02, sigma: .15, rmse_vol_points: .01,
   points: 50, status: "ok", reason: null, fit_ms: 1, butterfly_min_g: .3, butterfly_k: .2, butterfly_ok: true }
@@ -99,3 +99,35 @@ it("samples stored curves at their original tenor/forward and matches exact expi
   expect(curves[1]!.label).toContain("grid violation")
   expect(comparisonSeries({ ...expiry, id: "different" }, history, "strike")).toHaveLength(1)
 })
+const sabr: SabrFit = { alpha: .6, beta: .5, rho: -.3, nu: .8, beta_calibrated: false, rmse_vol_points: .01, points: 40,
+  status: "ok", reason: null, fit_ms: 1, butterfly_min_g: .2, butterfly_k: 0, butterfly_ok: true, min_k: -.15, max_k: .1 }
+
+describe("SABR overlay", () => {
+  it("matches the server's Hagan expansion, including the ATM series branch", () => {
+    // Values from analytics::sabr_iv for the same parameters, F = 100, T = 1.5.
+    expect(sabrVol(sabr, 100, -.2, 1.5)).toBeCloseTo(0.11366372017678149, 13)
+    expect(sabrVol(sabr, 100, 0, 1.5)).toBeCloseTo(0.063993375000000005, 13)
+    expect(sabrVol(sabr, 100, 1e-8, 1.5)).toBeCloseTo(0.063993373560537345, 13)
+    expect(sabrVol(sabr, 100, .15, 1.5)).toBeCloseTo(0.075730969610391954, 13)
+    expect(sabrVol({ ...sabr, beta: 1, nu: 0, alpha: .2 }, 100, -.3, 1)).toBeCloseTo(.2, 14)
+    expect(sabrVol({ ...sabr, alpha: -1 }, 100, 0, 1)).toBeNull()
+    expect(sabrVol({ ...sabr, rho: 1 }, 100, 0, 1)).toBeNull()
+    expect(sabrVol(sabr, 100, 0, 0)).toBeNull()
+  })
+  it("draws only inside the quoted range and the window, and only when asked", () => {
+    const withSabr = { ...expiry, sabr }
+    const points = sampleSabr(withSabr, "moneyness", { spot: 5000, window: .2 })
+    expect(points).toHaveLength(241)
+    expect(points[0]!.x).toBe(-.15)
+    expect(points[240]!.x).toBe(.1)
+    expect(sampleSabr({ ...withSabr, sabr: null }, "moneyness")).toEqual([])
+    expect(sampleSabr({ ...withSabr, forward: null }, "moneyness")).toEqual([])
+    const off = smileSeries([withSabr], "moneyness", "market")
+    expect(off.some((s) => s.id.endsWith("-sabr"))).toBe(false)
+    const on = smileSeries([withSabr], "moneyness", "market", undefined, undefined, true)
+    const curve = on.find((s) => s.id.endsWith("-sabr"))!
+    expect(curve.dotted).toBe(true)
+    expect(curve.label).toContain("SABR")
+  })
+})
+

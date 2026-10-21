@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "openport/analytics/chain_analytics.hpp"
+#include "openport/pricing/american.hpp"
 #include "openport/pricing/implied_vol.hpp"
 #include "support/american_chain.hpp"
 
@@ -293,6 +294,60 @@ TEST(AmericanAnalytics, CashResidualCarryPreservesOwnForwardWithoutClampOrTermBo
         analytics::kDeamericanizationSteps, cash);
     EXPECT_NEAR(side->eep, expected, 1e-10);
   }
+}
+
+TEST(AmericanAnalytics, ClosedFormModelsCorrectAndReportThemselvesWithinTheirMeasuredError) {
+  analytics::ChainBook book;
+  md::InstrumentId id = 0;
+  const md::Date expiry{2027, 9, 22};
+  const auto as_of = md::new_york_to_utc(expiry, 16, 15) - static_cast<md::Timestamp>(.25 * md::kNanosPerYear);
+  test::add_american_expiry(book, as_of, expiry, id);
+  analytics::AnalyticsOptions options;
+  options.discount_curve = analytics::DiscountCurve::from_points("SPX", {{.25, .045}, {1, .045}});
+  const auto lattice = analytics::analyze(book.underlyings().at("SPY"), book, as_of, options);
+  EXPECT_EQ(lattice.slices[0].eep_model, pricing::AmericanModel::LeisenReimer);
+  for (auto model : {pricing::AmericanModel::BjerksundStensland2002, pricing::AmericanModel::BaroneAdesiWhaley}) {
+    options.american_model = model;
+    const auto m = analytics::analyze(book.underlyings().at("SPY"), book, as_of, options);
+    const auto& slice = m.slices.at(0);
+    EXPECT_TRUE(slice.deamericanized);
+    EXPECT_EQ(slice.eep_model, model);
+    const double forward = 100 * std::exp(.035 * .25);
+    EXPECT_NEAR(slice.forward.forward, forward, forward * .0005);
+    for (std::size_t i = 0; i < slice.strikes.size(); ++i) {
+      const auto& row = slice.strikes[i];
+      // Within the 0.15 vol points measured at this tenor (docs/american-analytics.md).
+      EXPECT_NEAR(row.iv, .20, .0016) << row.strike;
+      for (const auto* side : {&row.call, &row.put}) {
+        const auto& reference = side == &row.call ? lattice.slices[0].strikes[i].call : lattice.slices[0].strikes[i].put;
+        // The same contract's EEP within six cents of the lattice's (deep ITM puts differ most).
+        EXPECT_NEAR(side->eep, reference.eep, .06) << row.strike;
+      }
+    }
+  }
+}
+
+TEST(AmericanAnalytics, ClosedFormModelsLeaveCashDividendExpiriesOnTheLattice) {
+  analytics::ChainBook book;
+  md::InstrumentId id = 0;
+  const auto as_of = md::new_york_to_utc({2026, 9, 22}, 16, 0);
+  const md::Date ex_date{2026, 12, 1};
+  const std::vector<pricing::CashDividend> cash{{md::years_between(as_of, md::new_york_to_utc(ex_date, 0, 0)), 1}};
+  test::add_american_expiry(book, as_of, {2027, 3, 19}, id, 100, 80, 2.5, 17, 301, "SPY", cash);
+  test::add_american_expiry(book, as_of, {2026, 10, 16}, id, 100, 80, 2.5, 17, 301);
+  analytics::AnalyticsOptions options;
+  options.fallback_rate = .045;
+  options.dividends = {{ex_date, 1}};
+  options.american_model = pricing::AmericanModel::BaroneAdesiWhaley;
+  const auto m = analytics::analyze(book.underlyings().at("SPY"), book, as_of, options);
+  ASSERT_EQ(m.slices.size(), 2u);
+  for (const auto& slice : m.slices) {
+    EXPECT_TRUE(slice.deamericanized);
+    // The later expiry spans the payment; the earlier one does not.
+    EXPECT_EQ(slice.eep_model, slice.dividends.empty() ? pricing::AmericanModel::BaroneAdesiWhaley
+                                                        : pricing::AmericanModel::LeisenReimer);
+  }
+  EXPECT_NE(m.slices[0].dividends.empty(), m.slices[1].dividends.empty());
 }
 
 TEST(AmericanAnalytics, UsesOnlyFutureCashBeforeExpiryAndReportsItInDateOrder) {
