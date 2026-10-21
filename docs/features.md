@@ -238,7 +238,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   history retains the deciding equity/time, rules, peak and floor.
 - Limits tighten immediately; looser evaluation limits wait for the next trading
   day. Personal soft floors, trade limits, cooldowns and profit locks can keep an
-  account reduce-only independently of its plan. [Guardrails](paper-trading.md#personal-guardrails).
+  account reduce-only independently of its plan. Opt-in discipline guardrails start
+  the cooldown after a losing streak, warn about or block size creep against the
+  median of recent openings, and journal tilt flags. [Guardrails](paper-trading.md#personal-guardrails).
 
 ### Custom-plan rules
 
@@ -278,6 +280,18 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   traded option volume. Unknown or stale volume refuses entries; replays and
   backtests need recordings or generated scenarios carrying that volume.
   [Complete custom rules](paper-trading.md#account-rules-and-evaluations).
+- Optional prop rule types, off by default and in no preset: an open-loss cap on
+  one position's marked loss (fixed, or a share of the start-of-day profit balance
+  or drawdown room) that flattens, blocks adds or fails; a floor on the closed
+  balance; a best-position cap on how much of the target one trade counts toward;
+  and an opening-order cap on the last minute's volume, refused when that volume is
+  unknown. [Prop rules](paper-trading.md#prop-rules-open-loss-caps-a-balance-floor-best-position-and-minute-volume-caps).
+- The Rules page replays the attempt's recorded days against other presets or
+  custom rules side by side, showing where each would pass, fail or lock, and
+  imports, validates and exports versioned rule packs with an effective date,
+  source and verification note, kept apart from the illustrative presets.
+  [Comparisons](paper-trading.md#comparing-rule-sets-on-the-recorded-attempt) ·
+  [rule packs](paper-trading.md#versioned-rule-packs).
 
 ### Two-step, funded phase and costs
 
@@ -292,6 +306,13 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   in evaluation, verification and funded phases. Funded account-size scaling uses
   periodic profit/payout reviews, capped capital growth and proportional loss limits.
   [Funded rules and scaling](paper-trading.md#funded-accounts-and-payouts).
+- Optional payout reviews find short-held, oversized or open-loss-breaching trades
+  each cycle and escalate from a warning to forfeiting their profit to capping the
+  payout, in the preview and the journal. After a payout the floor can stay, restart
+  below a reset balance, or move up to the starting balance.
+- Challenge economics combine each program step's pass odds, purchase, reset and
+  activation fees with the funded step's first payout into an expected value and a
+  break-even pass rate: an illustrative estimate, not a prediction.
 - The terminal hides funded plans and Payouts unless the account is already funded
   or `showFundedAccounts` is enabled in `web/src/lib/features.ts`. OpenPort funds no one.
 - Evaluation, reset and activation costs and reset limits are recorded per attempt.

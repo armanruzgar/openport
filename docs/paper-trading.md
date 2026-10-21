@@ -1341,6 +1341,22 @@ Guardrails belong to the account, separately from its plan, and default to off.
 | `cooldown_minutes` | Market minutes without new opening orders after a triggered closing stop fills, up to 1440 |
 | `cooldown_loss` | A closing fill's realised loss before fees must exceed this dollar amount to also start the configured cooldown |
 | `profit_lock` | Day's marked P&L at or above this dollar amount makes the account reduce-only |
+| `loss_streak` | Optional, 0–100: this many losing closes in a row start the `cooldown_minutes` cooldown (which must be set) and record a `LOSS_STREAK` tilt flag; a winning close ends the streak |
+| `size_creep_percent` | Optional, 101–10000: an opening order whose contracts (every leg and ratio) exceed this percentage of the median of the recent opening orders is size creep. It records a `SIZE_CREEP` tilt flag, and the preview warns with `SIZE_CREEP` |
+| `size_creep_window` | Optional, 3–100 recent accepted opening orders in that median; zero means 20. The median needs three. The window rolls across trading days |
+| `size_creep_block` | Optional boolean: refuse size creep with `SIZE_CREEP` instead of only flagging it |
+
+**Discipline guardrails.** The last four fields are opt-in and omitted from the journal
+while off, so older settings keep their bytes; requests from before them remain valid.
+A losing close is a closing fill (options or shares) whose realised P&L before fees is
+negative; one at exactly zero leaves the streak alone. Each tilt flag is journaled as a
+`tilt_flag` event (`time`, `code`, `message`) and kept for the trading day in
+`guardrail_state.tilt` (the latest 50), beside `losing_closes` and `recent_opening_sizes`;
+rollover clears the flags and the streak, not the window. Tightening applies at once
+(the smaller nonzero streak and percentage, a block over a warning); loosening waits for
+the next trading day, as for the other guardrails. The terminal's personal guardrails edit
+them and list today's flags. They are personal settings, not plan rules: they never
+decide an attempt and never take an account off its preset.
 
 Touching the soft floor submits closing orders and latches `SOFT_FLOOR`. Liquidation
 uses the same quotes, displayed liquidity and regular-session restrictions as a plan
@@ -1696,6 +1712,24 @@ with fewer, without an evaluation rule or without complete current marks it retu
 422 `PASS_ODDS_UNAVAILABLE` with the reason.
 It is an estimate from past results, not a prediction. Per-playbook sampling excludes
 days whose account equity cannot be attributed exclusively to that setup.
+
+**Challenge economics.** `?economics=true` adds `economics`: the expected value of buying
+the account's program. The steps are the account's preset and those its passes unlock
+(a two-step challenge, its verification, its funded step). Each evaluation step's
+single-attempt pass odds come from a fresh attempt at its rules on the same recorded days
+and seed; its eventual odds allow its `max_resets` (unlimited counts 100 attempts); its
+expected cost is its purchase fee (the first step) or activation fee, plus its reset fee
+times the expected resets. The funded step costs its activation fee and is worth its first
+payout: the trader's share of the first cap (or the minimum without caps), with odds from
+the same simulation of reaching the profit that withdraws it, with its qualifying days,
+before its floor. `trading::challenge_economics` multiplies each step's eventual odds into
+the next: `expected_value = reach × payout_odds × payout − Σ reach_i × cost_i`, and the
+`break_even_pass` is the first step's single-attempt pass odds at which it is zero
+(bisection; null when no rate breaks even, zero when nothing costs). `payout_odds` (0–1)
+and `payout` (dollars) replace the simulated first payout, and are what a custom plan
+without a preset program needs (`available: false` with a reason otherwise). Program fees
+are bookkeeping in this simulator; the figure is an illustrative estimate, labelled so.
+The Rules page's **Challenge economics** panel shows it, with the two overrides.
 
 ## Account rules and evaluations
 
@@ -2320,6 +2354,107 @@ and what closing every position now would leave; a locked day gets a banner, a
 `locked today` badge, rule alerts and ticket notices that only closing orders work, and
 a decided attempt names its rule and what liquidating cost against the decided equity.
 
+#### Prop rules: open-loss caps, a balance floor, best-position and minute-volume caps
+
+These rule types, drawn from the shapes of common futures and CFD prop-firm terms, are
+configurable and off by default; no built-in preset uses them, and their parameters are
+the plan author's, never a claim to match any named firm. Each is recorded in the
+journal only when set, so plans without them keep their journal bytes, and each is an
+`AccountRules` field, so overriding one takes an account off its preset (its `plan_id`
+becomes null) exactly as financing rates do.
+
+**Open-loss cap** (`open_loss_cap: {basis, amount, percent, action}`, null when off). On
+every fully marked observation of an active attempt, each option position (by OSI) and
+each underlying's shares is measured alone at its marks: its open loss is the negative
+of its unrealised P&L (fees excluded). The cap is `amount` with `basis: "amount"`;
+`percent` (1–100) of the start-of-day profit balance with `day_profit` (the day's
+opening closed balance above the starting balance; while that is not above zero the same
+percentage of the drawdown room stands in, and without a drawdown rule there is no cap
+that day); or `percent` of the drawdown room with `drawdown_room` (the day's opening
+equity above the floor in force, which needs a drawdown rule). Percentages round down to
+whole cents. A position whose open loss reaches the cap is journaled once per breach as
+an `open_loss_cap` event (`symbol`, `loss`, `limit`, `action`), its round trip is
+remembered in `evaluation.open_loss_trades` for payout reviews, and its `action` applies:
+`flatten` has the account close that position (`system:open_loss:N`, retried on later
+quotes like any rule close; shares at their fresh price in the regular session),
+`block_adds` refuses orders and share trades that add to it with `OPEN_LOSS_CAP` until an
+observation finds it back within the cap (reductions always work), and `fail` fails the
+attempt with decision code `OPEN_LOSS_CAP` and liquidates as any decision does. A spread's
+legs are separate positions. Positions without a mark are not measured. The account view
+reports `evaluation.open_loss: {limit, positions, trades}` (null without the rule).
+
+**Balance drawdown basis** (`drawdown_basis: "equity" | "balance"`). With `balance` the
+floor's peak follows, and the floor is checked against, the closed balance (cash plus the
+positions' cost: realised P&L after fees) instead of fully marked equity; an end-of-day
+ratchet uses the day's last closed balance (`evaluation.day_close_balance`, kept only
+under this basis). Open losses then never touch the floor until closed, which is why such
+plans usually add an open-loss cap. The daily loss limit, risk room displays and breach
+estimates keep their own bases. Set it per phase: a two-step program's evaluation can
+trail equity while its funded step measures the balance.
+
+**Best-position cap** (`best_position_percent`, 1–100, evaluation and verification with
+a target). A closed whole trade (rolls and adjustments count once, fees included, as for
+trade consistency) counts at most this percentage of the profit target toward it; the
+excess over that cap, summed over the attempt's closed trades, is left out. The
+`BEST_POSITION` objective is met while no trade exceeds the cap, or once attempt profit
+less the excess still reaches the target. It holds the pass back and never fails the
+account; open trades count at their marks in full until they close. The account view
+reports `evaluation.best_position: {cap, excess, counted_profit, trade}`.
+
+**Minute-volume cap** (`minute_volume_percent`, 1–1000). An opening order's contracts per
+leg may be at most this percentage of that contract's volume in the minute before
+acceptance: the server's cumulative volume report within that minute less the last one a
+minute or more old, on the same market date. Without both reports (a feed that reports no
+option volume, a contract that has not traded, or a snapshot feed reporting less often
+than each minute) the order is refused with `MINUTE_VOLUME`, since the cap cannot be
+checked; the refusal's evidence carries the contract, its opening contracts, the volume
+(null when unknown) and the percentage. It is an acceptance check in the server, like the
+direction rules: fills are not rechecked and reductions are exempt. In a replay or
+backtest it reads the volume the recording carries, so it needs a recording with option
+volume.
+
+#### Comparing rule sets on the recorded attempt
+
+`POST /api/account/rules-compare` (read access, live accounts) replays the account's
+recorded attempt against its own rules and up to seven more: presets by ID in `plans`,
+and custom rule sets in `rules` (`{name, initial_cash, rules}` in the rules shape;
+`include_current: false` leaves the account's own out). `trading::replay_rules` walks each
+finished day as its open, its recorded low and high in timestamp order and its close,
+then the day in progress to the current marks, through the same `evaluate_plan` the
+reducer runs. Each set starts at its own starting balance and moves by the recorded
+dollar P&L, withdrawals added back; the closed balance moves by each day's realised P&L
+at its close, so a balance target counts only at a close. Days count as trading days with
+recorded executions or, where the account did not count them, realised P&L. The attempt's
+closed whole trades count toward trade objectives from when they closed. Nothing is
+re-executed: a lock ends that day at its level and later days move from there, and rules
+on orders, positions or the clock (open-loss and minute-volume caps, contract and trade
+risk caps, strategies, hold times, instruments and hours, flat time and holding rules)
+are listed per set in `not_replayed`. Each set reports `status`, `code`, `message`, the
+`decided_day`, `decided_at` (a recorded extreme's time, null when the decision came at a
+day's open or close, whose times are not recorded), `decided_equity`, `locked_days`,
+`closest_floor` and per-day `{day, outcome, close, floor}`, where `outcome` is `active`,
+`locked`, `passed`, `failed` or `after`. The Rules page's **Compare rules** panel shows the
+sets side by side and a day-by-day grid of where they part. Unknown presets or more than
+eight sets are 400 `INVALID_REQUEST`; invalid custom rules are 422 with their code.
+
+#### Versioned rule packs
+
+A rule pack is a JSON plan file: `{format: "openport.rule-pack", version: 1, id, name,
+effective_from: "YYYY-MM-DD", source: "https://…", verify, notes?, plans: [{id, name,
+summary?, initial_cash, rules, unlocked_by?}]}`. `verify` says how and when the terms were
+checked against `source`. `POST /api/rule-packs/validate` (read access; nothing is stored)
+checks it: the format and version, a lowercase ID, an http(s) source, a date, 1–16 plans
+with unique IDs and names, no built-in preset's ID or name, `unlocked_by` naming another
+plan in the pack, and each plan's rules through the same parser and `validate_rules` as a
+reset. It returns `{valid, errors: [{where, message}], warnings, pack}`, the pack
+normalized with every plan's rules as the server reads them (a normalized pack validates
+to itself), and warns when `effective_from` is after today. The terminal keeps imported
+packs in that browser only, lists them with their effective date, source and verify
+note, exports them as files, and offers their plans as starting points for a custom plan:
+starting an attempt sends the pack plan's rules as custom rules, which the server checks
+again, so a pack plan is never a preset and its terms are the author's, not this
+project's. **Template from my rules** fills a pack from the account's own rules.
+
 #### Plan presets with objectives
 
 Two preset families use these rules, at 25K, 50K and 100K, with any strategy, strategy
@@ -2659,6 +2794,34 @@ open and close equity of the trading day in progress (even when requested after 
 date ends and before rollover) and an unlocked peak and floor all move down by the
 amount, so the day's P&L and the drawdown room are unchanged and an end-of-day ratchet
 compares closes net of it; a locked floor stays where it is.
+
+**Payout reviews** (`payouts.review: {min_hold_seconds, max_trade_percent, open_loss,
+ladder, cap}`, funded only, null when off). At each payout request the account reviews the
+cycle's positive closed whole trades (closed since the last payout or the start, net of
+fees): one held under `min_hold_seconds` from its first opening fill to its last close
+offends as `short_hold`, one whose profit exceeds `max_trade_percent` of the cycle's net
+realised profit (exactly, `pnl × 100 > percent × cycle profit`) as `oversized`, and, with
+`open_loss` (which needs an open-loss cap), one whose positions breached it as
+`open_loss`. The nth review that finds any offending trade takes the nth `ladder` step,
+the last repeating (default `warning, forfeit, cap`): `warning` records the trades and
+pays as usual; `forfeit` voids their profit, which leaves the account with the payout and
+is not paid; `cap` forfeits and also caps the payout at `cap` (required exactly when a step
+caps). Forfeited profit comes off the profit the withdrawal share is taken from, and off
+the equity every floor and buffer check reads. The payout preview (`payout.review: {step,
+trades: [{id, pnl, held_seconds, closed, offences}], forfeited}` and `payout.forfeit`)
+shows what a request now would do; the journaled `payout` event and the account's
+`payouts[].review` record it, only when a review found offending trades. Reviews add
+alongside the other plan outcomes (a failure, a day lock, a pass held back): they act only
+at payouts.
+
+**The floor after a payout** (`payouts.after_payout`, needs a drawdown floor). `keep`
+(default) leaves the floor as above. `reset` restarts the account at `reset_percent`
+(1–100, default 100) of the starting balance: the payout's maximum leaves at least that
+balance, the rest of the equity above it is removed with the payout, unpaid
+(`payouts[].removed`), and the peak and floor restart from that balance, unlocked, as at
+the attempt's start. `starting_balance` raises the floor to the starting balance after the
+payout and locks it there; the maximum leaves equity at least a cent above it. The preview
+reports `after_payout` and, for `reset`, `reset_balance`.
 
 The web terminal always offers verification with its prerequisite lock, but hides
 funded plans and the Payouts page (this simulator funds no one) unless the account is
@@ -3566,6 +3729,10 @@ opening orders and cancels working openings outside the plan window.
 | `INVALID_ALERT`, `UNKNOWN_ALERT` | Alert terms that do not fit their scope, or a 101st alert; an alert ID the account does not have |
 | `INVALID_GROUP` | An order's `group` names no open round trip or whole trade holding one on its underlying; grouping names a fully closed trade, mixed underlyings or too few round trips; or ungrouping names a closed round trip |
 | `DEFINED_RISK` | A defined-risk plan's order, bracket exit or exercise would leave a short option uncovered, now or once the open orders fill |
+| `OPEN_LOSS_CAP` | A position's open loss reached the plan's open-loss cap: adding to it is refused (`block_adds`), or the attempt failed (`fail`); `system:open_loss:N` closes it under `flatten` |
+| `MINUTE_VOLUME` | An opening order's contracts exceed the plan's percentage of the last minute's volume, or that volume is unknown so the cap cannot be checked; evidence as for `MAX_VOLUME_SHARE` |
+| `BEST_POSITION` | Objective: profit above the best-position cap does not count toward the target |
+| `LOSS_STREAK`, `SIZE_CREEP` | Tilt flags from the discipline guardrails; `SIZE_CREEP` also refuses an oversized opening order with `size_creep_block` |
 
 ## Engine integration and HTTP API
 
