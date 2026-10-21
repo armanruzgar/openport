@@ -160,8 +160,8 @@ export function rollPlan(group: StrategyGroup, target: { id: string; strikes: re
   for (const [index, { leg }] of group.legs.entries()) {
     const strike = strikes?.[index] ?? leg.strike
     const quote = target.strikes.find((row) => row.strike === strike)?.[leg.type]
-    if (!quote?.symbol) return { reason: `${expiryLabel(target.id)} lists no ${leg.strike} ${leg.type}.` }
-    if (!quote.tradable) return { reason: quote.untradable_reason ?? `The ${leg.strike} ${leg.type} is not tradable.` }
+    if (!quote?.symbol) return { reason: `${expiryLabel(target.id)} lists no ${strike} ${leg.type}.` }
+    if (!quote.tradable) return { reason: quote.untradable_reason ?? `The ${strike} ${leg.type} is not tradable.` }
     opening.push({ ...leg, strike, symbol: quote.symbol, expiry: target.id, quote })
   }
   if (opening.some((leg, index) => leg.symbol === group.legs[index]!.leg.symbol))

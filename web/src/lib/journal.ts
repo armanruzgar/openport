@@ -295,6 +295,8 @@ export function wholeEntries(groups: readonly TradeGroup[]): JournalOptionTrade[
     const closed = open ? null : group.trades.map((t) => t.closed ?? "").sort().at(-1) ?? null
     const opened = group.trades.map((t) => t.opened).sort()[0]!
     const days = group.trades.map((t) => t.trading_day ?? "").filter(Boolean).sort()
+    // A tag or playbook filter can leave out some of a whole trade's round trips: total only those shown.
+    const whole = group.whole?.round_trips.every((id) => group.trades.some((t) => t.id === id)) ? group.whole : null
     return {
       ...first, id: group.whole?.id ?? first.id, status: open ? "open" : "closed", opened, closed,
       journalGroup: {
@@ -305,10 +307,10 @@ export function wholeEntries(groups: readonly TradeGroup[]): JournalOptionTrade[
       duration_seconds: closed ? (Date.parse(closed) - Date.parse(opened)) / 1000 : null,
       opened_contracts: group.trades.reduce((total, t) => total + t.opened_contracts, 0),
       closed_contracts: group.trades.reduce((total, t) => total + t.closed_contracts, 0),
-      gross: group.whole?.gross ?? sum((t) => t.gross), fees: group.whole?.fees ?? sum((t) => t.fees),
-      net: group.whole?.net ?? sum((t) => t.net), return: null,
-      buying_power: group.whole?.buying_power ?? first.strategy_buying_power ?? undefined,
-      return_on_buying_power: group.whole ? group.whole.return_on_buying_power ?? null : first.strategy_return_on_buying_power ?? null,
+      gross: whole?.gross ?? sum((t) => t.gross), fees: whole?.fees ?? sum((t) => t.fees),
+      net: whole?.net ?? sum((t) => t.net), return: null,
+      buying_power: whole?.buying_power ?? first.strategy_buying_power ?? undefined,
+      return_on_buying_power: whole ? whole.return_on_buying_power ?? null : first.strategy_return_on_buying_power ?? null,
       tags: [...new Set(group.trades.flatMap((t) => t.tags ?? []))],
     }
   })
