@@ -18,8 +18,14 @@
 namespace openport::providers {
 
 /// A primary feed with a backup that takes over an underlying while the primary
-/// has been Stale, in Error or silent for longer than `after`, and hands it back
-/// once the primary reports a healthy update again.
+/// has been in Error, Stopped or silent for longer than `after`, and hands it back
+/// once the primary has been fresh again for `after`.
+///
+/// Freshness is separate from the state label: a Live or Delayed status, or a
+/// complete snapshot whose market time advanced, proves the primary, so a feed
+/// whose healthy label is Stale (timing unconfirmed) keeps its underlyings. The
+/// label still reaches downstream unchanged. No underlying moves onto a backup
+/// that is in Error or Stopped; its status says why it stays.
 ///
 /// Both feeds' contracts are remapped by OSI symbol into one id space, as the demo
 /// feed does across recordings. Only the active feed's events reach the engine.
@@ -81,11 +87,14 @@ class FailoverProvider final : public md::Provider {
     Source active = kPrimary;
     md::FeedState primary_state = md::FeedState::Connecting;
     std::string primary_message;
-    md::Timestamp primary_success = 0;  ///< last healthy update from the primary
-    md::Timestamp primary_bad_since = 0;  ///< when it turned Stale, Error or Stopped
+    md::Timestamp primary_success = 0;  ///< last fresh update from the primary
+    md::Timestamp primary_bad_since = 0;  ///< when it turned Error or Stopped
+    md::Timestamp primary_healthy_since = 0;  ///< start of its current fresh run
+    md::Timestamp primary_market = 0;  ///< market time of its last complete snapshot
     md::FeedState backup_state = md::FeedState::Connecting;
     std::string backup_message;
     md::Timestamp switched = 0;
+    bool held = false;  ///< due to fail over, but the backup is unavailable
     md::FeedState reported = md::FeedState::Connecting;  ///< last status sent downstream
     std::set<md::InstrumentId> unpriced;  ///< to clear once the active feed vouches for its chain
   };
@@ -96,6 +105,7 @@ class FailoverProvider final : public md::Provider {
   void switch_to(const std::string& underlying, Route& route, Source source, md::Timestamp now);
   void report(const std::string& underlying, Route& route, md::Timestamp now, std::string_view note = {});
   void vouch(const std::string& underlying, Route& route);
+  void prove(Route& route, md::Timestamp now) const;
   void define(md::InstrumentId id);
   bool active(Source source, const std::string& underlying) const;
   [[nodiscard]] md::Timestamp quiet_after(Source source) const;

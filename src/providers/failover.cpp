@@ -7,9 +7,8 @@
 namespace openport::providers {
 namespace {
 bool healthy(md::FeedState state) { return state == md::FeedState::Live || state == md::FeedState::Delayed; }
-bool failing(md::FeedState state) {
-  return state == md::FeedState::Stale || state == md::FeedState::Error || state == md::FeedState::Stopped;
-}
+// Stale is a label about timing, not a failure: freshness is judged separately.
+bool failing(md::FeedState state) { return state == md::FeedState::Error || state == md::FeedState::Stopped; }
 }  // namespace
 
 FailoverProvider::FailoverProvider(std::unique_ptr<md::Provider> primary, std::unique_ptr<md::Provider> backup,
@@ -112,8 +111,7 @@ void FailoverProvider::receive(Source source, md::Event event) {
       const auto it = routes_.find(underlying);
       if (it == routes_.end()) return;
       auto& route = it->second;
-      route.primary_success = now;
-      route.primary_bad_since = 0;
+      prove(route, now);
       route.primary_state = primary.delay.count() > 0 ? md::FeedState::Delayed : md::FeedState::Live;
       route.primary_message = std::string(primary_->name()) + " " + underlying + ": receiving quotes";
       if (route.active == kBackup) evaluate(underlying, route, now);
@@ -152,6 +150,13 @@ void FailoverProvider::receive(Source source, md::Event event) {
       } else if constexpr (std::is_same_v<T, md::UnderlyingClose>) {
         if (active(source, value.symbol)) sink_->publish(value);
       } else if constexpr (std::is_same_v<T, md::SnapshotComplete>) {
+        // A primary snapshot whose market time advanced is fresh whatever its label says.
+        if (const auto it = routes_.find(value.underlying);
+            source == kPrimary && it != routes_.end() && value.ts > it->second.primary_market) {
+          it->second.primary_market = value.ts;
+          prove(it->second, now);
+          evaluate(value.underlying, it->second, now);
+        }
         if (!active(source, value.underlying)) return;
         if (const auto it = routes_.find(value.underlying); it != routes_.end()) vouch(value.underlying, it->second);
         sink_->publish(value);
@@ -191,10 +196,10 @@ void FailoverProvider::status(Source source, const md::ProviderStatus& update) {
       route.primary_state = update.state;
       route.primary_message = update.message;
       if (healthy(update.state)) {
-        route.primary_success = now;
-        route.primary_bad_since = 0;
-      } else if (failing(update.state) && route.primary_bad_since == 0) {
-        route.primary_bad_since = now;
+        prove(route, now);
+      } else if (failing(update.state)) {
+        if (route.primary_bad_since == 0) route.primary_bad_since = now;
+        route.primary_healthy_since = 0;
       }
     } else {
       route.backup_state = update.state;
@@ -211,6 +216,7 @@ void FailoverProvider::status(Source source, const md::ProviderStatus& update) {
 
 void FailoverProvider::evaluate(const std::string& underlying, Route& route, md::Timestamp now) {
   const auto quiet = quiet_after(kPrimary);
+  const auto after = options_.after.count() * md::kNanosPerSecond;
   if (route.active == kPrimary) {
     auto bad = route.primary_bad_since;
     if (bad == 0) {
@@ -218,11 +224,34 @@ void FailoverProvider::evaluate(const std::string& underlying, Route& route, md:
       const auto since = route.primary_success > 0 ? route.primary_success : started_;
       if (now - since > quiet) bad = since + quiet;
     }
-    if (bad > 0 && now - bad >= options_.after.count() * md::kNanosPerSecond) switch_to(underlying, route, kBackup, now);
-  } else if (route.primary_bad_since == 0 && healthy(route.primary_state) && route.primary_success > route.switched &&
-             now - route.primary_success <= quiet) {
+    if (bad == 0 || now - bad < after) {
+      route.held = false;
+      return;
+    }
+    // A backup that failed to start or reports an error would supply nothing.
+    if (failing(route.backup_state)) {
+      if (!route.held) {
+        route.held = true;
+        report(underlying, route, now);
+      }
+      return;
+    }
+    route.held = false;
+    switch_to(underlying, route, kBackup, now);
+  } else if (route.primary_bad_since == 0 && route.primary_healthy_since > 0 && route.primary_success > route.switched &&
+             now - route.primary_success <= quiet && now - route.primary_healthy_since >= after) {
+    // Back only after a fresh run as long as the threshold, so a flapping primary stays off.
     switch_to(underlying, route, kPrimary, now);
   }
+}
+
+void FailoverProvider::prove(Route& route, md::Timestamp now) const {
+  // A fresh run starts after a failure or a silence longer than the engine allows.
+  if (route.primary_healthy_since == 0 || route.primary_bad_since != 0 ||
+      now - route.primary_success > quiet_after(kPrimary))
+    route.primary_healthy_since = now;
+  route.primary_success = now;
+  route.primary_bad_since = 0;
 }
 
 void FailoverProvider::switch_to(const std::string& underlying, Route& route, Source source, md::Timestamp now) {
@@ -231,11 +260,13 @@ void FailoverProvider::switch_to(const std::string& underlying, Route& route, So
   if (source == kBackup) {
     ++on_backup_count_;
     want_backup_ = true;
+    route.primary_healthy_since = 0;  // recovery needs a fresh run after this
   } else {
     --on_backup_count_;
   }
   // The status first, so everything after it is known to come from this feed.
-  report(underlying, route, now, source == kPrimary ? std::string(primary_->name()) + " recovered; " : std::string{});
+  const bool recovered = source == kPrimary && !route.held;
+  report(underlying, route, now, recovered ? std::string(primary_->name()) + " recovered; " : std::string{});
   // Then the new feed's latest values. Contracts it does not price keep their old,
   // aging quotes until it vouches for its chain, when vouch() clears them.
   auto& cache = caches_[source];
@@ -275,6 +306,9 @@ void FailoverProvider::report(const std::string& underlying, Route& route, md::T
                   (route.backup_message.empty() ? "connecting" : route.backup_message) + "; primary " +
                   std::string(primary_->name()) + " " + std::string(md::to_string(route.primary_state));
     out.feed = std::string(backup_->name());
+  } else if (route.held) {
+    out.message += "; fallback " + std::string(backup_->name()) + " unavailable: " +
+                   (route.backup_message.empty() ? std::string(md::to_string(route.backup_state)) : route.backup_message);
   }
   route.reported = out.state;
   sink_->publish(std::move(out));
@@ -291,7 +325,11 @@ void FailoverProvider::start_backup() {
     for (auto& [underlying, route] : routes_) {
       route.backup_state = md::FeedState::Error;
       route.backup_message = "could not start";
-      if (route.active == kBackup) report(underlying, route, now);
+      // A backup that never started supplies nothing: hand the underlying back.
+      if (route.active == kBackup) {
+        route.held = true;
+        switch_to(underlying, route, kPrimary, now);
+      }
     }
   }
 }

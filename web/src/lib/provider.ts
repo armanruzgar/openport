@@ -23,5 +23,5 @@ export function fallbackLabel(provider: ProviderInfo | null | undefined, underly
 export function fallbackTitle(provider: ProviderInfo): string {
   const f = provider.fallback
   if (!f) return ""
-  return `${f.primary} has been stale, in error or silent for ${f.after_seconds} s, so ${f.backup} supplies this underlying until ${f.primary} recovers; its data is reported as delayed`
+  return `${f.primary} has been in error or silent for ${f.after_seconds} s, so ${f.backup} supplies this underlying until ${f.primary} has been fresh for as long; its data is reported as delayed`
 }

@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <thread>
 
 #include "openport/providers/factory.hpp"
@@ -24,6 +25,7 @@ class ManualFeed final : public md::Provider {
   [[nodiscard]] md::Capabilities capabilities() const noexcept override { return capabilities_; }
   void start(const md::Subscription& requested, md::EventSink& out) override {
     ++starts;
+    if (refuse) throw std::runtime_error("refused");
     subscription = requested;
     sink = &out;
   }
@@ -32,6 +34,7 @@ class ManualFeed final : public md::Provider {
   md::EventSink* sink = nullptr;
   md::Subscription subscription;
   int starts = 0, stops = 0;
+  bool refuse = false;
 
  private:
   std::string name_;
@@ -156,7 +159,7 @@ TEST_F(Failover, AnErrorLastingTheThresholdSwitchesThatUnderlyingToTheBackup) {
 
 TEST_F(Failover, ARecoveredPrimaryTakesBackWithItsLatestValues) {
   primary_snapshot();
-  primary->send(status(md::FeedState::Stale));
+  primary->send(status(md::FeedState::Error));
   at(31);
   ASSERT_TRUE(provider->on_backup("SPX"));
   backup->send(md::ContractDefinition{0, kB});
@@ -170,6 +173,14 @@ TEST_F(Failover, ARecoveredPrimaryTakesBackWithItsLatestValues) {
   EXPECT_TRUE(sink.events.empty());
   primary->send(md::SnapshotComplete{"SPX", kStart + 49 * kSecond});
   primary->send(status(md::FeedState::Live, "SPX", "Tradier: real-time options"));
+  // Healthy once is not enough: it must stay fresh for the threshold.
+  EXPECT_TRUE(provider->on_backup("SPX"));
+  EXPECT_TRUE(sink.events.empty());
+  at(79);
+  EXPECT_TRUE(provider->on_backup("SPX"));
+  now = kStart + 80 * kSecond;
+  primary->send(md::OptionQuote{7, kStart + 79 * kSecond, 31.0, 31.5, 9, 9});
+  primary->send(md::SnapshotComplete{"SPX", kStart + 79 * kSecond});
   EXPECT_FALSE(provider->on_backup("SPX"));
   ASSERT_FALSE(sink.events.empty());
   const auto& first = std::get<md::ProviderStatus>(sink.events[0]);
@@ -177,17 +188,121 @@ TEST_F(Failover, ARecoveredPrimaryTakesBackWithItsLatestValues) {
   EXPECT_EQ(first.feed, "tradier");
   EXPECT_EQ(first.message, "tradier recovered; Tradier: real-time options");
   const auto quotes = sink.all<md::OptionQuote>();
-  ASSERT_EQ(quotes.size(), 2u);
+  ASSERT_EQ(quotes.size(), 3u);
   EXPECT_EQ(quotes[0].id, 0u);
   EXPECT_DOUBLE_EQ(quotes[0].bid, 31.0);
   EXPECT_EQ(quotes[1].id, 1u);  // C's last primary quote is offered again
+  // B, priced only by the backup, is cleared by the primary's complete snapshot.
+  EXPECT_EQ(quotes[2].id, 2u);
+  EXPECT_EQ(quotes[2].ask, 0);
+  EXPECT_EQ(quotes[2].ts, 0);
+  EXPECT_TRUE(std::holds_alternative<md::SnapshotComplete>(sink.events.back()));
   EXPECT_EQ(provider->capabilities().delay, 0s);
-  // B, priced only by the backup, is cleared at the primary's next complete snapshot.
+}
+
+TEST_F(Failover, AStaleLabelledPrimaryWhoseSnapshotsAdvanceKeepsItsUnderlyings) {
+  // As Schwab without isDelayed or IBKR's Z/Y fields: fresh data, timing unconfirmed.
+  for (md::Timestamp t = 0; t <= 200; t += 5) {
+    now = kStart + t * kSecond;
+    primary->send(md::SnapshotComplete{"SPX", kStart + t * kSecond});
+    primary->send(status(md::FeedState::Stale, "SPX", "Schwab: timing unconfirmed"));
+    primary->send(status(md::FeedState::Live, "SPY"));
+    at(t);
+  }
+  EXPECT_FALSE(provider->on_backup("SPX"));
+  EXPECT_EQ(backup->starts, 0);
+  const auto label = sink.all<md::ProviderStatus>().back();
+  EXPECT_EQ(sink.all<md::ProviderStatus>().front().state, md::FeedState::Stale);  // the true label passes on
+  EXPECT_EQ(label.feed, "tradier");
+
+  // A snapshot that repeats its market time proves nothing: silence, then a switch.
+  for (md::Timestamp t = 205; t <= 290; t += 5) {
+    now = kStart + t * kSecond;
+    primary->send(md::SnapshotComplete{"SPX", kStart + 200 * kSecond});
+    primary->send(status(md::FeedState::Stale, "SPX", "Schwab: timing unconfirmed"));
+    primary->send(status(md::FeedState::Live, "SPY"));
+    at(t);
+    EXPECT_EQ(provider->on_backup("SPX"), t >= 290) << t;
+  }
+  EXPECT_FALSE(provider->on_backup("SPY"));
+
+  // Recovery uses the same test: advancing snapshots for the threshold, label and all.
+  for (md::Timestamp t = 295; t <= 325; t += 5) {
+    now = kStart + t * kSecond;
+    primary->send(md::SnapshotComplete{"SPX", kStart + t * kSecond});
+    primary->send(status(md::FeedState::Stale, "SPX", "Schwab: timing unconfirmed"));
+    EXPECT_EQ(provider->on_backup("SPX"), t < 325) << t;
+  }
+  const auto back = sink.all<md::ProviderStatus>().back();
+  EXPECT_EQ(back.state, md::FeedState::Stale);
+  EXPECT_EQ(back.feed, "tradier");
+}
+
+TEST_F(Failover, AFlappingPrimaryStaysOnTheBackupUntilItHoldsSteady) {
+  primary_snapshot();
+  primary->send(status(md::FeedState::Error));
+  at(30);
+  ASSERT_TRUE(provider->on_backup("SPX"));
+  for (md::Timestamp t = 35; t <= 120; t += 5) {
+    now = kStart + t * kSecond;
+    primary->send(status(t % 10 == 5 ? md::FeedState::Live : md::FeedState::Error));
+    at(t);
+    EXPECT_TRUE(provider->on_backup("SPX")) << t;
+  }
+  now = kStart + 130 * kSecond;
+  primary->send(status(md::FeedState::Live));
+  at(159);
+  EXPECT_TRUE(provider->on_backup("SPX"));
+  at(160);
+  EXPECT_FALSE(provider->on_backup("SPX"));
+  EXPECT_EQ(sink.all<md::ProviderStatus>().back().feed, "tradier");
+}
+
+TEST_F(Failover, NoUnderlyingMovesOntoABackupThatCouldNotStart) {
+  backup->refuse = true;
+  primary_snapshot();
+  primary->send(status(md::FeedState::Live, "SPY"));
+  primary->send(status(md::FeedState::Error, "SPX", "HTTP 503"));
   sink.events.clear();
-  primary->send(md::SnapshotComplete{"SPX", kStart + 51 * kSecond});
-  ASSERT_EQ(sink.all<md::OptionQuote>().size(), 1u);
-  EXPECT_EQ(sink.all<md::OptionQuote>()[0].id, 2u);
-  EXPECT_EQ(sink.all<md::OptionQuote>()[0].ask, 0);
+  at(30);
+  EXPECT_EQ(backup->starts, 1);
+  EXPECT_FALSE(provider->on_backup("SPX"));  // handed back: a dead backup supplies nothing
+  const auto held = sink.all<md::ProviderStatus>().back();
+  EXPECT_EQ(held.state, md::FeedState::Error);
+  EXPECT_EQ(held.feed, "tradier");
+  EXPECT_EQ(held.message, "HTTP 503; fallback cboe unavailable: could not start");
+
+  sink.events.clear();
+  now = kStart + 40 * kSecond;
+  primary->send(status(md::FeedState::Error, "SPY", "HTTP 503"));
+  at(70);
+  EXPECT_FALSE(provider->on_backup("SPY"));
+  EXPECT_EQ(backup->starts, 1);
+  const auto statuses = sink.all<md::ProviderStatus>();
+  ASSERT_EQ(statuses.size(), 2u);  // the primary's word, then why it stays
+  EXPECT_EQ(statuses[1].underlying, "SPY");
+  EXPECT_EQ(statuses[1].message, "HTTP 503; fallback cboe unavailable: could not start");
+  at(80);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().size(), 2u);  // said once
+}
+
+TEST_F(Failover, NoUnderlyingMovesOntoABackupInError) {
+  primary_snapshot();
+  primary->send(status(md::FeedState::Live, "SPY"));
+  primary->send(status(md::FeedState::Error, "SPX"));
+  at(30);
+  ASSERT_TRUE(provider->on_backup("SPX"));
+  backup->send(md::ProviderStatus{now, md::FeedState::Error, "cboe: HTTP 500", ""});
+  primary->send(status(md::FeedState::Error, "SPY", "HTTP 503"));
+  at(60);
+  EXPECT_FALSE(provider->on_backup("SPY"));
+  const auto held = sink.all<md::ProviderStatus>().back();
+  EXPECT_EQ(held.underlying, "SPY");
+  EXPECT_EQ(held.message, "HTTP 503; fallback cboe unavailable: cboe: HTTP 500");
+  // Once the backup recovers, the overdue underlying moves.
+  backup->send(md::ProviderStatus{now, md::FeedState::Delayed, "cboe: delayed", ""});
+  at(61);
+  EXPECT_TRUE(provider->on_backup("SPY"));
 }
 
 TEST_F(Failover, SilenceCountsAsFailureAfterTheEnginesStaleWindow) {

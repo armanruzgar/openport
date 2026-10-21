@@ -166,8 +166,9 @@ consequences for paper fills.
 own sink, definitions are remapped by OSI symbol into one id space, and per-underlying
 routes decide which child's events pass. `ProviderStatus::feed` names the feed in
 charge; it is not recorded. A new adapter needs nothing extra to serve as either
-feed, but its health states matter: `Stale`, `Error` and `Stopped` count as failing,
-`Live` and `Delayed` as healthy. Tests drive two hand-made feeds and an injected clock
+feed, but its health matters: `Error` and `Stopped` count as failing; a `Live` or
+`Delayed` status, or a `SnapshotComplete` whose market time advanced, as fresh, so
+`Stale` with advancing snapshots keeps the primary. Tests drive two hand-made feeds and an injected clock
 through `tick()` ([tests](../tests/providers/failover_test.cpp)).
 
 ## Historical day imports

@@ -18,8 +18,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   Requires `--expiries` and `--window`. Build option `OPENPORT_WITH_IBKR` (on by
   default). Not yet run live.
 - **Feed failover.** `--fallback-provider NAME` switches an underlying to a second
-  provider once the main one has been stale, in error or silent for
-  `--fallback-seconds` (default 30), and back when it recovers. Contracts map by OSI
+  provider once the main one has been in error or silent for
+  `--fallback-seconds` (default 30), and back once it has been fresh for as long.
+  A primary labelled stale whose snapshots advance keeps its underlyings, and none
+  move onto a backup that could not start or reports an error. Contracts map by OSI
   symbol; the backup reports delayed with a fallback label in status and the
   terminal. Paper trading keeps its freshness checks, and every fill names the feed
   that priced it (`feed` in the fills API and journal).

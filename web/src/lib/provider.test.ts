@@ -48,7 +48,7 @@ describe("fallback label", () => {
   })
 
   it("explains when the backup took over and that its data is delayed", () => {
-    expect(fallbackTitle({ ...provider, fallback })).toContain("tradier has been stale, in error or silent for 30 s")
+    expect(fallbackTitle({ ...provider, fallback })).toContain("tradier has been in error or silent for 30 s")
     expect(fallbackTitle({ ...provider, fallback })).toContain("reported as delayed")
     expect(fallbackTitle(provider)).toBe("")
   })

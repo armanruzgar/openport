@@ -5230,7 +5230,7 @@
                 "type": "null"
               }
             ],
-            "description": "The backup feed behind --fallback-provider: it supplies an underlying once the primary has been Stale, in Error or silent for after_seconds, until the primary reports a healthy update. Null without one; absent on older servers."
+            "description": "The backup feed behind --fallback-provider: it supplies an underlying once the primary has been in Error, Stopped or silent for after_seconds, until the primary has been fresh again for after_seconds. Null without one; absent on older servers."
           }
         },
         "required": [

@@ -384,13 +384,20 @@ the environment, as `--provider` would. Neither feed may be `demo` or `replay`, 
 the two must differ. Both must accept the subscription's filters.
 
 Each underlying is routed on its own. The main feed keeps it until its status has
-been `Stale`, `Error` or `Stopped` for `--fallback-seconds` (default 30), or it has
-sent no healthy update for that long beyond the engine's stale window (three poll
-intervals, at least a minute). A provider-wide error counts for every underlying. A
-streaming feed that does not report its own health, such as Databento, proves itself
-with quotes, as it does to the engine. The backup starts at the first switch and then
-keeps running. The underlying returns to the main feed at its first healthy status
-after the switch.
+been `Error` or `Stopped` for `--fallback-seconds` (default 30), or it has sent no
+fresh update for that long beyond the engine's stale window (three poll intervals,
+at least a minute). Freshness is judged apart from the state label: a `live` or
+`delayed` status, or a complete snapshot whose market time advanced, is fresh. So a
+feed whose healthy state is `stale` because it cannot confirm its timing (Schwab
+without `isDelayed`, IBKR without its delay fields, Tradier's indexes) keeps its
+underlyings, and still reports `stale`. A provider-wide error counts for every
+underlying. A streaming feed that does not report its own health, such as Databento,
+proves itself with quotes, as it does to the engine. The backup starts at the first
+switch and then keeps running. No underlying moves onto a backup that could not start
+or reports `error` or `stopped`; it stays on the main feed, whose status message adds
+`fallback cboe unavailable: ...`. An underlying returns to the main feed once that
+feed has been fresh, without an error, for `--fallback-seconds`, so a flapping feed
+stays on the backup.
 
 The two feeds' contracts share one id space, mapped by OSI symbol as the demo feed
 maps its days; only the feed in charge of an underlying reaches the engine. A switch

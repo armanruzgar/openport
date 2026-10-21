@@ -20,7 +20,7 @@ void validate_subscription(std::string_view provider, const md::Subscription& su
 [[nodiscard]] std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config);
 
 /// A FailoverProvider: `backup` takes over an underlying once `primary` has been
-/// Stale, in Error or silent for `after`. Neither may be replay or demo, and the
+/// in Error, Stopped or silent for `after`. Neither may be replay or demo, and the
 /// two must differ.
 [[nodiscard]] std::unique_ptr<md::Provider> make_failover_provider(const md::ProviderConfig& primary,
                                                                    const md::ProviderConfig& backup,
