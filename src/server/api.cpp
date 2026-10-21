@@ -330,6 +330,8 @@ json status_json(const MetricsSource& source) {
   if (!source.notifications()) notifications["enabled"] = false;
   return {
       {"version", OPENPORT_VERSION},
+      {"build", {{"revision", OPENPORT_BUILD_REVISION}, {"compiler", OPENPORT_BUILD_COMPILER},
+                 {"platform", OPENPORT_BUILD_PLATFORM}}},
       {"trading", trading_status_json(s.trading)},
       {"accounts", account_ticks_json(s)},
       {"series", series_status_json(source)},

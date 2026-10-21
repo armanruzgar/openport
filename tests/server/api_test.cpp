@@ -109,6 +109,12 @@ TEST(Api, StatusDescribesProviderFeedAndUnderlyings) {
 TEST(Api, StatusIncludesRunningVersionBeforeMarketDataArrives) {
   CandleSource source;
   EXPECT_EQ(get(source, "/api/status")["version"], OPENPORT_VERSION);
+  const auto build = get(source, "/api/status")["build"];
+  ASSERT_EQ(build.size(), 3u);
+  for (const auto* key : {"revision", "compiler", "platform"}) {
+    ASSERT_TRUE(build[key].is_string());
+    EXPECT_FALSE(build[key].get<std::string>().empty());
+  }
 }
 
 TEST(Api, TradableUnderlyingFlagUsesContractsAndIsIncludedInTicks) {

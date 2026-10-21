@@ -105,11 +105,17 @@ export interface TokenStatus {
 export interface TokenReloadResponse extends TokenStatus {
   names: string[]
 }
+export interface BuildInfo {
+  revision: string
+  compiler: string
+  platform: string
+}
 export interface Status {
   tokens?: TokenStatus
   sandboxes?: { enabled: boolean; idle_seconds: number }
   /** Running openportd version; absent on older servers. */
   version?: string
+  build?: BuildInfo
   notifications?: NotificationStatus
   series?: { enabled: boolean; directory: string | null; rows_today: number; last_write: string | null; last_error: string | null }
   trading?: TradingStatus | null

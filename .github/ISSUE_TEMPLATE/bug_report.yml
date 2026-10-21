@@ -27,9 +27,15 @@ body:
     id: provider
     attributes:
       label: Market data
-      options: [Cboe (default), Databento, Massive, ThetaData, Replay or demo market]
+      options: [Cboe (default), Databento, Massive, ThetaData, Tradier, tastytrade, Replay or demo market]
     validations:
       required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Use Status → Copy diagnostics in the terminal. Review before sharing; never paste a token link or provider credentials.
+      render: text
   - type: textarea
     id: logs
     attributes:
