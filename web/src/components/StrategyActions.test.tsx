@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { api } from "../api/client"
+import { api, ApiError } from "../api/client"
 import { liveState, useLive } from "../api/live"
 import type { Order } from "../api/trading-types"
 import type { Chain, ChainRow } from "../api/types"
@@ -79,6 +79,37 @@ it("sends GTC and template tags with a percentage target and combo stop", async 
   }), trading.write)
 }, renderTimeout)
 
+it("takes profit on the credit side once a debit ticket becomes a credit spread", async () => {
+  const quoted = spread.legs.map(({ leg }, i) => ({ ...leg, quote: { ...quote, bid: i === 0 ? 5 : 3, ask: i === 0 ? 5.2 : 3.2, mid: i === 0 ? 5.1 : 3.1 } }))
+  const ticket = (legs: typeof quoted) => <StrategyTicket legs={legs} onLegs={() => {}} expiries={[selection.expiry]} underlying="SPX" spot={7000} trading={trading} onClose={() => {}} />
+  // Bought first: a 2.00 debit, whose take-profit receives 150% of it.
+  await render(ticket(quoted.map((leg) => ({ ...leg, side: leg.side === "buy" ? "sell" as const : "buy" as const }))))
+  await check("Spread exits")
+  expect(host.textContent).toContain("Receive (% of entry debit)")
+  expect(host.textContent).toContain("Closing limit: $3.00 credit")
+  // The same strikes as a 2.00 credit buy back at 50% of it, not at 150%.
+  await render(ticket(quoted))
+  expect(host.textContent).toContain("Buy back (% of entry credit)")
+  expect(host.textContent).toContain("Closing limit: $1.00 debit")
+}, renderTimeout)
+
+it("sends a strategy's corrected terms after a rejection under a new client order ID", async () => {
+  vi.mocked(api.submitOrder).mockRejectedValue(new ApiError(422, "Buying power exceeded", "BUYING_POWER"))
+  const legs = spread.legs.map(({ leg }, i) => ({ ...leg, quote: { ...quote, bid: i === 0 ? 5 : 3, ask: i === 0 ? 5.2 : 3.2, mid: i === 0 ? 5.1 : 3.1 } }))
+  await render(<StrategyTicket legs={legs} onLegs={() => {}} expiries={[selection.expiry]} underlying="SPX" spot={7000} trading={trading} onClose={() => {}} />)
+  const send = () => act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  await click("Quantity 2")
+  await send()
+  await waitForRender(() => expect(host.textContent).toContain("Buying power exceeded"))
+  await send()
+  await click("Quantity 1")
+  await send()
+  const sent = vi.mocked(api.submitOrder).mock.calls.map(([request]) => request)
+  expect(sent.map((request) => request.quantity)).toEqual([2, 2, 1])
+  expect(sent[1]!.client_order_id).toBe(sent[0]!.client_order_id)
+  expect(sent[2]!.client_order_id).not.toBe(sent[0]!.client_order_id)
+}, renderTimeout)
+
 it("sets exits on the held closing legs under the reduce-only latch", async () => {
   await render(<SpreadExitsDialog group={spread} trading={{ ...trading, kill_latched: true }} onClose={() => {}} />)
   await setField("Stop source", "underlying")
@@ -106,6 +137,22 @@ it("sets a held spread's stop-limit alone as its GTC limit with the trigger", as
     exits_only: true, type: "limit", time_in_force: "gtc", limit_price: "4.20", trigger,
     bracket: { stop_loss: { trigger, limit_price: "4.20" } },
   }), trading.write)
+}, renderTimeout)
+
+it("sends a held spread's corrected exits after a rejection under a new client order ID", async () => {
+  vi.mocked(api.submitOrder).mockRejectedValue(new ApiError(422, "Stop is through the market", "INVALID_TRIGGER"))
+  await render(<SpreadExitsDialog group={spread} trading={trading} onClose={() => {}} />)
+  await setField("Stop level", "4.00")
+  await waitForRender(() => expect([...host.querySelectorAll("button")].find((button) => button.textContent === "Set exits")?.disabled).toBe(false))
+  await click("Set exits")
+  await waitForRender(() => expect(host.textContent).toContain("Stop is through the market"))
+  await click("Set exits")
+  await setField("Stop level", "4.50")
+  await click("Set exits")
+  const ids = vi.mocked(api.submitOrder).mock.calls.map(([request]) => request.client_order_id)
+  expect(ids).toHaveLength(3)
+  expect(ids[1]).toBe(ids[0])
+  expect(ids[2]).not.toBe(ids[0])
 }, renderTimeout)
 
 it("changes a signed combo stop and cancels the held OCO exits", async () => {

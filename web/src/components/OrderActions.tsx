@@ -4,7 +4,7 @@ import { useRef, useState } from "react"
 
 import { useLive } from "../api/live"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
-import type { ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, Order, Position, StockHolding, TradingStatus } from "../api/trading-types"
+import type { ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, NewOrder, Order, Position, StockHolding, TradingStatus } from "../api/trading-types"
 import { contractLabel, orderLabel, osiLabel } from "../lib/journal"
 import { closingAction, editableFields, flattenPlan, isOpen, openOrdersIn, orderChange, orderDraft, outcome, underlyingsOf } from "../lib/orders"
 import { describeTrigger } from "../lib/ticket"
@@ -42,6 +42,24 @@ export function useWrite(trading: TradingStatus) {
     }
   }
   return { run, pending, error, blocked }
+}
+
+/**
+ * Stamps a dialog's request with a client order ID: the one already sent while the
+ * terms are unchanged, so a retry stays idempotent, and a new one once they change,
+ * since the server keeps a rejected order under its ID and refuses other terms there.
+ */
+export function useClientOrderId() {
+  const last = useRef<{ terms: string; id: string } | null>(null)
+  return {
+    stamp(request: NewOrder): NewOrder {
+      const terms = JSON.stringify({ ...request, client_order_id: "" })
+      if (last.current?.terms !== terms) last.current = { terms, id: crypto.randomUUID() }
+      return { ...request, client_order_id: last.current.id }
+    },
+    /** The next request is a new order even on the same terms. */
+    reset() { last.current = null },
+  }
 }
 
 function ScopePicker({ value, options, onChange, what }: { value: string | null; options: string[]; onChange: (value: string | null) => void; what: string }) {
