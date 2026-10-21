@@ -30148,19 +30148,7 @@
           "errors": {
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "where": {
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "where",
-                "message"
-              ]
+              "$ref": "#/components/schemas/RulePackError"
             }
           },
           "warnings": {
@@ -30189,6 +30177,22 @@
           "warnings",
           "pack",
           "label"
+        ]
+      },
+      "RulePackError": {
+        "type": "object",
+        "properties": {
+          "where": {
+            "type": "string",
+            "description": "The field, or plans[N]."
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "where",
+          "message"
         ]
       }
     }
