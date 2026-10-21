@@ -11,7 +11,7 @@ import { Badge, Meter, toneOf, toneText } from "./ui"
 
 export const viewLabels: Record<View, string> = {
   backtest: "Backtest", brief: "Brief", dashboard: "Dashboard", chain: "Trade", positions: "Positions", orders: "Orders", journal: "Journal",
-  playbooks: "Playbooks", rules: "Rules", payouts: "Payouts", smile: "Volatility", exposure: "Exposure", replay: "Replay", engine: "Status",
+  playbooks: "Playbooks", rules: "Rules", payouts: "Payouts", smile: "Volatility", exposure: "Exposure", flow: "Flow", replay: "Replay", engine: "Status", analysis: "Analysis",
 }
 
 const icons: Partial<Record<View, ReactNode>> = {
@@ -27,6 +27,7 @@ const icons: Partial<Record<View, ReactNode>> = {
   payouts: <path d="M3 7h18v11H3zM3 11h18M7 15h4m6 0h.01M6 7l9-3 1 3" />,
   replay: <path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v3h3M10 9l5 3-5 3z" />,
   engine: <path d="M3 12h4l3-8 4 16 3-8h4" />,
+  analysis: <path d="M4 4h16v16H4zM8 15l3-3 2 2 3-4M4 9h16" />,
 }
 function Icon({ view }: { view: View }) {
   return <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icons[view]}</svg>
@@ -105,7 +106,7 @@ export function AccountSummary() {
 export function Sidebar({ view, onView, open, onClose }: { view: View; onView: (view: View) => void; open: boolean; onClose: () => void }) {
   const { trading } = useLive()
   const account = useAccount().data
-  const current = view === "smile" || view === "exposure" ? "chain" : view
+  const current = view === "smile" || view === "exposure" || view === "flow" ? "chain" : view
   const items = navigableViews(trading != null, payoutsVisible(account))
   useEffect(() => {
     if (!open) return

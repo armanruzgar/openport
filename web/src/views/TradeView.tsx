@@ -2,12 +2,14 @@ import { StagedOrders } from "../components/Playbooks"
 import type { View } from "../lib/route"
 import { ChainView } from "./ChainView"
 import { ExposureView } from "./ExposureView"
+import { FlowView } from "./FlowView"
 import { SmileView } from "./SmileView"
 
 const tabs: { view: View; label: string; hint: string }[] = [
   { view: "chain", label: "Chain", hint: "Quotes, Greeks and the order ticket" },
   { view: "smile", label: "Volatility", hint: "Smile, SVI/SSVI fits and term structure" },
   { view: "exposure", label: "Exposure", hint: "Dealer gamma and vanna exposure" },
+  { view: "flow", label: "Flow", hint: "Time and sales, and net premium by strike and expiry" },
 ]
 
 /** The trading terminal: the chain with its ticket, plus market analytics beside it. */
@@ -28,6 +30,7 @@ export function TradeView({ symbol, view, expiry, onNavigate }: {
       </div>
       {view === "smile" ? <SmileView symbol={symbol} />
         : view === "exposure" ? <ExposureView symbol={symbol} />
+        : view === "flow" ? <FlowView symbol={symbol} />
         : <ChainView symbol={symbol} expiry={expiry} onExpiry={(id) => onNavigate({ expiry: id })} />}
     </div>
   )

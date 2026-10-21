@@ -3,6 +3,7 @@ import type { BacktestComparison, BacktestListing, BacktestState, BacktestStart 
 import type { Playbook, PlaybooksResponse, PassOdds } from "./playbook-types"
 import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
+import type { AnalysisFormat, AnalysisGrid, AnalysisPortfolio, AnalysisPortfolios, AnalysisProfile, EarningsHistory, EarningsImport, Flow, FlowQuery } from "./types"
 import type { NotificationChannel, NotificationStatus, TokenReloadResponse } from "./types"
 import type { CandleInterval, Candles, Chain, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, Summary, Surface, RunVerification } from "./types"
 import type { Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
@@ -67,6 +68,8 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
 function routed(path: string): string {
   if (path === "/api/tokens/reload") return path
   if (path === "/api/backtests" || path.startsWith("/api/backtests/")) return path
+  // Earnings history and analysis portfolios belong to the daemon, whatever is playing.
+  if (path.startsWith("/api/earnings") || path.startsWith("/api/analysis/")) return path
   if (path === "/api/replay" || path.startsWith("/api/replay/")) return path
   const source = dataSource.get()
   if (source.startsWith("history:")) return path.replace(/^\/api\//, `/api/replay/history/${encodeURIComponent(source.slice(8))}/`)
@@ -126,6 +129,16 @@ export function riskProfilePath(query: RiskProfileQuery): string {
   const betas = Object.entries(query.betas ?? {}).map(([symbol, beta]) => `${symbol}:${beta}`)
   if (betas.length) params.set("betas", betas.join(","))
   return `/api/risk/profile${params.size ? `?${params}` : ""}`
+}
+/** GET /api/underlyings/{symbol}/flow's query; defaults are left to the server. */
+export function flowPath(symbol: string, query: FlowQuery): string {
+  const params = new URLSearchParams()
+  if (query.type) params.set("type", query.type)
+  if (query.side?.length) params.set("side", query.side.join(","))
+  if (query.only) params.set("only", query.only)
+  if (query.min_premium) params.set("min_premium", String(query.min_premium))
+  if (query.limit) params.set("limit", String(query.limit))
+  return `${underlying(symbol)}/flow${params.size ? `?${params}` : ""}`
 }
 /** Trading routes act on the active account; the main one needs no parameter. */
 function scoped(path: string): string {
@@ -267,6 +280,21 @@ export const api = {
   stopReplay: (mode: WriteMode) => write<{ replay: null }>("/api/replay", "DELETE", mode),
   probability: (symbol: string, days: number[], prices: number[], signal?: AbortSignal) =>
     get<Probability>(`${underlying(symbol)}/probability?days=${days.join(",")}${prices.length ? `&prices=${prices.join(",")}` : ""}`, signal),
+  flow: (symbol: string, query: FlowQuery, signal?: AbortSignal) => get<Flow>(flowPath(symbol, query), signal),
+  earnings: (symbol: string, signal?: AbortSignal) => get<EarningsHistory>(`/api/earnings?symbol=${encodeURIComponent(symbol)}`, signal),
+  importEarnings: (csv: string, mode: WriteMode) => write<EarningsImport>("/api/earnings/import", "POST", mode, { csv }),
+  analysisPortfolios: (signal?: AbortSignal) => get<AnalysisPortfolios>("/api/analysis/portfolios", signal),
+  analysisPortfolio: (id: string, signal?: AbortSignal) => get<AnalysisPortfolio>(`/api/analysis/portfolios/${encodeURIComponent(id)}`, signal),
+  importPortfolio: (name: string, csv: string, format: AnalysisFormat, mode: WriteMode) =>
+    write<AnalysisPortfolio>("/api/analysis/portfolios", "POST", mode, { name, csv, format }),
+  deletePortfolio: (id: string, mode: WriteMode) => write<{ id: string; deleted: true }>(`/api/analysis/portfolios/${encodeURIComponent(id)}`, "DELETE", mode),
+  analysisProfile: (id: string, query: { underlying?: string; days?: number[] }, signal?: AbortSignal) => {
+    const params = new URLSearchParams()
+    if (query.underlying) params.set("underlying", query.underlying)
+    if (query.days?.length) params.set("days", query.days.join(","))
+    return get<AnalysisProfile>(`/api/analysis/portfolios/${encodeURIComponent(id)}/risk/profile${params.size ? `?${params}` : ""}`, signal)
+  },
+  analysisGrid: (id: string, signal?: AbortSignal) => get<AnalysisGrid>(`/api/analysis/portfolios/${encodeURIComponent(id)}/risk/grid`, signal),
   candles: (symbol: string, interval: CandleInterval, limit: number, signal?: AbortSignal) =>
     get<Candles>(`${underlying(symbol)}/candles?interval=${interval}&limit=${limit}`, signal),
 }
