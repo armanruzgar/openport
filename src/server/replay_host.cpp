@@ -1290,6 +1290,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
         else identity.erase("revision");
       }
       if (input.contains("challenge")) identity["challenge"] = input.at("challenge");
+      if (input.contains("scenario_source")) identity["scenario_source"] = input.at("scenario_source");
       if (identity != input) return refuse("The scenario or its generator has changed since the run started");
     } else {
       recording = input.at("file").get<std::string>();
@@ -1424,7 +1425,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     }
     engine.replay = true;
     auto identity = input;
-    if (sandbox) identity.erase("challenge");
+    if (sandbox) { identity.erase("challenge"); identity.erase("scenario_source"); }
     engine.run_input = identity.dump();
     engine.run_id = session->id;
     engine.paper_accounts.clear();
@@ -1490,7 +1491,8 @@ void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete)
     if (request.method != "POST" || request.target != "/api/replay/packs") { complete(api_error(405, "METHOD_NOT_ALLOWED", "Use GET to export, POST /api/replay/packs to import")); return; }
     if (!options_.demo || !history_->writable()) { complete(api_error(403, "WRITE_DISABLED", "Scenario packs require demo mode and writable replay storage")); return; }
     auto pack = parse_body(request, {"version", "scenario", "seed", "plan", "challenge"});
-    if (pack.value("version", 0) != 1) throw std::invalid_argument("Scenario pack version must be 1");
+    if (!pack.contains("version") || !pack.at("version").is_number_integer() || pack.at("version") != 1)
+      throw std::invalid_argument("Scenario pack version must be 1");
     const auto directory = options_.engine.paper_journal.parent_path() / "scenario-packs";
     auto scenario = providers::parse_scenario(pack.at("scenario").dump(), directory / "import.json");
     pack["seed"] = std::to_string(seed_field(pack.at("seed"), scenario));
@@ -1755,6 +1757,7 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
         if (!challenge.is_null()) {
           auto identity = json::parse(engine.run_input);
           identity["challenge"] = challenge;
+          identity["scenario_source"] = day->source;
           engine.run_input = identity.dump();
         }
         engine.run_id = session->id;

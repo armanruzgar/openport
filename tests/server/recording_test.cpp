@@ -1441,6 +1441,8 @@ TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs)
   std::string id;
   {
     server::ReplayHost host({file.directory, base});
+    auto invalid_version = pack; invalid_version["version"] = 1.5;
+    EXPECT_EQ(call(host, "POST", "/api/replay/packs", invalid_version.dump()).status, 400);
     const auto imported = call(host, "POST", "/api/replay/packs", pack.dump());
     ASSERT_EQ(imported.status, 201) << imported.body;
     EXPECT_EQ(json::parse(imported.body), pack);
@@ -1482,10 +1484,12 @@ TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs)
       EXPECT_TRUE(run["completed_at"].is_string());
     }
   }
+  std::filesystem::remove(file.directory / "scenario-packs" / "test-challenge.json");
   const auto full = server::verify_run(file.directory / "replays" / (completed_id + ".jsonl"));
   ASSERT_TRUE(full.matched) << full.message;
   ASSERT_TRUE(full.run.contains("drill"));
   EXPECT_EQ(full.run["drill"]["score"], 100);
+  EXPECT_EQ(full.run["inputs"][0]["scenario_source"], scenario.dump());
 }
 TEST(ReplayHost, ReplayFromTradeKeepsGeneratedInputsAndRefusesMissingScenarioSource) {
   using nlohmann::json;

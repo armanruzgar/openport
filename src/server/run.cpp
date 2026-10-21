@@ -381,7 +381,10 @@ RunVerification verify_run(const std::filesystem::path& journal,
           throw std::runtime_error("Recording input changed: " + file.filename().string());
       } else if (identity.at("kind") == "scenario") {
         providers::Scenario scenario;
-        if (identity.at("builtin").get<bool>()) {
+        if (identity.contains("challenge") && identity.contains("scenario_source")) {
+          scenario = providers::parse_scenario(identity.at("scenario_source").get<std::string>(), identity.at("file").get<std::string>());
+          scenario.builtin = identity.at("builtin").get<bool>();
+        } else if (identity.at("builtin").get<bool>()) {
           bool found = false;
           for (const auto& candidate : providers::builtin_scenarios()) {
             if (candidate.id != identity.at("id").get<std::string>()) continue;
