@@ -1,5 +1,20 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- **Surface history:** persist per-expiry SVI parameters at scheduled intraday slots
+  and the close; compare the same expiry against the prior close, week and month.
+- **Event volatility:** derive an event variance premium from adjacent straddling
+  expiries using supplied labels and earnings/news calendars, including BMO/AMC.
+  Missing brackets and confounded solves remain explicit.
+- **Vol scanner:** batch API and sortable terminal view for every subscribed symbol,
+  with history coverage, feed timestamps, simulation labels and symbol navigation.
+- **Python/MCP:** read stored volatility/surface history and the batch scanner,
+  and select the account calendar for event estimates.
+- **Volatility history:** ranks, percentiles and population z-scores for signed skew
+  and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
+  Live comparison measurements remain pending.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

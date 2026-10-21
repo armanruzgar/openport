@@ -238,3 +238,45 @@ calibration cost on its API worker; repeated responses still pay serialization c
   [*Arbitrage-free SVI volatility surfaces*](https://arxiv.org/abs/1204.0646),
   Quantitative Finance 14(1), 59–71. Density diagnostic: Lemma 2.2; Axel Vogt example:
   a=−0.0410, b=0.1331, ρ=0.3060, m=0.3586, σ=0.4153.
+
+## Historical surface snapshots
+
+The live series worker retains raw SVI parameters per listed expiry at 10:00,
+12:00 and 14:00 New York time (the first sampled snapshot in the following five
+minutes), and the latest sampled snapshot in the session's final five minutes
+through the scheduled close. Like the minute series, collection samples the first
+publication observed in each market minute. Early closes use their actual close; there is no
+14:00 capture after a 13:00 close. Missing windows stay missing. Replays and demos
+do not collect history. Offline non-demo recordings can populate these snapshots
+with `--backfill-series`.
+
+`GET /api/underlyings/{symbol}/surface-history` returns `snapshots` and three
+`comparisons`: `prior_close`, `week`, and `month`. `from`/`to` accept ISO timestamps
+or New York dates (45 days by default, at most 366 days); `compare=true` omits the
+range list. One week means seven calendar days and one month means the preceding
+calendar month, clamping the day at month end. Non-session targets roll back to
+the previous business session. The exact target session must have a close sample;
+missing history is null, never a substitute from a more distant recorded date.
+Close samples are withheld until the session has completed at the current
+publication's market time. Comparisons also respect an explicitly requested range.
+
+Each snapshot carries `as_of` (the actual observation), session date, capture slot,
+spot, model `svi`, and expiry ids including AM/PM and exercise-family suffixes.
+Each expiry retains its own forward, full-precision tenor, calibration range,
+parameters, fit status/reason, butterfly check and `calendar_ok`. No sampled quote
+points are stored. The terminal selects one listed expiry and samples its curves
+in `lib/svi.ts`, using each snapshot's own forward and remaining tenor, clipped to
+its calibrated range. This compares the same contract over time, not constant
+maturity; expiry ageing and forward changes are part of the comparison. Failed
+fits remain absent; grid violations remain labelled diagnostics.
+
+Snapshots are append-only versioned JSON lines in `SYMBOL-YYYY-MM.surfaces` beside
+the minute CSVs in `--series-dir`. Intraday slots keep the first sample; the close
+slot keeps the latest eligible sample. `--force` can correct the retained sample
+at its actual timestamp. Repeated identical backfills do not append fitting-time
+noise. Restart restores the same records and full parameter precision. Torn or
+invalid files report a series error and refuse further appends, preserving the
+readable prefix. All retained surface records are currently indexed in memory;
+storage and memory grow with recorded sessions and expiries. `--no-series`
+disables this collection too. `enabled: false` and empty arrays identify sources
+without a series store; they do not imply that an old surface was observed.

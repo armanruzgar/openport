@@ -29,7 +29,9 @@
   and stored candles. Model-free IV uses OTM quote mids and our parity forward and
   discount, with known American exercise premiums removed. It is not Cboe's VIX.
   `openport-probe --compare-mfiv` compares SPX against published index minute bars;
-  measured differences will be added here after a live session.
+  live measured differences are pending. No live MFIV-versus-VIX accuracy result
+  is claimed. The terminal tracking line uses same-session daily observations;
+  the probe requires exact matched market minutes.
   [Metric definitions and comparison procedure](volatility.md).
 - **American-style** equity and ETF options cannot fit a rate from their own parity:
   early exercise makes puts worth more at higher strikes, which reads as rates between
