@@ -1,17 +1,39 @@
 class Openport < Formula
   desc "Options analytics and paper-trading simulator"
   homepage "https://github.com/38st/openport"
-  url "https://github.com/38st/openport/releases/download/v0.4.0/openport-0.4.0-darwin-arm64.tar.gz"
   version "0.4.0"
-  sha256 "e372f5f6430cf9ed967a80f69952c041cc016843781b1df820d2964b7e12c23a"
   license "MIT"
 
   depends_on :macos
-  depends_on arch: :arm64
+
+  on_arm do
+    url "https://github.com/38st/openport/releases/download/v0.4.0/openport-0.4.0-darwin-arm64.tar.gz"
+    sha256 "e372f5f6430cf9ed967a80f69952c041cc016843781b1df820d2964b7e12c23a"
+  end
+
+  on_intel do
+    url "https://github.com/38st/openport.git", tag: "v0.4.0"
+    depends_on "cmake" => :build
+    depends_on "node" => :build
+    depends_on "boost" => :build
+    depends_on "openssl@3"
+    depends_on "zstd"
+  end
 
   def install
-    bin.install Dir["bin/*"]
-    (share/"openport").install "share/openport/web"
+    if Hardware::CPU.intel?
+      cd "web" do
+        system "npm", "ci", "--no-audit", "--no-fund"
+        system "npm", "run", "build"
+      end
+      system "cmake", "-S", ".", "-B", "build", *std_cmake_args,
+             "-DOPENPORT_BUILD_TESTS=OFF", "-DOPENPORT_BUILD_BENCHMARKS=OFF"
+      system "cmake", "--build", "build", "-j3"
+      system "cmake", "--install", "build", "--component", "openport"
+    else
+      bin.install Dir["bin/*"]
+      (share/"openport").install "share/openport/web"
+    end
     doc.install Dir["docs/*"], "README.md"
   end
 
@@ -38,16 +60,16 @@ class Openport < Formula
       Start the terminal with:
         brew services start openport
 
-      Open the http://localhost:8080/#token=... link in #{var}/log/openport.log.
-      The token is kept in #{var}/openport/write-token. If the log is buffered,
-      open this URL with the contents of that file after #token=:
-        http://localhost:8080/#token=TOKEN
+      Open the running terminal without searching its log:
+        openportd --print-url --open --write-token-file #{var}/openport/write-token
+      Omit --open to print the link. If the service has not created its token yet,
+      wait a few seconds and retry. For a foreground session, use openportd --open.
       The link saves the token in that browser tab for paper-trading writes.
       Accounts and chart history are kept under #{var}/openport.
       Protect the token file and logs; the link grants write access.
 
-      This formula installs the Apple Silicon archive. Use Docker on Intel Macs
-      and Linux; see the README for Docker Compose and source builds.
+      Apple Silicon uses the release archive; Intel Macs build the release tag
+      from source. For upgrades and backups, see docs/upgrade-and-backup.md.
     EOS
   end
 

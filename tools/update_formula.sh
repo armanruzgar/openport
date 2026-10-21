@@ -37,11 +37,12 @@ sha="$(awk -v asset="$asset" '
 ' "$temporary/SHA256SUMS")" || fail "expected one valid SHA256SUMS entry for $asset"
 
 awk -v url="$release/$asset" -v version="$version" -v sha="$sha" '
-  /^  url / { print "  url \"" url "\""; urls++; next }
+  /^    url .*releases\/download/ { print "    url \"" url "\""; urls++; next }
+  /^    url .*openport\.git/ { print "    url \"https://github.com/38st/openport.git\", tag: \"v" version "\""; tags++; next }
   /^  version / { print "  version \"" version "\""; versions++; next }
-  /^  sha256 / { print "  sha256 \"" sha "\""; sums++; next }
+  /^    sha256 / { print "    sha256 \"" sha "\""; sums++; next }
   { print }
-  END { if (urls != 1 || versions != 1 || sums != 1) exit 1 }
+  END { if (urls != 1 || versions != 1 || sums != 1 || tags != 1) exit 1 }
 ' "$formula" > "$temporary/openport.rb" || fail "unexpected formula layout; left unchanged"
 cat "$temporary/openport.rb" > "$formula"
 echo "Updated Formula/openport.rb for $version ($sha)"

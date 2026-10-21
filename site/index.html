@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="style.css">
   <script src="tape-data.js" defer></script>
   <script src="site.js" defer></script>
+  <script src="install.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -33,7 +34,7 @@
       <button class="key" type="button" data-cmd="help" data-js hidden><kbd>[?]</kbd><span>Help</span></button>
       <button class="key" type="button" data-cmd="theme" data-js hidden aria-label="Switch between light and dark themes"><kbd>[^M]</kbd><span id="theme-label">Light mode</span></button>
       <a class="key" href="#quick-start"><kbd aria-hidden="true">[↓]</kbd><span>Install</span></a>
-      <a class="key" href="https://github.com/38st/openport/blob/main/docs/architecture.md"><kbd aria-hidden="true">[↗]</kbd><span>Docs</span></a>
+      <a class="key" href="https://github.com/38st/openport/blob/main/docs/first-ten-minutes.md"><kbd aria-hidden="true">[↗]</kbd><span>Docs</span></a>
       <a class="key" href="https://github.com/38st/openport"><kbd aria-hidden="true">[↗]</kbd><span>GitHub</span></a>
     </nav>
   </header>
@@ -78,14 +79,25 @@
     <section id="quick-start" class="seg col" aria-labelledby="quick-start-title">
       <p class="addr">00000200<b>Install</b></p>
       <div class="body">
-        <h2 id="quick-start-title">Try it in one command</h2>
-        <div class="term">
+        <h2 id="quick-start-title">Start the terminal</h2>
+        <div class="install-tabs" role="tablist" aria-label="Installation method" data-js hidden>
+          <button id="install-docker" class="key" type="button" role="tab" aria-selected="true" aria-controls="install-panel" data-install="docker"><kbd aria-hidden="true">[1]</kbd><span>Docker</span></button>
+          <button id="install-homebrew" class="key" type="button" role="tab" aria-selected="false" aria-controls="install-panel" tabindex="-1" data-install="homebrew"><kbd aria-hidden="true">[2]</kbd><span>Homebrew</span></button>
+        </div>
+        <div id="install-panel" class="term" role="tabpanel" aria-labelledby="install-docker">
           <pre id="install-command" tabindex="0" aria-label="Docker quick start"><code>docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport</code></pre>
           <button class="key" type="button" data-copy data-js hidden><kbd aria-hidden="true">[c]</kbd><span>Copy</span></button>
         </div>
         <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
-        <p>With Docker installed, this starts Cboe’s free 15-minute delayed feed for SPX, SPY, QQQ, IWM and DIA. No key needed. Open the link it prints, <code>http://localhost:8080/#token=…</code>. The volume keeps your accounts and chart history between runs. When nothing is trading, choose the demo market’s simulated prices.</p>
+        <p id="install-description">With Docker installed, this starts Cboe’s free 15-minute delayed feed for SPX, SPY, QQQ, IWM and DIA. No key needed. Open the link it prints, <code>http://localhost:8080/#token=…</code>. The volume keeps your accounts and chart history between runs. When nothing is trading, choose the demo market’s simulated prices.</p>
+        <template id="homebrew-command">brew tap 38st/openport https://github.com/38st/openport
+brew install openport
+brew services start openport
+openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"</template>
+        <p><a class="more" href="https://github.com/38st/openport/blob/main/docs/first-ten-minutes.md">Next: your first ten minutes ↗</a></p>
         <a class="more" href="https://github.com/38st/openport/blob/main/docs/install.md">Your provider, a release archive or a source build ↗</a>
+        <!-- TODO: set data-demo-url to the verified hosted HTTPS URL. Placeholder: https://demo.example.com. Keep hidden until configured. -->
+        <a id="hosted-demo" class="more key" data-demo-url="" hidden><kbd aria-hidden="true">[↗]</kbd><span>Try it in your browser</span></a>
       </div>
     </section>
 
@@ -182,6 +194,7 @@
   <footer class="foot col">
     <nav aria-label="Project resources">
       <a href="https://github.com/38st/openport">GitHub</a>
+      <a href="https://github.com/38st/openport/discussions">Discussions</a>
       <a href="https://github.com/38st/openport/releases">Releases</a>
       <a href="https://github.com/38st/openport/blob/main/docs/architecture.md">Architecture</a>
       <a href="https://github.com/38st/openport/blob/main/docs/runtime.md">Runtime guide</a>

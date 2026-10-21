@@ -1,0 +1,53 @@
+name: openport-demo
+services:
+  openport:
+    image: ${OPENPORT_IMAGE:-ghcr.io/38st/openport:latest}
+    command: ["--provider", "demo", "--sandboxes", "${SANDBOXES:-20}",
+              "--sandbox-idle-seconds", "3600", "--client-ip-header", "X-Real-IP",
+              "--allowed-host", "${DEMO_HOST:?Set DEMO_HOST}",
+              "--allowed-origin", "https://${DEMO_HOST:?Set DEMO_HOST}"]
+    volumes:
+      - demo:/var/lib/openport
+    networks: [backend]
+    # Only Caddy can reach this listener. No host port or provider credentials.
+    read_only: true
+    tmpfs: ["/tmp:size=512m,mode=1777"]
+    cpus: 2
+    mem_limit: 2g
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  caddy:
+    image: caddy:2.10.2-alpine
+    environment:
+      DEMO_HOST: ${DEMO_HOST:?Set DEMO_HOST}
+      AUTH_UPSTREAM: ${AUTH_UPSTREAM:?Set the cookie authentication gateway address}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [edge, backend]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 64
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    depends_on: [openport]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  edge:
+  backend:
+    internal: true
+volumes:
+  demo:
+  caddy-data:
+  caddy-config:

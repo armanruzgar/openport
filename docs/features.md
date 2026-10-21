@@ -53,6 +53,10 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   trendlines, with price-alert creation from a line. VWAP math is available but
   the current OHLC endpoint has no volume, so the UI reports it unavailable.
   See [terminal controls and limitations](terminal.md).
+- Status → **Copy diagnostics** produces a report of version, build, server
+  platform, provider, feed and error categories, with a prefilled GitHub issue
+  link. No raw errors, secrets or telemetry. Fatal signals leave a minimal local
+  crash log where possible. [Details](configuration.md#diagnostics).
 
 - **Brief** brings together prior-session and observed overnight levels, implied
   moves, volatility changes, positioning and supplied events, alongside floor
@@ -439,3 +443,19 @@ A confirmation names the new destination (for example, **Send to live account
 Practice**); cancelling sends nothing. Closing and reopening the action also
 selects the current destination. This applies to order changes, cancellations,
 flattening, exits, stock/strategy actions, and settings writes as well as tickets.
+
+## Installation and operation
+
+- `openportd --open` opens the saved token link after startup; `--print-url [--open]`
+  recovers it later without starting another daemon or feed. Browser launching
+  stays opt-in; on shared machines `--print-url` keeps the token out of `ps`.
+  `--no-token-link` keeps the token out of service logs, and the systemd unit uses
+  it. [Installation](install.md).
+- Homebrew uses an Apple Silicon archive or builds from source on Intel. Release
+  automation produces Linux amd64/arm64 deb/rpm packages with a private systemd
+  service. Windows uses Docker Desktop or WSL2.
+- [Upgrade and backup](upgrade-and-backup.md) covers the full data directory,
+  version compatibility, restore, rollback and torn-journal repair.
+- [Remote access](remote-access.md) covers Tailscale and authenticated Caddy.
+  [Demo deployment](../deploy/demo/README.md) supplies simulated data, bounded
+  visitor accounts and container resource limits; it is not a hosted service.

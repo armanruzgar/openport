@@ -51,6 +51,10 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--rate R` | The rate assumed when no index curve is available |
 | `--address`, `--port`, `--web-root`, `--allowed-origin`, `--allowed-host`, `--write-token`, `--write-token-file` | The web server and who may write (see [Security](#security)) |
 | `--token-file FILE` | Named tokens: one `NAME SCOPES SECRET` per line, with comma-separated scopes and `#` comments |
+| `--open` | Open the terminal after startup; opt-in even on a TTY. Creates a token file beside the journal when no token is configured. The token link is the browser launcher's argument, which `ps` shows other local users while it runs; on a shared machine use `--print-url` and paste the link |
+| `--print-url [--open]` | Read existing token settings, print the local terminal link and exit; optionally open it. Reuse the service's address, port and token-file flags. A host name address such as `localhost` is used as given |
+| `--no-token-link` | At startup, print the `--print-url` command for a token file instead of its token link, for services whose stdout goes to a shared log such as journald. The systemd unit uses it |
+| `--crash-log PATH` | Local fatal signal log; defaults to `crash.log` beside the paper journal. No network reporting |
 | `--notify-config FILE` | Owner-only JSON file for notification channels, filters and the `include_simulated` demo/replay opt-in (default false); alternatively `OPENPORT_NOTIFY_JSON` or channel environment variables ([setup](runtime.md#external-notifications)) |
 | `--sandboxes N` | Offer up to N visitor accounts; 0 (default) disables them. Requires `--provider demo` and paper trading |
 | `--sandbox-idle-seconds N` | Delete sandboxes after N seconds without authenticated use; default 86400 |
@@ -96,6 +100,10 @@ Nothing else is sent. A network failure stays silent.
 
 ## Security
 
+For private phone access or an authenticated proxy, see
+[remote access](remote-access.md). For data protection and version changes, see
+[upgrade and backup](upgrade-and-backup.md).
+
 openportd binds to 127.0.0.1 by default. Reads are public unless `--require-token`
 is set; loopback writes without a configured legacy token remain open unless that
 flag or `--sandboxes` is set. A public demo with sandboxes often sits behind a local
@@ -127,3 +135,28 @@ selected journals were inspected/repaired; exit 1 means at least one failed
 (including damage before the last line, which is never cut). `--dry-run` and
 `--file` require `--repair-journals`; invalid options exit 2. Repair preserves the
 original in a timestamped sibling backup.
+
+## Diagnostics
+
+Status → **Copy diagnostics** copies the running version, source revision, compiler,
+server build OS/architecture, provider, feed state, browser connection state and
+recent server error categories. A selectable preview remains when clipboard access
+is denied. **Report a bug on GitHub** opens a prefilled issue for you to review
+and submit. Nothing is uploaded automatically: there is no telemetry.
+
+Raw errors can contain credentials or paths, so diagnostics export only known
+HTTP/error codes or a generic error category. They exclude URLs, tokens, account
+data, local directories and raw provider messages. Recent errors are the last
+errors reported by the server, not a complete log. Older servers show unavailable
+build fields; builds without Git metadata report `unknown` unless configured with
+`-DOPENPORT_BUILD_REVISION=REVISION`. Build revisions are captured at CMake configure
+time, with `-dirty` for tracked modifications.
+
+On macOS/Linux, normal server startup opens an owner-only local `crash.log` beside
+the journal (`--crash-log PATH` overrides it). Fatal SIGABRT, SIGSEGV, SIGBUS, SIGILL
+and SIGFPE append a signal name using async-signal-safe operations, then retain the
+normal fatal signal exit. Startup lines identify the version/build/platform.
+The log contains no memory dump or stack trace; SIGKILL, power loss, failures
+before initialization and some stack overflows cannot be logged. Failure to open
+the log produces a warning and does not prevent startup. The log is append-only;
+archive/rotate it while the server is stopped. It is never sent anywhere.

@@ -5820,12 +5820,25 @@
           "error"
         ]
       },
+      "BuildInfo": {
+        "type": "object",
+        "required": ["revision", "compiler", "platform"],
+        "properties": {
+          "revision": {"type": "string", "description": "Build-time source revision, optionally dirty, or unknown."},
+          "compiler": {"type": "string", "description": "Build compiler ID and version."},
+          "platform": {"type": "string", "description": "Server build OS and architecture."}
+        }
+      },
       "Status": {
         "type": "object",
         "properties": {
           "version": {
             "type": "string",
             "description": "Running openportd release version; absent on older servers."
+          },
+          "build": {
+            "$ref": "#/components/schemas/BuildInfo",
+            "description": "Nonsecret build metadata; absent on older servers."
           },
           "trading": {
             "anyOf": [

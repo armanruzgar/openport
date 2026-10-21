@@ -1,0 +1,18 @@
+title: ""
+body:
+  - type: markdown
+    attributes:
+      value: "Ask about setup or practice workflows. Report vulnerabilities privately through the Security tab; never include tokens or provider credentials."
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: Include the installation method, platform and what you have tried.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (optional)
+      description: Status → Copy diagnostics, reviewed before sharing.
+      render: text

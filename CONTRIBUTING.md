@@ -3,6 +3,13 @@
 Bug reports, fixes and features are welcome. For anything larger than a fix, open an
 issue first to agree on the approach.
 
+Use [GitHub Discussions](https://github.com/38st/openport/discussions) for setup
+questions, practice workflows and early ideas. Bug and feature issue forms are in
+`.github/ISSUE_TEMPLATE`; Status → Copy diagnostics can prefill the bug form without
+sharing credentials or account data. Discussion forms cover the `Q&A` and `Ideas`
+categories; a repository administrator must enable Discussions and those category
+slugs (`q-a`, `ideas`) for the forms to appear.
+
 ## Building and testing
 
 You need CMake 3.25+, a C++20 compiler (CI uses GCC 13 and Apple Clang), Boost 1.83+, OpenSSL 3,
@@ -113,7 +120,14 @@ workflow skips the deployment with a notice. Link previews use
 ## Releasing
 
 Publishing a GitHub release builds the image for amd64 and arm64 and pushes it to
-`ghcr.io/38st/openport`, and attaches a Linux archive for each architecture.
+`ghcr.io/38st/openport`, and attaches Linux archives plus `.deb`/`.rpm` packages
+for amd64 and arm64. The packages include the web terminal and a private systemd
+service, which is not started automatically. The release-assets workflow builds
+them with CPack, inspects both formats and runs the extracted native binary before
+upload. Checksums cover archives and packages. Ubuntu 24.04's glibc baseline
+applies to the RPM too; do not advertise older enterprise distro compatibility.
+On a matching Linux machine, `python3 tools/package_test.py PACKAGE_DIRECTORY
+--arch amd64` (or `arm64`) checks locally built packages without installing them.
 `tools/release.sh` builds a release on your own machine: it checks and tests the web
 terminal and the engine, packages this machine's build and a Linux build from the Docker
 image with checksums and release notes into `dist/`, and smoke-tests the image. Nothing
@@ -128,12 +142,21 @@ tools/update_formula.sh VERSION
 ```
 
 The script reads the checksum for `openport-VERSION-darwin-arm64.tar.gz` and updates
-the formula's URL, version and SHA-256 together. Review and commit
+the formula's Apple Silicon URL, version, SHA-256 and Intel source tag together.
+Intel Macs build the tag using Homebrew dependencies. Review and commit
 `Formula/openport.rb` to the default branch so the tap receives it. Do this after
 the final archives and checksums are published. For an offline check, pass a saved
 file as the second argument; `python3 tools/update_formula_test.py` tests parsing
 with fixture checksums. Users update with `brew update && brew upgrade openport`,
 then `brew services restart openport`.
+
+The example in `deploy/demo/` is configuration only, with simulated prices,
+bounded sandboxes and an authenticating HTTPS proxy. Test real DNS, certificates
+and sign-in on the target host before setting the site's hidden `data-demo-url`.
+No hosting or publishing is implied by a local build.
+Run `python3 tools/demo_proxy_test.py` to check its Caddy configuration against
+synthetic local auth/backend containers. It requires Docker and the Caddy/Python
+images named in the test; no real credentials or public listener are used.
 
 ## Licence
 

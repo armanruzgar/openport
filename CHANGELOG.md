@@ -25,6 +25,30 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   on the current volume-free candle API; its math is tested with sample volumes.
 - Add chain, chart, positions and orders pop-outs, an optional wide-screen
   positions/orders split, and phone calls/puts selection with bottom-sheet tickets.
+- **Open the terminal without hunting for a token.** `openportd --open` launches
+  the browser after startup; `--print-url [--open]` reads existing token settings
+  and exits. Homebrew caveats and installation examples use the helper.
+  `--no-token-link` prints the `--print-url` command instead of the token link at
+  startup; the systemd unit uses it so the token stays out of journald. `--open`
+  documents, and on Linux warns, that the launcher's arguments are visible in `ps`.
+  `--print-url --address localhost` names the host as given instead of failing.
+- **Install on more platforms.** Release automation packages Linux amd64/arm64
+  `.deb` and `.rpm` assets with a private systemd service. Intel Macs build the
+  release tag through Homebrew; Windows Docker Desktop/WSL2 paths are documented.
+- **Keep data through upgrades.** New backup, restore, rollback and journal-repair
+  guidance covers native, Homebrew, Docker and systemd storage. Remote/phone
+  recipes use Tailscale or Caddy with cookie authentication.
+- **Start and find help more easily.** The site adds Homebrew installation tabs,
+  first-ten-minutes links and Discussions. Bug forms accept sanitized diagnostics;
+  Discussions templates cover questions and ideas.
+- **Prepare a hosted demo.** `deploy/demo` runs simulated prices and bounded
+  sandboxes behind authenticated HTTPS, with container resource limits. The site
+  keeps its browser-demo button hidden until a real URL is configured. Nothing
+  is hosted or published by this change.
+- **Share diagnostics deliberately.** Status copies version/build/platform,
+  provider/feed and recent error categories into a reviewable bug report. Local
+  fatal signal logs contain no memory dump; there is no telemetry. `/api/status`
+  adds optional build metadata for clients.
 
 ## 0.4.0 (2026-10-06)
 

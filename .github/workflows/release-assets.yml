@@ -1,8 +1,8 @@
-name: Release archives
+name: Release archives and Linux packages
 
-# Attaches a Linux archive for each architecture to a published release, built from
+# Attaches Linux archives and deb/rpm packages to a published release, built from
 # the release's tag on native runners the way tools/release.sh builds its own, then
-# rewrites SHA256SUMS over every archive the release carries.
+# rewrites SHA256SUMS over every archive and package the release carries.
 on:
   release:
     types: [published]
@@ -36,7 +36,7 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       - name: Build the image
-        run: docker build -t openport:release .
+        run: docker build --build-arg OPENPORT_BUILD_REVISION="$(git rev-parse HEAD)" -t openport:release .
       - name: Package the archive
         run: |
           name="openport-${TAG#v}-linux-${{ matrix.arch }}"
@@ -51,18 +51,34 @@ jobs:
           cp docs/*.md "$stage/docs/"
           tar -C "$RUNNER_TEMP/stage" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
           echo "ARCHIVE=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
-      - name: Attach it to the release
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
+      # Upload the archive first, so a packaging failure still leaves it on the release.
+      - name: Attach the archive to the release
         run: gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Package deb and rpm with a systemd unit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          cmake -S packaging -B "$RUNNER_TEMP/packages" \
+            -DOPENPORT_STAGE="$STAGE" -DOPENPORT_PACKAGE_VERSION="${TAG#v}" \
+            -DOPENPORT_PACKAGE_ARCH="${{ matrix.arch }}"
+          cpack --config "$RUNNER_TEMP/packages/CPackConfig.cmake" -B "$RUNNER_TEMP/packages"
+          python3 tools/package_test.py "$RUNNER_TEMP/packages" --arch "${{ matrix.arch }}"
+      - name: Attach the packages to the release
+        run: gh release upload "$TAG" "$RUNNER_TEMP/packages/"*.deb "$RUNNER_TEMP/packages/"*.rpm --clobber --repo "$GITHUB_REPOSITORY"
 
   checksums:
     name: SHA256SUMS
     needs: linux
+    # Still sum the archives that were attached when a packaging step failed.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
-      - name: Rewrite SHA256SUMS over every archive
+      - name: Rewrite SHA256SUMS over archives and packages
         run: |
+          shopt -s nullglob
           mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz'
-          sha256sum -- *.tar.gz > SHA256SUMS
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --pattern '*.deb' --pattern '*.rpm'
+          sha256sum -- *.tar.gz *.deb *.rpm > SHA256SUMS
           cat SHA256SUMS
           gh release upload "$TAG" SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
