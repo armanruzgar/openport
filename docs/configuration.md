@@ -57,7 +57,7 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--record FILE`, `--record-dir DIR` | Recording the feed to a file, or rolling by trading date into a directory the Replay page reads; directory recordings publish only on clean close |
 | `--import-day databento\|thetadata\|massive --date YYYY-MM-DD --symbols SPX,SPY` | Import a completed past trading day and exit; accepts `--expiries N` and `--window F` |
 | `--import-days YYYY-MM-DD..YYYY-MM-DD` | Inclusive date range with `--import-day PROVIDER`; repeat this or `--date` to combine dates (sorted, deduplicated, at most 3660 days). Skip closures and resume matching complete files; report day/window progress |
-| `--record-keep-days N`, `--record-max-gb X` | Optional retention for `--record-dir` without `--record`; oldest complete files first. N calendar days by trading date; X decimal GB. Both default to 0 (unlimited); never remove the file being written |
+| `--record-keep-days N`, `--record-max-gb X` | Optional retention for `--record-dir` without `--record`; oldest complete files first. N calendar days by trading date; X decimal GB. Both default to 0 (unlimited); never remove the file being written. Stale `.record-*` staging folders count toward X and are reported, never deleted |
 | `--out DIR` | Import destination, default `./recordings`; select this directory with `--record-dir` to list its days in Replay |
 | `--candle-dir DIR`, `--no-history` | Where chart history is kept, and whether Cboe backfills prices and volatility-index proxies ([price history](runtime.md#price-history)) |
 | `--series-dir DIR`, `--no-series` | Local minute volatility history; defaults to `series` beside the candle directory, or disables collection ([storage](runtime.md#volatility-series-storage)) |

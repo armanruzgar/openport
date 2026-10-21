@@ -11,6 +11,8 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Record across trading dates.** `--record-dir` rolls at calendar boundaries and
   publishes only complete files, with optional oldest-first age/size retention that
   protects active files. Replay lists trading dates, symbols and sources across providers.
+  Retention runs off the feed thread at rollover, reports files it cannot remove
+  instead of stopping recording, and counts stale staging folders toward the size cap.
 - **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
   duration and cover multiple pauses/resumes before the pacing loop observes them.
 

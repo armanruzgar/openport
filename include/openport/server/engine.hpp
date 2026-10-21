@@ -157,6 +157,8 @@ class Engine final : public MetricsSource {
   bool post_trading(TradingCommand command, TradingCompletion completion) override;
   [[nodiscard]] md::RecordingStats recording_stats() const;
   [[nodiscard]] std::string recording_error() const;
+  /// Retention problems for --record-dir; recording continues.
+  [[nodiscard]] std::string recording_warning() const;
   void roll_recording();
 
  private:

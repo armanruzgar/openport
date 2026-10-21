@@ -6,7 +6,9 @@
 #include <condition_variable>
 #include <fstream>
 #include <limits>
+#include <mutex>
 #include <random>
+#include <thread>
 
 namespace {
 using namespace openport;
@@ -612,5 +614,141 @@ TEST(RecordingDirectory, ByteRetentionUsesHeaderAgeRatherThanFilenameOrder) {
   EXPECT_TRUE(std::filesystem::exists(newer));
   recording.close();
   EXPECT_TRUE(std::filesystem::exists(newer));
+}
+}  // namespace
+
+namespace {
+template <typename Predicate>
+bool eventually(Predicate done) {
+  for (int attempt = 0; attempt < 500 && !done(); ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  return done();
+}
+TEST(RecordingDirectory, RetentionFailuresWarnAndNeverStopStartupOrRollover) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.started = md::new_york_to_utc({2026, 9, 21}, 9, 30);
+  const auto old = file.directory / "old.oprec";
+  test::record_events(old, {md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000}}, header);
+  std::atomic<md::Timestamp> time{md::new_york_to_utc({2026, 9, 24}, 9, 30)};
+  std::atomic<int> refused{0};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  options.keep_days = 1;
+  options.remove = [&](const std::filesystem::path&, std::error_code& ec) {
+    ++refused;
+    ec = std::make_error_code(std::errc::permission_denied);
+    return false;
+  };
+  test::EventCollector sink;
+  std::unique_ptr<md::RecordingDirectory> recording;
+  ASSERT_NO_THROW(recording = std::make_unique<md::RecordingDirectory>(file.directory, header, sink, options));
+  EXPECT_EQ(refused, 1);
+  EXPECT_TRUE(std::filesystem::exists(old));
+  EXPECT_NE(recording->warning().find("could not remove old.oprec"), std::string::npos) << recording->warning();
+  EXPECT_TRUE(recording->error().empty());
+  time = md::new_york_to_utc({2026, 9, 24}, 17, 0);
+  recording->rollover();
+  recording->publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
+  EXPECT_TRUE(eventually([&] { return refused >= 2; }));
+  EXPECT_TRUE(recording->error().empty());
+  recording->close();
+  EXPECT_TRUE(recording->error().empty());
+  EXPECT_EQ(published(file.directory).size(), 3U) << "both days publish beside the undeletable file";
+  EXPECT_TRUE(std::filesystem::exists(old));
+  EXPECT_NE(recording->warning().find("ermission denied"), std::string::npos) << recording->warning();
+  EXPECT_EQ(sink.snapshot().size(), 1U) << "retention problems are not feed errors";
+}
+TEST(RecordingDirectory, RolloverRetentionRunsOffThePublishingThread) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.started = md::new_york_to_utc({2026, 9, 21}, 9, 30);
+  const auto old = file.directory / "old.oprec";
+  test::record_events(old, {md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000}}, header);
+  std::atomic<md::Timestamp> time{md::new_york_to_utc({2026, 9, 21}, 10, 0)};
+  std::mutex lock;
+  std::vector<std::thread::id> removers;
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  options.keep_days = 2;
+  options.remove = [&](const std::filesystem::path& path, std::error_code& ec) {
+    { const std::lock_guard guard(lock); removers.push_back(std::this_thread::get_id()); }
+    return std::filesystem::remove(path, ec);
+  };
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  EXPECT_TRUE(std::filesystem::exists(old));
+  time = md::new_york_to_utc({2026, 9, 23}, 17, 0);
+  recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
+  EXPECT_TRUE(eventually([&] { return !std::filesystem::exists(old); }));
+  EXPECT_FALSE(std::filesystem::exists(old.string() + ".end"));
+  {
+    const std::lock_guard guard(lock);
+    ASSERT_FALSE(removers.empty());
+    for (const auto& remover : removers) EXPECT_NE(remover, std::this_thread::get_id());
+  }
+  recording.close();
+  EXPECT_TRUE(recording.error().empty());
+  EXPECT_TRUE(recording.warning().empty()) << recording.warning();
+}
+TEST(RecordingDirectory, ChangedFilesAreRecheckedAfterAnEarlierScanSkippedThem) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.started = md::new_york_to_utc({2026, 9, 21}, 9, 30);
+  const auto active = file.directory / "active.oprec";
+  test::DiscardEvents discard;
+  md::RecordingSink writing(active, header, discard, {});
+  writing.publish(md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000});
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [] { return md::new_york_to_utc({2026, 9, 24}, 9, 30); };
+  options.keep_days = 2;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  EXPECT_TRUE(std::filesystem::exists(active)) << "an open explicit recording is never pruned";
+  writing.close();
+  recording.close();
+  EXPECT_FALSE(std::filesystem::exists(active)) << "the completed file is no longer served from the cached verdict";
+}
+TEST(RecordingDirectory, StaleStagingFoldersCountTowardTheByteBudgetAndAreKept) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.started = md::new_york_to_utc({2026, 9, 23}, 9, 30);
+  const auto complete = file.directory / "complete.oprec";
+  test::record_events(complete, {md::UnderlyingQuote{"SPX", header.started, 0, 0, 5000}}, header);
+  const auto staging = file.directory / ".record-crash1";
+  std::filesystem::create_directory(staging);
+  replace(staging / "day.oprec", std::string(200'000, 'x'));
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [] { return md::new_york_to_utc({2026, 9, 24}, 9, 30); };
+  options.max_bytes = 100'000;
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  EXPECT_FALSE(std::filesystem::exists(complete)) << "the crashed writer's bytes count toward the budget";
+  EXPECT_TRUE(std::filesystem::exists(staging / "day.oprec")) << "stale staging data is never deleted";
+  EXPECT_NE(recording.warning().find("1 stale staging directory (200000 bytes)"), std::string::npos) << recording.warning();
+  recording.close();
+  EXPECT_TRUE(std::filesystem::exists(staging / "day.oprec"));
+  std::size_t staging_folders = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(file.directory))
+    if (entry.path().filename().string().starts_with(".record-")) ++staging_folders;
+  EXPECT_EQ(staging_folders, 1U) << "this writer's own staging folder is not counted as stale";
+}
+TEST(RecordingDirectory, OneReceiptTimeDecidesTheDayAndStampsTheEvent) {
+  test::RecordingFile file;
+  const auto boundary = md::new_york_to_utc({2026, 9, 24}, 17, 0);
+  // Every clock read advances, so a second read would cross into the next day.
+  std::atomic<md::Timestamp> next{boundary - 2};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return next.fetch_add(1); };
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, test::recording_header(), discard, options);
+  recording.publish(md::UnderlyingQuote{"SPX", boundary - 1, 0, 0, 5000});
+  recording.close();
+  const auto files = published(file.directory);
+  ASSERT_EQ(files.size(), 1U);
+  EXPECT_NE(files[0].filename().string().find("2026-09-24"), std::string::npos);
+  md::RecordingReader reader(files[0]);
+  const auto record = reader.next();
+  ASSERT_TRUE(record);
+  EXPECT_EQ(record->received, boundary - 1);
+  EXPECT_FALSE(reader.next());
 }
 }  // namespace

@@ -770,7 +770,7 @@ int run(int argc, char** argv) {
   std::signal(SIGHUP, on_signal);
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
-  std::string recording_error;
+  std::string recording_error, recording_warning;
   std::string history_error, proxy_error, series_error;
   std::string holidays_error;
   std::string dividends_error;
@@ -788,6 +788,7 @@ int run(int argc, char** argv) {
     if (auto tick = replays.tick(); !tick.empty()) web.broadcast(tick);
     engine.roll_recording();
     report(engine.recording_error(), recording_error);
+    report(engine.recording_warning(), recording_warning);
     report(engine.status().circuit_breaker.error, breaker_error);
     if (history) report(history->error(), history_error);
     if (proxy_history) report(proxy_history->error(), proxy_error);

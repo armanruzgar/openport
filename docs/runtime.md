@@ -421,7 +421,9 @@ Directory recordings stay in private `.record-*` staging directories until clean
 close, then publish atomically. The Replay page sees them after rollover or shutdown.
 A failed write leaves no published partial day and live delivery continues with a
 recording error. A killed process can leave a hidden staging directory; remove it
-only after that writer has stopped. Explicit `--record FILE` retains its existing
+only after that writer has stopped. OpenPort never deletes one: at startup it warns
+about each `.record-*` folder already present and counts its size toward
+`--record-max-gb` while it remains. Explicit `--record FILE` retains its existing
 single-file behavior and can be recovered after an unclean stop.
 
 Retention is opt-in: `--record-keep-days 30 --record-max-gb 20` keeps at most 30
@@ -430,8 +432,12 @@ Pruning runs at startup, rollover and close, oldest header start time first, acr
 all completed `.oprec` files in that directory, including imports and their `.end`
 indexes. Use a separate directory for recordings that must be kept. Active staging
 files, active explicit recordings, symlinks and damaged files are never pruned.
-The byte budget includes this writer's current file. The directory can exceed it
-between pruning runs; an active file is never removed to meet the budget.
+The byte budget includes this writer's current file and any stale staging folders.
+The directory can exceed it between pruning runs; an active file is never removed
+to meet the budget. Startup and shutdown prune in place; at rollover pruning runs on
+a background thread, so the feed never waits for it. Files are read once and then
+skipped until their size or modification time changes. A file that cannot be
+removed is skipped and reported on stderr; neither startup nor recording stops.
 Retention requires `--record-dir` without `--record`.
 
 Full chains are large. Cboe's first poll of the whole SPX and SPY chains, about 164,000

@@ -178,6 +178,10 @@ std::string Engine::recording_error() const {
   return daily_recorder_ ? daily_recorder_->error() : recorder_ ? recorder_->error() : std::string{};
 }
 
+std::string Engine::recording_warning() const {
+  return daily_recorder_ ? daily_recorder_->warning() : std::string{};
+}
+
 void Engine::roll_recording() {
   if (daily_recorder_) daily_recorder_->rollover();
 }
