@@ -126,6 +126,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
           {position.awaiting_settlement && <span className="mt-1 inline-block rounded-full border border-warn px-2 py-0.5 text-[10px] text-warn">Awaiting settlement</span>}
           {position.awaiting_settlement && position.settle_by && <div className="mt-1 text-[11px] text-muted">
             {position.settle_by === "opening_print" ? "Waiting for opening print · AM approximation"
+              : position.settle_by === "soq" ? "Waiting for the published opening quotation (SOQ)"
               : position.settle_by === "closing_print" ? "Waiting for closing print" : "Manual settlement value required"}
           </div>}
           {position.do_not_exercise && <span className="mt-1 ml-1 inline-block rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">Not to be exercised</span>}
@@ -154,7 +155,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
             <button type="button" className="trade-button" aria-label={`Abandon ${position.symbol}`} onClick={() => onAbandon(position)}>Abandon</button>}
           {onClose && !position.awaiting_settlement && <button type="button" className="trade-button" aria-label={`Close ${position.symbol}`} onClick={() => onClose(position)}>Close</button>}
           {onExits && !position.awaiting_settlement && <button type="button" className="trade-button" aria-label={`Exits for ${position.symbol}`} onClick={() => onExits(position)}>Exits…</button>}
-          {onSettle && position.awaiting_settlement && (position.settle_by === "manual" || position.settle_by === "opening_print") &&
+          {onSettle && position.awaiting_settlement && (position.settle_by === "manual" || position.settle_by === "opening_print" || position.settle_by === "soq") &&
             <button type="button" className="trade-button" aria-label={`Settle ${position.symbol}`} onClick={() => onSettle(position)}>Settle</button>}
         </div></td>
       </tr>

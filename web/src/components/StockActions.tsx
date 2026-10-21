@@ -35,6 +35,7 @@ export function SettleDialog({ position, trading, onClose }: { position: Positio
       : `No closing print for ${position.underlying} arrived after this contract expired. Half an hour after the close it settles on the last print before it, if that came in the close's last five minutes.`} Enter the official
       {am ? " settlement value" : " closing value"} from the exchange; {position.do_not_exercise ? "the do-not-exercise instruction closes this long at zero, without shares or cash proceeds" : "the position closes at intrinsic value"}.</p>
     {position.settle_by === "opening_print" && <p className="text-sm text-muted">The simulator is waiting for an opening-print approximation. Importing a value now settles before that print arrives.</p>}
+    {position.settle_by === "soq" && <p className="text-sm text-muted">The server is waiting for Cboe to publish this index's special opening quotation. Importing the official value now settles before it is fetched.</p>}
     <label className="trade-label">{position.underlying} settlement value
       <input className="trade-input" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder="Official value" /></label>
     {intrinsic != null && <p className="text-sm text-muted">{position.do_not_exercise ? "Settlement" : "Intrinsic"} value {dollars(intrinsic)} a share, {signedMoney((intrinsic * 100 * position.quantity).toFixed(2))} for

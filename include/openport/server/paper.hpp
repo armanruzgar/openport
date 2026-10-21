@@ -126,6 +126,8 @@ struct TradingView {
   bool equity_error_recovered = false;
   std::string playbooks_json;  ///< Immutable catalogue and transient stages for this account.
   bool opening_settlement = false;  ///< This source settles AM options on the opening print.
+  /// Underlyings whose AM options settle on a published special opening quotation.
+  std::vector<std::string> published_opening_quotations;
   std::optional<RunIdentity> run;  ///< The replay run, for replay accounts.
   md::Timestamp replay_start = 0, replay_end = 0;  ///< Risk-setting rollover horizon; zero for live accounts.
 };

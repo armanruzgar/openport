@@ -5341,3 +5341,79 @@ TEST_F(PaperEngine, ExtendedCapsRoundTripThroughTheLimitsEndpoint) {
       {"direction", "at_or_above"}, {"level", "0.8"}}).status, 201);
 }
 }
+
+TEST(PaperRecovery, LiveAMPositionsSettleOnThePublishedOpeningQuotation) {
+  const auto path = paper_path();
+  auto options = paper_options(); options.paper_journal = path;
+  options.published_opening_quotations = {"SPX"};
+  test::ScriptedMarket market;
+  market.contract = *md::parse_osi("SPX261016C05000000");  // October's monthly, AM-settled
+  const auto later = *md::parse_osi("SPXW261019C05000000");
+  {
+    PaperProvider provider;
+    server::Engine engine(provider, {{"SPX"}}, options); engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+    provider.sink->publish(md::ContractDefinition{0, market.contract});
+    provider.sink->publish(md::ContractDefinition{1, later});
+    provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+    provider.sink->publish(md::OptionQuote{0, market.time, 4, 4.2, 1, 1});
+    provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
+    ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
+    // Another date's value, or another underlying's, does not settle it.
+    engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, 0, "cboe", "SET", "https://example.test/SET"},
+                                   {"RUT", {2026, 10, 16}, 2400, 0, "cboe", "RLS", "https://example.test/RLS"}});
+    const auto after = market.contract.expiry_time() + 30 * md::kNanosPerMinute;
+    provider.sink->publish(md::OptionQuote{1, after, 8, 8.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] {
+      const auto view = engine.trading_view();
+      return view->snapshot->time == after && !view->snapshot->positions.empty() && view->snapshot->positions[0].awaiting_settlement;
+    }));
+    EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq");
+    const auto computed = md::new_york_to_utc({2026, 10, 16}, 10, 35) + 51 * md::kNanosPerSecond;
+    engine.set_opening_quotations({{"SPX", {2026, 10, 16}, 7757.09, computed, "cboe", "SET", "https://example.test/SET"}});
+    provider.sink->publish(md::OptionQuote{1, after + md::kNanosPerMinute, 8, 8.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->positions.empty(); }));
+    engine.stop();
+  }
+  bool found = false;
+  for (const auto& record : trading::FileJournal::read(path.string()).records) {
+    if (record.type != "settlement") continue;
+    const auto payload = json::parse(record.payload);
+    const auto source = payload["settlement_source"];
+    EXPECT_EQ(source["kind"], "published_soq");
+    EXPECT_EQ(source["provider"], "cboe");
+    EXPECT_EQ(source["index"], "SET");
+    EXPECT_EQ(source["date"], "2026-10-16");
+    EXPECT_EQ(source["quote_time"], md::format_timestamp(md::new_york_to_utc({2026, 10, 16}, 10, 35) + 51 * md::kNanosPerSecond));
+    found = true;
+  }
+  EXPECT_TRUE(found);
+  std::filesystem::remove_all(path.parent_path());
+}
+
+TEST(PaperRecovery, WithoutAPublishedOpeningQuotationAMPositionsSettleByHandAfterTheDate) {
+  auto options = paper_options();
+  options.published_opening_quotations = {"SPX"};
+  test::ScriptedMarket market;
+  market.contract = *md::parse_osi("SPX261016C05000000");
+  const auto later = *md::parse_osi("SPXW261019C05000000");
+  PaperProvider provider;
+  server::Engine engine(provider, {{"SPX"}}, options); engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  provider.sink->publish(md::ContractDefinition{0, market.contract});
+  provider.sink->publish(md::ContractDefinition{1, later});
+  provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+  provider.sink->publish(md::OptionQuote{0, market.time, 4, 4.2, 1, 1});
+  provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
+  ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
+  const auto monday = md::new_york_to_utc({2026, 10, 19}, 9, 45);
+  provider.sink->publish(md::OptionQuote{1, monday, 8, 8.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= monday; }));
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "manual");
+  const auto settled = write(engine, "POST", "/api/settlements", {{"symbol", market.symbol()}, {"value", "5010.25"}});
+  ASSERT_EQ(settled.status, 200) << settled.body;
+  EXPECT_TRUE(engine.trading_view()->snapshot->positions.empty());
+  engine.stop();
+}

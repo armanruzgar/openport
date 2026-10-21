@@ -188,7 +188,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 - Settlement references and sources appear in Journal rows, settlement lists,
   account reads and exports. New demo/scenario and recorded replay runs use the
   expiry opening print for AM settlement, an approximation of the official special
-  opening quotation. Live providers require manual settlement imports.
+  opening quotation. Live providers require manual settlement imports, or with
+  `--am-settlement cboe` settle SPX, RUT, DJX and VIX AM options on the special opening
+  quotation Cboe publishes, keeping manual import as the fallback.
   [Settlement](paper-trading.md#expiry-and-explicit-settlement).
 
 ## Margin and buying power

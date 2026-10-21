@@ -4207,15 +4207,30 @@ provider, underlying symbol and quote time. Waiting AM positions show
 `settle_by: "opening_print"`. If no qualifying print arrives they continue to wait, with `settle_by: "manual"`
 after 09:35 ET so the trader knows to import;
 a manual import after expiry but before the print still settles exactly once.
-Live real-provider AM positions retain `settle_by: "manual"` and the explicit
-`POST /api/settlements` import (the terminal's Settle button). Their feed does not
-supply the official special opening quotation. Its value must come from the
-authoritative source; PM imports are
+Live real-provider AM positions settle by the explicit `POST /api/settlements` import
+(the terminal's Settle button) with `settle_by: "manual"`, as their feed does not supply
+the official special opening quotation, unless the server is started with
+`--am-settlement cboe`. It then fetches the special opening quotations Cboe Global
+Indices publishes for SPX (index `SET`), RUT (`RLS`), DJX (`DJS`) and VIX (`VRO`): the
+delayed quote `https://cdn.cboe.com/api/global/delayed_quotes/quotes/_SET.json` every
+15 minutes (Cboe's CDN caches it that long), which carries the day's value and Cboe's
+New York `last_trade_time` once every component has opened, and the daily history
+`https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv` at startup and
+every six hours, so a restart still finds the last two weeks' values. Both endpoints
+were reachable without an account on 2026-10-21; the tests use responses recorded
+then. NDX's quotation is Nasdaq's and is not fetched. A history row replaces a quote of
+the same date only when its value differs. Waiting AM positions on those underlyings
+show `settle_by: "soq"` through their expiry date and settle once their date's value
+arrives, with source `published_soq`, provider `cboe`, the `index`, `date`, `url` and,
+from the delayed quote, `quote_time`. After the expiry date without one they show
+`manual`, and an import before the fetch still settles exactly once: manual import
+remains the fallback for a fetch that fails or a value Cboe has not published. Demo and
+replay accounts keep their opening print. PM imports are
 accepted only while no closing print is recorded. The same journal transaction
 records the reference value, canonical definition and integration
 `settlement_source`: `provider_official_close`, `provider_closing_print` or
-`provider_last_print_before_close` with provider and time, `manual_am_import` or
-`manual_pm_import`. Preserve the official source used for an AM import
+`provider_last_print_before_close` with provider and time, `published_soq`,
+`manual_am_import` or `manual_pm_import`. Preserve the official source used for an AM import
 externally when an independent provenance audit is required. The first market
 batch on a later trading date rolls the daily baseline on the finished day's closing
 marks before its own quotes are applied. When a PM position of the finished day is

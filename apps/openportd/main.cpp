@@ -102,6 +102,7 @@ struct Settings {
   std::vector<trading::PlanEvent> event_calendar;
   bool massive_dividends = false;
   bool dividends_source = false;
+  bool cboe_soq = false;
   std::vector<analytics::EventLabel> events;
   const server::PlanPreset* plan = server::find_plan("practice");
   std::optional<trading::Money> paper_cash;
@@ -139,6 +140,7 @@ int usage(const char* error = nullptr) {
       "                 [--sandboxes N] [--sandbox-idle-seconds N] [--client-ip-header NAME]\n"
       "                 [--no-paper] [--write-token TOKEN] [--write-token-file PATH] [--candle-dir DIR] [--no-history]\n"
       "                 [--dividends FILE|massive] [--event-calendar FILE] [--events FILE] [--no-cboe-holidays]\n"
+      "                 [--am-settlement manual|cboe]\n"
       "                 [--series-dir DIR] [--no-series]\n"
       "                 [--open] [--no-token-link] [--crash-log PATH]\n"
       "       openportd --print-url [--open] [--write-token-file PATH] [--address ADDR] [--port N]\n"
@@ -178,6 +180,10 @@ int usage(const char* error = nullptr) {
       "           held shares receive the dividend and short shares pay it. \"massive\" reads\n"
       "           them for the stock and ETF symbols from Massive's API instead, every six\n"
       "           hours, with MASSIVE_API_KEY (any stocks plan), whatever the provider\n"
+      "am settlement: \"cboe\" settles live AM index options (SPX, RUT, DJX, VIX) on the\n"
+      "               special opening quotation Cboe publishes (SET, RLS, DJS, VRO), fetched\n"
+      "               from cdn.cboe.com; default manual (POST /api/settlements), which stays\n"
+      "               the fallback; not available with demo or replay providers\n"
       "series: --series-dir DIR (default series beside candle-dir), --no-series\n"
       "        --backfill-series FILE... [--force] rebuilds recording minutes offline and exits\n"
       "events: YYYY-MM-DD,Label lines for volatility session moves; labels are 1-160 bytes\n"
@@ -522,6 +528,9 @@ int run(int argc, char** argv) {
       if (!file) return usage(("--event-calendar: cannot read " + value).c_str());
       try { settings.event_calendar = trading::parse_event_calendar(file); }
       catch (const std::exception& error) { return usage(error.what()); }
+    } else if (arg == "--am-settlement") {
+      if (value != "manual" && value != "cboe") return usage("--am-settlement must be manual or cboe");
+      settings.cboe_soq = value == "cboe";
     } else if (arg == "--dividends" && value == "massive") {
       settings.massive_dividends = true;
       settings.dividends_source = true;
@@ -571,6 +580,7 @@ int run(int argc, char** argv) {
           (demo ? ".openport/demo/paper-journal.jsonl" : ".openport/paper-journal.jsonl");
   }
   if (demo && settings.massive_dividends) return usage("demo: --dividends massive needs network access; use a file");
+  if (offline && settings.cboe_soq) return usage("--am-settlement cboe is for live providers; demo and replay settle AM on the opening print");
   if (settings.open || settings.print_url) {
     if (settings.compact_journals || settings.repair_journals || settings.repair_dry_run ||
         !settings.repair_file.empty() || settings.force || !settings.backfill_series.empty())
@@ -708,6 +718,9 @@ int run(int argc, char** argv) {
   engine_options.paper = settings.paper;
   engine_options.dividends = settings.dividends;
   engine_options.demo_dividends = !settings.dividends_source;
+  if (settings.cboe_soq)
+    for (const auto& symbol : settings.subscription.underlyings)
+      if (!providers::cboe_soq_index(symbol).empty()) engine_options.published_opening_quotations.push_back(symbol);
   engine_options.events = settings.events;
   engine_options.event_calendar = settings.event_calendar;
   engine_options.write_mode = server::write_mode({settings.address, settings.write_token, settings.allowed_origins, settings.tokens, settings.require_token, engine_options.sandboxes, settings.client_ip_header});
@@ -750,6 +763,18 @@ int run(int argc, char** argv) {
   if (settings.cboe_holidays && !offline) {
     holidays = std::make_unique<providers::CboeHolidaySchedule>(md::set_scheduled_days);
     holidays->start();
+  }
+  // AM settlement values Cboe publishes reach the live accounts as they appear.
+  std::unique_ptr<providers::CboeSettlementQuotations> soq;
+  if (!engine_options.published_opening_quotations.empty()) {
+    soq = std::make_unique<providers::CboeSettlementQuotations>(engine_options.published_opening_quotations,
+        [&engine](std::vector<providers::SettlementQuotation> found) {
+          std::vector<server::OpeningQuotation> list;
+          for (auto& q : found)
+            list.push_back({q.underlying, q.date, q.value, q.quote_time, "cboe", q.index, q.url});
+          engine.set_opening_quotations(std::move(list));
+        }, providers::CboeSettlementQuotations::Options{});
+    soq->start();
   }
   const auto trading_status = engine.status().trading;
   if (trading_status.reason.starts_with("JOURNAL_LOCKED:"))

@@ -109,6 +109,7 @@ function Journal({ trading }: { trading: TradingStatus }) {
 
 function settlementSource(kind: string | null | undefined): string {
   if (!kind) return "Source unavailable";
+  if (kind === "published_soq") return "published special opening quotation (SOQ)";
   return `${kind.replaceAll("_", " ")}${kind.endsWith("opening_print") ? " (AM approximation)" : ""}`
 }
 export function SettlementPrint({ trade }: { trade: Trade }) {

@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <set>
@@ -333,6 +334,157 @@ md::Timestamp CboeHolidaySchedule::poll_once(net::HttpClient& http) {
 }
 
 std::string CboeHolidaySchedule::error() const {
+  const std::lock_guard lock(error_mutex_);
+  return error_;
+}
+
+std::string_view cboe_soq_index(std::string_view underlying) {
+  for (const auto& entry : kCboeSoqIndices)
+    if (entry.underlying == underlying) return entry.index;
+  return {};
+}
+
+std::string cboe_soq_history_url(std::string_view index) {
+  return "https://cdn.cboe.com/api/global/us_indices/daily_prices/" + std::string(index) + "_History.csv";
+}
+
+std::string cboe_soq_quote_url(std::string_view index) {
+  return "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_" + std::string(index) + ".json";
+}
+
+std::vector<SettlementQuotation> parse_cboe_soq_history(std::string_view csv, std::string_view underlying,
+                                                        std::string_view index, md::Date since) {
+  std::vector<SettlementQuotation> rows;
+  bool header = false;
+  for (std::size_t start = 0; start < csv.size();) {
+    auto end = csv.find('\n', start);
+    if (end == std::string_view::npos) end = csv.size();
+    auto line = csv.substr(start, end - start);
+    start = end + 1;
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    if (line.empty()) continue;
+    const auto fields = csv_fields(line);
+    if (!header) {
+      header = fields.size() >= 2 && fields[0] == "DATE" && fields[1] == index;
+      if (!header) break;
+      continue;
+    }
+    // MM/DD/YYYY, as Cboe writes its index histories.
+    if (fields.size() < 2 || fields[0].size() != 10 || fields[0][2] != '/' || fields[0][5] != '/') continue;
+    const auto midnight = md::parse_datetime(fields[0].substr(6, 4) + "-" + fields[0].substr(0, 2) + "-" +
+                                             fields[0].substr(3, 2) + " 00:00:00", md::Zone::Utc);
+    if (!midnight) continue;
+    char* rest = nullptr;
+    const double value = std::strtod(fields[1].c_str(), &rest);
+    if (rest == fields[1].c_str() || *rest != '\0' || !std::isfinite(value) || value <= 0) continue;
+    const auto date = md::date_from_days(*midnight / md::kNanosPerDay);
+    if (date < since) continue;
+    rows.push_back({std::string(underlying), std::string(index), date, value, 0, cboe_soq_history_url(index)});
+  }
+  if (!header) throw std::runtime_error("Cboe " + std::string(index) + " history: no DATE," + std::string(index) + " header");
+  return rows;
+}
+
+std::optional<SettlementQuotation> parse_cboe_soq_quote(std::string_view json, std::string_view underlying,
+                                                        std::string_view index) {
+  simdjson::ondemand::parser parser;
+  const simdjson::padded_string padded(json);
+  simdjson::ondemand::document doc;
+  if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) throw std::runtime_error("Cboe quote: invalid JSON");
+  simdjson::ondemand::object data;
+  if (doc["data"].get_object().get(data) != simdjson::SUCCESS) throw std::runtime_error("Cboe quote: no data object");
+  if (text_or_empty(data, "symbol") != "^" + std::string(index)) return std::nullopt;
+  const double value = number_or_zero(data, "current_price");
+  const auto time = md::parse_datetime(text_or_empty(data, "last_trade_time"), md::Zone::NewYork);
+  if (!(value > 0) || !time) return std::nullopt;
+  return SettlementQuotation{std::string(underlying), std::string(index), md::trading_date(*time), value, *time,
+                             cboe_soq_quote_url(index)};
+}
+
+CboeSettlementQuotations::CboeSettlementQuotations(std::vector<std::string> underlyings, Sink sink, Options options)
+    : sink_(std::move(sink)), options_(std::move(options)) {
+  for (auto& underlying : underlyings)
+    if (!cboe_soq_index(underlying).empty() &&
+        std::find(underlyings_.begin(), underlyings_.end(), underlying) == underlyings_.end())
+      underlyings_.push_back(std::move(underlying));
+}
+
+void CboeSettlementQuotations::start() {
+  stop();
+  stopping_ = false;
+  thread_ = std::thread(&CboeSettlementQuotations::run, this);
+}
+
+void CboeSettlementQuotations::stop() {
+  {
+    const std::lock_guard lock(wake_mutex_);
+    stopping_ = true;
+  }
+  wake_.notify_all();
+  if (thread_.joinable()) thread_.join();
+}
+
+void CboeSettlementQuotations::run() {
+  net::HttpClient http;
+  while (!stopping_) {
+    const md::Timestamp next = poll_once(http);
+    const md::Timestamp wait = std::clamp<md::Timestamp>(next - options_.clock(), md::kNanosPerSecond, 3600 * md::kNanosPerSecond);
+    std::unique_lock lock(wake_mutex_);
+    if (wake_.wait_for(lock, std::chrono::nanoseconds(wait), [this] { return stopping_.load(); })) break;
+  }
+}
+
+md::Timestamp CboeSettlementQuotations::poll_once(net::HttpClient& http) {
+  const md::Timestamp now = options_.clock();
+  if (due_ > now || stopping_) return due_;
+  const bool history = history_due_ <= now;
+  const auto since = md::date_from_days(md::days_since_epoch(md::trading_date(now)) - options_.lookback_days);
+  std::string failures;
+  bool changed = false;
+  const auto keep = [&](SettlementQuotation q, bool from_history) {
+    auto& held = known_[{q.underlying, q.date}];
+    // Cboe's history is the published record; a quote fills in only a date it lacks.
+    if (!from_history && held.value > 0 && held.quote_time == 0) return;
+    if (from_history && held.value == q.value && held.quote_time > 0) return;  // the quote already said so
+    if (held == q) return;
+    held = std::move(q);
+    changed = true;
+  };
+  for (const auto& underlying : underlyings_) {
+    const auto index = cboe_soq_index(underlying);
+    for (const bool from_history : {true, false}) {
+      if (from_history && !history) continue;
+      const auto url = from_history ? cboe_soq_history_url(index) : cboe_soq_quote_url(index);
+      try {
+        const auto response = http.get(url, {}, options_.timeout, &stopping_);
+        if (response.status != 200) throw std::runtime_error("HTTP " + std::to_string(response.status));
+        if (from_history) {
+          for (auto& row : parse_cboe_soq_history(response.body, underlying, index, since)) keep(std::move(row), true);
+        } else if (auto quote = parse_cboe_soq_quote(response.body, underlying, index); quote && !(quote->date < since)) {
+          keep(std::move(*quote), false);
+        }
+      } catch (const std::exception& e) {
+        if (stopping_) return now;
+        failures += (failures.empty() ? "" : "\n") + std::string("cboe ") + std::string(index) +
+                    (from_history ? " history: " : " quote: ") + e.what();
+      }
+    }
+  }
+  std::erase_if(known_, [&](const auto& entry) { return entry.first.second < since; });
+  if (changed) {
+    std::vector<SettlementQuotation> all;
+    for (const auto& [key, quote] : known_) all.push_back(quote);
+    sink_(std::move(all));
+  }
+  const auto interval = (failures.empty() ? options_.interval : std::min(options_.interval, options_.retry)).count() * md::kNanosPerSecond;
+  due_ = now + interval;
+  if (history) history_due_ = now + (failures.empty() ? options_.history_interval : options_.retry).count() * md::kNanosPerSecond;
+  const std::lock_guard lock(error_mutex_);
+  error_ = std::move(failures);
+  return due_;
+}
+
+std::string CboeSettlementQuotations::error() const {
   const std::lock_guard lock(error_mutex_);
   return error_;
 }

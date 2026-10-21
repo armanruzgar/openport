@@ -743,3 +743,98 @@ TEST(CboeCharts, PublishedIndexShapesSkipZeroMinutesAndKeepDailyCloseOnlyRows) {
     EXPECT_EQ(providers::cboe_chart_url(symbol, providers::CboeChart::Intraday),
               "https://cdn-api.cboe.com/api/global/delayed_quotes/charts/intraday/" + std::string(symbol) + ".json");
 }
+
+namespace {
+using namespace openport;
+
+// Recorded from cdn.cboe.com on 2026-10-21 (the history trimmed to its header, first
+// row and last six rows; the quotes as served, after the SOQs were computed that morning).
+constexpr std::string_view kSetHistory = "DATE,SET\n07/09/1998,1162.440000\n10/14/2026,7771.780000\n"
+    "10/15/2026,7690.080000\n10/16/2026,7757.090000\n10/19/2026,7700.250000\n10/20/2026,7681.230000\n"
+    "10/21/2026,7736.880000\n";
+constexpr std::string_view kSetQuote = R"({"timestamp": "2026-10-21 22:38:45", "data": {"symbol": "^SET", "security_type": "index", "exchange_id": 5, "current_price": 7736.8799, "price_change": 55.6499, "price_change_percent": 0.7245, "bid": 0.0, "ask": 0.0, "bid_size": 0, "ask_size": 0, "open": 7736.8799, "high": 7736.8799, "low": 7736.8799, "close": 7736.8799, "prev_day_close": 7681.23, "volume": 0, "iv30": 0.0, "iv30_change": 0.0, "iv30_change_percent": null, "seqno": 20933921831, "last_trade_time": "2026-10-21T10:35:51", "tick": "up"}, "symbol": "_SET"})";
+constexpr std::string_view kRlsQuote = R"({"timestamp": "2026-10-21 22:40:46", "data": {"symbol": "^RLS", "security_type": "index", "exchange_id": 5, "current_price": 2787.0601, "price_change": 56.4401, "price_change_percent": 2.0669, "bid": 0.0, "ask": 0.0, "bid_size": 0, "ask_size": 0, "open": 2787.0601, "high": 2787.0601, "low": 2787.0601, "close": 2787.0601, "prev_day_close": 2730.6201, "volume": 0, "iv30": 0.0, "iv30_change": 0.0, "iv30_change_percent": null, "seqno": 21456146304, "last_trade_time": "2026-10-21T11:01:19", "tick": "up"}, "symbol": "_RLS"})";
+
+TEST(CboeSoq, MapsAmSettledUnderlyingsToTheirPublishedIndices) {
+  EXPECT_EQ(providers::cboe_soq_index("SPX"), "SET");
+  EXPECT_EQ(providers::cboe_soq_index("RUT"), "RLS");
+  EXPECT_EQ(providers::cboe_soq_index("VIX"), "VRO");
+  EXPECT_TRUE(providers::cboe_soq_index("NDX").empty());
+  EXPECT_TRUE(providers::cboe_soq_index("SPY").empty());
+  EXPECT_EQ(providers::cboe_soq_history_url("SET"), "https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv");
+  EXPECT_EQ(providers::cboe_soq_quote_url("RLS"), "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_RLS.json");
+}
+
+TEST(CboeSoq, ReadsTheHistoryFromADateOn) {
+  const auto rows = providers::parse_cboe_soq_history(kSetHistory, "SPX", "SET", {2026, 10, 16});
+  ASSERT_EQ(rows.size(), 4u);
+  EXPECT_EQ(rows[0].date, (md::Date{2026, 10, 16}));
+  EXPECT_DOUBLE_EQ(rows[0].value, 7757.09);  // the October monthly's settlement
+  EXPECT_EQ(rows[0].quote_time, 0);           // a row has a date, not a time
+  EXPECT_EQ(rows[0].underlying, "SPX");
+  EXPECT_EQ(rows[3].date, (md::Date{2026, 10, 21}));
+  EXPECT_EQ(providers::parse_cboe_soq_history(kSetHistory, "SPX", "SET").size(), 7u);
+  // Junk rows are skipped; another index's document or a page is refused.
+  EXPECT_EQ(providers::parse_cboe_soq_history("DATE,SET\n10/21/2026,\nnot,a row\n10/22/2026,-1\n10/23/2026,7700.5\n", "SPX", "SET").size(), 1u);
+  EXPECT_THROW((void)providers::parse_cboe_soq_history(kSetHistory, "RUT", "RLS"), std::runtime_error);
+  EXPECT_THROW((void)providers::parse_cboe_soq_history("<html>moved</html>", "SPX", "SET"), std::runtime_error);
+}
+
+TEST(CboeSoq, ReadsTheDaysValueFromTheDelayedQuote) {
+  const auto quote = providers::parse_cboe_soq_quote(kSetQuote, "SPX", "SET");
+  ASSERT_TRUE(quote);
+  EXPECT_EQ(quote->date, (md::Date{2026, 10, 21}));
+  EXPECT_DOUBLE_EQ(quote->value, 7736.8799);
+  EXPECT_EQ(quote->quote_time, md::new_york_to_utc({2026, 10, 21}, 10, 35) + 51 * md::kNanosPerSecond);
+  EXPECT_FALSE(providers::parse_cboe_soq_quote(kRlsQuote, "SPX", "SET"));  // another index
+  EXPECT_FALSE(providers::parse_cboe_soq_quote(R"({"data":{"symbol":"^SET","current_price":0}})", "SPX", "SET"));
+  EXPECT_THROW((void)providers::parse_cboe_soq_quote("{}", "SPX", "SET"), std::runtime_error);
+}
+
+TEST(CboeSoq, FetchesQuotesOftenAndTheHistoryRarely) {
+  md::Timestamp clock = md::new_york_to_utc({2026, 10, 21}, 11, 0);
+  std::vector<std::vector<providers::SettlementQuotation>> received;
+  providers::CboeSettlementQuotations::Options options;
+  options.clock = [&] { return clock; };
+  options.lookback_days = 3;
+  providers::CboeSettlementQuotations soq({"SPX", "SPY", "RUT", "SPX"},
+      [&](std::vector<providers::SettlementQuotation> all) { received.push_back(std::move(all)); }, options);
+  EXPECT_EQ(soq.underlyings(), (std::vector<std::string>{"SPX", "RUT"}));
+  test::HttpStub http;
+  http.respond = [](std::string_view url) {
+    if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, std::string(kSetHistory.substr(0, kSetHistory.find("10/21")))};
+    if (url.ends_with("_SET.json")) return net::HttpResponse{200, std::string(kSetQuote)};
+    if (url.ends_with("_RLS.json")) return net::HttpResponse{200, std::string(kRlsQuote)};
+    return net::HttpResponse{404, ""};
+  };
+  EXPECT_EQ(soq.poll_once(http), clock + 15 * 60 * md::kNanosPerSecond);
+  EXPECT_EQ(http.urls.size(), 4u);
+  EXPECT_EQ(soq.error(), "cboe RLS history: HTTP 404");
+  ASSERT_EQ(received.size(), 1u);
+  // 10/19 and 10/20 from the history, 10/21's from each quote; older rows fall outside the lookback.
+  ASSERT_EQ(received[0].size(), 4u);
+  EXPECT_EQ(received[0][0].index, "RLS");
+  EXPECT_GT(received[0][0].quote_time, 0);
+  EXPECT_EQ(received[0][3].date, (md::Date{2026, 10, 21}));
+  EXPECT_EQ(received[0][3].underlying, "SPX");
+  // Nothing new: no publication. The history failed, so it is retried with the quotes.
+  clock += 15 * 60 * md::kNanosPerSecond;
+  soq.poll_once(http);
+  EXPECT_EQ(http.urls.size(), 8u);
+  EXPECT_EQ(received.size(), 1u);
+  // The published history replaces the quote of its date only if it differs.
+  http.respond = [](std::string_view url) {
+    if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, "DATE,SET\n10/21/2026,7736.900000\n"};
+    if (url.ends_with("RLS_History.csv")) return net::HttpResponse{200, "DATE,RLS\n10/21/2026,2787.060100\n"};
+    return net::HttpResponse{503, ""};
+  };
+  clock += 15 * 60 * md::kNanosPerSecond;
+  soq.poll_once(http);
+  ASSERT_EQ(received.size(), 2u);
+  const auto& spx = received[1][3];
+  EXPECT_DOUBLE_EQ(spx.value, 7736.9);
+  EXPECT_EQ(spx.quote_time, 0);
+  EXPECT_GT(received[1][0].quote_time, 0);  // RUT's history agreed with its quote
+  EXPECT_NE(soq.error().find("cboe SET quote: HTTP 503"), std::string::npos);
+}
+}  // namespace

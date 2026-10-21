@@ -15455,10 +15455,14 @@
             "description": "A long option instructed not to be exercised at expiry: it then expires worthless with no cash proceeds or shares delivered."
           },
           "settle_by": {
-            "description": "How an expired position settles: opening_print for demo and driver-5 replay AM positions, closing_print for PM positions with a recorded or still awaited close, manual otherwise; null before expiry.",
+            "description": "How an expired position settles: opening_print for demo and driver-5 replay AM positions, soq for live AM positions whose underlying's published special opening quotation the server fetches (--am-settlement cboe) through the expiry date, closing_print for PM positions with a recorded or still awaited close, manual otherwise; null before expiry.",
             "anyOf": [
               {
                 "const": "closing_print",
+                "type": "string"
+              },
+              {
+                "const": "soq",
                 "type": "string"
               },
               {

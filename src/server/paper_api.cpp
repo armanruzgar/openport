@@ -710,6 +710,11 @@ json portfolio_json(const TradingView& view) {
         {"settle_by", !p.awaiting_settlement ? json(nullptr)
             : c.settlement == md::Settlement::AM && view.opening_settlement &&
               s.time <= c.expiry_time() + kOpeningPrintWait ? json("opening_print")
+            // A published special opening quotation is fetched through the expiry date.
+            : c.settlement == md::Settlement::AM &&
+              std::find(view.published_opening_quotations.begin(), view.published_opening_quotations.end(), c.underlying) !=
+                  view.published_opening_quotations.end() &&
+              md::trading_date(s.time) <= c.expiry ? json("soq")
             : c.settlement == md::Settlement::PM &&
               (s.closing_prints.contains(c.underlying + " " + md::format_date(c.expiry)) ||
                s.time < md::new_york_to_utc(c.expiry, md::regular_close_hour(c.expiry), 0) + kLastPrintWait)

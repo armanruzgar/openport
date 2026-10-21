@@ -144,6 +144,9 @@ class Engine final : public MetricsSource {
   /// Replaces dividends for day rollovers and American analytics (Options::dividends
   /// at first), as a fetcher learns of new ones. Thread-safe.
   void set_dividends(std::vector<trading::Dividend> dividends);
+  /// Replaces the published special opening quotations live AM settlement reads, as a
+  /// fetcher learns of them (Options::published_opening_quotations). Thread-safe.
+  void set_opening_quotations(std::vector<OpeningQuotation> quotations);
 
   [[nodiscard]] std::vector<std::string> symbols() const override;
   [[nodiscard]] std::shared_ptr<const analytics::UnderlyingMetrics> metrics(
@@ -212,6 +215,7 @@ class Engine final : public MetricsSource {
 
   std::mutex dividends_mutex_;
   std::optional<std::vector<trading::Dividend>> pending_dividends_;
+  std::optional<std::vector<OpeningQuotation>> pending_quotations_;
 
   // Engine thread only: quote receipt never locks the reader-facing status mutex.
   std::map<std::string, UnderlyingHealth> health_;

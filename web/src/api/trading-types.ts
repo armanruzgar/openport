@@ -955,7 +955,7 @@ export interface Position {
   fresh: boolean
   awaiting_settlement: boolean
   /** While awaiting settlement: on the recorded closing print, or by a value entered by hand (AM series, or no print arrived). */
-  settle_by?: "closing_print" | "opening_print" | "manual" | null
+  settle_by?: "closing_print" | "opening_print" | "soq" | "manual" | null
   /** It cannot be sold now (its quote shows only an ask, or it has expired), so a long can be abandoned; absent on older servers. */
   no_bid?: boolean
   /** A long option instructed not to be exercised at expiry; absent on older servers. */

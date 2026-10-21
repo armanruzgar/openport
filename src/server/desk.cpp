@@ -910,6 +910,7 @@ void Desk::publish_trading() {
       view->valuations = session.valuations();
       view->run = run_;
       view->opening_settlement = !opening_source().empty();
+      if (!options_.replay && provider_ != "demo") view->published_opening_quotations = options_.published_opening_quotations;
       // Each underlying's own data time tells whether its feed has stalled. Until this
       // run has seen any (just after a restart), the account's last quotes stand in.
       for (const auto& [symbol, contract] : view->contracts) {
@@ -1462,6 +1463,18 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         const auto& contract = p.position.contract;
         if (market_time_ < contract.expiry_time()) continue;
         if (contract.settlement == md::Settlement::AM) {
+          // A live account settles on the published special opening quotation, the
+          // official AM reference, once its fetcher has it; manual import remains.
+          if (const auto soq = opening_quotations_.find({contract.underlying, contract.expiry});
+              soq != opening_quotations_.end()) {
+            const auto& q = soq->second;
+            SettlementSource source{{"kind", "published_soq"}, {"provider", q.provider}, {"symbol", contract.underlying},
+                {"index", q.index}, {"date", md::format_date(q.date)}, {"url", q.url}};
+            if (q.quote_time > 0) source["quote_time"] = md::format_timestamp(q.quote_time);
+            session.settle(contract.osi_symbol(), Money::from_double(q.value), market_time_, source);
+            sample_equity(account);
+            continue;
+          }
           const auto kind = opening_source();
           const auto opening = opening_prints_.find({contract.underlying, contract.expiry});
           if (kind.empty() || opening == opening_prints_.end() || opening->second.ts > market_time_) continue;
@@ -2022,6 +2035,15 @@ void Desk::set_dividends(std::vector<trading::Dividend> dividends) {
     record_input(nlohmann::json{{"kind", "dividends"}, {"dividends", dividends_}}.dump());
     publish_trading();
   }
+}
+void Desk::set_opening_quotations(std::vector<OpeningQuotation> quotations) {
+  // Recorded runs never read them: their AM positions keep their opening print.
+  if (options_.replay || provider_ == "demo") return;
+  opening_quotations_.clear();
+  for (auto& q : quotations)
+    if (std::find(options_.published_opening_quotations.begin(), options_.published_opening_quotations.end(), q.underlying) !=
+            options_.published_opening_quotations.end() && std::isfinite(q.value) && q.value > 0)
+      opening_quotations_[{q.underlying, q.date}] = std::move(q);
 }
 std::shared_ptr<const analytics::UnderlyingMetrics> Desk::metrics(const std::string& symbol) const {
   const auto it = metrics_.find(symbol);

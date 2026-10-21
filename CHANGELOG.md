@@ -119,6 +119,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Financing rates and pin risk are program rules: changing them drops the preset's `plan_id`, and financing overrides on evaluation, verification and funded plans are refused with `PLAN_LOCKED`.
 - What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
 - Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
+- **Published AM settlement values.** `--am-settlement cboe` fetches the special opening quotations Cboe publishes for SPX, RUT, DJX and VIX (indices SET, RLS, DJS and VRO, from Cboe's public delayed quote and daily history) and settles live AM positions on them with source `published_soq`; waiting positions show `settle_by: "soq"`, and manual import remains the fallback. Tested with responses recorded on 2026-10-21.
 
 ### API, Python and automation
 
