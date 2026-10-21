@@ -1718,9 +1718,6 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
           std::vector<std::vector<Decision>> rejections;
           std::set<std::string> symbols;
           for (const auto& orders : c.candidates) {
-            const bool chained = std::any_of(orders.begin(), orders.end(), [](const auto& order) {
-              return !order.then.empty() || !order.oco.empty();
-            });
             auto& gates = rejections.emplace_back();
             std::map<std::string, Quantity> preceding;
             for (const auto& order : orders) {
@@ -1728,8 +1725,9 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
               std::map<std::string, double> ignored;
               const auto names = chain_symbols(order);
               const auto inputs = preview_market({names.begin(), names.end()}, ignored);
-              if (gate.ok() && !chained) gate = opening_gate(*account, order, market_time_, inputs, preceding);
-              if (gate.ok() && !chained && (session.config().rules.no_counter_positions || session.config().rules.max_volume_percent != 0))
+              // Chained candidates too: submission gates the parent and every child.
+              if (gate.ok()) gate = opening_gate(*account, order, market_time_, inputs, preceding);
+              if (gate.ok() && (session.config().rules.no_counter_positions || session.config().rules.max_volume_percent != 0))
                 gate = project_contracts(order, preceding);
               gates.push_back(std::move(gate));
               for (const auto& symbol : chain_symbols(order)) symbols.insert(symbol);

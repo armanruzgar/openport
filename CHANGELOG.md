@@ -7,6 +7,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Single-name scenario/replay halts pause one underlying; the replay API and Dashboard support halt drills with recorded, verifiable commands.
 - What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
 - Financing rates and pin risk are program rules: changing them drops the preset's `plan_id`, and financing overrides on evaluation, verification and funded plans are refused with `PLAN_LOCKED`.
+- What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
 
 ## 0.4.0 (2026-10-06)
 

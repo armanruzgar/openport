@@ -104,6 +104,17 @@ TEST_P(DeskPhases, VolumeShareGateChecksKnownUnknownStaleVolumeAndOpeningContrac
   ASSERT_EQ(projection.what_if->candidates.size(), 2U);
   EXPECT_TRUE(projection.what_if->candidates[0].decision.ok());
   EXPECT_EQ(projection.what_if->candidates[1].decision.code, trading::Reason::MAX_VOLUME_SHARE);
+  // A chained candidate takes submission's gate on the parent and every child.
+  for (const bool oco : {false, true}) {
+    auto chained = market.market("chain");
+    (oco ? chained.oco : chained.then).push_back(market.market("child", 2));
+    what_if.candidates = {{chained}};
+    const auto chain = command(desk, what_if, market.time, market.time);
+    ASSERT_TRUE(chain.what_if);
+    EXPECT_EQ(chain.what_if->candidates[0].decision.code, trading::Reason::MAX_VOLUME_SHARE);
+    server::TradingCommand submit; submit.order = chained;
+    EXPECT_EQ(command(desk, submit, market.time, market.time).decision.code, trading::Reason::MAX_VOLUME_SHARE);
+  }
   const auto resting = command(desk, entry, market.time, market.time);
   ASSERT_TRUE(resting.decision.ok()) << resting.decision.message;
   server::TradingCommand change;
