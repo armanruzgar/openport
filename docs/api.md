@@ -37,9 +37,9 @@ halt reaches the regular close. See [stress scenarios](scenarios.md#events).
 | `GET /api/earnings?symbol=` | Earnings implied versus realized moves, recorded or imported, with the over-priced rate ([earnings](volatility.md#earnings-implied-versus-realized)) |
 | `POST /api/earnings/import` | Seed past moves from `{ "csv": "..." }`; requires admin; rows are labelled imported |
 | `DELETE /api/earnings/imported` | Remove every imported move; requires admin |
-| `GET /api/analysis/portfolios`, `GET /api/analysis/portfolios/{id}` | Analysis-only portfolios: holdings valued now, Greeks by underlying, the risk views available ([analysis](analysis.md)) |
+| `GET /api/analysis/portfolios`, `GET /api/analysis/portfolios/{id}` | Analysis-only portfolios: holdings valued now, Greeks by underlying, the risk views available ([analysis](analysis.md)); require admin, like every analysis-portfolio route |
 | `POST /api/analysis/portfolios`, `DELETE /api/analysis/portfolios/{id}` | Import `{ "name", "csv", "format" }` or delete; require admin |
-| `GET /api/analysis/portfolios/{id}/risk/profile`, `.../risk/grid` | Risk profile and scenario grid of an analysis portfolio |
+| `GET /api/analysis/portfolios/{id}/risk/profile`, `.../risk/grid` | Risk profile and scenario grid of an analysis portfolio; require admin |
 | `WS /ws` | A small tick each second with versions, so clients refetch only what changed; at most 256 open sessions, after which an upgrade gets 503 with `Retry-After: 5` |
 
 Expiry ids are the date plus settlement, for example `2026-10-16AM`.

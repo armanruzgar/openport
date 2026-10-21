@@ -218,7 +218,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
 
     @server.tool()
     def analysis_portfolios() -> dict:
-        """Imported outside portfolios. Analysis only: they are not paper accounts and cannot be traded."""
+        """Imported outside portfolios (needs an admin token). Analysis only: they are not paper accounts and cannot be traded."""
         return result(client, client.analysis_portfolios)
 
     @server.tool()

@@ -170,6 +170,7 @@ class Client:
         return self._request("POST", "/earnings/import", {"csv": csv}, control=True, retry=False)
 
     def analysis_portfolios(self) -> JSON:
+        """Admin, reads included: imported outside portfolios."""
         return self._request("GET", "/analysis/portfolios", control=True)
 
     def import_portfolio(self, name: str, csv: str, format: str = "auto") -> JSON:
@@ -178,10 +179,11 @@ class Client:
                              control=True, retry=False)
 
     def analysis_portfolio(self, portfolio: str) -> JSON:
+        """Admin: one analysis portfolio's holdings, Greeks and risk views."""
         return self._request("GET", "/analysis/portfolios/" + quote(portfolio, safe=""), control=True)
 
     def analysis_risk(self, portfolio: str, view: str = "profile", **params) -> JSON:
-        """A risk view of an analysis portfolio: profile or grid (the portfolio's views lists them)."""
+        """Admin: a risk view of an analysis portfolio, profile or grid (the portfolio's views lists them)."""
         return self._request("GET", "/analysis/portfolios/" + quote(portfolio, safe="") + "/risk/" + quote(view, safe=""),
                              params=params, control=True)
 

@@ -47,6 +47,20 @@ TEST(AnalysisImport, GenericReadsOsiTickersAndSplitColumnsAndNetsLots) {
   EXPECT_THROW((void)server::parse_analysis_csv("symbol,quantity\nSPY,1\n", "fidelity"), std::invalid_argument);
 }
 
+TEST(AnalysisImport, ABrokerSizedFileStillStopsAtTwoThousandHoldings) {
+  // Over 64 KiB, as the import route now accepts, but each holding is still counted.
+  const auto file = [](std::size_t holdings) {
+    std::string csv = "symbol,quantity,description\n";
+    for (std::size_t i = 0; i < holdings; ++i)
+      csv += std::string{char('A' + i / 676), char('A' + i / 26 % 26), char('A' + i % 26)} + ",1," + std::string(40, 'x') + "\n";
+    return csv;
+  };
+  const auto most = file(server::kAnalysisMaxHoldings);
+  EXPECT_GT(most.size(), 64u * 1024);
+  EXPECT_EQ(server::parse_analysis_csv(most, "generic").holdings.size(), server::kAnalysisMaxHoldings);
+  EXPECT_THROW((void)server::parse_analysis_csv(file(server::kAnalysisMaxHoldings + 1), "generic"), std::invalid_argument);
+}
+
 TEST(AnalysisImport, TastytradeSchwabAndIbkrLayouts) {
   auto p = server::parse_analysis_csv(
       "Account,Symbol,Type,Quantity,Exp Date,DTE,Strike Price,Call/Put,Underlying Symbol,Trade Price\n"
@@ -78,6 +92,18 @@ TEST(AnalysisImport, TastytradeSchwabAndIbkrLayouts) {
   EXPECT_DOUBLE_EQ(*p.holdings[0].cost, 4.10);  // $820 over 2 x 100
   EXPECT_DOUBLE_EQ(*p.holdings[1].cost, 400);
   EXPECT_EQ(p.skipped.size(), 2u);
+
+  // Some Schwab exports write two-digit years: MM/DD/YY is 20YY.
+  p = server::parse_analysis_csv(
+      "\"Symbol\",\"Qty (Quantity)\",\"Price\",\"Security Type\"\n"
+      "\"SPY 12/18/26 600.00 C\",\"-2\",\"$4.30\",\"Option\"\n"
+      "\"QQQ 1/15/27 480 P\",\"1\",\"$6.25\",\"Option\"\n"
+      "\"IWM 12/18/226 200 P\",\"1\",\"$1.00\",\"Option\"\n",
+      "schwab");
+  ASSERT_EQ(p.holdings.size(), 2u);
+  EXPECT_EQ(p.holdings[0].symbol, "SPY   261218C00600000");
+  EXPECT_EQ(p.holdings[1].symbol, "QQQ   270115P00480000");
+  EXPECT_EQ(p.skipped.size(), 1u);  // a three-digit year is not a date
 
   p = server::parse_analysis_csv(
       "Statement,Header,Field Name,Field Value\n"

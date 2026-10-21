@@ -3683,7 +3683,8 @@ with it, and that name is what their requests carry in Host.
 
 Every POST/PUT/DELETE under `/api/` uses the same protection. POST and PUT require
 `Content-Type: application/json` (an optional media-type parameter is accepted);
-DELETE has no body. The body limit remains 64 KiB. A present Origin must match Host
+DELETE has no body. The body limit remains 64 KiB, except 4 MiB for
+`POST /api/analysis/portfolios`, whose broker exports run larger. A present Origin must match Host
 or an exact `--allowed-origin`; invalid or ambiguous security headers fail closed
 with 403 `ORIGIN_REJECTED`. Non-browser clients may omit Origin.
 

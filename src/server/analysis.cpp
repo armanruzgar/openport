@@ -15,9 +15,9 @@ namespace openport::server {
 namespace {
 using nlohmann::json;
 using Row = std::vector<std::string>;
+}  // namespace
 
-/// RFC 4180 rows: quoted fields may hold commas, quotes ("") and line breaks.
-std::vector<Row> csv_rows(std::string_view text) {
+std::vector<std::vector<std::string>> csv_rows(std::string_view text) {
   if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
   std::vector<Row> rows;
   Row row;
@@ -53,6 +53,8 @@ std::vector<Row> csv_rows(std::string_view text) {
   if (!row.empty()) rows.push_back(std::move(row));
   return rows;
 }
+
+namespace {
 
 std::string trim(std::string_view s) {
   while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
@@ -116,7 +118,12 @@ std::optional<md::Date> date_parts(std::string_view raw) {
   int a = 0, b = 0, c = 0;
   char tail = 0;
   if (std::sscanf(text.c_str(), "%4d-%2d-%2d%c", &a, &b, &c, &tail) == 3 && text.size() == 10) return md::Date{a, b, c};
-  if (std::sscanf(text.c_str(), "%2d/%2d/%4d%c", &a, &b, &c, &tail) == 3) return md::Date{c, a, b};
+  if (std::sscanf(text.c_str(), "%2d/%2d/%4d%c", &a, &b, &c, &tail) == 3) {
+    // Schwab writes MM/DD/YYYY, and MM/DD/YY in some exports: two digits are 20YY.
+    const auto digits = text.size() - text.rfind('/') - 1;
+    if (digits == 2) return md::Date{2000 + c, a, b};
+    return digits == 4 ? std::optional<md::Date>(md::Date{c, a, b}) : std::nullopt;
+  }
   if (text.size() == 8 && std::all_of(text.begin(), text.end(), [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); }))
     return md::Date{std::stoi(text.substr(0, 4)), std::stoi(text.substr(4, 2)), std::stoi(text.substr(6, 2))};
   // IBKR's 18DEC26

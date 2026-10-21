@@ -5304,8 +5304,8 @@
     "/api/analysis/portfolios": {
       "get": {
         "summary": "GET /api/analysis/portfolios",
-        "description": "Imported analysis-only portfolios.",
-        "x-scope": "read",
+        "description": "Imported analysis-only portfolios. Requires admin, reads included: they are outside holdings, not market data.",
+        "x-scope": "admin",
         "responses": {
           "200": {
             "description": "Success",
@@ -5367,7 +5367,7 @@
       "get": {
         "summary": "GET /api/analysis/portfolios/{id}",
         "description": "Holdings valued from the current analytics, with Greeks by underlying.",
-        "x-scope": "read",
+        "x-scope": "admin",
         "responses": {
           "200": {
             "description": "Success",
@@ -5486,7 +5486,7 @@
       "get": {
         "summary": "GET /api/analysis/portfolios/{id}/risk/profile",
         "description": "Risk profile of an analysis portfolio.",
-        "x-scope": "read",
+        "x-scope": "admin",
         "responses": {
           "200": {
             "description": "Success",
@@ -5536,7 +5536,7 @@
       "get": {
         "summary": "GET /api/analysis/portfolios/{id}/risk/grid",
         "description": "Spot and volatility scenario grid of an analysis portfolio.",
-        "x-scope": "read",
+        "x-scope": "admin",
         "responses": {
           "200": {
             "description": "Success",

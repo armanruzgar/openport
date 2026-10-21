@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "openport/server/analysis.hpp"
 #include "openport/server/engine.hpp"
 
 namespace openport::server {
@@ -234,20 +235,16 @@ void EarningsStore::observe(const MetricsSource& source, const std::vector<tradi
 EarningsStore::Import EarningsStore::import_csv(std::string_view text) {
   Import result;
   std::vector<EarningsMove> rows;
-  std::istringstream in{std::string(text)};
-  std::string line;
   bool header = false;
-  for (int n = 1; std::getline(in, line); ++n) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.empty() || line[0] == '#') continue;
-    std::vector<std::string> fields;
-    std::stringstream cells(line);
-    for (std::string cell; std::getline(cells, cell, ',');) {
+  // The same quoted-CSV reader as portfolio imports, so a quoted label may hold commas.
+  const auto records = csv_rows(text);
+  for (std::size_t n = 1; n <= records.size(); ++n) {
+    auto fields = records[n - 1];
+    if (fields.empty() || (fields.size() == 1 && fields[0].empty()) || fields[0].starts_with('#')) continue;
+    for (auto& cell : fields) {
       while (!cell.empty() && std::isspace(static_cast<unsigned char>(cell.front()))) cell.erase(cell.begin());
       while (!cell.empty() && std::isspace(static_cast<unsigned char>(cell.back()))) cell.pop_back();
-      fields.push_back(cell);
     }
-    if (!line.empty() && line.back() == ',') fields.emplace_back();
     const auto where = "line " + std::to_string(n);
     if (!header) {
       if (fields.size() < 5 || fields[0] != "symbol" || fields[1] != "date" || fields[2] != "session" ||

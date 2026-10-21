@@ -92,12 +92,13 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
         "# past quarters, from my notes\n"
         "symbol,date,session,implied_move,realized_move,label\r\n"
         "SPX,2026-09-22,after_close,4.0,-1.0,dup\n"
-        "AAPL,2026-07-30,after_close,4.1%,-2.3,Q3 FY26\n"
+        "AAPL,2026-07-30,after_close,4.1%,-2.3,\"Q3, FY26\"\n"  // quoted, as analysis imports read them
         "AAPL,2026-05-01,before_open,3.5,5.25,\n");
     EXPECT_EQ(result.added, 2u);
     ASSERT_EQ(result.skipped.size(), 1u);  // recorded here first
     EXPECT_THROW(store.import_csv("symbol,date,session,implied_move,realized_move\nAAPL,2026-13-01,after_close,4,1\n"), std::invalid_argument);
     EXPECT_THROW(store.import_csv("symbol,date\nAAPL,2026-07-30\n"), std::invalid_argument);
+    EXPECT_THROW(store.import_csv("symbol,date,session,implied_move,realized_move,label\nAAPL,2026-07-30,after_close,4,1,\"Q3\n"), std::invalid_argument);
     EXPECT_THROW(store.import_csv("symbol,date,session,implied_move,realized_move\nAAPL,2026-07-30,midday,4,1\n"), std::invalid_argument);
     EXPECT_THROW(store.import_csv("symbol,date,session,implied_move,realized_move\nAAPL,2026-07-30,after_close,0,1\n"), std::invalid_argument);
   }
@@ -108,7 +109,7 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
   ASSERT_EQ(aapl.size(), 2u);
   EXPECT_EQ(aapl[0].date, (md::Date{2026, 7, 30}));  // newest first
   EXPECT_EQ(aapl[0].source, "imported");
-  EXPECT_EQ(aapl[0].label, "Q3 FY26");
+  EXPECT_EQ(aapl[0].label, "Q3, FY26");
   EXPECT_DOUBLE_EQ(*aapl[0].implied, 0.041);
   EXPECT_EQ(*aapl[0].priced(), "over");
   EXPECT_EQ(*aapl[1].priced(), "under");

@@ -494,6 +494,47 @@ TEST(WebServer, AsyncPostDeleteRoundTripsAndSecurityHeaders) {
   web.stop();
 }
 
+TEST(WebServer, OnlyThePortfolioImportTakesABodyOverSixtyFourKiB) {
+  std::mutex mutex;
+  std::vector<std::size_t> received;
+  server::WebServer web("127.0.0.1", 0, {},
+      [&](const server::ApiRequest& request, server::ApiCompletion complete) {
+        { const std::lock_guard lock(mutex); received.push_back(request.body.size()); }
+        complete({200, "{}"});
+      });
+  web.start(1);
+  asio::io_context io;
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  const auto send = [&](const std::string& target, std::size_t size) {
+    beast::tcp_stream connection(io);
+    connection.expires_after(std::chrono::minutes(5));
+    connection.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    http::request<http::string_body> request{http::verb::post, target, 11};
+    request.set(http::field::host, host);
+    request.set(http::field::content_type, "application/json");
+    request.body() = "{\"csv\":\"" + std::string(size, 'x') + "\"}";
+    request.prepare_payload();
+    // A rejected body is answered before it is all read, so a write may see a broken pipe.
+    beast::error_code ec;
+    http::write(connection, request, ec);
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    http::read(connection, buffer, response, ec);
+    return response;
+  };
+  const auto imported = send("/api/analysis/portfolios", 1024 * 1024);
+  EXPECT_EQ(imported.result_int(), 200);
+  const auto order = send("/api/orders", 80 * 1024);
+  EXPECT_EQ(order.result_int(), 400);
+  EXPECT_NE(order.body().find("64 KiB"), std::string::npos);
+  const auto other = send("/api/analysis/portfolios/ira", 80 * 1024);
+  EXPECT_EQ(other.result_int(), 400);
+  const std::lock_guard lock(mutex);
+  ASSERT_EQ(received.size(), 1u);
+  EXPECT_GT(received[0], 1024u * 1024);
+  web.stop();
+}
+
 TEST(WebServer, StopSeversLateCommandCompletionBeforeDestroyingExecutor) {
   server::ApiCompletion complete;
   std::promise<void> received;
@@ -690,6 +731,47 @@ TEST(WebPolicy, NamedTokensEnforceEveryRouteFamilyAndAccount) {
     EXPECT_FALSE(check("POST", path, "owner-secret")) << path;
     EXPECT_FALSE(check("POST", path, "legacy-secret")) << path;
   }
+}
+
+TEST(WebPolicy, AnalysisPortfoliosRequireAdminEvenToRead) {
+  const auto tokens = server::parse_token_file("reader read reader-secret\nall trade:* all-secret\nowner admin owner-secret");
+  const auto check = [](const server::WritePolicy& policy, std::string method, std::string path, const std::string& secret) {
+    server::ApiRequest request{std::move(method), std::move(path)};
+    request.content_type = "application/json";
+    if (!secret.empty()) request.authorization = "Bearer " + secret;
+    return server::check_api_write(request, policy);
+  };
+  const std::vector<std::string> routes{"/api/analysis/portfolios", "/api/analysis/portfolios/ira",
+      "/api/analysis/portfolios/ira/risk/profile?underlying=SPY", "/api/analysis/portfolios/ira/risk/grid"};
+  // Reads are public on this server, and stay so for market data, but not for outside holdings.
+  const server::WritePolicy open_reads{"0.0.0.0", "", {}, tokens};
+  EXPECT_FALSE(check(open_reads, "GET", "/api/status", ""));
+  EXPECT_FALSE(check(open_reads, "GET", "/api/status", "stale-secret"));
+  for (const auto& route : routes) {
+    for (const auto* secret : {"", "stale-secret", "reader-secret", "all-secret"}) {
+      const auto rejected = check(open_reads, "GET", route, secret);
+      ASSERT_TRUE(rejected) << route << " " << secret;
+      EXPECT_EQ(rejected->status, 403);
+    }
+    EXPECT_FALSE(check(open_reads, "GET", route, "owner-secret")) << route;
+  }
+  EXPECT_TRUE(check(open_reads, "POST", "/api/analysis/portfolios", "reader-secret"));
+  EXPECT_FALSE(check(open_reads, "POST", "/api/analysis/portfolios", "owner-secret"));
+  EXPECT_TRUE(check(open_reads, "DELETE", "/api/analysis/portfolios/ira", "all-secret"));
+  EXPECT_FALSE(check(open_reads, "DELETE", "/api/analysis/portfolios/ira", "owner-secret"));
+  // A prefix that is not the route is not caught by it.
+  EXPECT_FALSE(check(open_reads, "GET", "/api/analysis/portfoliosx", ""));
+  // With --require-token, too.
+  const server::WritePolicy required{"0.0.0.0", "", {}, tokens, true};
+  EXPECT_TRUE(check(required, "GET", routes[1], "reader-secret"));
+  EXPECT_FALSE(check(required, "GET", routes[1], "owner-secret"));
+  // A loopback server whose writes need no credentials already gives every request admin.
+  const server::WritePolicy loopback{"127.0.0.1", "", {}};
+  EXPECT_EQ(server::write_mode(loopback), "open");
+  for (const auto& route : routes) EXPECT_FALSE(check(loopback, "GET", route, "")) << route;
+  const server::WritePolicy guarded{"127.0.0.1", "legacy-secret", {}};
+  EXPECT_TRUE(check(guarded, "GET", routes[0], ""));
+  EXPECT_FALSE(check(guarded, "GET", routes[0], "legacy-secret"));
 }
 
 TEST(WebPolicy, ReplayScopeConfiguresOnlyTheIsolatedAccount) {

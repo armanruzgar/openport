@@ -45,6 +45,11 @@ inline constexpr std::string_view kAnalysisFormats[] = {"generic", "tastytrade",
 inline constexpr std::size_t kAnalysisMaxHoldings = 2000;
 inline constexpr std::size_t kAnalysisMaxPortfolios = 32;
 
+/// RFC 4180 rows: quoted fields may hold commas, quotes ("") and line breaks; a
+/// leading UTF-8 BOM is skipped and a blank line is an empty row. Throws
+/// std::invalid_argument when the text ends inside a quoted field.
+[[nodiscard]] std::vector<std::vector<std::string>> csv_rows(std::string_view text);
+
 /// Parses a positions file. Throws std::invalid_argument naming the line and the
 /// problem, or the columns a layout is missing. Holdings of one symbol are summed;
 /// ones that net to zero are dropped. Option symbols are read as OSI (padded or

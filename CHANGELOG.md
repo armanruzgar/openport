@@ -18,10 +18,12 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Analyse a portfolio held elsewhere.** Import a positions CSV (generic columns,
   or tastytrade, Schwab or IBKR exports) into an analysis-only portfolio and see its
   Greeks, risk profile and scenario grid on your feed. It is not a paper account and
-  can never be traded. `/api/analysis/portfolios`.
-- Option prints now carry the printing venue where the provider gives one;
-  recordings keep it as an optional trailing field. Builds before this one cannot
-  read trades with a venue in new recordings.
+  can never be traded. Every route, reads included, needs admin; imports may be up
+  to 4 MiB. `/api/analysis/portfolios`.
+- Option prints now carry the printing venue where the provider gives one.
+  Recordings from such providers (Databento, and ThetaData or Databento imports)
+  use format version 5, which older builds refuse at the header; every other
+  provider writes the same files as before.
 - The Python client and MCP server can read the tape, the earnings history and
   analysis portfolios.
 

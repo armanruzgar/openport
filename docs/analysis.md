@@ -8,8 +8,8 @@ response labels it so. It never sends anything to a broker.
 ## Importing
 
 The Analysis page, or `POST /api/analysis/portfolios` with
-`{ "name", "csv", "format" }`, imports a CSV of up to 64 KiB (the request limit) and
-2,000 holdings. `format` is `auto` (detected from the columns), `generic`,
+`{ "name", "csv", "format" }`, imports a CSV of up to 4 MiB (this route's request
+limit; every other route keeps 64 KiB) and 2,000 holdings. `format` is `auto` (detected from the columns), `generic`,
 `tastytrade`, `schwab` or `ibkr`. Lots of one symbol are summed, with their
 quantity-weighted cost when every lot has one; holdings that net to zero, cash,
 totals and unsupported instruments (futures, bonds, funds) are left out and listed
@@ -24,7 +24,7 @@ imported holdings against your statement.
 | --- | --- | --- |
 | generic | `symbol`, `quantity`, optional `cost` (or `price`, `average_price`) per share; or `underlying`, `expiry` (YYYY-MM-DD), `strike`, `type` (call/put), `quantity` | OSI, padded or compact |
 | tastytrade | `Symbol`, `Type` (equity option, equity), `Quantity`, optional `Exp Date`, `Strike Price`, `Call/Put`, `Underlying Symbol`, `Trade Price` or `Average Open Price`, and a `Direction` for unsigned quantities | OSI, or the expiry, strike and call/put columns |
-| schwab | Title lines, then `Symbol`, `Qty (Quantity)`, optional `Cost Basis` (the lot's total) and `Security Type` | `SPY 12/18/2026 600.00 C` |
+| schwab | Title lines, then `Symbol`, `Qty (Quantity)`, optional `Cost Basis` (the lot's total) and `Security Type` | `SPY 12/18/2026 600.00 C`, or `SPY 12/18/26 600.00 C` (two-digit years are 20YY) |
 | ibkr | An activity statement's `Open Positions` section (summary rows; lots are not added twice), or a Flex query with `AssetClass`, `Symbol`, `Quantity`, optional `UnderlyingSymbol`, `Expiry`, `Strike`, `Put/Call`, `CostBasisPrice` | `SPY 18DEC26 600 C`, OSI, or the expiry, strike and put/call columns |
 
 Short positions are negative quantities. Costs are per share, or per option share
@@ -51,6 +51,14 @@ by underlying. The risk views run on the valued holdings:
 P&L is measured from the book's value now, not from its cost. Views are listed in
 the portfolio's `views`; stress tests and value at risk will attach there as they
 arrive.
+
+## Access
+
+Every analysis-portfolio route needs admin, reads included: the holdings are
+someone's outside positions, not market data, so they are not public even on a
+server whose market reads are. A loopback server that accepts writes without
+credentials gives every request admin, so the terminal works there as before;
+anywhere else, send an admin token. Read, trade and sandbox tokens get 403.
 
 ## Storage
 
