@@ -164,6 +164,9 @@ class Client:
         """Orders, newest first; client_order_id finds the order(s) that used that ID, one per attempt."""
         return self._request("GET", "/orders", scoped=True, params={"status": status, "client_order_id": client_order_id})
 
+    def get_order(self, order_id: str) -> OrderResult:
+        return self._request("GET", "/orders/" + quote(str(order_id), safe=""), scoped=True)
+
     def fills(self) -> Fills:
         return self._request("GET", "/fills", scoped=True)
 
@@ -337,8 +340,8 @@ class Client:
     def close_stock(self, symbol: str, shares: int | None = None) -> Portfolio:
         return self._request("POST", "/stocks/close", {"symbol": symbol, **({"shares": shares} if shares is not None else {})}, scoped=True)
 
-    def list_backtests(self) -> JSON:
-        return self._request("GET", "/backtests", control=True)
+    def list_backtests(self, playbook: str | None = None) -> JSON:
+        return self._request("GET", "/backtests", params={"playbook": playbook}, control=True)
 
     def start_backtest(self, playbook: str | list[str], plan: str | JSON, **settings) -> JSON:
         """Pin one selector, or 2–8 distinct IDs for a joint account (ID order)."""
@@ -357,8 +360,77 @@ class Client:
     def delete_backtest(self, run_id: str) -> JSON:
         return self._request("DELETE", "/backtests/" + quote(run_id, safe=""), params={"purge": "true"}, control=True)
 
-    def cancel_backtest(self, run_id: str) -> JSON:
-        return self._request("DELETE", "/backtests/" + quote(run_id, safe=""), control=True)
+    def cancel_backtest(self, run_id: str | None = None) -> JSON:
+        return self._request("DELETE", "/backtests" + ("/" + quote(run_id, safe="") if run_id else ""), control=True)
+
+    def playbooks(self) -> JSON:
+        """Definitions, account modes, staged orders and forward reports."""
+        return self._request("GET", "/playbooks", scoped=True)
+
+    def get_playbook(self, playbook_id: str, version: int | None = None) -> JSON:
+        return self._request("GET", "/playbooks/" + quote(playbook_id, safe=""),
+                             params={"version": version}, scoped=True)
+
+    def create_playbook(self, definition: JSON) -> JSON:
+        return self._request("POST", "/playbooks", definition, scoped=True, retry=False)
+
+    def version_playbook(self, definition: JSON) -> JSON:
+        """Save the next version; definition includes its ID and expected current version."""
+        return self._request("PUT", "/playbooks/" + quote(definition["id"], safe=""),
+                             definition, scoped=True, retry=False)
+
+    def archive_playbook(self, playbook_id: str, version: int) -> JSON:
+        return self._request("DELETE", "/playbooks/" + quote(playbook_id, safe=""),
+                             params={"version": version}, scoped=True, retry=False)
+
+    def playbook_mode(self, playbook_id: str, mode: str) -> JSON:
+        return self._request("PUT", "/playbooks/" + quote(playbook_id, safe="") + "/mode",
+                             {"mode": mode}, scoped=True, retry=False)
+
+    def send_staged_order(self, stage_id: str) -> JSON:
+        """Send the reviewed stage through the engine's current risk checks."""
+        return self._request("POST", "/playbooks/staged/" + quote(stage_id, safe="") + "/send",
+                             {}, scoped=True, retry=False)
+
+    def dismiss_staged_order(self, stage_id: str) -> JSON:
+        return self._request("POST", "/playbooks/staged/" + quote(stage_id, safe="") + "/dismiss",
+                             {}, scoped=True, retry=False)
+
+    def notifications(self) -> JSON:
+        """Nonsecret notification status is part of status, with no separate GET route."""
+        return self.status()["notifications"]
+
+    def test_notification(self, channel: str) -> JSON:
+        return self._request("POST", "/notifications/test", {"channel": channel}, control=True, retry=False)
+
+    def configure_notification(self, channel: str, **settings) -> JSON:
+        return self._request("PUT", "/notifications/channels/" + quote(channel, safe=""),
+                             settings, control=True)
+
+    def create_sandbox(self) -> JSON:
+        """Create an isolated demo account; the returned token is a secret."""
+        return self._request("POST", "/sandboxes", {}, control=True, retry=False)
+
+    def calendar_events(self, start: str | None = None, end: str | None = None) -> JSON:
+        return self._request("GET", "/calendar/events", params={"from": start, "to": end}, control=True)
+
+    def pass_odds(self, days: int = 20, samples: int = 1000, *,
+                  playbook: str | None = None, seed: str | None = None) -> JSON:
+        """Derived historical estimate, not a prediction; insufficient history is 422."""
+        return self._request("GET", "/account/pass-odds", scoped=True,
+                             params={"days": days, "samples": samples, "playbook": playbook, "seed": seed})
+
+    def strategy_template(self, symbol: str, expiry: str, template: JSON, *,
+                          min_strike: float | None = None, max_strike: float | None = None) -> JSON:
+        return self._request("GET", "/strategy-template", params={"symbol": symbol, "expiry": expiry,
+                             "template": json.dumps(template, allow_nan=False),
+                             "min_strike": min_strike, "max_strike": max_strike})
+
+    def replay_history(self) -> JSON:
+        return self._request("GET", "/replay/history", control=True)
+
+    def get_replay(self, run_id: str) -> JSON:
+        return self._request("GET", "/replay/history/" + quote(run_id, safe=""), control=True)
 
     def list_replays(self) -> ReplayListing:
         return self._request("GET", "/replay", control=True)

@@ -83,7 +83,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     server = MCPServer("openport", instructions=(
         "Trades a paper simulator only, on data openportd has, often delayed. "
         "Check as_of, feed and simulated on every result. Money is decimal text. "
-        "Writes require OPENPORT_WRITE_TOKEN and an account, except sandbox tokens default to their own account. Preview before placing an order. "
+        "Writes require OPENPORT_WRITE_TOKEN and an account, except sandbox tokens default to their own account. Preview before placing an order; preview_change before modifying one. Review staged orders before sending. "
         "Reuse client_order_id if repeating an order after an uncertain response."))
 
     def selected(account: str | None = None, replay: bool = False):
@@ -309,5 +309,166 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     def stop_replay(account: str) -> dict:
         """Stop the replay; its journal remains available in history."""
         return write(account, True, lambda target: target.stop_replay())
+
+    @server.tool()
+    def fills(account: str | None = None, replay: bool = False) -> dict:
+        """Paper fills, including exact prices and observed quote times."""
+        target = selected(account, replay)
+        return result(target, lambda: target.fills())
+
+    @server.tool()
+    def trades(status: str = "all", account: str | None = None, replay: bool = False) -> dict:
+        """Journal trades and their notes."""
+        target = selected(account, replay)
+        return result(target, lambda: target.trades(status))
+
+    @server.tool()
+    def equity(start: str | None = None, end: str | None = None, limit: int = 500, account: str | None = None, replay: bool = False) -> dict:
+        """Account equity samples; money stays decimal text."""
+        target = selected(account, replay)
+        return result(target, lambda: target.equity(start, end, limit=limit))
+
+    @server.tool()
+    def candles(symbol: str, interval: str = "5m", limit: int = 500, account: str | None = None, replay: bool = False) -> dict:
+        """Observed OHLC bars, oldest first, with market timestamps."""
+        target = selected(account, replay)
+        return result(target, lambda: target.candles(symbol, interval, limit))
+
+    @server.tool()
+    def surface(symbol: str, expiries: int = 4, window: float = 0.1, account: str | None = None, replay: bool = False) -> dict:
+        """Volatility surface and fit diagnostics; missing estimates stay null."""
+        target = selected(account, replay)
+        return result(target, lambda: target.surface(symbol, expiries, window))
+
+    @server.tool()
+    def calendar_events(start: str | None = None, end: str | None = None, account: str | None = None, replay: bool = False) -> dict:
+        """Supplied calendar events; no inferred event times."""
+        target = selected(account, replay)
+        return result(target, lambda: target.calendar_events(start, end))
+
+    @server.tool()
+    def playbooks(account: str | None = None, replay: bool = False) -> dict:
+        """Versioned playbooks, modes, stages and forward reports. Review a stage before sending it."""
+        target = selected(account, replay)
+        return result(target, lambda: target.playbooks())
+
+    @server.tool()
+    def get_playbook(playbook_id: str, version: int | None = None, account: str | None = None, replay: bool = False) -> dict:
+        """Read a playbook definition, optionally an older version."""
+        target = selected(account, replay)
+        return result(target, lambda: target.get_playbook(playbook_id, version))
+
+    @server.tool()
+    def pass_odds(days: int = 20, samples: int = 1000, playbook: str | None = None, seed: str | None = None, account: str | None = None, replay: bool = False) -> dict:
+        """Seeded historical pass estimate, not a prediction. Requires sufficient history."""
+        target = selected(account, replay)
+        return result(target, lambda: target.pass_odds(days, samples, playbook=playbook, seed=seed))
+
+    @server.tool()
+    def strategy_template(symbol: str, expiry: str, template: dict, account: str | None = None, replay: bool = False) -> dict:
+        """Select option legs without placing an order. Preview the resulting order before sending."""
+        target = selected(account, replay)
+        return result(target, lambda: target.strategy_template(symbol, expiry, template))
+
+    @server.tool()
+    def alerts(account: str | None = None, replay: bool = False) -> dict:
+        """Account alert definitions and trip history."""
+        target = selected(account, replay)
+        return result(target, lambda: target.alerts())
+
+    @server.tool()
+    def what_if(candidates: list[dict], account: str | None = None, replay: bool = False) -> dict:
+        """Compare up to six candidate adjustments on private copies; never trades."""
+        return write(account, replay, lambda target: target.what_if(candidates))
+
+    @server.tool()
+    def preview_change(order_id: str, change: dict, account: str | None = None, replay: bool = False) -> dict:
+        """Preview changed order terms before calling modify_order."""
+        return write(account, replay, lambda target: target.preview_change(order_id, **change))
+
+    @server.tool()
+    def modify_order(order_id: str, change: dict, account: str | None = None, replay: bool = False) -> dict:
+        """Modify a paper order. Call preview_change with the same terms first."""
+        return write(account, replay, lambda target: target.modify_order(order_id, **change))
+
+    @server.tool()
+    def note(trade_id: str, note: str = "", tags: list[str] | None = None, account: str | None = None, replay: bool = False) -> dict:
+        """Save a trade journal note and tags."""
+        return write(account, replay, lambda target: target.note(trade_id, note, tags))
+
+    @server.tool()
+    def day_note(day: str, plan: str = "", review: str = "", account: str | None = None, replay: bool = False) -> dict:
+        """Save a New York trading day plan and review."""
+        return write(account, replay, lambda target: target.day_note(day, plan, review))
+
+    @server.tool()
+    def create_alert(scope: str, metric: str, direction: str, level: str, terms: dict | None = None, account: str | None = None, replay: bool = False) -> dict:
+        """Create a paper account, contract, spread or underlying alert."""
+        return write(account, replay, lambda target: target.create_alert(scope, metric, direction, level, **(terms or {})))
+
+    @server.tool()
+    def delete_alert(alert_id: str, account: str | None = None, replay: bool = False) -> dict:
+        """Remove an account alert."""
+        return write(account, replay, lambda target: target.delete_alert(alert_id))
+
+    @server.tool()
+    def create_playbook(definition: dict, account: str | None = None, replay: bool = False) -> dict:
+        """Create a versioned definition; requires admin scope and starts off."""
+        return write(account, replay, lambda target: target.create_playbook(definition))
+
+    @server.tool()
+    def version_playbook(definition: dict, account: str | None = None, replay: bool = False) -> dict:
+        """Save a new version using the current version as concurrency guard; admin scope."""
+        return write(account, replay, lambda target: target.version_playbook(definition))
+
+    @server.tool()
+    def archive_playbook(playbook_id: str, version: int, account: str | None = None, replay: bool = False) -> dict:
+        """Archive a playbook at its current version; admin scope."""
+        return write(account, replay, lambda target: target.archive_playbook(playbook_id, version))
+
+    @server.tool()
+    def playbook_mode(playbook_id: str, mode: Literal["off", "stage", "auto"], account: str | None = None, replay: bool = False) -> dict:
+        """Set mode; auto permits future paper orders. Requires admin scope. Prefer stage for review."""
+        return write(account, replay, lambda target: target.playbook_mode(playbook_id, mode))
+
+    @server.tool()
+    def send_staged_order(stage_id: str, account: str | None = None, replay: bool = False) -> dict:
+        """Send a reviewed stage through fresh engine risk checks. Read playbooks and preview its order first."""
+        return write(account, replay, lambda target: target.send_staged_order(stage_id))
+
+    @server.tool()
+    def dismiss_staged_order(stage_id: str, account: str | None = None, replay: bool = False) -> dict:
+        """Dismiss a staged playbook order."""
+        return write(account, replay, lambda target: target.dismiss_staged_order(stage_id))
+
+    @server.tool()
+    def notifications() -> dict:
+        """Nonsecret delivery status; no destinations or credentials."""
+        return result(client, client.notifications)
+
+    @server.tool()
+    def list_backtests(playbook: str | None = None) -> dict:
+        """Saved simulated batch runs, optionally filtered by playbook ID/version."""
+        return result(client, lambda: client.list_backtests(playbook))
+
+    @server.tool()
+    def get_backtest(run_id: str) -> dict:
+        """Progress and saved report for a simulated batch."""
+        return result(client, lambda: client.get_backtest(run_id))
+
+    @server.tool()
+    def compare_backtests(run_ids: list[str]) -> dict:
+        """Compare 2–8 saved runs; mismatched input/plan warnings remain visible."""
+        return result(client, lambda: client.compare_backtests(run_ids))
+
+    @server.tool()
+    def start_backtest(playbook: str | list[str], plan: str | dict, settings: dict | None = None) -> dict:
+        """Start a simulated batch; requires replay scope. settings supplies days/scenarios, seed and workers."""
+        return write("main", False, lambda target: target.start_backtest(playbook, plan, **(settings or {})))
+
+    @server.tool()
+    def cancel_backtest(run_id: str) -> dict:
+        """Cancel a running batch; requires replay scope."""
+        return write("main", False, lambda target: target.cancel_backtest(run_id))
 
     return server

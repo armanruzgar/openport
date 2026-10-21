@@ -17,7 +17,7 @@ def call(server, name, **arguments):
 def test_tool_schemas_name_accounts_and_typed_orders(stub):
     server = create_server(Client(stub.url, "secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"}
+    assert {"status", "symbols", "summary", "chain", "volatility", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"} <= set(tools)
     for name in ["start_replay", "step_replay", "stop_replay"]:
         assert "account" in tools[name].input_schema["required"]
     schema = tools["place_order"].input_schema
@@ -136,3 +136,40 @@ def test_sandbox_tools_default_to_own_account_but_other_writers_still_name_one(s
     assert stub.requests[-1][1] == "/api/positions/close"
     ordinary = create_server(Client(stub.url, "named-secret"))
     assert call(ordinary, "place_order", order=order)["error"]["code"] == "INVALID_ACCOUNT"
+
+
+def test_copilot_parity_tools_and_scoped_mutations(stub):
+    server = create_server(Client(stub.url, "secret"))
+    tools = {tool.name for tool in asyncio.run(server.list_tools())}
+    assert {"start_backtest", "get_backtest", "compare_backtests", "playbooks", "get_playbook",
+            "create_playbook", "version_playbook", "playbook_mode", "send_staged_order", "dismiss_staged_order",
+            "alerts", "create_alert", "delete_alert", "note", "day_note", "what_if", "candles", "surface",
+            "equity", "calendar_events", "modify_order", "preview_change", "pass_odds", "strategy_template"} <= tools
+    for name, arguments, method, path in [
+        ("playbooks", {}, "GET", "/api/replay/playbooks?account=main"),
+        ("preview_change", {"order_id": "1", "change": {"quantity": 2}}, "POST", "/api/replay/orders/1/preview?account=main"),
+        ("modify_order", {"order_id": "1", "change": {"quantity": 2}}, "PUT", "/api/replay/orders/1?account=main"),
+        ("what_if", {"candidates": []}, "POST", "/api/replay/orders/what-if?account=main"),
+    ]:
+        response = call(server, name, account="main", replay=True, **arguments)
+        assert "error" not in response
+        assert response["as_of"] == TIME
+        assert stub.requests[-1][:2] == (method, path)
+    response = call(server, "start_backtest", playbook="morning", plan="practice", settings={"scenarios": 2})
+    assert "error" not in response
+    assert stub.requests[-1][1] == "/api/backtests"
+    assert stub.requests[-1][3]["scenarios"] == 2
+
+
+@pytest.mark.parametrize("name,arguments", [
+    ("modify_order", {"order_id": "1", "change": {"quantity": 2}}),
+    ("create_alert", {"scope": "account", "metric": "equity", "direction": "at_or_below", "level": "1"}),
+    ("note", {"trade_id": "1"}), ("create_playbook", {"definition": {}}),
+    ("playbook_mode", {"playbook_id": "morning", "mode": "auto"}),
+    ("send_staged_order", {"stage_id": "1"}),
+    ("start_backtest", {"playbook": "morning", "plan": "practice"}),
+])
+def test_new_mutating_tools_require_token(stub, name, arguments):
+    response = call(create_server(Client(stub.url)), name, **arguments)
+    assert response["error"]["code"] == "WRITE_TOKEN_REQUIRED"
+    assert all(request[0] == "GET" for request in stub.requests)

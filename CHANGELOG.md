@@ -1,5 +1,11 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- Python client coverage for every documented HTTP operation, with a contract parity guard.
+- MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
+  market views and order changes, retaining account scopes and preview guidance.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

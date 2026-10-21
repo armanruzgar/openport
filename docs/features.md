@@ -417,3 +417,11 @@ A confirmation names the new destination (for example, **Send to live account
 Practice**); cancelling sends nothing. Closing and reopening the action also
 selects the current destination. This applies to order changes, cancellations,
 flattening, exits, stock/strategy actions, and settings writes as well as tickets.
+
+## Programmability
+
+The Python client covers the documented HTTP API, including playbooks, staged
+orders, notifications, sandbox creation, calendar events, templates and pass odds.
+A contract parity test guards new operations. MCP tools add backtests, playbooks,
+alerts, journals, what-if and order-change previews to the copilot. All writes
+remain paper trading and use the server’s token scopes. See [Python](../python/README.md).

@@ -187,3 +187,15 @@ keep `error` as string/null and add failure wall/market timestamps and
 `error_recovered`. `account()` and account listings expose a nullable `damaged`
 object with the last verified sequence/time and recovery instructions; a damaged
 account remains readable and refuses writes with `ACCOUNT_DAMAGED`.
+
+Client parity includes `get_order`, `playbooks`, `get_playbook(id, version)`,
+`create_playbook`, `version_playbook` (pass the current version), `archive_playbook`,
+`playbook_mode`, `send_staged_order`, `dismiss_staged_order`, `notifications`,
+`test_notification`, `configure_notification`, `create_sandbox`, `calendar_events`,
+`pass_odds`, `strategy_template`, `replay_history` and `get_replay`. Notification
+status comes from `status`; configuration/test require admin. Sandbox creation
+returns a secret token; store it privately. MCP intentionally omits credential
+issuance and notification administration. It exposes the other copilot reads and
+playbook, alert, journal, what-if, backtest and order-change tools. Preview before
+placing or modifying orders; review staged terms before sending. Playbook
+definition/mode changes require admin; ordinary trade scope cannot enable auto.
