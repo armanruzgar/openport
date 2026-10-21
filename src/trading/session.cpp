@@ -1817,7 +1817,8 @@ Decision exposure_check(const State& s, const Order& o, const Measures& snapshot
   std::vector<const Order*> working;
   for (const auto id : open_ids(s))
     if (const auto& other = s.orders[id - 1]; other.id != o.id && !shadowed(s, other)) working.push_back(&other);
-  const auto without = portfolio_risk(s.ledger, working, s.contracts, s.valuations, s.config.limits, s.time, snapshot.stock_prices, s.config.scenarios, risk_tags(s));
+  const auto without = portfolio_risk(s.ledger, working, s.contracts, s.valuations, s.config.limits, s.time,
+      snapshot.stock_prices, s.config.scenarios, risk_tags(s), {&o});
   return check_exposure(snapshot.risk, without);
 }
 Decision walk_check(const Order& o, Money tick, Money cap_tick) {

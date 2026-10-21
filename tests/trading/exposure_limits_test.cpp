@@ -83,6 +83,62 @@ TEST(ExposureLimits, AddingATagReservesTheExistingFungiblePositionBeforeTheFill)
   EXPECT_EQ(after.scopes.at("tag:hedge").reachable.delta_high, 750000);
   const auto decision = check_exposure(after, before);
   EXPECT_EQ(decision.code, Reason::DELTA_LIMIT); EXPECT_EQ(decision.scope, "tag:hedge");
+  // Valued over the same positions, the add still raises the scope; a tagged sell lowers it.
+  const auto scoped = portfolio_risk(ledger, {}, contracts, values, limits, f.time, {}, {}, {}, {&order});
+  EXPECT_EQ(scoped.scopes.at("tag:hedge").position.dollar_delta, 500000);
+  EXPECT_EQ(check_exposure(after, scoped).code, Reason::DELTA_LIMIT);
+  order.request.side = Side::Sell;
+  const auto trim = portfolio_risk(ledger, {&order}, contracts, values, limits, f.time);
+  EXPECT_EQ(check_exposure(trim, before).code, Reason::DELTA_LIMIT);
+  EXPECT_TRUE(check_exposure(trim, portfolio_risk(ledger, {}, contracts, values, limits, f.time, {}, {}, {}, {&order})).ok());
+}
+TEST(ExposureLimits, ATaggedCloseOfAnUntaggedBookOverItsScopeCapPasses) {
+  test::ScriptedMarket f;
+  SessionConfig config; config.limits.aggregate = {1e9, 1e9}; config.limits.per_underlying = {1e9, 1e9};
+  ExposureLimits caps{1e9, 1e9}; caps.theta = 1e9;
+  config.limits.tag_overrides["hedge"] = caps;
+  TradingSession session(config, f.time); f.seed(session);
+  ASSERT_TRUE(session.submit(f.market("short", 2, Side::Sell), f.time).decision.ok());
+  const auto theta = std::abs(session.snapshot()->risk.aggregate.position.theta);
+  ASSERT_GT(theta, 0);
+  auto limits = config.limits;
+  limits.tag_overrides["hedge"].theta = theta / 5;
+  ASSERT_TRUE(session.set_limits(limits, f.time).decision.ok());
+  auto add = f.market("add", 1, Side::Sell); add.tags = {"hedge"};
+  const auto refused = session.submit(add, f.time);
+  EXPECT_EQ(refused.decision.code, Reason::THETA_LIMIT); EXPECT_EQ(refused.decision.scope, "tag:hedge");
+  auto cover = f.market("cover", 1); cover.tags = {"hedge"};
+  EXPECT_TRUE(session.submit(cover, f.time).decision.ok());
+}
+TEST(ExposureLimits, RememberedGridsFollowValuationsQuantitiesAndFreshness) {
+  test::ScriptedMarket f;
+  Contracts contracts{{f.symbol(), f.contract}};
+  Limits limits; limits.aggregate = {1e9, 1e9}; limits.per_underlying = {1e9, 1e9};
+  limits.aggregate.worst_grid_loss = 1e9;
+  const auto direct = [&](const Ledger& ledger, const Valuations& values, Timestamp now) {
+    const auto grid = scenario_grid(ledger, values, {}, now, limits.max_valuation_age);
+    double loss = 0;
+    for (const auto& cell : grid.cells) loss = std::max(loss, -cell.pnl);
+    return std::pair(grid.complete, loss);
+  };
+  const auto check = [&](const Ledger& ledger, const Valuations& values, Timestamp now) {
+    for (int repeat = 0; repeat < 2; ++repeat) {
+      const auto risk = portfolio_risk(ledger, {}, contracts, values, limits, now);
+      const auto [complete, loss] = direct(ledger, values, now);
+      EXPECT_EQ(risk.complete, complete);
+      ASSERT_TRUE(risk.aggregate.worst_grid_loss);
+      EXPECT_EQ(*risk.aggregate.worst_grid_loss, loss);
+    }
+  };
+  Ledger ledger; ledger.fill(f.contract, -1, Money::parse("4"), {});
+  Valuations values{{f.symbol(), f.valuation()}};
+  check(ledger, values, f.time);
+  auto moved = f.valuation(); moved.smile_iv += 0.05; moved.forward *= 1.01;
+  check(ledger, {{f.symbol(), moved}}, f.time);
+  ledger.fill(f.contract, -2, Money::parse("4"), {});
+  check(ledger, values, f.time);
+  check(ledger, values, f.time + 10 * limits.max_valuation_age);  // stale: incomplete, not remembered
+  EXPECT_FALSE(portfolio_risk(ledger, {}, contracts, values, limits, f.time + 10 * limits.max_valuation_age).complete);
 }
 TEST(ExposureLimits, NewCapsRoundTripAndLooseningWaitsForRollover) {
   Limits current, requested;

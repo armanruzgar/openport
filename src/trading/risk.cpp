@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <array>
 #include <tuple>
+#include <unordered_map>
 
 #include "openport/pricing/black.hpp"
 
@@ -103,6 +105,55 @@ std::optional<BreachLevel> solve_level(const std::function<std::optional<double>
   else if (sigma) level.touch_probability = 0;  // no session left today
   return level;
 }
+/// scenario_grid, remembered. measure() values the held book and every open
+/// order's legs per underlying, again for each order check without the order,
+/// and pricing those grids is most of its cost. The key holds every input the
+/// grid reads (each position's contract, quantity, pricing fields and whether its
+/// valuation is usable now, the shares and their prices, and the configuration),
+/// so a hit returns exactly what scenario_grid would. Only the multi-day and
+/// beta-weighted grids read the clock itself. Each thread keeps its own, so
+/// reading takes no lock.
+ScenarioGrid cached_grid(const Ledger& ledger, const Valuations& valuations, const ScenarioConfig& config,
+    Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices = {}) {
+  std::string key;
+  const auto put = [&](const auto& value) {
+    char bytes[sizeof(value)];
+    std::memcpy(bytes, &value, sizeof(value));
+    key.append(bytes, sizeof(value));
+  };
+  const auto text = [&](const std::string& value) { put(value.size()); key += value; };
+  const auto list = [&](const std::vector<double>& values) { put(values.size()); for (const double x : values) put(x); };
+  list(config.spot_percent); list(config.vol_points); list(config.days);
+  put(config.vol_floor); put(config.beta_weighted); put(config.term_scaled);
+  put(config.betas.size());
+  for (const auto& [name, beta] : config.betas) { text(name); put(beta); }
+  if (config.days != std::vector<double>{0} || config.beta_weighted || config.term_scaled) put(now);
+  put(ledger.positions().size());
+  for (const auto& [symbol, p] : ledger.positions()) {
+    text(symbol); text(p.contract.underlying);
+    put(p.quantity); put(p.contract.type); put(p.contract.strike); put(p.contract.expiry_time());
+    const auto it = valuations.find(symbol);
+    const bool usable = now < p.contract.expiry_time() && it != valuations.end() && fresh(it->second, p.contract, now, max_age);
+    put(usable);
+    if (usable) {
+      const auto& v = it->second;
+      put(v.spot); put(v.forward); put(v.discount); put(v.years); put(v.smile_iv);
+    }
+  }
+  put(ledger.stocks().size());
+  for (const auto& [symbol, stock] : ledger.stocks()) {
+    text(symbol); put(stock.shares);
+    const auto price = stock_prices.find(symbol);
+    put(price != stock_prices.end());
+    if (price != stock_prices.end()) put(price->second);
+  }
+  thread_local std::unordered_map<std::string, ScenarioGrid> grids;
+  if (const auto found = grids.find(key); found != grids.end()) return found->second;
+  auto grid = scenario_grid(ledger, valuations, config, now, max_age, stock_prices);
+  if (grids.size() >= 512) grids.clear();
+  grids.emplace(std::move(key), grid);
+  return grid;
+}
 }  // namespace
 Timestamp observation_time(const md::OptionContract& contract, Timestamp now) {
   const auto session = md::trading_session(contract.root, now);
@@ -114,7 +165,8 @@ RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*
     const Contracts& contracts,
     const Valuations& valuations, const Limits& limits, Timestamp now,
     const std::map<std::string, double>& stock_prices, const ScenarioConfig& scenarios,
-    const std::map<std::string, std::vector<std::string>>& position_tags) {
+    const std::map<std::string, std::vector<std::string>>& position_tags,
+    const std::vector<const Order*>& scope_orders) {
   RiskSnapshot result;
   result.aggregate.limits = limits.aggregate;
   // Each contract's fresh valuation, looked up once however many orders trade it.
@@ -194,7 +246,7 @@ RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*
     for (const auto& [symbol, p] : ledger.stocks()) if (underlying.empty() || symbol == underlying) stocks[symbol] = p;
     std::vector<double> losses;
     if (bucket.limits.worst_grid_loss) {
-      const auto grid = scenario_grid(Ledger::restore({}, positions, stocks), valuations, scenarios, now, limits.max_valuation_age, stock_prices);
+      const auto grid = cached_grid(Ledger::restore({}, positions, stocks), valuations, scenarios, now, limits.max_valuation_age, stock_prices);
       result.complete &= grid.complete;
       for (const auto& cell : grid.cells) losses.push_back(-cell.pnl);
     }
@@ -212,7 +264,7 @@ RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*
         for (const auto& l : order->request.legs) leg(l.symbol, order->remaining() * l.ratio * (l.side == Side::Buy ? 1 : -1));
       else leg(order->request.symbol, order->remaining() * (order->request.side == Side::Buy ? 1 : -1));
       if (bucket.limits.worst_grid_loss && !pending.empty()) {
-        const auto grid = scenario_grid(Ledger::restore({}, pending), valuations, scenarios, now, limits.max_valuation_age);
+        const auto grid = cached_grid(Ledger::restore({}, pending), valuations, scenarios, now, limits.max_valuation_age);
         result.complete &= grid.complete;
         for (std::size_t i = 0; i < losses.size(); ++i) losses[i] += std::max(0.0, -grid.cells[i].pnl);
       }
@@ -234,12 +286,15 @@ RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*
         const auto found = position_tags.find(symbol);
         if (found != position_tags.end() && matches(found->second)) return true;
         // Adding a tag to an existing fungible position scopes that whole
-        // position once filled; reserve it before accepting the order too.
-        return std::any_of(orders.begin(), orders.end(), [&](const auto* order) {
+        // position once filled; reserve it before accepting the order too. The
+        // order checked is a scope order of its `without` snapshot, so both
+        // value the same positions and a reducing order is not charged for them.
+        const auto tags = [&](const auto* order) {
           if (!order->open() || !matches(order->request.tags)) return false;
           if (!multi_leg(order->request)) return order->request.symbol == symbol;
           return std::any_of(order->request.legs.begin(), order->request.legs.end(), [&](const auto& leg) { return leg.symbol == symbol; });
-        });
+        };
+        return std::any_of(orders.begin(), orders.end(), tags) || std::any_of(scope_orders.begin(), scope_orders.end(), tags);
       };
       std::map<std::string, Position> positions;
       std::map<std::string, StockPosition> stocks;
