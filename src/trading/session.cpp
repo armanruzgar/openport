@@ -4988,6 +4988,8 @@ TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared
   validate_guardrails(config.guardrails);
   if (time < 0) throw TradingError(Reason::INVALID_TIME, "Negative session time");
   if (config.fee_per_contract < Money{}) throw TradingError(Reason::INVALID_MONEY, "Fee cannot be negative");
+  // As reset_account requires: percentage rules and payouts work from this balance.
+  if (config.initial_cash <= Money{}) throw TradingError(Reason::INVALID_MONEY, "Starting balance must be positive");
   if (journal && journal->sequence() != 0) throw TradingError(Reason::JOURNAL_CORRUPT, "Use recover for a nonempty journal");
   impl_->actor = std::move(actor);
   impl_->state.config = std::move(config);
@@ -6342,6 +6344,10 @@ CommandResult TradingSession::exercise(const std::string& symbol, Quantity contr
     if (s.config.rules.buy_only && contract.type == pricing::OptionType::Put &&
         -delivered(contract, contracts) > std::max<Quantity>(0, shares_held(s, contract.underlying)))
       return CommandResult{failure(Reason::BUY_ONLY, "This plan is buy-only: put exercise would sell shares short; hold enough long shares first"), {}, 0};
+    // As a share sale would be: defined risk allows no short shares.
+    if (s.config.rules.defined_risk && contract.type == pricing::OptionType::Put &&
+        -delivered(contract, contracts) > std::max<Quantity>(0, shares_held(s, contract.underlying)))
+      return CommandResult{failure(Reason::DEFINED_RISK, "This plan allows defined risk only: put exercise would sell shares short, which can lose without limit"), {}, 0};
     if (const auto d = defined_risk_check(s, {{symbol, -contracts}},
                                           "Exercising this long would leave a short option uncovered; close the short first");
         !d.ok())

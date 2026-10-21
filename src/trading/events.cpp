@@ -116,7 +116,11 @@ std::vector<EventWindow> event_windows(const AccountRules& r, Timestamp from, Ti
   const auto append = [&](EventWindow w) { if (w.start <= to && w.end > from) out.push_back(std::move(w)); };
   const auto holding = [&](const std::string& kind, const std::string& symbol,
                            const std::string& label, md::Date day) {
-    append({kind + ":" + md::format_date(day) + ":" + symbol, kind, symbol, label, at(day, r.hold_cutoff), at(day, r.day_end_minutes)});
+    // An early close moves the cutoff as much earlier (15:45 becomes 12:45 before a
+    // 13:00 close), so openings stop and positions close while the market still trades.
+    const auto close = std::int64_t{md::regular_close_hour(day)} * 60;
+    const auto cutoff = close < 16 * 60 ? std::max<std::int64_t>(0, r.hold_cutoff - (16 * 60 - close)) : r.hold_cutoff;
+    append({kind + ":" + md::format_date(day) + ":" + symbol, kind, symbol, label, at(day, cutoff), at(day, r.day_end_minutes)});
   };
   for (std::size_t i = 0; i < r.events.size(); ++i) {
     const auto& e = r.events[i];

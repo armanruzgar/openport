@@ -135,6 +135,29 @@ TEST(TradingDelivery, BuyOnlyPutExerciseRechecksSharesAfterASale) {
   EXPECT_EQ(s.exercise(put.osi_symbol(), 1, f.time).decision.code, Reason::BUY_ONLY);
 }
 
+TEST(TradingDelivery, DefinedRiskPutExerciseCannotOpenShortShares) {
+  const auto put = *md::parse_osi("SPY261022P00520000");
+  Spy f; AccountRules rules; rules.defined_risk = true;
+  TradingSession s(roomy(rules), f.time);
+  f.define(s, put); f.quote(s, put, "10", "10.20");
+  ASSERT_TRUE(s.submit(f.market("put", put, 1), f.time).decision.ok());
+  EXPECT_EQ(s.trade_stock("SPY", -100, f.time).decision.code, Reason::DEFINED_RISK);
+  EXPECT_EQ(s.exercise(put.osi_symbol(), 1, f.time).decision.code, Reason::DEFINED_RISK);
+  // With the shares to deliver, it only closes them.
+  ASSERT_TRUE(s.trade_stock("SPY", 100, f.time).decision.ok());
+  EXPECT_TRUE(s.exercise(put.osi_symbol(), 1, f.time).decision.ok());
+}
+
+TEST(TradingDelivery, ASessionNeedsAPositiveStartingBalanceAsAResetDoes) {
+  Spy f;
+  for (const auto* cash : {"0", "-1"}) {
+    auto c = roomy();
+    c.initial_cash = m(cash);
+    try { TradingSession s(c, f.time); FAIL() << cash; }
+    catch (const TradingError& error) { EXPECT_EQ(error.code(), Reason::INVALID_MONEY); }
+  }
+}
+
 TEST(TradingDelivery, KillAllowsShareClosesAndFlattenButRejectsExercise) {
   const auto call = *md::parse_osi("SPY261022C00500000");
   for (const bool daily : {false, true}) {
