@@ -147,6 +147,32 @@ TEST(Databento, AReusedIdFollowsItsLatestDefinitionAndAContractKeepsItsId) {
   EXPECT_EQ(quote_for(77, 30), 0u);
 }
 
+TEST(Databento, VolumeIsNotPublishedAsTheDaysAfterAGapUntilTheNextDay) {
+  Collector sink;
+  providers::DatabentoMapper mapper(sink);
+  auto put = definition(4242, "SPXW  261005P07405000", db::InstrumentClass::Put);
+  feed(mapper, put);
+  const auto trade_at = [&](md::Timestamp ts) {
+    db::TradeMsg trade{};
+    stamp(trade, db::RType::Mbp0, 4242, static_cast<std::uint64_t>(ts));
+    trade.price = 45 * kScale / 10;
+    trade.size = 3;
+    feed(mapper, trade);
+  };
+  const auto morning = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  trade_at(morning);
+  ASSERT_EQ(sink.all<md::OptionVolume>().size(), 1u);
+  mapper.volume_gap(morning + md::kNanosPerMinute);
+  trade_at(morning + 2 * md::kNanosPerMinute);
+  EXPECT_EQ(sink.all<md::OptionVolume>().size(), 1u);
+  EXPECT_EQ(sink.all<md::OptionTrade>().size(), 2u);  // the prints themselves still flow
+  const auto next = md::new_york_to_utc({2026, 9, 23}, 10, 0);
+  trade_at(next);
+  const auto volumes = sink.all<md::OptionVolume>();
+  ASSERT_EQ(volumes.size(), 2u);
+  EXPECT_DOUBLE_EQ(volumes.back().contracts, 3.0);
+}
+
 TEST(Databento, DropsRecordsForUndefinedInstrumentsAndHandlesEmptySides) {
   Collector sink;
   providers::DatabentoMapper mapper(sink);

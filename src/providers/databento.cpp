@@ -167,7 +167,14 @@ void DatabentoMapper::on_trade(const db::TradeMsg& msg) {
   if (date != volume.date) volume = {date, 0, ts};
   volume.contracts += static_cast<double>(msg.size);
   volume.ts = std::max(volume.ts, ts);
+  // After a gap the sum misses trades: it is not the day's volume until the next day.
+  if (gap_date_ && date <= *gap_date_) return;
   sink_.publish(md::OptionVolume{id, volume.ts, volume.contracts});
+}
+
+void DatabentoMapper::volume_gap(md::Timestamp now) {
+  const auto date = md::trading_date(now);
+  gap_date_ = gap_date_ ? std::max(*gap_date_, date) : date;
 }
 
 void DatabentoMapper::on_statistic(const db::StatMsg& msg) {
@@ -251,7 +258,8 @@ void DatabentoProvider::start(const md::Subscription& subscription, md::EventSin
                              options_.quotes == QuoteSchema::Cbbo1s ? db::Schema::Cbbo1S
                                                                     : db::Schema::Cmbp1,
                              db::SType::Parent);
-  if (options_.trades) session->client->Subscribe(symbols, db::Schema::Trades, db::SType::Parent);
+  // Trades replay too: OptionVolume is the day's cumulative volume, not since connect.
+  if (options_.trades) session->client->Subscribe(symbols, db::Schema::Trades, db::SType::Parent, replay_from);
 
   Session* raw = session.get();
   session->client->Start(
@@ -277,6 +285,8 @@ void DatabentoProvider::start(const md::Subscription& subscription, md::EventSin
         };
         report(error.what());
         raw->mapper.reset_health();
+        // A resubscription replays nothing, so the trades of the outage are lost.
+        raw->mapper.volume_gap(md::now());
         const bool recovered = raw->recovery.recover(
             [raw] { raw->client->Reconnect(); }, [raw] { raw->client->Resubscribe(); },
             [raw](std::chrono::seconds delay) { return raw->wait(delay); }, report);

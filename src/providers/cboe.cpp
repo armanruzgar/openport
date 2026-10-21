@@ -468,7 +468,8 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
     parse_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     return parsed;
   };
-  bool read_page = page_until_[underlying] > now;
+  const bool holding = page_until_[underlying] > now;
+  bool read_page = holding;
   if (read_page && now - page_fetched_[underlying] < std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_interval).count())
     return "cboe " + underlying + " (page): waiting for Cboe's next page, about once a minute";
   if (!read_page) {
@@ -491,7 +492,9 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
         response = std::move(page);
         have = true;
         source = "page";
-        page_until_[underlying] = now + std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_hold).count();
+        // The hold starts when the page beats the file, and is not extended by
+        // reading the page during it: the file is tried again when it ends.
+        if (!holding) page_until_[underlying] = now + std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_hold).count();
       }
     }
     // A page no fresher than the file (both idle overnight, say) is left alone for a while.

@@ -197,10 +197,15 @@ void ThetaDataProvider::publish_chain(const std::string& underlying,
     }
   }
   if (spot > 0.0) sink.publish(md::UnderlyingQuote{underlying, spot_ts, 0.0, 0.0, spot});
+  // The IV snapshot may fail or carry no clock: a strike window then uses the last
+  // spot, and with none yet defines nothing new rather than the whole chain.
+  auto& window_spot = window_spots_[underlying];
+  if (spot > 0.0) window_spot = spot;
+  const bool waiting = subscription.strike_window > 0 && window_spot <= 0.0;
 
   std::set<md::Date> expiries;
   for (const ThetaRow& row : quotes) expiries.insert(row.expiry);
-  const ChainFilter filter(subscription, md::date_from_days(md::now() / md::kNanosPerDay), spot,
+  const ChainFilter filter(subscription, md::date_from_days(md::now() / md::kNanosPerDay), window_spot,
                            expiries);
 
   auto contract_of = [](const ThetaRow& row) {
@@ -228,7 +233,7 @@ void ThetaDataProvider::publish_chain(const std::string& underlying,
   for (const ThetaRow& row : quotes) {
     md::OptionContract contract = contract_of(row);
     const std::string symbol = contract.osi_symbol();
-    if (!publisher_.known(symbol) && !filter.admits(contract)) continue;
+    if (!publisher_.known(symbol) && (waiting || !filter.admits(contract))) continue;
     check_cancelled();
     const md::InstrumentId id = publisher_.define(symbol, std::move(contract), sink);
     seen.insert(id);

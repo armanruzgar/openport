@@ -88,6 +88,22 @@ TEST(ThetaData, MergesQuotesImpliedVolsAndOpenInterest) {
   EXPECT_EQ(md::format_timestamp(spot[0].ts), "2026-09-22T19:33:42.100Z");
 }
 
+TEST(ThetaData, AStrikeWindowWaitsForASpotAndKeepsTheLastOne) {
+  providers::ThetaDataProvider provider;
+  Collector sink;
+  md::Subscription subscription;
+  subscription.strike_window = 0.04;  // 7800 and 8000 around 7777.27; 7405 is outside
+  const auto quotes = providers::parse_theta_rows(kQuotes);
+  // The IV snapshot failed: no spot, so nothing is defined yet.
+  provider.publish_chain("SPX", quotes, {}, {}, subscription, sink);
+  EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
+  provider.publish_chain("SPX", quotes, providers::parse_theta_rows(kImpliedVols), {}, subscription, sink);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 2u);
+  // It fails again: the window keeps the last spot.
+  provider.publish_chain("SPX", quotes, {}, {}, subscription, sink);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 2u);
+}
+
 TEST(ThetaData, UsesTheDocumentedIvRoute) {
   providers::ThetaDataProvider provider;
   test::HttpStub http;
