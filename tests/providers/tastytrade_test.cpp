@@ -154,19 +154,22 @@ TEST(Tastytrade, FiltersWaitForActualSpotAndRetainPreviouslyDefinedOptions) {
   providers::TastytradeMapper mapper({{"SPX"}, 1, .01}, sink);
   mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
   EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
-  EXPECT_EQ(mapper.subscriptions().size(), 3u);
+  EXPECT_EQ(mapper.subscriptions().size(), 2u);  // the underlying's Quote and Trade
   auto spot = quote("$SPX");
   spot["bidPrice"] = 7399;
   spot["askPrice"] = 7401;
   mapper.event(spot);
   EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 4u);
-  EXPECT_EQ(mapper.subscriptions().size(), 19u);
+  // Quote, Greeks and Summary for each option: the only events read for one.
+  EXPECT_EQ(mapper.subscriptions().size(), 14u);
+  EXPECT_FALSE(mapper.subscriptions().contains({"Trade", ".SPX261016C7400"}));
+  EXPECT_FALSE(mapper.subscriptions().contains({"Profile", "$SPX"}));
   sink.events.clear();
   spot["bidPrice"] = 8999;
   spot["askPrice"] = 9001;
   mapper.event(spot);
   EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 1u);
-  EXPECT_EQ(mapper.subscriptions().size(), 23u);
+  EXPECT_EQ(mapper.subscriptions().size(), 17u);
   mapper.event(quote(".SPX261016C7400"));
   EXPECT_EQ(sink.all<md::OptionQuote>().size(), 1u);
 }
@@ -210,7 +213,7 @@ TEST(Tastytrade, CompleteChainRefreshUnsubscribesRemovedAndExpiredOptions) {
   EXPECT_EQ(sink.all<md::OptionQuote>()[0].ts, 0);
   sink.events.clear();
   mapper.chain("SPX", "SPX", chain, {2026, 10, 17});
-  EXPECT_EQ(mapper.subscriptions().size(), 7u);  // only the later expiry and underlying
+  EXPECT_EQ(mapper.subscriptions().size(), 5u);  // only the later expiry and underlying
   EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
 }
 

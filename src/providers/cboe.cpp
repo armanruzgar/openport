@@ -317,7 +317,18 @@ md::Timestamp CboeHolidaySchedule::poll_once(net::HttpClient& http) {
   try {
     const auto response = http.get(kCboeHolidaysUrl, {}, options_.timeout, &stopping_);
     if (response.status != 200) throw std::runtime_error("HTTP " + std::to_string(response.status));
-    for (auto& day : parse_cboe_holidays(response.body)) days_[day.date] = std::move(day);
+    // The latest listing wins: an upcoming day of a year it lists, but no longer this
+    // day (rescinded, or back to a full day), is dropped. Past days, and the rest of a
+    // year once Cboe lists only the next, are kept as seen.
+    auto listed = parse_cboe_holidays(response.body);
+    const auto today = md::new_york_time(now).date;
+    std::set<int> years;
+    for (const auto& day : listed) years.insert(day.date.year);
+    std::erase_if(days_, [&](const auto& entry) {
+      return !(entry.first < today) && years.contains(entry.first.year) &&
+          std::none_of(listed.begin(), listed.end(), [&](const auto& day) { return day.date == entry.first; });
+    });
+    for (auto& day : listed) days_[day.date] = std::move(day);
     std::vector<md::ScheduledDay> all;
     for (const auto& [date, day] : days_) all.push_back(day);
     sink_(std::move(all));

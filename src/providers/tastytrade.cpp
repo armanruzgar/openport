@@ -193,11 +193,12 @@ std::set<DxlinkSubscription> TastytradeMapper::subscriptions() const {
   std::set<DxlinkSubscription> result;
   for (const auto& [symbol, underlying] : underlyings_) {
     (void)underlying;
-    for (const auto* type : {"Quote", "Trade", "Profile"}) result.insert({type, symbol});
+    for (const auto* type : {"Quote", "Trade"}) result.insert({type, symbol});
   }
+  // Only the events event() reads: each subscription counts toward the 25000 cap.
   for (const auto& [symbol, instrument] : instruments_) {
     (void)instrument;
-    for (const auto* type : {"Quote", "Greeks", "Summary", "Trade"}) result.insert({type, symbol});
+    for (const auto* type : {"Quote", "Greeks", "Summary"}) result.insert({type, symbol});
   }
   if (result.size() > 25000) throw std::runtime_error("tastytrade: exceeds 25000 event subscriptions; use expiry/strike filters");
   return result;

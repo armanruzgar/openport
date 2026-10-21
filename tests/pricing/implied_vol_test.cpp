@@ -104,6 +104,18 @@ TEST(ImpliedVol, RejectsPricesOutsideTheNoArbitrageBounds) {
             IvStatus::BelowIntrinsic);
 }
 
+TEST(ImpliedVol, NoiseLevelTimeValueDeepInTheMoneyIsNotSolved) {
+  // About 19.4 of intrinsic value and 7e-15 of time value: what is left after parity is
+  // the price's rounding, not volatility.
+  const double price = 0.97 * black_price(OptionType::Put, 100.0, 120.0, 5.0, 0.01);
+  EXPECT_EQ(implied_vol_black(price, OptionType::Put, 100.0, 120.0, 5.0, 0.97).status, IvStatus::BelowIntrinsic);
+  // A time value well above the rounding still solves.
+  const double priced = black_price(OptionType::Put, 100.0, 120.0, 5.0, 0.2);
+  const auto iv = implied_vol_black(priced, OptionType::Put, 100.0, 120.0, 5.0);
+  ASSERT_TRUE(iv.ok());
+  EXPECT_NEAR(iv.vol, 0.2, 1e-9);
+}
+
 TEST(ImpliedVol, RejectsInvalidInputs) {
   EXPECT_EQ(implied_vol_black(-1.0, OptionType::Call, 100.0, 90.0, 1.0).status,
             IvStatus::InvalidInput);

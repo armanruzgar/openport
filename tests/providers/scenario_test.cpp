@@ -51,6 +51,21 @@ TEST(Scenarios, BuiltinsAreValidAndUsersOverrideAfterThem) {
   }
 }
 
+TEST(Scenarios, TwoUserFilesWithOneIdAreReported) {
+  test::RecordingFile directory;
+  const auto user = directory.directory / "user";
+  std::filesystem::create_directory(user);
+  auto first = valid(); first["title"] = "First";
+  auto second = valid(); second["title"] = "Second";
+  write(user / "a-fade.json", first);
+  write(user / "b-fade.json", second);
+  std::vector<std::string> errors;
+  const auto loaded = providers::load_scenarios(user, [&](const auto& error) { errors.push_back(error); });
+  EXPECT_EQ(loaded.back().title, "Second");
+  ASSERT_EQ(errors.size(), 1U);
+  EXPECT_NE(errors.front().find("b-fade.json: id custom is also used by a-fade.json"), std::string::npos) << errors.front();
+}
+
 TEST(Scenarios, RejectsInvalidFieldsWithFileAndFieldNames) {
   test::RecordingFile directory;
   const auto path = directory.directory / "invalid.json";

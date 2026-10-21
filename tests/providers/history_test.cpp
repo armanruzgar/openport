@@ -237,6 +237,22 @@ TEST(HistoryImport, ThetaRequestBudgetHonoursRetryAfterAndHasAFiniteRetryLimit) 
   EXPECT_EQ(std::count(waits.begin(), waits.end(), std::chrono::milliseconds(2000)), 3);
 }
 
+TEST(HistoryImport, ThetaRetryAfterOutsideItsRangeBacksOffInsteadOfFailing) {
+  for (const auto* retry : {"120", "0", "Wed, 21 Oct 2026 07:28:00 GMT"}) {
+    SCOPED_TRACE(retry);
+    test::HttpStub http;
+    std::vector<std::chrono::milliseconds> waits;
+    http.respond = [&](std::string_view) -> net::HttpResponse { net::HttpResponse response{429, "private"}; response.headers = {{"Retry-After", retry}}; return response; };
+    auto source = providers::theta_history(http, [&](auto delay) { waits.push_back(delay); });
+    test::DiscardEvents sink;
+    try { source->prepare(request("unused"), {}, sink); FAIL(); }
+    catch (const std::runtime_error& error) { EXPECT_NE(std::string(error.what()).find("HTTP 429"), std::string::npos) << error.what(); }
+    EXPECT_EQ(http.urls.size(), 4U);
+    const auto expected = std::string_view(retry) == "120" ? 60000 : std::string_view(retry) == "0" ? 1000 : 1000;
+    EXPECT_EQ(std::count(waits.begin(), waits.end(), std::chrono::milliseconds(expected)), std::string_view(retry).size() > 3 ? 1 : 3);
+  }
+}
+
 TEST(HistoryImport, ImportedReplayTradesDeterministicallyAndVerifiesOffline) {
   test::RecordingFile file;
   test::HttpStub http;

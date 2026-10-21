@@ -1,6 +1,7 @@
 #include "openport/providers/scenario.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -383,10 +384,16 @@ Scenario parse_scenario(std::string_view source, const std::filesystem::path& fi
 std::vector<Scenario> load_scenarios(const std::filesystem::path& user,
                                     const std::function<void(const std::string&)>& log) {
   auto out = builtin_scenarios();
+  std::map<std::string, std::filesystem::path> loaded;  // user files by scenario id
   try {
     for (const auto& file : files(user)) {
       try {
         auto s = read_scenario(file);
+        // A user file may replace a built-in; two user files with one id is a mistake.
+        if (const auto [it, added] = loaded.try_emplace(s.id, file); !added) {
+          if (log) log(file.string() + ": id " + s.id + " is also used by " + it->second.filename().string() + ", which it replaces");
+          it->second = file;
+        }
         out.erase(std::remove_if(out.begin(), out.end(), [&](const auto& prior) { return prior.id == s.id; }), out.end());
         out.push_back(std::move(s));
       } catch (const std::exception& error) { if (log) log(error.what()); }

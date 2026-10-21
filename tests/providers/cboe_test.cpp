@@ -704,17 +704,30 @@ TEST(CboeHolidays, TheScheduleIsFetchedDailyAndKeepsWhatItSaw) {
   EXPECT_EQ(schedule.poll_once(http), clock + 3600 * md::kNanosPerSecond);
   EXPECT_EQ(schedule.error(), "cboe holiday schedule: HTTP 503");
   EXPECT_EQ(received.size(), 1u);
-  // A special closure appears; next year's schedule no longer lists this year's, which stay.
+  // A special closure appears in the year's listing.
   clock += 3600 * md::kNanosPerSecond;
-  http.respond = [](std::string_view) {
-    return net::HttpResponse{200, "##\nHoliday Name,Date,Regular Trading Hours,Global Trading Hours\n"
-                                  "National Day of Mourning,2026-10-07,None,None\n"};
-  };
+  const std::string mourning = std::string(kHolidays2026) + "National Day of Mourning,2026-10-07,None,None\n";
+  http.respond = [&](std::string_view) { return net::HttpResponse{200, mourning}; };
   schedule.poll_once(http);
   EXPECT_TRUE(schedule.error().empty());
   ASSERT_EQ(received.size(), 2u);
   EXPECT_EQ(received[1].size(), 13u);
   EXPECT_EQ(received[1][8], (md::ScheduledDay{{2026, 10, 7}, "National Day of Mourning", true, 13, 0}));
+  // Rescinded: the year's next listing no longer has it, so it is dropped.
+  clock += 24 * 3600 * md::kNanosPerSecond;
+  http.respond = [](std::string_view) { return net::HttpResponse{200, std::string(kHolidays2026)}; };
+  schedule.poll_once(http);
+  ASSERT_EQ(received.size(), 3u);
+  EXPECT_EQ(received[2].size(), 12u);
+  // Next year's schedule no longer lists this year's, which stay.
+  clock += 24 * 3600 * md::kNanosPerSecond;
+  http.respond = [](std::string_view) {
+    return net::HttpResponse{200, "##\nHoliday Name,Date,Regular Trading Hours,Global Trading Hours\n"
+                                  "New Year's Day,2027-01-01,None,None\n"};
+  };
+  schedule.poll_once(http);
+  ASSERT_EQ(received.size(), 4u);
+  EXPECT_EQ(received[3].size(), 13u);
 }
 
 TEST(Cboe, PublishesReportedVolumeIncludingZeroAndDeduplicatesWithinTheDate) {
