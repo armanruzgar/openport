@@ -7,7 +7,8 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Charles Schwab market data.** `--provider schwab` polls Trader API option
   chains with the underlying quote, open interest, volume, delta and gamma, using
   an OAuth refresh token from the environment. Health follows each response's
-  `isDelayed`. Tested against documentation-shaped samples; not yet run live.
+  `isDelayed`; `isMini`/`isNonStandard` and `mini`/`nonStandard` both mark a
+  nonstandard contract. Tested against documentation-shaped samples; not yet run live.
 - **Alpaca market data.** `--provider alpaca` polls option snapshots for equity
   and ETF underlyings from the free indicative feed (reported as delayed, derived
   quotes) or OPRA with a subscription. Alpaca has no index options, so SPX and

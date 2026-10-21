@@ -47,8 +47,13 @@ void add_options(const Json& map, std::string_view underlying, bool call, std::v
         const double multiplier = number(field(item, "multiplier"), 100);
         if (!(multiplier > 0)) throw std::runtime_error("Schwab: invalid contract size");
         contract->multiplier = multiplier;
-        contract->standard = contract->standard && multiplier == 100 &&
-                             field(item, "nonStandard") != Json(true) && field(item, "mini") != Json(true);
+        // The published schema says isNonStandard and isMini; some clients read
+        // nonStandard and mini. Either spelling marks the contract.
+        const auto flagged = [&](const char* published, const char* observed) {
+          return field(item, published) == Json(true) || field(item, observed) == Json(true);
+        };
+        contract->standard = contract->standard && multiplier == 100 && !flagged("isNonStandard", "nonStandard") &&
+                             !flagged("isMini", "mini");
         SchwabOption option;
         option.contract = *contract;
         option.ts = milliseconds(field(item, "quoteTimeInLong"));

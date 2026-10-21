@@ -96,6 +96,14 @@ TEST(Schwab, RejectsInconsistentOrUntimedContractsAndFailedChains) {
   call["quoteTimeInLong"] = 1790263800000;
   call["nonStandard"] = true;
   EXPECT_FALSE(providers::parse_schwab_chain(json.dump(), "SPX").options[0].contract.standard);
+  // The published schema's spellings count as well.
+  for (const auto* flag : {"isNonStandard", "isMini", "mini"}) {
+    call["nonStandard"] = false;
+    call[flag] = true;
+    EXPECT_FALSE(providers::parse_schwab_chain(json.dump(), "SPX").options[0].contract.standard) << flag;
+    call[flag] = false;
+  }
+  EXPECT_TRUE(providers::parse_schwab_chain(json.dump(), "SPX").options[0].contract.standard);
   EXPECT_THROW((void)providers::parse_schwab_chain(kChain, "SPY"), std::runtime_error);
   EXPECT_THROW((void)providers::parse_schwab_chain(R"({"symbol":"$SPX","status":"FAILED"})", "SPX"), std::runtime_error);
   EXPECT_THROW((void)providers::parse_schwab_chain("not json secret", "SPX"), std::runtime_error);
