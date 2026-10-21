@@ -126,21 +126,187 @@ double atm_vol(const std::vector<StrikeMetrics>& strikes, double forward) {
   return below ? below->iv : (above ? above->iv : kNaN);
 }
 
-/// Dollar gamma per 1% move of one position term, with gamma at a hypothetical spot.
-struct GammaTerm {
-  double amplitude;  ///< weight * discount * forward_per_spot * .01 / (sd * sqrt(2pi))
-  double center;     ///< log(strike / forward_per_spot) - sd^2/2
-  double inverse_sd;
+/// One strike's signed positions, with common smile IV and fitted carry.
+struct ExposureTerm {
+  double strike;
+  double vol;
+  double years;
+  double discount;
+  double carry;
+  double carry_rate;
+  double yield;
+  double calls;
+  double puts;
 };
 
-double total_gex_at(const std::vector<GammaTerm>& terms, double spot) {
-  const double log_spot = std::log(spot);
-  double total = 0.0;
-  for (const GammaTerm& t : terms) {
-    const double d1 = (log_spot - t.center) * t.inverse_sd;
-    total += t.amplitude * std::exp(-0.5 * d1 * d1);
+ExposureValues exposure_at(const ExposureTerm& t, double spot) {
+  const double sd = t.vol * std::sqrt(t.years);
+  const double d1 = std::log(spot * t.carry / t.strike) / sd + .5 * sd;
+  const double d2 = d1 - sd;
+  const double density = pricing::norm_pdf(d1);
+  const double scale = t.discount * t.carry;
+  const double weight = t.calls + t.puts;
+  // Use the put CDF directly to retain small deltas in the tails.
+  const double delta = scale * (t.calls * pricing::norm_cdf(d1) -
+                                t.puts * pricing::norm_cdf(-d1));
+  const double charm = (t.yield * delta - weight * scale * density *
+      (2 * t.carry_rate * t.years - d2 * sd) / (2 * t.years * sd)) / 365.0;
+  return {weight * scale * density / sd * spot * .01,
+          -weight * scale * density * d2 / t.vol / 100 * spot,
+          delta * spot,
+          charm * spot,
+          weight * t.discount * spot * t.carry * density * std::sqrt(t.years) *
+              d1 * d2 / t.vol / 10000};
+}
+
+double total_at(const std::vector<ExposureTerm>& terms, double spot,
+                double ExposureValues::* field) {
+  double total = 0;
+  for (const auto& term : terms) total += exposure_at(term, spot).*field;
+  return total;
+}
+
+void compute_exposure(UnderlyingMetrics& out) {
+  out.exposure = {};
+  auto& summary = out.exposure;
+  const auto& settings = out.exposure_settings;
+  if (out.exposure_convention == ExposureConvention::CustomerFlow) {
+    summary.available = false;
+    summary.unavailable_reason = "Customer flow unavailable: the feed has no aggressor-side or signed volume data";
+  } else if (!(out.spot > 0) || !std::isfinite(out.spot)) {
+    summary.available = false;
+    summary.unavailable_reason = "Exposure unavailable: no finite positive spot";
   }
-  return total * spot;
+  int exposure_options = 0, exposure_oi = 0;
+  std::map<double, ExposureValues> by_strike;
+  std::vector<ExposureTerm> terms;
+  for (auto& slice : out.slices) {
+    static_cast<ExposureValues&>(slice) = {};
+    for (auto& row : slice.strikes) {
+      static_cast<ExposureValues&>(row) = {};
+      auto weight = [&](const OptionMetrics& option, double sign) {
+        if (option.id == kNoInstrument || !std::isfinite(row.iv)) return 0.0;
+        ++exposure_options;
+        exposure_oi += option.has_open_interest;
+        return option.has_open_interest && std::isfinite(option.open_interest) &&
+                       option.open_interest >= 0
+                   ? sign * option.open_interest * option.contract.multiplier : 0.0;
+      };
+      const double calls = weight(row.call,
+          out.exposure_convention == ExposureConvention::ShortAll ? -1 : 1);
+      const double puts = weight(row.put, -1);
+      if (summary.available && row.iv > 0 && std::isfinite(row.iv) &&
+          slice.years > 0 && slice.forward.forward > 0 && slice.forward.discount > 0 &&
+          std::isfinite(slice.forward.forward) && std::isfinite(slice.forward.discount) &&
+          (calls != 0 || puts != 0)) {
+        const double carry = slice.forward.forward / out.spot;
+        const double carry_rate = std::log(carry) / slice.years;
+        const double yield = -std::log(slice.forward.discount * carry) / slice.years;
+        const ExposureTerm term{row.strike, row.iv,
+            std::max(slice.years, settings.min_days / 365.0), slice.forward.discount,
+            carry, carry_rate, yield, calls, puts};
+        static_cast<ExposureValues&>(row) = exposure_at(term, out.spot);
+        terms.push_back(term);
+      }
+      for (const auto field : kExposureFields) {
+        if (!summary.available) row.*field = kNaN;
+        slice.*field += row.*field;
+        by_strike[row.strike].*field += row.*field;
+      }
+    }
+    for (const auto field : kExposureFields) summary.*field += slice.*field;
+  }
+  if (exposure_options > 0)
+    summary.oi_coverage = static_cast<double>(exposure_oi) / exposure_options;
+  if (!summary.available) {
+    for (const auto field : kExposureFields) summary.*field = kNaN;
+    return;
+  }
+  // Share the spot grid across metrics: each strike's density/CDF is evaluated once.
+  std::vector<std::pair<double, ExposureValues>> grid;
+  ExposureValues largest;
+  if (!terms.empty() && settings.flip_steps > 1) {
+    for (int i = 0; i < settings.flip_steps; ++i) {
+      const double x = -settings.flip_range + 2.0 * settings.flip_range * i /
+                                                  (settings.flip_steps - 1);
+      const double spot = out.spot * (1 + x);
+      ExposureValues totals;
+      if (spot > 0) {
+        for (const auto& term : terms) {
+          const auto values = exposure_at(term, spot);
+          for (const auto field : kExposureFields) totals.*field += values.*field;
+        }
+      } else {
+        for (const auto field : kExposureFields) totals.*field = kNaN;
+      }
+      grid.emplace_back(spot, totals);
+      for (const auto field : kExposureFields)
+        if (std::isfinite(totals.*field))
+          largest.*field = std::max(largest.*field, std::abs(totals.*field));
+    }
+  }
+  for (std::size_t metric = 0; metric < kExposureFields.size(); ++metric) {
+    const auto field = kExposureFields[metric];
+    auto& levels = summary.levels[metric];
+    double positive = 0, negative = 0;
+    for (const auto& [strike, values] : by_strike) {
+      if (values.*field > positive) {
+        positive = values.*field;
+        levels.positive_wall = strike;
+      }
+      if (values.*field < negative) {
+        negative = values.*field;
+        levels.negative_wall = strike;
+      }
+    }
+    // Neither underflowed tails nor an identically zero profile prove a flip.
+    const double threshold = (largest.*field) * 1e-10;
+    double best_distance = std::numeric_limits<double>::infinity();
+    std::size_t previous = grid.size();
+    for (std::size_t i = 0; i < grid.size(); ++i) {
+      const auto& [spot, values] = grid[i];
+      const double value = values.*field;
+      if (!std::isfinite(value)) {
+        previous = grid.size();
+        continue;
+      }
+      if (!(std::abs(value) > threshold)) continue;
+      const auto prior = previous;
+      previous = i;
+      if (prior == grid.size()) continue;
+      double lo = grid[prior].first;
+      double flo = grid[prior].second.*field;
+      double hi = spot;
+      if (std::signbit(flo) == std::signbit(value)) continue;
+      bool finite = true;
+      for (int iteration = 0; iteration < 60 && hi - lo > out.spot * 1e-10; ++iteration) {
+        const double mid = .5 * (lo + hi);
+        const double v = total_at(terms, mid, field);
+        if (!std::isfinite(v)) {
+          finite = false;
+          break;
+        }
+        if (v == 0) {
+          lo = hi = mid;
+          break;
+        }
+        if (std::signbit(v) == std::signbit(flo)) {
+          lo = mid;
+          flo = v;
+        } else
+          hi = mid;
+      }
+      if (!finite) continue;
+      const double crossing = .5 * (lo + hi);
+      if (std::abs(crossing - out.spot) < best_distance) {
+        best_distance = std::abs(crossing - out.spot);
+        levels.flip = crossing;
+      }
+    }
+  }
+  summary.gamma_flip = summary.levels[0].flip;
+  summary.call_wall = summary.levels[0].positive_wall;
+  summary.put_wall = summary.levels[0].negative_wall;
 }
 
 }  // namespace
@@ -328,9 +494,6 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
       f.dividends = std::move(used_dividends);
     }
   }
-  int exposure_options = 0, exposure_oi = 0;
-  std::map<double, double> gex_by_strike;
-  std::vector<GammaTerm> gamma_terms;
 
   // Pass 2: price every option against its expiry's forward.
   for (Fitted& f : fitted) {
@@ -355,8 +518,6 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
     const double discount = sm.forward.discount;
     const double spot = out.spot;
     const GreeksContext ctx{forward, discount, years, spot, forward / spot};
-    const double exposure_years = std::max(years, options.exposure_min_days / 365.0);
-    const GreeksContext exposure_ctx{forward, discount, exposure_years, spot, forward / spot};
 
     sm.strikes.reserve(slice.strikes.size());
     for (const auto& [strike, pair] : slice.strikes) {
@@ -381,37 +542,16 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
       row.iv = std::isfinite(otm) ? otm : itm;
       if (call) fill_greeks(row.call, OptionType::Call, strike, row.iv, ctx);
       if (put) fill_greeks(row.put, OptionType::Put, strike, row.iv, ctx);
-      double net_oi = 0;
-      auto include = [&](const OptionState* state, const OptionMetrics& m, double sign) {
+      auto include = [&](const OptionState* state, const OptionMetrics& m) {
         if (!state) return;
         ++sm.coverage.options;
         sm.coverage.quoted += state->has_quote;
         sm.coverage.open_interest += state->has_open_interest;
         sm.coverage.volume += std::isfinite(m.volume);
         sm.coverage.priced += std::isfinite(m.iv);
-        if (!std::isfinite(row.iv)) return;
-        ++exposure_options;
-        exposure_oi += state->has_open_interest;
-        if (state->has_open_interest && std::isfinite(m.open_interest) && m.open_interest >= 0)
-          net_oi += sign * m.open_interest * state->contract.multiplier;
       };
-      include(call, row.call, 1);
-      include(put, row.put, -1);
-      if (std::isfinite(row.iv) && net_oi != 0 && spot > 0) {
-        // Both sides share the smile IV; received OI contributes even when
-        // that side's own quote could not produce an IV.
-        OptionMetrics exposure;
-        fill_greeks(exposure, OptionType::Call, strike, row.iv, exposure_ctx);
-        row.gex = exposure.gamma * net_oi * spot * spot * 0.01;
-        row.vex = exposure.vanna * net_oi * spot;
-        const double sd = row.iv * std::sqrt(exposure_years);
-        const double carry = forward / spot;
-        gamma_terms.push_back({net_oi * discount * carry * .01 * pricing::norm_pdf(0) / sd,
-                               std::log(strike / carry) - .5 * sd * sd, 1 / sd});
-      }
-      sm.gex += row.gex;
-      sm.vex += row.vex;
-      gex_by_strike[strike] += row.gex;
+      include(call, row.call);
+      include(put, row.put);
       sm.strikes.push_back(std::move(row));
     }
     out.coverage.options += sm.coverage.options;
@@ -423,92 +563,48 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
         !sm.deamericanized)
       out.american_approximation = true;
     sm.atm_iv = atm_vol(sm.strikes, forward);
-    out.exposure.gex += sm.gex;
-    out.exposure.vex += sm.vex;
     out.slices.push_back(std::move(sm));
   }
 
   out.options_priced = out.coverage.priced;
-  if (exposure_options > 0)
-    out.exposure.oi_coverage = static_cast<double>(exposure_oi) / exposure_options;
-
-  // Walls: the strikes carrying the most positive and most negative GEX.
-  double best_call = 0.0;
-  double best_put = 0.0;
-  for (const auto& [strike, gex] : gex_by_strike) {
-    if (gex > best_call) {
-      best_call = gex;
-      out.exposure.call_wall = strike;
-    }
-    if (gex < best_put) {
-      best_put = gex;
-      out.exposure.put_wall = strike;
-    }
-  }
-
-  // Gamma flip: re-evaluate total GEX at hypothetical spots (sticky-strike vols)
-  // and find the sign change nearest the current spot.
-  if (out.spot > 0.0 && !gamma_terms.empty() && options.flip_steps > 1) {
-    std::vector<std::pair<double, double>> grid;
-    double largest = 0;
-    for (int i = 0; i < options.flip_steps; ++i) {
-      const double x =
-          -options.flip_range + 2.0 * options.flip_range * i / (options.flip_steps - 1);
-      const double s = out.spot * (1.0 + x);
-      const double gex = s > 0 ? total_gex_at(gamma_terms, s) : kNaN;
-      grid.emplace_back(s, gex);
-      if (std::isfinite(gex)) largest = std::max(largest, std::abs(gex));
-    }
-    // Underflowed tails carry no evidence of a sign. Require both endpoints
-    // to have meaningful magnitude relative to the entire search grid.
-    const double threshold = largest * 1e-10;
-    double best_distance = std::numeric_limits<double>::infinity();
-    std::size_t previous = grid.size();
-    for (std::size_t i = 0; i < grid.size(); ++i) {
-      const auto [s, gex] = grid[i];
-      if (!std::isfinite(gex)) {
-        previous = grid.size();
-        continue;
-      }
-      if (!(std::abs(gex) > threshold)) continue;
-      const auto prior = previous;
-      previous = i;
-      if (prior == grid.size()) continue;
-      // A root can lie exactly on a grid point; bracket it using the nearest
-      // meaningful values on either side, never the tiny value itself.
-      auto [lo, flo] = grid[prior];
-      double hi = s;
-      if (std::signbit(flo) == std::signbit(gex)) continue;
-      bool finite = true;
-      for (int iteration = 0; iteration < 60 && hi - lo > out.spot * 1e-10; ++iteration) {
-        const double mid = .5 * (lo + hi);
-        const double value = total_gex_at(gamma_terms, mid);
-        if (!std::isfinite(value)) {
-          finite = false;
-          break;
-        }
-        if (value == 0) {
-          lo = hi = mid;
-          break;
-        }
-        if (std::signbit(value) == std::signbit(flo)) {
-          lo = mid;
-          flo = value;
-        } else
-          hi = mid;
-      }
-      if (!finite) continue;
-      const double crossing = .5 * (lo + hi);
-      if (std::abs(crossing - out.spot) < best_distance) {
-        best_distance = std::abs(crossing - out.spot);
-        out.exposure.gamma_flip = crossing;
-      }
-    }
-  }
+  out.exposure_settings = {options.exposure_min_days, options.flip_range, options.flip_steps};
+  compute_exposure(out);
 
   out.compute_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
   return out;
+}
+
+const char* to_string(ExposureConvention convention) {
+  switch (convention) {
+    case ExposureConvention::OpenInterest: return "open_interest";
+    case ExposureConvention::ShortAll: return "short_all";
+    case ExposureConvention::LongCallsShortPuts: return "long_calls_short_puts";
+    case ExposureConvention::CustomerFlow: return "customer_flow";
+  }
+  return "open_interest";
+}
+
+const char* to_string(ExposureSlice slice) {
+  switch (slice) {
+    case ExposureSlice::All: return "all";
+    case ExposureSlice::ZeroDte: return "0dte";
+    case ExposureSlice::ExZeroDte: return "ex_0dte";
+  }
+  return "all";
+}
+
+UnderlyingMetrics exposure_view(UnderlyingMetrics metrics, ExposureConvention convention,
+                                ExposureSlice slice) {
+  metrics.exposure_convention = convention;
+  metrics.exposure_slice = slice;
+  const auto date = md::new_york_time(metrics.as_of).date;
+  std::erase_if(metrics.slices, [&](const auto& expiry) {
+    return slice == ExposureSlice::ZeroDte ? expiry.expiry != date :
+           slice == ExposureSlice::ExZeroDte && expiry.expiry == date;
+  });
+  compute_exposure(metrics);
+  return metrics;
 }
 
 }  // namespace openport::analytics

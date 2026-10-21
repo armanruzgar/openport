@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -44,13 +45,35 @@ struct OptionMetrics {
   double vendor_iv = kNaN;
 };
 
-struct StrikeMetrics {
+/// Signed OI-weighted dollar sensitivities; see docs/methods.md for units.
+struct ExposureValues {
+  double gex = 0.0;
+  double vex = 0.0;
+  double dex = 0.0;
+  double cex = 0.0;
+  double vomex = 0.0;
+};
+inline constexpr std::array kExposureNames = {"gex", "vex", "dex", "cex", "vomex"};
+inline constexpr std::array kExposureFields = {
+    &ExposureValues::gex, &ExposureValues::vex, &ExposureValues::dex,
+    &ExposureValues::cex, &ExposureValues::vomex};
+
+enum class ExposureConvention { OpenInterest, ShortAll, LongCallsShortPuts, CustomerFlow };
+enum class ExposureSlice { All, ZeroDte, ExZeroDte };
+[[nodiscard]] const char* to_string(ExposureConvention convention);
+[[nodiscard]] const char* to_string(ExposureSlice slice);
+
+struct ExposureSettings {
+  double min_days = 0.5;
+  double flip_range = 0.10;
+  int flip_steps = 81;
+};
+
+struct StrikeMetrics : ExposureValues {
   double strike = 0.0;
   double iv = kNaN;  ///< smile IV, taken from the out-of-the-money side
   OptionMetrics call;
   OptionMetrics put;
-  double gex = 0.0;  ///< dollars of hedging per 1% move in spot (calls add, puts subtract)
-  double vex = 0.0;  ///< dollars of delta per vol point (calls add, puts subtract)
 };
 
 /// Counts over standard contracts in live expiries; quoted/OI count receipt,
@@ -70,7 +93,7 @@ struct Dividend {
   double amount;
 };
 
-struct SliceMetrics {
+struct SliceMetrics : ExposureValues {
   md::Date expiry;
   md::Timestamp expiry_time = 0;
   std::string root;
@@ -83,19 +106,24 @@ struct SliceMetrics {
   bool deamericanized = false;
   std::vector<Dividend> dividends;  ///< cash payments used in the EEP correction
   double atm_iv = kNaN;
-  double gex = 0.0;
-  double vex = 0.0;
   std::vector<StrikeMetrics> strikes;
 };
 
-/// Exposure uses the common open-interest convention: dealers are assumed long the
-/// calls and short the puts that customers hold. That is a modelling convention,
-/// not knowledge of anyone's actual positions.
-struct ExposureSummary {
+/// Sticky-strike spot crossing and signed strike extrema, absent when not found.
+struct ExposureLevels {
+  double flip = kNaN;
+  double positive_wall = kNaN;
+  double negative_wall = kNaN;
+};
+
+/// Default positioning is long calls / short puts; these are model assumptions,
+/// not knowledge of anyone's actual positions. Levels follow kExposureNames order.
+struct ExposureSummary : ExposureValues {
   /// Fraction of options at finite-smile-IV strikes with received OI; NaN if none.
   double oi_coverage = kNaN;
-  double gex = 0.0;
-  double vex = 0.0;
+  bool available = true;
+  std::string unavailable_reason;
+  std::array<ExposureLevels, kExposureNames.size()> levels;
   double gamma_flip = kNaN;  ///< spot level where total GEX changes sign, nearest to spot
   double call_wall = kNaN;   ///< strike with the largest positive GEX, all expiries combined
   double put_wall = kNaN;    ///< strike with the most negative GEX, all expiries combined
@@ -111,9 +139,18 @@ struct UnderlyingMetrics {
   std::uint64_t version = 0;  ///< version of the book this was computed from
   std::vector<SliceMetrics> slices;
   ExposureSummary exposure;
+  ExposureSettings exposure_settings;  ///< snapshot's floor and flip search, reused by API views
+  ExposureConvention exposure_convention = ExposureConvention::OpenInterest;
+  ExposureSlice exposure_slice = ExposureSlice::All;
   int options_priced = 0;
   double compute_ms = 0.0;
 };
+
+/// Selects expiries and recomputes exposure from an immutable priced snapshot.
+/// Does not refit IVs, change market time, or alter the source snapshot.
+[[nodiscard]] UnderlyingMetrics exposure_view(
+    UnderlyingMetrics metrics, ExposureConvention convention = ExposureConvention::OpenInterest,
+    ExposureSlice slice = ExposureSlice::All);
 
 /// Continuously compounded zero rates, linear in T with flat end extrapolation.
 /// Construction rejects invalid points and requires two distinct positive tenors.
@@ -135,7 +172,7 @@ class DiscountCurve {
 
 struct AnalyticsOptions {
   int parity_strikes = 12;   ///< strikes nearest the money used to fit the forward
-  double flip_range = 0.10;  ///< search for the gamma flip within +-10% of spot
+  double flip_range = 0.10;  ///< search for exposure flips within +-10% of spot
   int flip_steps = 81;
   double fallback_rate = 0.04;  ///< flat rate when no eligible market-implied rate exists
   std::shared_ptr<const DiscountCurve> discount_curve;
@@ -152,7 +189,7 @@ struct AnalyticsOptions {
   /// parity forward on the escrowed spot, without borrowing or clamping.
   double min_days_for_rate = 30.0;
 
-  /// Exposure (GEX, VEX, gamma flip) uses at least this much time to expiry. Local
+  /// All exposure sensitivities and flips use at least this much time to expiry. Local
   /// gamma of an option minutes from expiry explodes but only holds over a tiny move,
   /// so it would drown out everything else. Displayed Greeks use the true time.
   double exposure_min_days = 0.5;
