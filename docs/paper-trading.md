@@ -3219,6 +3219,8 @@ running replay at `/api/replay/risk/profile` and for saved replay runs at
 | `iv` | Vol points added to every contract's smile IV, -100 to 100; default 0 |
 | `range`, `steps` | The moves run evenly from -`range`% to +`range`% (at most 99) in an odd number of `steps` (3 to 201); default 10 and 41 |
 | `betas` | `SYMBOL:BETA` overrides, comma-separated, each within 10 of zero |
+| `legs` | Up to eight `OSI:QUANTITY` hypothetical legs (padded OSI, signed whole contracts within 10000 of zero), comma-separated; requires `underlying` |
+| `held` | `false` values the legs alone, without the held book or its floors; default `true` |
 
 ```text
 x = the reference's move; each underlying moves beta * x (floored at -99.99%)
@@ -3255,6 +3257,118 @@ benchmark deltas. Spot and implied variance come from the reference's analytics;
 held position's valuation stands in for a reference spot the analytics lack, and
 without either the curves run against the percent move alone (`prices` and level
 prices are null).
+
+### Hypothetical legs and the Analyze tab
+
+`legs` adds contracts to the profile as though they were held: each is found in the
+underlying's current analytics (404 `UNKNOWN_CONTRACT` otherwise) and valued with the
+same model, from `valuation_for` unless the account already values that contract, so
+a candidate's curve and the held book's add up exactly. A leg on a held contract adds
+to or offsets it. With `held=false` the profile is the legs alone: `room` and the floor
+levels are null, because the account's floors measure its whole equity. The response
+echoes `held` and `legs`. P&L is from the contracts' model values now, as for the held
+book; what entering costs beyond the mids is the client's to subtract.
+
+The Trade page's **Analyze** tab draws up to four candidate strategies (one to four
+legs each, saved per underlying in this browser) on one chart through this route:
+today, an optional custom date and a minute past each candidate's first expiry (its
+expiring legs at intrinsic value), under an IV-shift slider, with or without the held
+book (grey: the held book alone). The selected candidate's strikes have handles on the
+chart: dragging one, or focusing it and pressing the arrow keys, moves that leg to the
+nearest listed strike with a tradable contract; each leg also has a strike picker and
+step buttons, side, ratio, type and expiry. P&L can be entered at the far sides (the
+default, subtracting each leg's half-spread) or at mids; covered calls add their
+shares' move. The price slices table reads every curve at percent moves, entered
+prices, ±1σ and ±2σ of the last date's implied standard deviation, and each
+candidate's breakevens at its expiry, linearly between the curve's points. **Send to
+ticket** opens the order ticket for one leg, the strategy ticket for two to four, and
+the shares-then-call dialog for a covered call; nothing is sent before the ticket's
+own review.
+
+### Strategy optimizer
+
+`GET /api/underlyings/{symbol}/optimizer?target=&budget=` searches listed candidates
+for a target price at a target date within a loss budget, for the Analyze tab's
+optimizer, the Python client (`optimize_strategies`) and the MCP tool of the same name.
+It needs only analytics, not a paper account, and has a running replay mirror.
+
+| Parameter | Meaning |
+| --- | --- |
+| `target` | Required: the price expected at the target date |
+| `budget` | Required: the most one candidate may lose, in dollars; candidates whose unit loses more are left out, and `quantity` is how many units fit |
+| `date` | `YYYY-MM-DD`; valued at that date's regular close, or a leg's earlier expiry. Default: the first searched expiry's date |
+| `expiry_ids` | Up to four expiry IDs; default the first four settling on or after the date. Earlier ones are listed in `skipped` |
+| `structures` | Any of `vertical` (bull and bear call and put spreads up to eight strikes wide), `condor` (short iron condors, wings one to four strikes), `butterfly` (long call and put butterflies with equal wings), `calendar` (long calendars, same strike, near and far chosen expiries), `single` (long and short calls and puts) and `covered` (100 shares and a short call, equity and ETF underlyings only); default all |
+| `rank` | `expected` (the user's expected P&L, default), `risk_neutral`, `pop` (the user's probability of profit) or `return_on_risk` |
+| `vol_points` | The user's volatility change (-50 to 100): added to the distribution's volatility and to legs alive at the valuation time |
+| `price` | `natural` (buy at asks, sell at bids; default) or `mid` |
+| `limit`, `max_candidates` | Candidates returned (1 to 100, default 20) and valued (1 to 25000, default 5000) |
+
+Strikes within 2.5 implied standard deviations of the spot and of the target (at most
+40 per expiry, nearest their geometric middle) with tradable two-sided quotes and an
+IV are combined. A candidate whose calls are net short (a naked short call) loses
+without bound and is counted in `unbounded` rather than valued. When more bounded
+candidates are listed than `max_candidates`, an even stride through the list is
+valued, so every structure and expiry keeps its share, and `truncated` is true.
+
+```text
+at = min(target date's close, first leg's expiry)
+leg value(S) = Black76(S*(S0 + (F - S0) T'/T)/S0, K, T', IV_strike + shift, D^(T'/T)), or intrinsic once expired
+P&L(S) = sum(±ratio * 100 * value) + shares * (S - S0) - net * 100
+v = implied_variance_until(at)                   (as the probability route's)
+market:  ln S_at ~ N(ln S0 - v/2, v)             (forward at spot)
+user:    sigma_u = max(1%, sqrt(v / t) + vol_points / 100), v_u = sigma_u^2 t
+         ln S_at ~ N(ln target - v_u/2, v_u)     (mean at the target)
+```
+
+`max_loss` and `max_profit` (null when calls are net long) are the extremes over a
+price grid from 0.01% to ten times the larger of spot and target, the strikes and both
+distributions' nodes, at today's volatility. `breakevens` are bisected sign changes.
+`pop` integrates each distribution between the breakevens with `price_odds`;
+`expected` is a 161-node normal quadrature over ±6 standard deviations;
+`return_on_risk` is the user's expected P&L over `max_loss`. Fees, early exercise and
+assignment are not modelled. Under the market's own distribution a fairly quoted
+candidate expects to lose about its spread, so `expected.risk_neutral` mainly measures
+cost; an edge comes only from the user's view. These are derived estimates from
+current quotes, not forecasts or advice.
+
+A search can value tens of thousands of payoffs, so network requests run on a pool of
+two worker threads; up to four more wait, and beyond that the route answers 503
+`SEARCH_BUSY` with `Retry-After`. HTTP I/O threads never wait for a search. Invalid
+queries answer 400 before queuing.
+
+### Hedge suggestions
+
+`GET /api/risk/hedges?target=delta|vega|grid&scope=aggregate|SYMBOL&utilisation=1`
+proposes, for one risk bucket, the smallest trade of each candidate hedge that
+brings it back within its limit (times `utilisation`, 0 to 1). `delta` and `vega`
+keep the bucket's dollar delta or vega within its limit at both ends of what its open
+orders can reach; `grid` keeps every cell of the rules' spot × volatility grid for the
+held book at or above the worst loss allowed, the larger of `-worst_grid_loss` (when
+that limit is set) and the floor (the higher of the plan and soft floors, as equity
+minus floor). A bucket for one underlying offers its shares (none for an index) and
+the at-the-money call and put in the expiry nearest 30 days; the aggregate offers SPY
+shares and SPY and SPX at-the-money options as beta hedges, and shows the book's
+beta-weighted dollar delta to SPY beside its dollar delta (the aggregate limit counts
+every underlying one for one). It has replay and saved-run mirrors.
+
+```text
+exposure after q units = exposure + q * unit exposure          (delta, vega)
+cell after q units     = cell + q * unit cell - |q| * half-spread
+```
+
+Each constraint is linear in q, so the smallest whole size, buying or selling, is
+exact: zero when the bucket is already within the target, none when no size up to the
+cap meets it (shares 10,000,000, contracts 100,000). Each hedge lists its side,
+quantity, price at the far side, premium, spread cost against the mid, the residual
+exposure, worst cell and utilisations, and `exceeds_order_limit` when it is larger than
+one order may be. Feasible hedges come first, then by spread cost, then by residual
+risk. Fees are not included, and pending orders' grid reservations are not modelled;
+the what-if and the ticket preview price both. An option hedge carries `order`, ready
+for `POST /api/orders/what-if`; a share hedge carries `stock_trade`, the body of
+`POST /api/stocks/trade`. On Positions, **Hedge suggestions** lists them; **Add to
+what-if** puts an option hedge in the What-if panel to compare with other
+adjustments, and **Ticket** opens its order or share ticket for review.
 
 `GET /api/underlyings/{symbol}/probability?days=0,1,7,30&prices=` gives, for up to
 eight horizons and twenty prices, the underlying's implied standard deviation of

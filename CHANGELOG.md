@@ -59,6 +59,28 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Add chain, chart, positions and orders pop-outs, an optional wide-screen
   positions/orders split, and phone calls/puts selection with bottom-sheet tickets.
 
+### Analyze
+
+- **Analyze tab.** Trade's new tab draws up to four candidate strategies' P&L by
+  price on today, a custom date and their first expiry, with or without the held
+  book, under an IV-shift slider; a price-slices table (% moves, prices, ±σ,
+  breakevens); strikes dragged on the chart or stepped per leg; and Send to ticket.
+  `GET /api/risk/profile` takes hypothetical `legs` and `held=false` so candidates
+  use the held book's own model.
+- **Strategy optimizer.** `GET /api/underlyings/{symbol}/optimizer` searches
+  verticals, iron condors, butterflies, calendars, singles and covered calls for a
+  target price, date and loss budget, ranked by expected P&L under the market's or
+  the user's shifted lognormal, probability of profit or return on risk. Candidate
+  counts are capped (an even sample past the cap) and searches run on a two-worker
+  pool that answers 503 `SEARCH_BUSY` when full, never on HTTP I/O threads. Derived
+  estimates, not advice; fees and early exercise are not modelled.
+- **Hedge suggestions.** `GET /api/risk/hedges` gives the smallest share, ATM option
+  or SPX/SPY beta hedge bringing a bucket's delta, vega or worst grid cell back inside
+  its limit or above the floor, ranked by spread cost and residual risk. Positions
+  sends an option hedge to the what-if and then to its ticket.
+- Python `optimize_strategies`, `hedges` and `risk_profile(legs=, held=)` with
+  matching MCP tools.
+
 ### Volatility
 
 - **Surface history:** persist per-expiry SVI parameters at scheduled intraday slots
