@@ -14,7 +14,8 @@ from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
                     Exposure, ExposureConvention, ExposureSlice, Volatility, Candles, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
-                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis)
+                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis,
+                    FillQuality, Calibration)
 
 
 def _list(values) -> str | None:
@@ -204,6 +205,17 @@ class Client:
 
     def fills(self) -> Fills:
         return self._request("GET", "/fills", scoped=True)
+
+    def fill_quality(self, attempt: str = "current") -> FillQuality:
+        """Paper fills by place on their book (mid, mid plus a tick, natural) by time of day, spread and DTE."""
+        return self._request("GET", "/fills/quality", scoped=True, params={"attempt": attempt})
+
+    def calibrate_fills(self, csv: str, format: str = "auto", max_quote_age_seconds: int | None = None) -> Calibration:
+        """Compare real broker fills (a CSV export's text) with the paper fill models. Read-only: nothing is stored."""
+        body: JSON = {"csv": csv, "format": format}
+        if max_quote_age_seconds is not None:
+            body["max_quote_age_seconds"] = max_quote_age_seconds
+        return self._request("POST", "/fills/calibration", body, control=True)
 
     def settlements(self) -> Settlements:
         """Settlement references and provenance, newest first across attempts."""

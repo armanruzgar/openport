@@ -6182,6 +6182,125 @@
     },
     "/api/replay/history/{run_id}/underlyings/{symbol}/series": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
+    },
+    "/api/fills/quality": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "attempt",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "current",
+              "all"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "summary": "Fill quality by place on the book",
+        "description": "Read the current publication. attempt defaults to current.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillQuality"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/fills/quality": {
+      "$ref": "#/paths/~1api~1fills~1quality"
+    },
+    "/api/replay/history/{run_id}/fills/quality": {
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "attempt",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "current",
+              "all"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "summary": "Fill quality by place on the book",
+        "description": "Read the current publication. attempt defaults to current.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FillQuality"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/fills/calibration": {
+      "post": {
+        "summary": "Compare real broker fills with the paper fill models",
+        "description": "Read-only analysis: reads the CSV, looks each timed fill's quote up in the recorded days the replay picker lists (--record-dir, else ~/.openport/recordings), and returns the comparison with suggested settings. Nothing is stored or traded. A read token may post it.",
+        "x-scope": "read",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalibrationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Calibration"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10881,6 +11000,32 @@
             "maximum": 100000,
             "default": 0,
             "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
+          },
+          "queue_fills": {
+            "type": "boolean",
+            "default": false,
+            "description": "Queue fills, a program rule; off and omitted by default. A resting single-leg limit at its own side's touch waits behind the size displayed when it joins (and the account's own earlier orders there). Trade prints at its price use that queue up, then fill it at its limit; prints through its price fill it too, and the far side reaching the limit fills it as before. Without prints a volume increase stands in, half on each side; without either, the displayed size is assumed to trade once every 300 seconds. Deterministic for a seed and a feed; a simulation, not an exchange queue position."
+          },
+          "queue_seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "default": 0,
+            "description": "Queue fills' seed, mixed with the attempt start, order and market time to round fractional queue changes at random. A program rule; omitted at zero."
+          },
+          "stop_stress_ticks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 0,
+            "description": "Stop stress, a program rule; zero disables it and is omitted. Extra adverse ticks for a price-triggered order (a stop, stop-limit, trailing stop or bracket stop-loss) reached in a fast market: after eight valid quotes of the contract, its spread at least stop_stress_percent of its average or its quotes changing that much faster than their average rate. A stop-limit's limit still caps the price; extended-hours touch stops are unaffected."
+          },
+          "stop_stress_percent": {
+            "type": "integer",
+            "minimum": 101,
+            "maximum": 1000,
+            "default": 200,
+            "description": "What counts as fast for stop stress, as a percent of the contract's normal spread width or quote rate. Reported with stop_stress_ticks; omitted from journals at 200."
           }
         },
         "required": [
@@ -13720,9 +13865,10 @@
                 "enum": [
                   "as_displayed",
                   "conservative",
-                  "midpoint"
+                  "midpoint",
+                  "queue"
                 ],
-                "description": "Override slippage, latency, impact and inside fills for the new attempt. As displayed sets all to zero; conservative sets 1 tick slippage, 1000 ms latency, 1 impact tick and no inside fills; midpoint sets inside_fill_percent to 50 and the others to zero."
+                "description": "Override slippage, latency, impact, inside fills and queue fills for the new attempt. As displayed sets all to zero; conservative sets 1 tick slippage, 1000 ms latency, 1 impact tick and no inside fills; midpoint sets inside_fill_percent to 50 and the others to zero; queue turns queue fills on with the others at zero. Queue fills are a program rule, so an attempt with them no longer follows its preset."
               },
               "margin": {
                 "type": "string",
@@ -13818,6 +13964,27 @@
                 "maximum": 100000,
                 "default": 0,
                 "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
+              },
+              "queue_seed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647,
+                "default": 0,
+                "description": "Queue fills' seed, mixed with the attempt start, order and market time to round fractional queue changes at random. A program rule; omitted at zero."
+              },
+              "stop_stress_ticks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 0,
+                "description": "Stop stress, a program rule; zero disables it and is omitted. Extra adverse ticks for a price-triggered order (a stop, stop-limit, trailing stop or bracket stop-loss) reached in a fast market: after eight valid quotes of the contract, its spread at least stop_stress_percent of its average or its quotes changing that much faster than their average rate. A stop-limit's limit still caps the price; extended-hours touch stops are unaffected."
+              },
+              "stop_stress_percent": {
+                "type": "integer",
+                "minimum": 101,
+                "maximum": 1000,
+                "default": 200,
+                "description": "What counts as fast for stop stress, as a percent of the contract's normal spread width or quote rate. Reported with stop_stress_ticks; omitted from journals at 200."
               }
             },
             "required": [
@@ -15178,6 +15345,23 @@
               }
             ],
             "description": "The order whose complete fill placed this one."
+          },
+          "queue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueueEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Queue fills' estimate for a resting limit; null otherwise."
+          },
+          "stress_ticks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Stop stress's extra adverse ticks, set when its trigger was reached in a fast market; zero otherwise."
           }
         },
         "required": [
@@ -15275,6 +15459,16 @@
               }
             ],
             "description": "Null under flat fees; absent on older servers."
+          },
+          "stress_ticks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "description": "Extra adverse ticks stop stress added to this fill; zero otherwise."
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "Queue fills: a resting limit filled at its limit by flow at its price, without the far side crossing."
           }
         },
         "required": [
@@ -16625,9 +16819,10 @@
                 "enum": [
                   "as_displayed",
                   "conservative",
-                  "midpoint"
+                  "midpoint",
+                  "queue"
                 ],
-                "description": "Override slippage, latency, impact and inside fills for the new attempt. As displayed sets all to zero; conservative sets 1 tick slippage, 1000 ms latency, 1 impact tick and no inside fills; midpoint sets inside_fill_percent to 50 and the others to zero."
+                "description": "Override slippage, latency, impact, inside fills and queue fills for the new attempt. As displayed sets all to zero; conservative sets 1 tick slippage, 1000 ms latency, 1 impact tick and no inside fills; midpoint sets inside_fill_percent to 50 and the others to zero; queue turns queue fills on with the others at zero. Queue fills are a program rule, so an attempt with them no longer follows its preset."
               },
               "margin": {
                 "type": "string",
@@ -16733,6 +16928,27 @@
                 "maximum": 100000,
                 "default": 0,
                 "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
+              },
+              "queue_seed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2147483647,
+                "default": 0,
+                "description": "Queue fills' seed, mixed with the attempt start, order and market time to round fractional queue changes at random. A program rule; omitted at zero."
+              },
+              "stop_stress_ticks": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 0,
+                "description": "Stop stress, a program rule; zero disables it and is omitted. Extra adverse ticks for a price-triggered order (a stop, stop-limit, trailing stop or bracket stop-loss) reached in a fast market: after eight valid quotes of the contract, its spread at least stop_stress_percent of its average or its quotes changing that much faster than their average rate. A stop-limit's limit still caps the price; extended-hours touch stops are unaffected."
+              },
+              "stop_stress_percent": {
+                "type": "integer",
+                "minimum": 101,
+                "maximum": 1000,
+                "default": 200,
+                "description": "What counts as fast for stop stress, as a percent of the contract's normal spread width or quote rate. Reported with stop_stress_ticks; omitted from journals at 200."
               }
             },
             "required": [
@@ -20491,6 +20707,32 @@
                         "maximum": 1000000,
                         "default": 0,
                         "description": "Same-plan reset allowance; zero (default) is unlimited."
+                      },
+                      "queue_fills": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Queue fills, a program rule; off and omitted by default. A resting single-leg limit at its own side's touch waits behind the size displayed when it joins (and the account's own earlier orders there). Trade prints at its price use that queue up, then fill it at its limit; prints through its price fill it too, and the far side reaching the limit fills it as before. Without prints a volume increase stands in, half on each side; without either, the displayed size is assumed to trade once every 300 seconds. Deterministic for a seed and a feed; a simulation, not an exchange queue position."
+                      },
+                      "queue_seed": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 2147483647,
+                        "default": 0,
+                        "description": "Queue fills' seed, mixed with the attempt start, order and market time to round fractional queue changes at random. A program rule; omitted at zero."
+                      },
+                      "stop_stress_ticks": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 0,
+                        "description": "Stop stress, a program rule; zero disables it and is omitted. Extra adverse ticks for a price-triggered order (a stop, stop-limit, trailing stop or bracket stop-loss) reached in a fast market: after eight valid quotes of the contract, its spread at least stop_stress_percent of its average or its quotes changing that much faster than their average rate. A stop-limit's limit still caps the price; extended-hours touch stops are unaffected."
+                      },
+                      "stop_stress_percent": {
+                        "type": "integer",
+                        "minimum": 101,
+                        "maximum": 1000,
+                        "default": 200,
+                        "description": "What counts as fast for stop stress, as a percent of the contract's normal spread width or quote rate. Reported with stop_stress_ticks; omitted from journals at 200."
                       }
                     },
                     "required": [],
@@ -22771,7 +23013,7 @@
       },
       "OrderWait": {
         "type": "object",
-        "description": "What keeps an open order from filling now, as matching reads the books, sessions and clocks: TRIGGER, REGULAR_SESSION, SESSION_CLOSED, INVALID_QUOTE, STALE_QUOTE, FILL_LATENCY, NEWER_QUOTE, LIMIT, DISPLAYED_SIZE STALE_DATA or MARKET_HALTED.",
+        "description": "What keeps an open order from filling now, as matching reads the books, sessions and clocks: TRIGGER, REGULAR_SESSION, SESSION_CLOSED, INVALID_QUOTE, STALE_QUOTE, FILL_LATENCY, NEWER_QUOTE, LIMIT, QUEUE, DISPLAYED_SIZE STALE_DATA or MARKET_HALTED.",
         "properties": {
           "code": {
             "enum": [
@@ -22785,7 +23027,8 @@
               "DISPLAYED_SIZE",
               "STALE_DATA",
               "SESSION_CLOSED",
-              "MARKET_HALTED"
+              "MARKET_HALTED",
+              "QUEUE"
             ]
           },
           "message": {
@@ -23469,6 +23712,32 @@
             "maximum": 100000,
             "default": 0,
             "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
+          },
+          "queue_fills": {
+            "type": "boolean",
+            "default": false,
+            "description": "Queue fills, a program rule; off and omitted by default. A resting single-leg limit at its own side's touch waits behind the size displayed when it joins (and the account's own earlier orders there). Trade prints at its price use that queue up, then fill it at its limit; prints through its price fill it too, and the far side reaching the limit fills it as before. Without prints a volume increase stands in, half on each side; without either, the displayed size is assumed to trade once every 300 seconds. Deterministic for a seed and a feed; a simulation, not an exchange queue position."
+          },
+          "queue_seed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647,
+            "default": 0,
+            "description": "Queue fills' seed, mixed with the attempt start, order and market time to round fractional queue changes at random. A program rule; omitted at zero."
+          },
+          "stop_stress_ticks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 0,
+            "description": "Stop stress, a program rule; zero disables it and is omitted. Extra adverse ticks for a price-triggered order (a stop, stop-limit, trailing stop or bracket stop-loss) reached in a fast market: after eight valid quotes of the contract, its spread at least stop_stress_percent of its average or its quotes changing that much faster than their average rate. A stop-limit's limit still caps the price; extended-hours touch stops are unaffected."
+          },
+          "stop_stress_percent": {
+            "type": "integer",
+            "minimum": 101,
+            "maximum": 1000,
+            "default": 200,
+            "description": "What counts as fast for stop stress, as a percent of the contract's normal spread width or quote rate. Reported with stop_stress_ticks; omitted from journals at 200."
           }
         },
         "required": [
@@ -27110,6 +27379,32 @@
                         "maximum": 1000000,
                         "default": 0,
                         "description": "Same-plan reset allowance; zero (default) is unlimited."
+                      },
+                      "queue_fills": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Queue fills, a program rule; off and omitted by default. A resting single-leg limit at its own side's touch waits behind the size displayed when it joins (and the account's own earlier orders there). Trade prints at its price use that queue up, then fill it at its limit; prints through its price fill it too, and the far side reaching the limit fills it as before. Without prints a volume increase stands in, half on each side; without either, the displayed size is assumed to trade once every 300 seconds. Deterministic for a seed and a feed; a simulation, not an exchange queue position."
+                      },
+                      "queue_seed": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 2147483647,
+                        "default": 0,
+                        "description": "Queue fills' seed, mixed with the attempt start, order and market time to round fractional queue changes at random. A program rule; omitted at zero."
+                      },
+                      "stop_stress_ticks": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 0,
+                        "description": "Stop stress, a program rule; zero disables it and is omitted. Extra adverse ticks for a price-triggered order (a stop, stop-limit, trailing stop or bracket stop-loss) reached in a fast market: after eight valid quotes of the contract, its spread at least stop_stress_percent of its average or its quotes changing that much faster than their average rate. A stop-limit's limit still caps the price; extended-hours touch stops are unaffected."
+                      },
+                      "stop_stress_percent": {
+                        "type": "integer",
+                        "minimum": 101,
+                        "maximum": 1000,
+                        "default": 200,
+                        "description": "What counts as fast for stop stress, as a percent of the contract's normal spread width or quote rate. Reported with stop_stress_ticks; omitted from journals at 200."
                       }
                     },
                     "required": [],
@@ -28954,6 +29249,688 @@
           "provider",
           "units"
         ]
+      },
+      "QueueEstimate": {
+        "type": "object",
+        "description": "Queue fills only: the simulated estimate for a resting limit at its price. Not an exchange's queue position.",
+        "properties": {
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ahead": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Estimated contracts ahead at the price; zero once used up."
+          },
+          "earned": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Contracts that traded past the queue (or through the price) not yet filled."
+          },
+          "displayed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Own side's displayed size at the price when last seen there; zero away from it."
+          },
+          "joined_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "joined",
+                "type": "string"
+              },
+              {
+                "const": "prints",
+                "type": "string"
+              },
+              {
+                "const": "volume",
+                "type": "string"
+              },
+              {
+                "const": "rate",
+                "type": "string"
+              }
+            ],
+            "description": "What last moved it: joining, trade prints, a volume increase or the 300-second volume-rate heuristic."
+          },
+          "simulated": {
+            "const": true
+          }
+        },
+        "required": [
+          "price",
+          "ahead",
+          "earned",
+          "displayed",
+          "joined_at",
+          "updated_at",
+          "source",
+          "simulated"
+        ],
+        "additionalProperties": false
+      },
+      "FillPlaces": {
+        "type": "object",
+        "description": "Contracts by place on the book, from the mid toward the natural.",
+        "properties": {
+          "mid_or_better": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mid_plus_one_tick": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "inside": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "natural": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "beyond_natural": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "mid_or_better",
+          "mid_plus_one_tick",
+          "inside",
+          "natural",
+          "beyond_natural"
+        ],
+        "additionalProperties": false
+      },
+      "FillQualityGroup": {
+        "type": "object",
+        "description": "Fills of one kind by where they priced on their book. Ticks are the natural price's tick tier and positive is worse for the side.",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "fills": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "contracts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "places": {
+            "$ref": "#/components/schemas/FillPlaces"
+          },
+          "from_mid_ticks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Contract-weighted mean ticks paid beyond the mid; null without contracts."
+          },
+          "vs_natural_ticks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Contract-weighted mean ticks beyond the natural; negative is better than the natural."
+          },
+          "cost_vs_mid": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "fills",
+          "contracts",
+          "places",
+          "from_mid_ticks",
+          "vs_natural_ticks",
+          "cost_vs_mid"
+        ],
+        "additionalProperties": false
+      },
+      "FillCalibration": {
+        "type": "object",
+        "description": "Suggested fill-model settings and why. basis heuristic: a rule of thumb from the paper fills; real_fills: measured from imported broker fills.",
+        "properties": {
+          "basis": {
+            "anyOf": [
+              {
+                "const": "heuristic",
+                "type": "string"
+              },
+              {
+                "const": "real_fills",
+                "type": "string"
+              }
+            ]
+          },
+          "fill_model": {
+            "anyOf": [
+              {
+                "const": "as_displayed",
+                "type": "string"
+              },
+              {
+                "const": "conservative",
+                "type": "string"
+              },
+              {
+                "const": "midpoint",
+                "type": "string"
+              },
+              {
+                "const": "custom",
+                "type": "string"
+              }
+            ]
+          },
+          "fill_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when nothing measured it (broker exports carry no order-entry time)."
+          },
+          "slippage_ticks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "impact_ticks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10
+          },
+          "inside_fill_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "basis",
+          "fill_model",
+          "fill_latency_ms",
+          "slippage_ticks",
+          "impact_ticks",
+          "inside_fill_percent",
+          "reasons"
+        ],
+        "additionalProperties": false
+      },
+      "FillQuality": {
+        "type": "object",
+        "description": "The account's paper fills by place on the book they traded against (Fill.quote), overall and by New York time of day (before 09:30, 09:30-10:00, 10:00-12:00, 12:00-14:00, 14:00-15:30, 15:30-16:15, after 16:15), spread width in ticks (1, 2, 3-4, 5-9, 10+) and calendar days to expiry (0, 1, 2-7, 8-30, 31+), with a heuristic Conservative suggestion. Fills recorded without their book, or without both sides, are unmeasured.",
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "const": "current",
+                "type": "string"
+              },
+              {
+                "const": "all",
+                "type": "string"
+              }
+            ]
+          },
+          "fills": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "measured": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unmeasured": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "overall": {
+            "$ref": "#/components/schemas/FillQualityGroup"
+          },
+          "time_of_day": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FillQualityGroup"
+            }
+          },
+          "spread": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FillQualityGroup"
+            }
+          },
+          "dte": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FillQualityGroup"
+            }
+          },
+          "suggestion": {
+            "$ref": "#/components/schemas/FillCalibration"
+          },
+          "simulated": {
+            "const": true
+          }
+        },
+        "required": [
+          "attempt",
+          "fills",
+          "measured",
+          "unmeasured",
+          "overall",
+          "time_of_day",
+          "spread",
+          "dte",
+          "suggestion",
+          "simulated"
+        ],
+        "additionalProperties": false
+      },
+      "PaperOutcome": {
+        "type": "object",
+        "description": "What a paper model does at once with a limit at the real fill's price on the same book.",
+        "properties": {
+          "fills": {
+            "type": "boolean"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "fills",
+          "price"
+        ],
+        "additionalProperties": false
+      },
+      "CalibrationQuote": {
+        "type": "object",
+        "description": "The book at a real fill: the file's own bid and ask (import), or the last recorded quote at or before it within the age limit (recording). Sizes are zero when unknown.",
+        "properties": {
+          "bid": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "ask": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "bid_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ask_size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "import",
+                "type": "string"
+              },
+              {
+                "const": "recording",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "bid",
+          "ask",
+          "bid_size",
+          "ask_size",
+          "time",
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "CalibrationRow": {
+        "type": "object",
+        "properties": {
+          "row": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The file's 1-based line."
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when the export gives only a date."
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "const": "buy",
+                "type": "string"
+              },
+              {
+                "const": "sell",
+                "type": "string"
+              }
+            ]
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CalibrationQuote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "place": {
+            "anyOf": [
+              {
+                "const": "mid_or_better",
+                "type": "string"
+              },
+              {
+                "const": "mid_plus_one_tick",
+                "type": "string"
+              },
+              {
+                "const": "inside",
+                "type": "string"
+              },
+              {
+                "const": "natural",
+                "type": "string"
+              },
+              {
+                "const": "beyond_natural",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_mid_ticks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vs_natural_ticks": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "as_displayed": {
+            "$ref": "#/components/schemas/PaperOutcome"
+          },
+          "conservative": {
+            "$ref": "#/components/schemas/PaperOutcome"
+          },
+          "midpoint": {
+            "$ref": "#/components/schemas/PaperOutcome"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why it could not be compared, when it could not."
+          }
+        },
+        "required": [
+          "row",
+          "time",
+          "symbol",
+          "side",
+          "quantity",
+          "price",
+          "quote",
+          "place",
+          "from_mid_ticks",
+          "vs_natural_ticks",
+          "as_displayed",
+          "conservative",
+          "midpoint",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "PaperFills": {
+        "type": "object",
+        "description": "Matched real fills each model fills at once.",
+        "properties": {
+          "as_displayed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "conservative": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "midpoint": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "as_displayed",
+          "conservative",
+          "midpoint"
+        ],
+        "additionalProperties": false
+      },
+      "CalibrationSkip": {
+        "type": "object",
+        "description": "A row that is not an option fill, and why.",
+        "properties": {
+          "row": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "row",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "CalibrationRequest": {
+        "type": "object",
+        "properties": {
+          "csv": {
+            "type": "string",
+            "description": "The broker export's text; the whole request is at most 64 KiB."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "const": "auto",
+                "type": "string"
+              },
+              {
+                "const": "generic",
+                "type": "string"
+              },
+              {
+                "const": "tastytrade",
+                "type": "string"
+              },
+              {
+                "const": "schwab",
+                "type": "string"
+              },
+              {
+                "const": "ibkr",
+                "type": "string"
+              }
+            ],
+            "default": "auto",
+            "description": "generic: time, symbol (OSI), side, quantity, price and optional bid and ask columns; tastytrade: transaction history; schwab: a thinkorswim statement's Account Trade History, or a Schwab transaction export (dates only); ibkr: a Flex Query trades file or an activity statement's Trades section."
+          },
+          "max_quote_age_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "default": 60,
+            "description": "How old a recorded quote at a fill may be."
+          }
+        },
+        "required": [
+          "csv"
+        ],
+        "additionalProperties": false
+      },
+      "Calibration": {
+        "type": "object",
+        "description": "Real broker fills against the same-time books and the paper fill models, with suggested settings. Read-only: nothing is stored, journaled or traded.",
+        "properties": {
+          "format": {
+            "anyOf": [
+              {
+                "const": "generic",
+                "type": "string"
+              },
+              {
+                "const": "tastytrade",
+                "type": "string"
+              },
+              {
+                "const": "schwab",
+                "type": "string"
+              },
+              {
+                "const": "ibkr",
+                "type": "string"
+              }
+            ]
+          },
+          "matched": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unmatched": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalibrationRow"
+            }
+          },
+          "real": {
+            "$ref": "#/components/schemas/FillQualityGroup"
+          },
+          "paper_fills": {
+            "$ref": "#/components/schemas/PaperFills"
+          },
+          "suggestion": {
+            "$ref": "#/components/schemas/FillCalibration"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CalibrationSkip"
+            }
+          },
+          "stored": {
+            "const": false
+          }
+        },
+        "required": [
+          "format",
+          "matched",
+          "unmatched",
+          "rows",
+          "real",
+          "paper_fills",
+          "suggestion",
+          "skipped",
+          "stored"
+        ],
+        "additionalProperties": false
       }
     }
   }
