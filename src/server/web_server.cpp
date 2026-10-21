@@ -11,6 +11,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -729,6 +730,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     auto future = done->get_future();
     asio::post(stream_.get_executor(), [self = shared_from_this(), done] {
       self->stopped_ = true;
+      if (self->cancelled_) self->cancelled_->store(true);
       {
         const std::lock_guard lock(self->completion_gate_->mutex);
         self->completion_gate_->session.reset();
@@ -943,9 +945,13 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
       gate->session.reset();
       asio::post(self->stream_.get_executor(), [self, response = std::move(response), version, keep_alive]() mutable {
         self->awaiting_.reset();
+        self->stop_watching();
         self->send_api(std::move(response), version, keep_alive);
       });
     };
+    cancelled_ = std::make_shared<std::atomic_bool>(false);
+    api.cancelled = cancelled_;
+    watch_disconnect(cancelled_);
     try { shared_.api(api, complete); }
     catch (const std::exception&) { complete(api_error(500, "INTERNAL_ERROR", "Internal error")); }
   }
@@ -994,6 +1000,25 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     return response;
   }
 
+  /// While a response is awaited nothing reads the socket, so a wait for it to turn
+  /// readable notices a client that has gone: readable with nothing to read is its
+  /// close (or reset). A pipelined next request ends the watch without cancelling.
+  void watch_disconnect(const std::shared_ptr<std::atomic_bool>& cancelled) {
+    stream_.socket().async_wait(tcp::socket::wait_read, [self = shared_from_this(), cancelled](beast::error_code ec) {
+      if (ec == asio::error::operation_aborted) return;
+      if (!ec) {
+        beast::error_code error;
+        if (self->stream_.socket().available(error) > 0 && !error) return;
+      }
+      cancelled->store(true);
+    });
+  }
+  void stop_watching() {
+    cancelled_.reset();
+    beast::error_code ignored;
+    stream_.socket().cancel(ignored);  // only the disconnect wait is outstanding
+  }
+
   void respond(http::message_generator&& message) {
     const bool keep_alive = message.keep_alive();
     // Bound a stalled client from the start of this write, not the request read.
@@ -1019,6 +1044,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   };
   std::shared_ptr<CompletionGate> completion_gate_ = std::make_shared<CompletionGate>();
   std::shared_ptr<HttpSession> awaiting_;
+  std::shared_ptr<std::atomic_bool> cancelled_;  ///< The awaited request's, until it completes.
   beast::tcp_stream stream_;
   beast::flat_buffer buffer_;
   std::optional<http::request_parser<http::string_body>> parser_;

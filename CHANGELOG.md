@@ -72,7 +72,9 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   target price, date and loss budget, ranked by expected P&L under the market's or
   the user's shifted lognormal, probability of profit or return on risk. Candidate
   counts are capped (an even sample past the cap) and searches run on a two-worker
-  pool that answers 503 `SEARCH_BUSY` when full, never on HTTP I/O threads. A chain
+  pool that answers 503 `SEARCH_BUSY` when full, never on HTTP I/O threads; a search
+  stops early when its client disconnects or the server stops, and queued ones are
+  dropped at shutdown. A chain
   without an at-the-money term structure uses the expiry's ATM IV over the time
   (`variance_fallback`) rather than a zero-width distribution. Derived
   estimates, not advice; fees and early exercise are not modelled.

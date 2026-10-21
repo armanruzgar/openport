@@ -1,9 +1,9 @@
 #pragma once
 
-#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
@@ -48,20 +48,23 @@ inline constexpr std::size_t kMaxSearchStrikes = 40;
 /// shrinking with it. Distributions are lognormal on the at-the-money implied
 /// variance to that time (implied_variance_until): forward at spot for the
 /// risk-neutral one, mean at the target price for the user's. More candidates
-/// than max_candidates are sampled at an even stride, marked truncated; a
-/// cancelled search returns what it valued so far, also marked truncated.
+/// than max_candidates are sampled at an even stride, marked truncated; a search
+/// whose `cancelled` turns true returns what it valued so far, also marked truncated.
 [[nodiscard]] nlohmann::json search_strategies(const analytics::UnderlyingMetrics& metrics,
-    const StrategySearchRequest& request, const std::atomic_bool* cancel = nullptr);
+    const StrategySearchRequest& request, const std::function<bool()>& cancelled = {});
 
 /// A small pool for searches, so HTTP I/O threads never wait for one. `submit`
-/// returns false when every worker is busy and the queue is full.
+/// returns false when every worker is busy and the queue is full. Destroying the
+/// pool drops the jobs still queued, calling each one's `dropped` instead, and
+/// waits for the running ones, which should watch `stopping()`.
 class StrategySearchPool {
  public:
   StrategySearchPool(std::size_t workers, std::size_t queue);
   ~StrategySearchPool();
   StrategySearchPool(const StrategySearchPool&) = delete;
   StrategySearchPool& operator=(const StrategySearchPool&) = delete;
-  bool submit(std::function<void()> job);
+  bool submit(std::function<void()> job, std::function<void()> dropped = {});
+  [[nodiscard]] bool stopping() const noexcept;
   /// The process's pool: two workers and four queued searches.
   static StrategySearchPool& shared();
 

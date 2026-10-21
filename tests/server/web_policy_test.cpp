@@ -11,7 +11,9 @@
 #include <fstream>
 #include <openssl/hmac.h>
 #include <nlohmann/json.hpp>
+#include <atomic>
 #include <condition_variable>
+#include <mutex>
 #include <future>
 #include <thread>
 #include <utility>
@@ -493,6 +495,65 @@ TEST(WebServer, AsyncPostDeleteRoundTripsAndSecurityHeaders) {
   EXPECT_EQ(response.result_int(), 403);
   EXPECT_NE(response.body().find("WRITE_TOKEN_REQUIRED"), std::string::npos);
   web.stop();
+}
+
+// A long read learns that nobody will take its response: the client hung up, or
+// the server is stopping. Answering it still lets the connection carry on.
+TEST(WebServer, AwaitedRequestsAreCancelledWhenTheClientLeavesOrTheServerStops) {
+  std::mutex mutex;
+  std::condition_variable ready;
+  std::vector<std::pair<std::shared_ptr<const std::atomic_bool>, server::ApiCompletion>> pending;
+  server::WebServer web("127.0.0.1", 0, {},
+      [&](const server::ApiRequest& request, server::ApiCompletion complete) {
+        const std::lock_guard lock(mutex);
+        pending.emplace_back(request.cancelled, std::move(complete));
+        ready.notify_all();
+      });
+  web.start(1);
+  asio::io_context io;
+  const auto send = [&](beast::tcp_stream& connection, bool connect = true) {
+    if (connect) connection.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    http::request<http::empty_body> request{http::verb::get, "/api/underlyings/SPX/optimizer?target=1&budget=1", 11};
+    request.set(http::field::host, "localhost");
+    http::write(connection, request);
+  };
+  const auto await = [&](std::size_t count) {
+    std::unique_lock lock(mutex);
+    return ready.wait_for(lock, std::chrono::seconds(10), [&] { return pending.size() >= count; });
+  };
+  const auto turns_true = [](const std::shared_ptr<const std::atomic_bool>& flag) {
+    for (int i = 0; i < 1000 && !flag->load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    return flag->load();
+  };
+  // A client that waits keeps its request alive, and gets its answer.
+  beast::tcp_stream staying(io);
+  send(staying);
+  ASSERT_TRUE(await(1));
+  ASSERT_TRUE(pending[0].first);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  EXPECT_FALSE(pending[0].first->load());
+  pending[0].second({200, "{}"});
+  beast::flat_buffer buffer;
+  http::response<http::string_body> response;
+  http::read(staying, buffer, response);
+  EXPECT_EQ(response.result_int(), 200);
+  EXPECT_FALSE(pending[0].first->load());
+  // One that hangs up cancels it.
+  {
+    beast::tcp_stream leaving(io);
+    send(leaving);
+    ASSERT_TRUE(await(2));
+    beast::error_code ignored;
+    leaving.socket().close(ignored);
+  }
+  EXPECT_TRUE(turns_true(pending[1].first));
+  // Stopping the server cancels what is still awaited.
+  send(staying, false);
+  ASSERT_TRUE(await(3));
+  EXPECT_FALSE(pending[2].first->load());
+  web.stop();
+  EXPECT_TRUE(pending[2].first->load());
+  for (auto& [flag, complete] : pending) EXPECT_NO_THROW(complete({200, "{}"}));
 }
 
 TEST(WebServer, StopSeversLateCommandCompletionBeforeDestroyingExecutor) {

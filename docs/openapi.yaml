@@ -553,7 +553,7 @@
       ],
       "get": {
         "summary": "GET /api/underlyings/{symbol}/optimizer",
-        "description": "Searches listed verticals, short iron condors, long butterflies, long calendars, single options and covered calls (not naked short calls) within a loss budget and ranks them under the risk-neutral and the user's shifted lognormal distributions. Runs on a two-worker search pool; 503 SEARCH_BUSY with Retry-After when it is full. Derived estimates, not advice.",
+        "description": "Searches listed verticals, short iron condors, long butterflies, long calendars, single options and covered calls (not naked short calls) within a loss budget and ranks them under the risk-neutral and the user's shifted lognormal distributions. Runs on a two-worker search pool; 503 SEARCH_BUSY with Retry-After when it is full. A search stops early (truncated) when its client disconnects or the server stops; one still queued at shutdown answers 503 ENGINE_STOPPING. Derived estimates, not advice.",
         "x-scope": "read",
         "responses": {
           "200": {

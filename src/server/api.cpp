@@ -877,7 +877,8 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   if (view == "probability") return probability_response(*metrics, query);
   if (view == "optimizer") {
     // The network path runs this on the search pool (see handle_api_async).
-    try { return ok(search_strategies(*metrics, parse_strategy_search(query))); }
+    const auto cancelled = [cancel = request.cancelled] { return cancel && cancel->load(); };
+    try { return ok(search_strategies(*metrics, parse_strategy_search(query), cancelled)); }
     catch (const std::invalid_argument& failure) { return error(400, failure.what()); }
   }
   if (view == "volatility") {

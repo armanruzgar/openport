@@ -255,7 +255,7 @@ StrategySearchRequest parse_strategy_search(const std::map<std::string, std::str
   return request;
 }
 
-json search_strategies(const analytics::UnderlyingMetrics& metrics, const StrategySearchRequest& request, const std::atomic_bool* cancel) {
+json search_strategies(const analytics::UnderlyingMetrics& metrics, const StrategySearchRequest& request, const std::function<bool()>& cancelled) {
   const double spot = metrics.spot;
   if (!(spot > 0) || !finite(spot)) throw std::invalid_argument("The underlying has no spot price to search from");
   const auto now = metrics.as_of;
@@ -468,7 +468,7 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
   truncated |= stride > 1;
   considered = listed.size();
   for (std::size_t i = 0; i < listed.size(); i += stride) {
-    if (cancel && (evaluated % 256) == 0 && cancel->load()) { truncated = true; break; }
+    if (cancelled && (evaluated % 256) == 0 && cancelled()) { truncated = true; break; }
     value(std::move(listed[i]));
   }
   const auto key = [&](const Scored& s) {
@@ -519,20 +519,23 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
 }
 
 struct StrategySearchPool::Impl {
+  struct Job {
+    std::function<void()> run, dropped;
+  };
   std::mutex mutex;
   std::condition_variable ready;
-  std::deque<std::function<void()>> queue;
+  std::deque<Job> queue;
   std::vector<std::thread> threads;
   std::size_t capacity = 0, outstanding = 0;  ///< Jobs running or waiting, at most workers + queue.
-  bool stopping = false;
+  std::atomic_bool stopping{false};
   void run() {
     while (true) {
       std::function<void()> job;
       {
         std::unique_lock lock(mutex);
-        ready.wait(lock, [&] { return stopping || !queue.empty(); });
-        if (stopping && queue.empty()) return;
-        job = std::move(queue.front());
+        ready.wait(lock, [&] { return stopping.load() || !queue.empty(); });
+        if (stopping.load()) return;
+        job = std::move(queue.front().run);
         queue.pop_front();
       }
       try { job(); } catch (...) { /* A job completes its own request; nothing escapes a worker. */ }
@@ -546,23 +549,30 @@ StrategySearchPool::StrategySearchPool(std::size_t workers, std::size_t queue) :
   for (std::size_t i = 0; i < std::max<std::size_t>(1, workers); ++i) impl_->threads.emplace_back([impl = impl_.get()] { impl->run(); });
 }
 StrategySearchPool::~StrategySearchPool() {
+  // Queued searches are dropped, not run: shutdown waits only for the running
+  // ones, and those see stopping() at their next cancellation check.
+  std::deque<Impl::Job> dropped;
   {
     const std::lock_guard lock(impl_->mutex);
     impl_->stopping = true;
+    dropped.swap(impl_->queue);
   }
   impl_->ready.notify_all();
+  for (auto& job : dropped)
+    if (job.dropped) try { job.dropped(); } catch (...) { /* As a worker would: nothing escapes. */ }
   for (auto& thread : impl_->threads) thread.join();
 }
-bool StrategySearchPool::submit(std::function<void()> job) {
+bool StrategySearchPool::submit(std::function<void()> job, std::function<void()> dropped) {
   {
     const std::lock_guard lock(impl_->mutex);
     if (impl_->stopping || impl_->outstanding >= impl_->capacity) return false;
     ++impl_->outstanding;
-    impl_->queue.push_back(std::move(job));
+    impl_->queue.push_back({std::move(job), std::move(dropped)});
   }
   impl_->ready.notify_one();
   return true;
 }
+bool StrategySearchPool::stopping() const noexcept { return impl_->stopping.load(); }
 StrategySearchPool& StrategySearchPool::shared() {
   static StrategySearchPool pool(2, 4);
   return pool;

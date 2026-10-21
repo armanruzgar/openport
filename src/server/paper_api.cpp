@@ -3394,13 +3394,17 @@ bool strategy_search(const ApiRequest& request, const MetricsSource& source, Api
   StrategySearchRequest search;
   try { search = parse_strategy_search(*query); }
   catch (const std::invalid_argument& failure) { complete(api_error(400, "INVALID_REQUEST", failure.what())); return true; }
-  const bool queued = StrategySearchPool::shared().submit([metrics, search, complete] {
+  // A search stops early, answering what it valued, once its client has gone or the
+  // server is stopping; one still queued at shutdown is dropped and answers 503.
+  auto& pool = StrategySearchPool::shared();
+  const bool queued = pool.submit([metrics, search, complete, cancel = request.cancelled, &pool] {
     ApiResponse response;
-    try { response.body = search_strategies(*metrics, search).dump(); }
+    const auto cancelled = [&] { return pool.stopping() || (cancel && cancel->load()); };
+    try { response.body = search_strategies(*metrics, search, cancelled).dump(); }
     catch (const std::invalid_argument& failure) { response = api_error(400, "INVALID_REQUEST", failure.what()); }
     catch (const std::exception&) { response = api_error(500, "INTERNAL_ERROR", "Strategy search failed"); }
     complete(std::move(response));
-  });
+  }, [complete] { complete(api_error(503, "ENGINE_STOPPING", "Strategy searches are stopping")); });
   if (!queued) {
     auto busy = api_error(503, "SEARCH_BUSY", "Strategy searches are all busy; retry shortly");
     busy.retry_after = kInboxRetrySeconds;

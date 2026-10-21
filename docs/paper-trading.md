@@ -3342,7 +3342,10 @@ current quotes, not forecasts or advice.
 A search can value tens of thousands of payoffs, so network requests run on a pool of
 two worker threads; up to four more wait, and beyond that the route answers 503
 `SEARCH_BUSY` with `Retry-After`. HTTP I/O threads never wait for a search. Invalid
-queries answer 400 before queuing.
+queries answer 400 before queuing. A search stops early, answering what it valued
+with `truncated` true, once its client closes the connection or the server is
+stopping; one still queued at shutdown is dropped unrun and answers 503
+`ENGINE_STOPPING`, so stopping waits only for searches already running.
 
 ### Hedge suggestions
 

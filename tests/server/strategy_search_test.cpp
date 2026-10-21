@@ -176,8 +176,7 @@ TEST(StrategySearch, BudgetsAndCandidateCapsBoundTheSearch) {
   for (const auto& c : wide["candidates"]) sampled.insert(c["structure"]);
   EXPECT_GE(sampled.size(), 3U);
   EXPECT_GT(wide["considered"].get<int>(), wide["evaluated"].get<int>());
-  std::atomic_bool cancel{true};
-  const auto cancelled = server::search_strategies(metrics, parse({{"target", "5000"}, {"budget", "100000"}}), &cancel);
+  const auto cancelled = server::search_strategies(metrics, parse({{"target", "5000"}, {"budget", "100000"}}), [] { return true; });
   EXPECT_TRUE(cancelled["truncated"]);
   EXPECT_THROW((void)server::search_strategies(metrics, parse({{"target", "5000"}, {"budget", "1000"}, {"expiry_ids", "2027-01-15AM"}})),
                std::invalid_argument);
@@ -225,6 +224,30 @@ TEST(StrategySearch, ThePoolRefusesWorkBeyondItsQueue) {
   EXPECT_EQ(done.load(), 2);
 }
 
+// Shutdown waits only for running searches, which see stopping(); queued ones are
+// dropped without running and told so.
+TEST(StrategySearch, DestroyingThePoolDropsQueuedSearchesAndStopsRunningOnes) {
+  auto pool = std::make_unique<server::StrategySearchPool>(1, 2);
+  std::promise<void> started;
+  std::atomic_bool saw_stop{false}, ran{false};
+  std::atomic_int dropped{0};
+  auto* running = pool.get();  // what a job's search watches while the destructor runs
+  ASSERT_TRUE(pool->submit([&started, &saw_stop, running] {
+    started.set_value();
+    while (!running->stopping()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    saw_stop = true;
+  }));
+  ASSERT_TRUE(pool->submit([&ran] { ran = true; }, [&dropped] { ++dropped; }));
+  ASSERT_TRUE(pool->submit([&ran] { ran = true; }, [&dropped] { ++dropped; }));
+  ASSERT_EQ(started.get_future().wait_for(std::chrono::seconds(10)), std::future_status::ready);
+  const auto begun = std::chrono::steady_clock::now();
+  pool.reset();
+  EXPECT_LT(std::chrono::steady_clock::now() - begun, std::chrono::seconds(5));
+  EXPECT_TRUE(saw_stop);
+  EXPECT_FALSE(ran);
+  EXPECT_EQ(dropped.load(), 2);
+}
+
 class SearchSource final : public server::MetricsSource {
  public:
   SearchSource() : metrics_(std::make_shared<const analytics::UnderlyingMetrics>(spx())) {}
@@ -262,5 +285,23 @@ TEST(StrategySearch, NetworkRequestsCompleteFromThePool) {
   EXPECT_EQ(rejected.status, 400);
   test::capture_contract("analytics", "GET", "/api/underlyings/SPX/optimizer?target=5050", rejected);
   EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/QQQ/optimizer?target=1&budget=1"}, source).status, 404);
+}
+
+// A request whose client has gone stops at the first check, answering what it valued.
+TEST(StrategySearch, ACancelledRequestStopsItsSearch) {
+  SearchSource source;
+  server::ApiRequest request{"GET", "/api/underlyings/SPX/optimizer?target=5050&budget=2000"};
+  request.cancelled = std::make_shared<const std::atomic_bool>(true);
+  std::promise<server::ApiResponse> promise;
+  server::handle_api_async(request, source, [&](server::ApiResponse response) { promise.set_value(std::move(response)); });
+  auto future = promise.get_future();
+  ASSERT_EQ(future.wait_for(std::chrono::minutes(2)), std::future_status::ready);
+  const auto response = future.get();
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto body = json::parse(response.body);
+  EXPECT_TRUE(body["truncated"]);
+  EXPECT_EQ(body["evaluated"], 0);
+  EXPECT_GT(body["considered"].get<int>(), 0);
+  EXPECT_EQ(json::parse(server::handle_api(request, source).body)["evaluated"], 0);
 }
 }  // namespace
