@@ -45,6 +45,8 @@ inline std::vector<std::string> paper_csv_columns(bool fills) {
       columns.push_back(std::string("quote.") + field);
     for (const auto* field : {"commission", "clearing", "regulatory", "index"})
       columns.push_back(std::string("fees.") + field);
+    // Last, so earlier columns keep their positions: the feed a fallback named.
+    columns.push_back("feed");
   }
   if (!fills) {
     for (const auto* prefix : {"review", "strategy_review"}) {
