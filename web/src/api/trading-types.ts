@@ -1013,7 +1013,14 @@ export interface HeldStrategy {
 }
 /** The trade each named round trip is in after grouping or ungrouping. */
 export interface GroupResponse { account_version: string; groups: Record<string, string> }
-export interface RiskCaps { dollar_delta: number; vega: number }
+export interface RiskCaps {
+  dollar_delta: number
+  vega: number
+  dollar_gamma_1pct?: number | null
+  theta?: number | null
+  worst_grid_loss?: number | null
+  short_vega?: number | null
+}
 export interface Limits {
   max_order_contracts: number
   price_band_absolute: Money
@@ -1021,6 +1028,8 @@ export interface Limits {
   aggregate: RiskCaps
   per_underlying: RiskCaps
   underlying_overrides?: Record<string, RiskCaps>
+  tag_overrides?: Record<string, RiskCaps>
+  playbook_overrides?: Record<string, RiskCaps>
   max_daily_loss: Money
   max_quote_age_seconds: number
   max_valuation_age_seconds: number
@@ -1030,10 +1039,16 @@ export interface Bucket {
   dollar_gamma_1pct: Num
   vega: Num
   theta: Num
-  reachable: { delta_low: Num; delta_high: Num; vega_low: Num; vega_high: Num }
+  reachable: { delta_low: Num; delta_high: Num; vega_low: Num; vega_high: Num; gamma_low?: Num; gamma_high?: Num; theta_low?: Num; theta_high?: Num }
   limits: RiskCaps
   delta_utilisation: Num
   vega_utilisation: Num
+  short_vega?: Num
+  worst_grid_loss?: Num
+  gamma_utilisation?: Num
+  theta_utilisation?: Num
+  grid_utilisation?: Num
+  short_vega_utilisation?: Num
 }
 /** One change of the kill latch; previous is the reason it replaced, cleared or released. */
 export interface KillChange { time: string; action: "trip" | "reset" | "release"; reason: string | null; previous: string | null; actor: string }
@@ -1074,6 +1089,7 @@ export interface Risk {
   aggregate: Bucket
   underlyings: Record<string, Bucket>
   scenarios: Scenarios
+  scopes?: Record<string, Bucket>
 }
 export interface OrdersResponse { account_version: string; orders: Order[] }
 export interface FillsResponse { account_version: string; fills: Fill[] }
@@ -1182,6 +1198,7 @@ export interface ProfileBeta {
   weighted_dollar_delta: number | null
 }
 export interface RiskProfile {
+  term_scaled?: boolean
   account_version: string
   time: string
   underlying: string | null
@@ -1202,7 +1219,7 @@ export interface RiskProfile {
   complete: boolean
   model: string
 }
-export interface RiskProfileQuery { underlying?: string; benchmark?: "SPY" | "SPX"; days?: (number | "expiry")[]; iv?: number; range?: number; steps?: number; betas?: Record<string, number> }
+export interface RiskProfileQuery { underlying?: string; benchmark?: "SPY" | "SPX"; days?: (number | "expiry")[]; iv?: number; range?: number; steps?: number; betas?: Record<string, number>; term_scaled?: boolean }
 /** A block of contracts at one price, as a fill would trade it. */
 export interface PreviewFill { symbol: string; side: Side; quantity: number; price: Money }
 /** What submitting the order now would execute (a private dry run), and its full size block by block. */
@@ -1315,7 +1332,20 @@ export interface PreviewLiquidity {
   size_left: number
 }
 export interface OrderWarning { code: "STOP_AS_LIMIT" | "STOP_REACHED" | "TARGET_REACHED" | "TRIGGER_REACHED" | "SLIPPAGE_BAND" | (string & {}); message: string }
+export interface EquityRisk {
+  dollar_delta: number
+  dollar_gamma_1pct: number
+  vega: number
+  theta: number
+  delta_utilisation: number
+  vega_utilisation: number
+  gamma_utilisation?: number | null
+  theta_utilisation?: number | null
+  grid_utilisation?: number | null
+  short_vega_utilisation?: number | null
+}
 export interface EquitySample {
+  risk?: EquityRisk | null
   time: string
   day: string
   attempt: number
@@ -1338,3 +1368,51 @@ export interface EquityHistory {
 export interface UpdateAccountRequest { name?: string; archived?: boolean }
 export interface UpdateAccountResponse { account: { id: string; name: string; archived: boolean } }
 export interface DeleteAccountResponse { deleted: string }
+
+export interface ScenarioAnalysis {
+  account_version: string
+  time: string
+  mode: "parallel" | "beta"
+  benchmark: string
+  betas: ProfileBeta[]
+  term_scaled: boolean
+  slices: (Scenarios & { days: number })[]
+  complete: boolean
+  model: string
+}
+
+export interface TailRisk {
+  complete: boolean
+  observations: number
+  var95: Num
+  es95: Num
+  var99: Num
+  es99: Num
+  /** Why var99 and es99 are null: they need 100 observations, 95% needs 20. */
+  tail99_reason: string | null
+  first: string | null
+  last: string | null
+}
+export interface StressResult {
+  id: string
+  name: string
+  from: string
+  to: string
+  label: string
+  source_note: string
+  sources: string[]
+  complete: boolean
+  missing_underlyings: string[]
+  pnl: Num
+  floor_breach: boolean | null
+  margin: Money | null
+  clamped: boolean
+}
+export interface HistoricalRisk {
+  account_version: string
+  time: string
+  stress: StressResult[]
+  sticky_strike: TailRisk
+  atm_vol_change: TailRisk
+  model: string
+}

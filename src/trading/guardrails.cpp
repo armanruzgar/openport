@@ -21,7 +21,10 @@ Limits tightened_limits(const Limits& current, const Limits& requested) {
   result.max_quote_age = std::min(current.max_quote_age, requested.max_quote_age);
   result.max_valuation_age = std::min(current.max_valuation_age, requested.max_valuation_age);
   const auto tighter = [](const ExposureLimits& a, const ExposureLimits& b) {
-    return ExposureLimits{std::min(a.dollar_delta, b.dollar_delta), std::min(a.vega, b.vega)};
+    const auto cap = [](std::optional<double> x, std::optional<double> y) { return !x ? y : !y ? x : std::optional(std::min(*x, *y)); };
+    return ExposureLimits{std::min(a.dollar_delta, b.dollar_delta), std::min(a.vega, b.vega),
+        cap(a.dollar_gamma_1pct, b.dollar_gamma_1pct), cap(a.theta, b.theta),
+        cap(a.worst_grid_loss, b.worst_grid_loss), cap(a.short_vega, b.short_vega)};
   };
   result.aggregate = tighter(current.aggregate, requested.aggregate);
   result.per_underlying = tighter(current.per_underlying, requested.per_underlying);
@@ -33,6 +36,15 @@ Limits tightened_limits(const Limits& current, const Limits& requested) {
     result.underlying_overrides[name] = tighter(a == current.underlying_overrides.end() ? current.per_underlying : a->second,
                                                b == requested.underlying_overrides.end() ? requested.per_underlying : b->second);
   }
+  const auto scopes = [&](const auto& old, auto& next) {
+    for (const auto& [name, caps] : old) {
+      const auto found = next.find(name);
+      if (found == next.end()) next[name] = caps;
+      else found->second = tighter(caps, found->second);
+    }
+  };
+  scopes(current.tag_overrides, result.tag_overrides);
+  scopes(current.playbook_overrides, result.playbook_overrides);
   return result;
 }
 Guardrails tightened_guardrails(const Guardrails& current, const Guardrails& requested) {

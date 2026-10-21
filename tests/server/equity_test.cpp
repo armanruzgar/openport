@@ -254,5 +254,27 @@ TEST(EquityStore, StorageErrorKeepsFailureTimesAndRecoversRetainedSamples) {
   EXPECT_EQ(EquityStore(file).samples().size(), 2u);
 }
 
+TEST(EquityStore, RiskSamplesRoundTripWithoutInventingValuesForLegacyRows) {
+  Directory dir;
+  const auto file = dir.path / "risk.csv";
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  EquitySample sample{time, 1, m("10000"), {}, m("10000"), {}, {}, 0};
+  {
+    EquityStore store(file); store.append(sample);
+    sample.time += md::kNanosPerMinute;
+    sample.risk = EquityRisk{{123456.789012345, -120, -40, 15}, 0.25, 0.4, 0.12, {}, 0.8, 0.75};
+    store.append(sample);
+  }
+  EquityStore restored(file);
+  ASSERT_EQ(restored.samples().size(), 2U);
+  EXPECT_FALSE(restored.samples()[0].risk);
+  ASSERT_TRUE(restored.samples()[1].risk);
+  EXPECT_DOUBLE_EQ(restored.samples()[1].risk->exposure.dollar_delta, sample.risk->exposure.dollar_delta);
+  EXPECT_DOUBLE_EQ(restored.samples()[1].risk->vega_utilisation, 0.4);
+  EXPECT_EQ(restored.samples()[1].risk->gamma_utilisation, 0.12);
+  EXPECT_FALSE(restored.samples()[1].risk->theta_utilisation);
+  EXPECT_EQ(restored.samples()[1].risk->grid_utilisation, 0.8);
+  EXPECT_EQ(restored.samples()[1].risk->short_vega_utilisation, 0.75);
 }
-}
+}  // namespace
+}  // namespace openport::server

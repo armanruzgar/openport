@@ -1130,6 +1130,45 @@ struct Measures {
   std::optional<Money> soft_floor;
   BuyingPower buying_power;
 };
+std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
+  std::map<std::string, std::vector<std::string>> result;
+  if (s.config.limits.tag_overrides.empty() && s.config.limits.playbook_overrides.empty()) return result;
+  const auto lives = lifecycles(s.fills, s.closures, s.contracts);
+  const auto tags = [&](const Lifecycle& life) {
+    std::set<std::string> found;
+    for (const auto id : life.fills) {
+      if (!id || id > s.fills.size()) continue;
+      const auto order = s.fills[id - 1].order_id;
+      if (order && order <= s.orders.size())
+        for (const auto& tag : s.orders[order - 1].request.tags) found.insert(tag);
+    }
+    for (const auto& id : {std::to_string(life.first_fill), trade_group(life, s.groups)})
+      if (const auto note = s.annotations.find(id); note != s.annotations.end())
+        found.insert(note->second.tags.begin(), note->second.tags.end());
+    return found;
+  };
+  for (const auto& life : lives) if (!life.closed) {
+    const auto found = tags(life);
+    result[life.symbol] = {found.begin(), found.end()};
+  }
+  // Delivered shares retain their originating option trade's scope. Fungible
+  // positions shared by tags count in each scope; retagging does not erase entry tags.
+  for (const auto& life : share_lifecycles(s.stock_fills)) if (!life.closed) {
+    std::set<std::string> found;
+    for (const auto id : life.fills) {
+      const auto& fill = s.stock_fills[id - 1];
+      for (const auto& option : lives)
+        if (option.symbol == fill.option && option.opened <= fill.time && (!option.closed || *option.closed >= fill.time)) {
+          const auto original = tags(option); found.insert(original.begin(), original.end());
+        }
+    }
+    if (const auto trip = s.trips.find(life.symbol); trip != s.trips.end())
+      if (const auto note = s.annotations.find(trip->second); note != s.annotations.end())
+        found.insert(note->second.tags.begin(), note->second.tags.end());
+    result[life.symbol] = {found.begin(), found.end()};
+  }
+  return result;
+}
 Measures measure(const State& s) {
   Measures out;
   out.equity = s.ledger.account().cash;
@@ -1175,7 +1214,7 @@ Measures measure(const State& s) {
   std::vector<const Order*> working;
   for (const auto id : open_ids(s))
     if (const auto& o = s.orders[id - 1]; !shadowed(s, o)) working.push_back(&o);
-  out.risk = portfolio_risk(s.ledger, working, s.contracts, s.valuations, s.config.limits, s.time, out.stock_prices);
+  out.risk = portfolio_risk(s.ledger, working, s.contracts, s.valuations, s.config.limits, s.time, out.stock_prices, s.config.scenarios, risk_tags(s));
   out.risk.daily_loss = std::max(Money{}, s.start_equity - out.equity);
   out.risk.kill_latched = s.kill;
   out.risk.kill_reason = s.kill_reason;
@@ -1778,7 +1817,8 @@ Decision exposure_check(const State& s, const Order& o, const Measures& snapshot
   std::vector<const Order*> working;
   for (const auto id : open_ids(s))
     if (const auto& other = s.orders[id - 1]; other.id != o.id && !shadowed(s, other)) working.push_back(&other);
-  const auto without = portfolio_risk(s.ledger, working, s.contracts, s.valuations, s.config.limits, s.time, snapshot.stock_prices);
+  const auto without = portfolio_risk(s.ledger, working, s.contracts, s.valuations, s.config.limits, s.time,
+      snapshot.stock_prices, s.config.scenarios, risk_tags(s), {&o});
   return check_exposure(snapshot.risk, without);
 }
 Decision walk_check(const Order& o, Money tick, Money cap_tick) {
@@ -3967,10 +4007,44 @@ std::optional<Money> alert_value(const State& s, const AlertCondition& c, const 
             if (!quote_check(s, symbol).ok()) return std::nullopt;
         return m.buying_power.available;
       }
-      if (c.metric == "dollar_delta" || c.metric == "vega" || c.metric == "theta") {
+      if (c.metric == "dollar_delta" || c.metric == "vega" || c.metric == "theta" || c.metric == "dollar_gamma_1pct") {
         if (!m.risk.complete) return std::nullopt;
         const auto& e = m.risk.aggregate.position;
-        return money(c.metric == "dollar_delta" ? e.dollar_delta : c.metric == "vega" ? e.vega : e.theta);
+        return money(c.metric == "dollar_delta" ? e.dollar_delta : c.metric == "vega" ? e.vega : c.metric == "theta" ? e.theta : e.dollar_gamma_1pct);
+      }
+      if (c.metric == "delta_utilisation" || c.metric == "vega_utilisation") {
+        if (!m.risk.complete) return std::nullopt;
+        return money(c.metric == "delta_utilisation" ? m.risk.aggregate.delta_utilisation : m.risk.aggregate.vega_utilisation);
+      }
+      if (c.metric == "grid_loss") {
+        if (!m.valuation_complete) return std::nullopt;
+        const auto grid = scenario_grid(s.ledger, s.valuations, s.config.scenarios, s.time,
+            s.config.limits.max_valuation_age, m.stock_prices);
+        if (!grid.complete) return std::nullopt;
+        double loss = 0;
+        for (const auto& cell : grid.cells) loss = std::max(loss, -cell.pnl);
+        return money(loss);
+      }
+      if (c.metric == "floor_touch_probability") {
+        if (!m.valuation_complete || !m.risk.complete || (s.config.rules.max_drawdown <= Money{} && !m.soft_floor)) return std::nullopt;
+        std::map<std::string, double> variances;
+        for (const auto& [symbol, bucket] : m.risk.underlyings) {
+          const auto sigma = s.indicators.find(indicator_key(symbol, "close_sigma"));
+          if (sigma == s.indicators.end() || !recent(sigma->second.time, s.config.limits.max_valuation_age)) return std::nullopt;
+          variances[symbol] = std::pow(sigma->second.price.dollars() / 100, 2);
+        }
+        const auto breach = breach_of(s, variances);
+        if (!breach.complete) return std::nullopt;
+        double probability = 0;
+        for (const auto& item : breach.underlyings) {
+          if (!item.complete) return std::nullopt;
+          for (const auto* level : {&item.down, &item.up, &item.soft_down, &item.soft_up})
+            if (*level) {
+              if (!(*level)->touch_probability) return std::nullopt;
+              probability = std::max(probability, *(*level)->touch_probability);
+            }
+        }
+        return money(probability);
       }
       if (!m.valuation_complete) return std::nullopt;
       if (c.metric == "equity") return m.equity;
@@ -3995,11 +4069,18 @@ void check_alerts(State& s, Events& events) {
     if (!measured) measured = measure(s);
     return *measured;
   };
+  std::map<std::string, std::optional<Money>> account_values;
   for (auto& alert : s.alerts.items) {
     if (!alert.armed && !alert.spec.repeat) continue;
     const auto& c = alert.spec.condition;
     std::optional<Money> value;
-    try { value = alert_value(s, c, measures); }
+    try {
+      if (c.scope == AlertScope::Account) {
+        const auto [it, added] = account_values.try_emplace(c.metric);
+        if (added) it->second = alert_value(s, c, measures);
+        value = it->second;
+      } else value = alert_value(s, c, measures);
+    }
     catch (const TradingError& error) {
       // An unrepresentable alert value must not stop market processing.
       if (error.code() != Reason::ARITHMETIC_OVERFLOW) throw;
@@ -4095,7 +4176,8 @@ Sizing size_order(const std::function<const OrderPreview&(Quantity)>& sized, Qua
     const auto code = sized(1).decision.code;
     if (code == Reason::BUYING_POWER || code == Reason::DELTA_LIMIT || code == Reason::VEGA_LIMIT ||
         code == Reason::MAX_ORDER_CONTRACTS || code == Reason::MAX_CONTRACTS_HELD || code == Reason::MAX_TRADE_RISK ||
-        code == Reason::SCALING_LIMIT) return none(code == Reason::BUYING_POWER ? "buying_power" : "limits");
+        code == Reason::SCALING_LIMIT || code == Reason::GAMMA_LIMIT || code == Reason::THETA_LIMIT ||
+        code == Reason::GRID_LOSS_LIMIT || code == Reason::SHORT_VEGA_LIMIT) return none(code == Reason::BUYING_POWER ? "buying_power" : "limits");
     return out;
   }
   Quantity low = 1, high = upper;
@@ -4960,6 +5042,8 @@ TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared
     : impl_(std::make_unique<Impl>()) {
   validate_limits(config.limits);
   validate_scenarios(config.scenarios);
+  if (config.scenarios.days != std::vector<double>{0} || config.scenarios.beta_weighted || config.scenarios.term_scaled)
+    throw TradingError(Reason::INVALID_SCENARIO, "Trading rules require a parallel zero-day grid; use read-only scenario analysis for beta, time and term shocks");
   normalize_event_rules(config.rules, true);
   validate_rules(config.rules);
   validate_guardrails(config.guardrails);
@@ -5692,8 +5776,7 @@ CommandResult TradingSession::set_limits(Limits limits, Timestamp time) {
     // so removing redundant entries changes none of their journal bytes.
     std::erase_if(effective.underlying_overrides, [&](const auto& entry) {
       return !limits.underlying_overrides.contains(entry.first) &&
-          entry.second.dollar_delta == effective.per_underlying.dollar_delta &&
-          entry.second.vega == effective.per_underlying.vega;
+          entry.second == effective.per_underlying;
     });
     s.pending_limits = Json(effective) != Json(limits) ? std::optional(limits) : std::nullopt;
     s.config.limits = effective;

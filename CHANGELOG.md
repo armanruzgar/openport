@@ -80,6 +80,15 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   with a `truncated` flag, and Python defaults to comparisons. Scanner rows are cached
   per publication. Event estimates count one event per date and session, and an
   event at a settlement instant now solves after that expiry.
+- Risk: cited historical stress scenarios and 1-day historical VaR/expected shortfall, with an observed ATM-IV-change variant when available.
+- Risk: gamma, theta, reachable grid-loss and gross short-vega caps, with tag and playbook scopes and evaluation rollover discipline.
+- Risk: account alerts for utilisation, grid loss, gamma and modelled floor-touch odds through existing notification channels.
+- Terminal: persist contemporaneous portfolio Greeks beside equity; chart risk intraday and across days without reconstructing old values.
+- API: read-only historical risk and scenario endpoints, with Python and MCP methods.
+- Risk: beta-aware spot × volatility × time scenario explorer, with optional term scaling; existing rule grids retain their defaults.
+- Risk: historical VaR/ES at 99% needs 100 observations (95% still needs 20); below that `var99`/`es99` are null and `tail99_reason` says why.
+- Risk: a tagged order that reduces an untagged book over its scope cap is no longer refused; the scope is valued over the same positions with and without the order.
+- Risk: scenario grids for grid-loss caps and alerts are remembered by their exact inputs, so order checks stop repricing every open order's grid.
 
 ## 0.4.0 (2026-10-06)
 

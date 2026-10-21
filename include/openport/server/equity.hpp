@@ -7,6 +7,11 @@
 #include "openport/trading/session.hpp"
 
 namespace openport::server {
+struct EquityRisk {
+  trading::Exposure exposure;
+  double delta_utilisation = 0, vega_utilisation = 0;
+  std::optional<double> gamma_utilisation = {}, theta_utilisation = {}, grid_utilisation = {}, short_vega_utilisation = {};
+};
 struct EquitySample {
   md::Timestamp time = 0;
   std::uint64_t attempt = 0;
@@ -18,6 +23,7 @@ struct EquitySample {
   std::uint64_t fill = 0;  ///< Zero for a minute sample; otherwise the fill ID.
   std::uint64_t stock_fill = 0;  ///< A share change, at its committed transaction mark.
   bool decision = false;  ///< Append-time retention hint; persisted as an ordinary mark.
+  std::optional<EquityRisk> risk = {};  ///< Complete contemporaneous valuations only; old rows and interim fill marks have none.
 };
 /// Exact marked-equity changes from committed fills, led by the mark before the first
 /// option execution (fill zero), which can be a new high or the equity that decided the

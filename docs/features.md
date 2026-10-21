@@ -272,6 +272,18 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 
 ## Risk tools
 
+- Historical stress panel with four cited index shocks, tenor volatility proxies,
+  held-book P&L, floor breaches and margin after each shock.
+- One-day historical-simulation VaR and expected shortfall at 95%/99% (20 and 100
+  observations required), from up to 252 stored closes, plus an ATM-vol-change variant when history is available.
+- Persisted portfolio Greeks and limit utilisation alongside equity, with intraday
+  and across-day charts; missing historical valuations remain gaps.
+- Optional gamma, theta, grid-loss and gross short-vega caps, including trade-tag
+  and playbook scopes; risk metric alerts use the existing delivery channels.
+
+- Scenario explorer: beta-weighted benchmark moves, calendar-day slices and optional
+  30-day-relative term-scaled volatility shocks; trading-rule grids remain unchanged.
+
 - Position Greeks, dollar-delta and vega limits, a spot × volatility scenario grid
   and today's P&L attribution by delta, gamma, vega and theta include contracts
   closed today, with costs apart. Positions are marked at mid.

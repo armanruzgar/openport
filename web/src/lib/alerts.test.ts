@@ -92,3 +92,10 @@ describe("toasts", () => {
     vi.useRealTimers()
   })
 })
+
+it("offers risk utilisation, grid loss, floor odds and every portfolio Greek", async () => {
+  const { alertMetrics } = await import("./alerts")
+  expect(alertMetrics.account.map((m) => m.value)).toEqual(expect.arrayContaining([
+    "dollar_delta", "dollar_gamma_1pct", "vega", "theta", "delta_utilisation", "vega_utilisation", "floor_room", "grid_loss", "floor_touch_probability",
+  ]))
+})

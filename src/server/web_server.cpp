@@ -386,7 +386,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
         path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" || path.starts_with("/api/underlyings/"));
     const bool account_read = read && (path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
-        path == "/api/fills" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/trades" ||
+        path == "/api/fills" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/trades" ||
         path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts");
     if ((!market_read && account != sandbox) || (read && !market_read && !account_read) ||
         (!read && path.starts_with("/api/playbooks")))

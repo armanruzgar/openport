@@ -12,7 +12,7 @@ from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
                     Exposure, Volatility, Candles, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
-                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability)
+                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis)
 
 
 def _list(values) -> str | None:
@@ -193,14 +193,27 @@ class Client:
     def risk(self) -> Risk:
         return self._request("GET", "/risk", scoped=True)
 
+    def risk_history(self) -> HistoricalRisk:
+        """Derived historical stress and one-day VaR/ES; incomplete inputs remain unavailable."""
+        return self._request("GET", "/risk/history", scoped=True)
+
+    def risk_scenarios(self, mode: str = "parallel", days: list[float] | None = None,
+                       benchmark: str | None = None, vols: list[float] | None = None,
+                       term_scaled: bool = False, betas: dict[str, float] | None = None) -> ScenarioAnalysis:
+        """Read-only spot × vol × time grid; does not change trading-rule scenarios."""
+        return self._request("GET", "/risk/scenarios", scoped=True, params={
+            "mode": mode, "days": _list(days), "benchmark": benchmark, "vols": _list(vols),
+            "term_scaled": "true" if term_scaled else "false",
+            "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
+
     def risk_profile(self, underlying: str | None = None, benchmark: str | None = None,
                      days: list[float | str] | None = None, iv: float | None = None,
                      range: float | None = None, steps: int | None = None,
-                     betas: dict[str, float] | None = None) -> RiskProfile:
+                     betas: dict[str, float] | None = None, term_scaled: bool = False) -> RiskProfile:
         """The held book's P&L curves over dates, against one underlying or beta-weighted to SPY or SPX."""
         return self._request("GET", "/risk/profile", scoped=True, params={
             "underlying": underlying, "benchmark": benchmark, "days": _list(days), "iv": iv, "range": range,
-            "steps": steps, "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
+            "term_scaled": "true" if term_scaled else None, "steps": steps, "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
 
     def equity(self, start: str | None = None, end: str | None = None, *,
                limit: int | None = None, cursor: str | None = None) -> EquityHistory:

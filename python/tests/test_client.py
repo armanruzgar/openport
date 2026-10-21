@@ -209,6 +209,8 @@ def test_base_url_rejects_ambiguous_credentials(url):
     ("create_alert", ("account", "equity", "at_or_below", "99000"), "POST", "/api/alerts", "AlertResponse"),
     ("delete_alert", ("1",), "DELETE", "/api/alerts/1", "AlertDeleted"),
     ("risk", (), "GET", "/api/risk", "Risk"),
+    ("risk_history", (), "GET", "/api/risk/history", "HistoricalRisk"),
+    ("risk_scenarios", (), "GET", "/api/risk/scenarios", "ScenarioAnalysis"),
     ("risk_profile", ("SPX",), "GET", "/api/risk/profile", "RiskProfile"),
     ("probability", ("SPX", [0, 7], [5900]), "GET", "/api/underlyings/SPX/probability", "Probability"),
     ("plans", (), "GET", "/api/plans", "PlansResponse"),

@@ -15,6 +15,8 @@
 #include <stdexcept>
 
 #include "openport/server/candles.hpp"
+#include "openport/server/series.hpp"
+#include "openport/trading/stress.hpp"
 #include "openport/server/plans.hpp"
 #include "openport/trading/contracts.hpp"
 #include "openport/trading/history.hpp"
@@ -1204,12 +1206,20 @@ json plans_json() {
   return {{"plans", plans}};
 }
 json exposure_limits(const ExposureLimits& limits) {
-  return {{"dollar_delta", limits.dollar_delta}, {"vega", limits.vega}};
+  json result{{"dollar_delta", limits.dollar_delta}, {"vega", limits.vega}};
+  for (const auto& [name, cap] : std::vector<std::pair<std::string, std::optional<double>>>{
+      {"dollar_gamma_1pct", limits.dollar_gamma_1pct}, {"theta", limits.theta},
+      {"worst_grid_loss", limits.worst_grid_loss}, {"short_vega", limits.short_vega}})
+    result[name] = cap ? number(*cap) : json(nullptr);
+  return result;
 }
 json limits_json(const Limits& limits) {
   json overrides = json::object();
   for (const auto& [symbol, caps] : limits.underlying_overrides) overrides[symbol] = exposure_limits(caps);
-  return {{"max_order_contracts", limits.max_order_contracts}, {"price_band_absolute", limits.price_band_absolute.str()},
+  json tags = json::object(), playbooks = json::object();
+  for (const auto& [name, caps] : limits.tag_overrides) tags[name] = exposure_limits(caps);
+  for (const auto& [name, caps] : limits.playbook_overrides) playbooks[name] = exposure_limits(caps);
+  return {{"tag_overrides", tags}, {"playbook_overrides", playbooks}, {"max_order_contracts", limits.max_order_contracts}, {"price_band_absolute", limits.price_band_absolute.str()},
           {"price_band_relative", limits.price_band_relative}, {"aggregate", exposure_limits(limits.aggregate)},
           {"per_underlying", exposure_limits(limits.per_underlying)}, {"underlying_overrides", overrides},
           {"max_daily_loss", limits.max_daily_loss.str()},
@@ -1217,10 +1227,16 @@ json limits_json(const Limits& limits) {
           {"max_valuation_age_seconds", limits.max_valuation_age / md::kNanosPerSecond}};
 }
 json bucket_json(const RiskBucket& b) {
-  return {{"dollar_delta", b.position.dollar_delta}, {"dollar_gamma_1pct", b.position.dollar_gamma_1pct},
+  const auto optional = [](std::optional<double> x) -> json { return x ? number(*x) : json(nullptr); };
+  return {{"short_vega", number(b.short_vega)}, {"worst_grid_loss", optional(b.worst_grid_loss)},
+          {"gamma_utilisation", optional(b.gamma_utilisation)}, {"theta_utilisation", optional(b.theta_utilisation)},
+          {"grid_utilisation", optional(b.grid_utilisation)}, {"short_vega_utilisation", optional(b.short_vega_utilisation)},
+          {"dollar_delta", b.position.dollar_delta}, {"dollar_gamma_1pct", b.position.dollar_gamma_1pct},
           {"vega", b.position.vega}, {"theta", b.position.theta},
           {"reachable", {{"delta_low", b.reachable.delta_low}, {"delta_high", b.reachable.delta_high},
-                         {"vega_low", b.reachable.vega_low}, {"vega_high", b.reachable.vega_high}}},
+                         {"vega_low", b.reachable.vega_low}, {"vega_high", b.reachable.vega_high},
+                         {"gamma_low", b.reachable.gamma_low}, {"gamma_high", b.reachable.gamma_high},
+                         {"theta_low", b.reachable.theta_low}, {"theta_high", b.reachable.theta_high}}},
           {"limits", exposure_limits(b.limits)}, {"delta_utilisation", b.delta_utilisation}, {"vega_utilisation", b.vega_utilisation}};
 }
 /// The latch, why the kill-switch reset could not clear it now (null when it could), and its
@@ -1239,6 +1255,8 @@ json risk_json(const TradingView& view) {
   const auto& s = *view.snapshot;
   json underlyings = json::object();
   for (const auto& [symbol, bucket] : s.risk.underlyings) underlyings[symbol] = bucket_json(bucket);
+  json scopes = json::object();
+  for (const auto& [name, bucket] : s.risk.scopes) scopes[name] = bucket_json(bucket);
   json pnl = json::array(), clamped = json::array();
   std::size_t index = 0;
   for ([[maybe_unused]] double spot : view.config.scenarios.spot_percent) {
@@ -1263,7 +1281,7 @@ json risk_json(const TradingView& view) {
               plan_trading_date(view.config.rules, std::max(s.time, view.replay_start))},
           {"time", md::format_timestamp(s.time)}, {"breach", breach_json(view.breach)}, {"warnings", warnings_json(view.warnings)},
           {"complete", s.risk.complete}, {"daily_loss", s.risk.daily_loss.str()},
-          {"kill", kill_json(s)}, {"aggregate", bucket_json(s.risk.aggregate)}, {"underlyings", underlyings},
+          {"kill", kill_json(s)}, {"aggregate", bucket_json(s.risk.aggregate)}, {"underlyings", underlyings}, {"scopes", scopes},
           {"scenarios", {{"spot_percent", view.config.scenarios.spot_percent}, {"vol_points", view.config.scenarios.vol_points},
                          {"pnl", pnl}, {"clamped", clamped}, {"complete", s.scenarios.complete}}}};
 }
@@ -1471,12 +1489,18 @@ std::string symbol_field(const json& j) {
   return symbol;
 }
 ExposureLimits parse_exposure(const json& j) {
-  fields(j, {"dollar_delta", "vega"});
-  return {number_field(j, "dollar_delta"), number_field(j, "vega")};
+  fields(j, {"dollar_delta", "vega"}, {"dollar_gamma_1pct", "theta", "worst_grid_loss", "short_vega"});
+  ExposureLimits result{number_field(j, "dollar_delta"), number_field(j, "vega")};
+  const auto cap = [&](const char* name) -> std::optional<double> {
+    return !j.contains(name) || j.at(name).is_null() ? std::nullopt : std::optional(number_field(j, name));
+  };
+  result.dollar_gamma_1pct = cap("dollar_gamma_1pct"); result.theta = cap("theta");
+  result.worst_grid_loss = cap("worst_grid_loss"); result.short_vega = cap("short_vega");
+  return result;
 }
 Limits parse_limits(const json& j) {
   fields(j, {"max_order_contracts", "price_band_absolute", "price_band_relative", "aggregate", "per_underlying",
-             "max_daily_loss", "max_quote_age_seconds", "max_valuation_age_seconds"}, {"underlying_overrides"});
+             "max_daily_loss", "max_quote_age_seconds", "max_valuation_age_seconds"}, {"underlying_overrides", "tag_overrides", "playbook_overrides"});
   Limits limits;
   limits.max_order_contracts = integer_field(j, "max_order_contracts");
   limits.price_band_absolute = decimal_field(j, "price_band_absolute");
@@ -1491,6 +1515,16 @@ Limits parse_limits(const json& j) {
             return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.';
           })) throw std::invalid_argument("Override underlying must be 1-16 uppercase letters, digits or dots");
       limits.underlying_overrides[symbol] = parse_exposure(caps);
+    }
+  }
+  for (const auto& key : {"tag_overrides", "playbook_overrides"}) {
+    if (!j.contains(key)) continue;
+    if (!j.at(key).is_object() || j.at(key).size() > 100) throw std::invalid_argument("Scope overrides must be an object with at most 100 entries");
+    auto& target = std::string_view(key) == "tag_overrides" ? limits.tag_overrides : limits.playbook_overrides;
+    for (const auto& [name, caps] : j.at(key).items()) {
+      if (name.empty() || name.size() > 100 || std::any_of(name.begin(), name.end(), [](unsigned char c) { return c < 32 || c == 127; }))
+        throw std::invalid_argument("Scope names must be 1-100 characters without controls");
+      target[name] = parse_exposure(caps);
     }
   }
   limits.max_daily_loss = decimal_field(j, "max_daily_loss");
@@ -2569,11 +2603,71 @@ json level_json(const std::optional<BreachLevel>& value, double spot) {
           {"touch_probability", value->touch_probability ? number(*value->touch_probability) : json(nullptr)}};
 }
 
+json historical_risk_json(const TradingView& view, const MetricsSource& source) {
+  const auto& s = *view.snapshot;
+  std::map<std::string, Position> positions;
+  std::map<std::string, StockPosition> stocks;
+  std::map<std::string, double> prices;
+  std::set<std::string> held;
+  for (const auto& p : s.positions) {
+    positions.emplace(p.position.contract.osi_symbol(), p.position);
+    held.insert(p.position.contract.underlying);
+  }
+  for (const auto& stock : s.stocks) {
+    stocks.emplace(stock.position.symbol, stock.position); held.insert(stock.position.symbol);
+    if (stock.fresh && stock.mark) prices[stock.position.symbol] = stock.mark->dollars();
+  }
+  const auto ledger = Ledger::restore({}, positions, stocks);
+  std::optional<Money> floor = view.config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt;
+  if (s.soft_floor) floor = floor ? std::max(*floor, *s.soft_floor) : s.soft_floor;
+  json stress = json::array();
+  for (const auto& scenario : historical_stresses()) {
+    const auto value = stress_book(ledger, view.valuations, scenario.factors, 0, s.equity, floor,
+        s.time, view.config.limits.max_valuation_age, prices, view.config.rules);
+    const bool complete = value.complete && s.valuation_complete;
+    json missing = json::array();
+    for (const auto& symbol : held) if (!scenario.factors.contains(symbol)) missing.push_back(symbol);
+    stress.push_back({{"id", scenario.id}, {"name", scenario.name}, {"from", scenario.from}, {"to", scenario.to},
+        {"label", scenario.label}, {"source_note", scenario.source_note}, {"sources", scenario.sources},
+        {"complete", complete}, {"missing_underlyings", missing}, {"pnl", complete ? number(value.pnl) : json(nullptr)},
+        {"floor_breach", complete && value.floor_breach ? json(*value.floor_breach) : json(nullptr)},
+        {"margin", complete ? money(value.margin) : json(nullptr)}, {"clamped", value.clamped}});
+  }
+  std::map<std::string, std::vector<HistoricalClose>> history;
+  for (const auto& symbol : held) {
+    std::map<md::Date, double> iv;
+    if (const auto* series = source.series())
+      for (const auto& row : series->rows(symbol, 0, s.time, true))
+        if (std::isfinite(row.values[8]) && row.values[8] > 0) iv[md::new_york_time(row.time).date] = row.values[8] / 100;
+    if (const auto* candles = source.candles())
+      for (const auto& row : candles->daily_history(symbol)) {
+        const auto date = md::new_york_time(row.start).date;
+        history[symbol].push_back({date, row.close, iv.contains(date) ? std::optional(iv.at(date)) : std::nullopt});
+      }
+  }
+  const auto risk = s.valuation_complete ? historical_risk(ledger, view.valuations, history,
+      s.time, view.config.limits.max_valuation_age, prices) : HistoricalRisk{};
+  const auto tail = [](const TailRisk& value) {
+    const auto num = [](const std::optional<double>& x) -> json { return x ? number(*x) : json(nullptr); };
+    return json{{"complete", value.complete}, {"observations", value.observations},
+      {"var95", num(value.var95)}, {"es95", num(value.es95)}, {"var99", num(value.var99)}, {"es99", num(value.es99)},
+      {"tail99_reason", value.var99 ? json(nullptr)
+          : json(value.tail99_reason.value_or("Needs fresh valuations and at least 100 aligned daily moves"))},
+      {"first", value.first ? json(md::format_date(*value.first)) : json(nullptr)},
+      {"last", value.last ? json(md::format_date(*value.last)) : json(nullptr)}};
+  };
+  return {{"account_version", std::to_string(s.account_version)}, {"time", md::format_timestamp(s.time)},
+    {"stress", stress}, {"sticky_strike", tail(risk.sticky_strike)}, {"atm_vol_change", tail(risk.atm_vol_change)},
+    {"model", "Derived 1-day historical simulation, up to 252 completed closes per factor; at least 20 paired returns for 95% and 100 for 99%. Black-76 sticky strike with one calendar day of decay; ATM variant adds observed 30d ATM IV changes uniformly by tenor. Empirical inverse-CDF VaR and fractional upper-tail ES in dollars, floored at zero. No liquidity, path or settlement simulation. Stress margin is the held-book requirement after the instantaneous shock, excluding working orders."}};
+}
+
 /// GET /api/risk/profile: the held book's value across moves of one underlying, or
 /// of a benchmark with every underlying beta-weighted to it, on several dates.
-ApiResponse risk_profile_response(const std::map<std::string, std::string>& query, const MetricsSource& source, std::string account) {
+ApiResponse risk_profile_response(const std::map<std::string, std::string>& query, const MetricsSource& source, std::string account, bool grid = false) {
   std::string underlying, benchmark = "SPY";
-  std::vector<std::string> days_text{"0", "1"};
+  std::vector<std::string> days_text = grid ? std::vector<std::string>{"0"} : std::vector<std::string>{"0", "1"};
+  std::vector<double> vols{-5, 0, 5, 10};
+  bool term_scaled = false, beta_weighted = !grid;
   double vol_points = 0, range = 10;
   int steps = 41;
   std::map<std::string, double> given;
@@ -2586,6 +2680,20 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
       days_text.clear();
       for (const auto item : split_list(value)) days_text.emplace_back(item);
       valid &= days_text.size() <= kMaxProfileCurves;
+    } else if (key == "term_scaled") {
+      valid &= value == "true" || value == "false";
+      term_scaled = value == "true";
+    } else if (grid && key == "mode") {
+      valid &= value == "parallel" || value == "beta";
+      beta_weighted = value == "beta";
+    } else if (grid && key == "vols") {
+      vols.clear();
+      for (const auto item : split_list(value)) {
+        double vol = 0;
+        valid &= query_decimal(std::string(item), vol) && std::abs(vol) <= 100;
+        vols.push_back(vol);
+      }
+      valid &= vols.size() <= 21;
     } else if (key == "iv") valid &= query_decimal(value, vol_points) && std::abs(vol_points) <= 100;
     else if (key == "range") valid &= query_decimal(value, range) && range > 0 && range <= 99;
     else if (key == "steps") {
@@ -2621,6 +2729,7 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
     if (underlying.empty() || stock.position.symbol == underlying) held.insert(stock.position.symbol);
   ProfileConfig config;
   config.vol_points = vol_points;
+  config.term_scaled = term_scaled;
   config.vol_floor = view->config.scenarios.vol_floor;
   for (int i = 0; i < steps; ++i) {
     const int offset = i - steps / 2;
@@ -2675,7 +2784,7 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
   double weighted = 0;
   bool weighted_complete = s.risk.complete;
   for (const auto& symbol : held) {
-    const auto beta = underlying.empty() ? profile_beta(source, symbol, reference, given) : BetaEstimate{1, analytics::kNaN, 0, "reference"};
+    const auto beta = underlying.empty() && beta_weighted ? profile_beta(source, symbol, reference, given) : BetaEstimate{1, analytics::kNaN, 0, "reference"};
     const auto bucket = s.risk.underlyings.find(symbol);
     const std::optional<double> dollar_delta = bucket != s.risk.underlyings.end() ? std::optional(bucket->second.position.dollar_delta) : std::nullopt;
     if (!beta.source.empty()) config.betas[symbol] = beta.beta;
@@ -2686,6 +2795,42 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
                      {"correlation", number(beta.correlation)},
                      {"dollar_delta", dollar_delta ? number(*dollar_delta) : json(nullptr)},
                      {"weighted_dollar_delta", dollar_delta && !beta.source.empty() ? number(*dollar_delta * beta.beta) : json(nullptr)}});
+  }
+  if (grid) {
+    if (!query.contains("range") && !query.contains("steps")) config.percent = view->config.scenarios.spot_percent;
+    if (config.percent.size() * config.days.size() * vols.size() > 20000)
+      return api_error(400, "INVALID_REQUEST", "Scenario grid is limited to 20000 cells");
+    config.variances.clear();
+    std::vector<RiskProfile> columns;
+    bool complete = true;
+    for (const double vol : vols) {
+      config.vol_points = vol;
+      // No floor root searches are needed for this grid.
+      auto settings = view->config;
+      settings.rules.max_drawdown = {};
+      auto snapshot = s;
+      snapshot.soft_floor.reset();
+      columns.push_back(snapshot_profile(snapshot, settings, view->valuations, config, spot, underlying));
+      complete &= columns.back().complete;
+    }
+    json slices = json::array();
+    for (std::size_t day = 0; day < config.days.size(); ++day) {
+      json pnl = json::array(), clamped = json::array();
+      for (std::size_t move = 0; move < config.percent.size(); ++move) {
+        json row = json::array(), clamps = json::array();
+        for (const auto& column : columns) {
+          row.push_back(complete ? number(column.curves[day].pnl[move]) : json(nullptr));
+          clamps.push_back(column.curves[day].clamped);
+        }
+        pnl.push_back(row); clamped.push_back(clamps);
+      }
+      slices.push_back({{"days", config.days[day]}, {"spot_percent", config.percent}, {"vol_points", vols},
+                        {"pnl", pnl}, {"clamped", clamped}, {"complete", complete}});
+    }
+    return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"time", md::format_timestamp(s.time)},
+        {"mode", beta_weighted ? "beta" : "parallel"}, {"benchmark", reference}, {"betas", betas},
+        {"term_scaled", term_scaled}, {"slices", slices}, {"complete", complete},
+        {"model", "Derived Black-76 sticky-strike scenarios; time reduces carry and remaining life. Term scaling uses sqrt(30/max(1,remaining days)). Trading rules retain their configured parallel, zero-day grid."}}.dump()};
   }
   const auto profile = snapshot_profile(s, view->config, view->valuations, config, spot, underlying);
   json prices = json::array();
@@ -2707,9 +2852,9 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
       {"percent", config.percent}, {"prices", prices}, {"curves", curves}, {"betas", betas},
       {"weighted_dollar_delta", weighted_complete ? number(weighted) : json(nullptr)},
       {"weighted_delta", weighted_complete && spot > 0 ? number(weighted / spot) : json(nullptr)},
-      {"complete", profile.complete},
+      {"complete", profile.complete}, {"term_scaled", term_scaled},
       {"model", "Black-76 on each contract's smile IV plus the offset, sticky strike; remaining life and carry shrink by the days; "
-                "each underlying moves its beta times the reference's percent move"}}.dump()};
+                "each underlying moves its beta times the reference's percent move; when term_scaled is true the IV offset is multiplied by sqrt(30/max(1,remaining days))"}}.dump()};
 }
 }  // namespace
 
@@ -2720,11 +2865,11 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   if (!order_detail && path != "/api/portfolio" && path != "/api/orders" && path != "/api/fills" && path != "/api/risk" &&
       path != "/api/trades.csv" && path != "/api/fills.csv" && path != "/api/account" && path != "/api/account/equity" &&
       path != "/api/trades" && path != "/api/settlements" && path != "/api/plans" && path != "/api/accounts" && path != "/api/risk/profile" &&
-      path != "/api/alerts") return {};
-  if (path == "/api/risk/profile") {
+      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history") return {};
+  if (path == "/api/risk/profile" || path == "/api/risk/scenarios") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
-    return risk_profile_response(*pairs, source, request.access.sandbox);
+    return risk_profile_response(*pairs, source, request.access.sandbox, path == "/api/risk/scenarios");
   }
   const auto query = question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1);
   // Every route takes account=ID; orders take status=open|all and client_order_id;
@@ -2786,6 +2931,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)},
         {"order", order_json(s.recent_orders[id - 1], *view)}}.dump()};
   }
+  if (path == "/api/risk/history") return ApiResponse{200, historical_risk_json(*view, source).dump()};
   if (path == "/api/account/equity") {
     json samples = json::array(), next = nullptr;
     Timestamp previous = 0;
@@ -2805,6 +2951,14 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       samples.push_back({{"time", md::format_timestamp(sample.time)}, {"day", md::format_date(plan_trading_date(view->config.rules, sample.time))},
           {"attempt", sample.attempt}, {"equity", sample.equity.str()}, {"floor", money(sample.floor)}, {"peak", sample.peak.str()},
           {"target", money(sample.target)}, {"tomorrow_floor", money(sample.tomorrow_floor)},
+          {"risk", sample.risk ? json{{"dollar_delta", number(sample.risk->exposure.dollar_delta)},
+              {"dollar_gamma_1pct", number(sample.risk->exposure.dollar_gamma_1pct)}, {"vega", number(sample.risk->exposure.vega)},
+              {"theta", number(sample.risk->exposure.theta)}, {"delta_utilisation", number(sample.risk->delta_utilisation)},
+              {"vega_utilisation", number(sample.risk->vega_utilisation)},
+              {"gamma_utilisation", sample.risk->gamma_utilisation ? number(*sample.risk->gamma_utilisation) : json(nullptr)},
+              {"theta_utilisation", sample.risk->theta_utilisation ? number(*sample.risk->theta_utilisation) : json(nullptr)},
+              {"grid_utilisation", sample.risk->grid_utilisation ? number(*sample.risk->grid_utilisation) : json(nullptr)},
+              {"short_vega_utilisation", sample.risk->short_vega_utilisation ? number(*sample.risk->short_vega_utilisation) : json(nullptr)}} : json(nullptr)},
           {"fill", sample.stock_fill ? json("s" + std::to_string(sample.stock_fill)) : sample.fill ? json(std::to_string(sample.fill)) : json(nullptr)}});
     }
     return ApiResponse{200, json{{"samples", samples}, {"next", next}, {"error", nullable(view->equity_error)},

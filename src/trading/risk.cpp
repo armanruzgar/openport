@@ -2,8 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <functional>
 #include <limits>
+#include <array>
+#include <tuple>
+#include <unordered_map>
 
 #include "openport/pricing/black.hpp"
 
@@ -22,24 +26,18 @@ bool finite(const Exposure& e) {
          std::isfinite(e.vega) && std::isfinite(e.theta);
 }
 bool add(RiskBucket& b, const Exposure& e, bool pending) {
-  if (pending) {
-    b.reachable.delta_low += std::min(0.0, e.dollar_delta);
-    b.reachable.delta_high += std::max(0.0, e.dollar_delta);
-    b.reachable.vega_low += std::min(0.0, e.vega);
-    b.reachable.vega_high += std::max(0.0, e.vega);
-  } else {
-    b.position.dollar_delta += e.dollar_delta;
-    b.position.dollar_gamma_1pct += e.dollar_gamma_1pct;
-    b.position.vega += e.vega;
-    b.position.theta += e.theta;
-    b.reachable.delta_low += e.dollar_delta;
-    b.reachable.delta_high += e.dollar_delta;
-    b.reachable.vega_low += e.vega;
-    b.reachable.vega_high += e.vega;
+  const std::array factors{
+      std::tuple{e.dollar_delta, &b.position.dollar_delta, &b.reachable.delta_low, &b.reachable.delta_high},
+      std::tuple{e.vega, &b.position.vega, &b.reachable.vega_low, &b.reachable.vega_high},
+      std::tuple{e.dollar_gamma_1pct, &b.position.dollar_gamma_1pct, &b.reachable.gamma_low, &b.reachable.gamma_high},
+      std::tuple{e.theta, &b.position.theta, &b.reachable.theta_low, &b.reachable.theta_high}};
+  for (const auto& [value, position, low, high] : factors) {
+    if (!pending) *position += value;
+    *low += pending ? std::min(0.0, value) : value;
+    *high += pending ? std::max(0.0, value) : value;
+    if (!std::isfinite(*position) || !std::isfinite(*low) || !std::isfinite(*high)) return false;
   }
-  return finite(b.position) && std::isfinite(b.reachable.delta_low) &&
-         std::isfinite(b.reachable.delta_high) && std::isfinite(b.reachable.vega_low) &&
-         std::isfinite(b.reachable.vega_high);
+  return true;
 }
 double worst(double low, double high) { return std::max(std::abs(low), std::abs(high)); }
 double utilisation(double value, double limit) {
@@ -50,18 +48,30 @@ double utilisation(double value, double limit) {
 void finish(RiskBucket& b) {
   b.delta_utilisation = utilisation(worst(b.reachable.delta_low, b.reachable.delta_high), b.limits.dollar_delta);
   b.vega_utilisation = utilisation(worst(b.reachable.vega_low, b.reachable.vega_high), b.limits.vega);
+  if (b.limits.dollar_gamma_1pct) b.gamma_utilisation = utilisation(worst(b.reachable.gamma_low, b.reachable.gamma_high), *b.limits.dollar_gamma_1pct);
+  if (b.limits.theta) b.theta_utilisation = utilisation(worst(b.reachable.theta_low, b.reachable.theta_high), *b.limits.theta);
+  if (b.limits.worst_grid_loss && b.worst_grid_loss) b.grid_utilisation = utilisation(*b.worst_grid_loss, *b.limits.worst_grid_loss);
+  if (b.limits.short_vega) b.short_vega_utilisation = utilisation(b.short_vega, *b.limits.short_vega);
 }
 /// A bucket over a limit fails, unless `before` (the bucket without the order
 /// being checked) was at least as far over it on that factor.
 Decision check_bucket(const RiskBucket& b, const std::string& scope, const RiskBucket* before = nullptr) {
-  const double delta = worst(b.reachable.delta_low, b.reachable.delta_high);
-  const double vega = worst(b.reachable.vega_low, b.reachable.vega_high);
-  const bool delta_raised = !before || delta > worst(before->reachable.delta_low, before->reachable.delta_high);
-  const bool vega_raised = !before || vega > worst(before->reachable.vega_low, before->reachable.vega_high);
-  if (delta > b.limits.dollar_delta && delta_raised)
-    return {Reason::DELTA_LIMIT, "Worst reachable absolute dollar delta exceeds limit", delta, b.limits.dollar_delta, scope};
-  if (vega > b.limits.vega && vega_raised)
-    return {Reason::VEGA_LIMIT, "Worst reachable absolute vega per point exceeds limit", vega, b.limits.vega, scope};
+  const RiskBucket empty;
+  const auto& prior = before ? *before : empty;
+  const std::array factors{
+    std::tuple{worst(b.reachable.delta_low, b.reachable.delta_high), worst(prior.reachable.delta_low, prior.reachable.delta_high),
+        std::optional(b.limits.dollar_delta), Reason::DELTA_LIMIT, "absolute dollar delta"},
+    std::tuple{worst(b.reachable.vega_low, b.reachable.vega_high), worst(prior.reachable.vega_low, prior.reachable.vega_high),
+        std::optional(b.limits.vega), Reason::VEGA_LIMIT, "absolute vega per point"},
+    std::tuple{worst(b.reachable.gamma_low, b.reachable.gamma_high), worst(prior.reachable.gamma_low, prior.reachable.gamma_high),
+        b.limits.dollar_gamma_1pct, Reason::GAMMA_LIMIT, "absolute dollar gamma per 1%"},
+    std::tuple{worst(b.reachable.theta_low, b.reachable.theta_high), worst(prior.reachable.theta_low, prior.reachable.theta_high),
+        b.limits.theta, Reason::THETA_LIMIT, "absolute theta per day"},
+    std::tuple{b.worst_grid_loss.value_or(0), prior.worst_grid_loss.value_or(0), b.limits.worst_grid_loss, Reason::GRID_LOSS_LIMIT, "grid loss"},
+    std::tuple{b.short_vega, prior.short_vega, b.limits.short_vega, Reason::SHORT_VEGA_LIMIT, "gross short vega"}};
+  for (const auto& [value, previous, limit, code, label] : factors)
+    if (limit && value > *limit && (!before || value > previous))
+      return {code, std::string("Worst reachable ") + label + " exceeds limit", value, *limit, scope};
   return {};
 }
 /// The first move from zero, in percent, at which `pnl` loses `room`: a scan in
@@ -95,6 +105,55 @@ std::optional<BreachLevel> solve_level(const std::function<std::optional<double>
   else if (sigma) level.touch_probability = 0;  // no session left today
   return level;
 }
+/// scenario_grid, remembered. measure() values the held book and every open
+/// order's legs per underlying, again for each order check without the order,
+/// and pricing those grids is most of its cost. The key holds every input the
+/// grid reads (each position's contract, quantity, pricing fields and whether its
+/// valuation is usable now, the shares and their prices, and the configuration),
+/// so a hit returns exactly what scenario_grid would. Only the multi-day and
+/// beta-weighted grids read the clock itself. Each thread keeps its own, so
+/// reading takes no lock.
+ScenarioGrid cached_grid(const Ledger& ledger, const Valuations& valuations, const ScenarioConfig& config,
+    Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices = {}) {
+  std::string key;
+  const auto put = [&](const auto& value) {
+    char bytes[sizeof(value)];
+    std::memcpy(bytes, &value, sizeof(value));
+    key.append(bytes, sizeof(value));
+  };
+  const auto text = [&](const std::string& value) { put(value.size()); key += value; };
+  const auto list = [&](const std::vector<double>& values) { put(values.size()); for (const double x : values) put(x); };
+  list(config.spot_percent); list(config.vol_points); list(config.days);
+  put(config.vol_floor); put(config.beta_weighted); put(config.term_scaled);
+  put(config.betas.size());
+  for (const auto& [name, beta] : config.betas) { text(name); put(beta); }
+  if (config.days != std::vector<double>{0} || config.beta_weighted || config.term_scaled) put(now);
+  put(ledger.positions().size());
+  for (const auto& [symbol, p] : ledger.positions()) {
+    text(symbol); text(p.contract.underlying);
+    put(p.quantity); put(p.contract.type); put(p.contract.strike); put(p.contract.expiry_time());
+    const auto it = valuations.find(symbol);
+    const bool usable = now < p.contract.expiry_time() && it != valuations.end() && fresh(it->second, p.contract, now, max_age);
+    put(usable);
+    if (usable) {
+      const auto& v = it->second;
+      put(v.spot); put(v.forward); put(v.discount); put(v.years); put(v.smile_iv);
+    }
+  }
+  put(ledger.stocks().size());
+  for (const auto& [symbol, stock] : ledger.stocks()) {
+    text(symbol); put(stock.shares);
+    const auto price = stock_prices.find(symbol);
+    put(price != stock_prices.end());
+    if (price != stock_prices.end()) put(price->second);
+  }
+  thread_local std::unordered_map<std::string, ScenarioGrid> grids;
+  if (const auto found = grids.find(key); found != grids.end()) return found->second;
+  auto grid = scenario_grid(ledger, valuations, config, now, max_age, stock_prices);
+  if (grids.size() >= 512) grids.clear();
+  grids.emplace(std::move(key), grid);
+  return grid;
+}
 }  // namespace
 Timestamp observation_time(const md::OptionContract& contract, Timestamp now) {
   const auto session = md::trading_session(contract.root, now);
@@ -105,7 +164,9 @@ Timestamp observation_time(const md::OptionContract& contract, Timestamp now) {
 RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*>& orders,
     const Contracts& contracts,
     const Valuations& valuations, const Limits& limits, Timestamp now,
-    const std::map<std::string, double>& stock_prices) {
+    const std::map<std::string, double>& stock_prices, const ScenarioConfig& scenarios,
+    const std::map<std::string, std::vector<std::string>>& position_tags,
+    const std::vector<const Order*>& scope_orders) {
   RiskSnapshot result;
   result.aggregate.limits = limits.aggregate;
   // Each contract's fresh valuation, looked up once however many orders trade it.
@@ -171,6 +232,99 @@ RiskSnapshot portfolio_risk(const Ledger& ledger, const std::vector<const Order*
     const auto q = o.request.side == Side::Buy ? o.remaining() : -o.remaining();
     add_exposure(it->second.underlying, exposure_of(o.request.symbol, it->second, q), true);
   }
+  // Each cell reserves only a pending order's loss: orders may fill in any
+  // subset, while the legs of an atomic combo remain together.
+  const auto extras = [&](RiskBucket& bucket, const std::string& underlying) {
+    std::map<std::string, Position> positions;
+    std::map<std::string, StockPosition> stocks;
+    std::map<std::string, double> short_low;
+    for (const auto& [symbol, p] : ledger.positions()) {
+      if (!underlying.empty() && p.contract.underlying != underlying) continue;
+      positions[symbol] = p;
+      if (const auto e = exposure_of(symbol, p.contract, p.quantity)) short_low[symbol] = e->vega;
+    }
+    for (const auto& [symbol, p] : ledger.stocks()) if (underlying.empty() || symbol == underlying) stocks[symbol] = p;
+    std::vector<double> losses;
+    if (bucket.limits.worst_grid_loss) {
+      const auto grid = cached_grid(Ledger::restore({}, positions, stocks), valuations, scenarios, now, limits.max_valuation_age, stock_prices);
+      result.complete &= grid.complete;
+      for (const auto& cell : grid.cells) losses.push_back(-cell.pnl);
+    }
+    for (const auto* order : orders) {
+      if (!order->open()) continue;
+      std::map<std::string, Position> pending;
+      const auto leg = [&](const std::string& symbol, Quantity quantity) {
+        const auto contract = contracts.find(symbol);
+        if (contract == contracts.end()) { result.complete = false; return; }
+        if (!underlying.empty() && contract->second.underlying != underlying) return;
+        pending[symbol] = Position{contract->second, quantity, {}, {}, {}};
+        if (const auto e = exposure_of(symbol, contract->second, quantity)) short_low[symbol] += std::min(0.0, e->vega);
+      };
+      if (multi_leg(order->request))
+        for (const auto& l : order->request.legs) leg(l.symbol, order->remaining() * l.ratio * (l.side == Side::Buy ? 1 : -1));
+      else leg(order->request.symbol, order->remaining() * (order->request.side == Side::Buy ? 1 : -1));
+      if (bucket.limits.worst_grid_loss && !pending.empty()) {
+        const auto grid = cached_grid(Ledger::restore({}, pending), valuations, scenarios, now, limits.max_valuation_age);
+        result.complete &= grid.complete;
+        for (std::size_t i = 0; i < losses.size(); ++i) losses[i] += std::max(0.0, -grid.cells[i].pnl);
+      }
+    }
+    for (const auto& [symbol, low] : short_low) bucket.short_vega += std::max(0.0, -low);
+    if (!losses.empty()) bucket.worst_grid_loss = std::max(0.0, *std::max_element(losses.begin(), losses.end()));
+    if (!std::isfinite(bucket.short_vega) || (bucket.worst_grid_loss && !std::isfinite(*bucket.worst_grid_loss))) result.complete = false;
+  };
+  extras(result.aggregate, "");
+  for (auto& [name, bucket] : result.underlyings) extras(bucket, name);
+  const auto scoped = [&](const std::string& prefix, const std::map<std::string, ExposureLimits>& overrides) {
+    for (const auto& [name, caps] : overrides) {
+      const auto matches = [&](const std::vector<std::string>& tags) {
+        return std::any_of(tags.begin(), tags.end(), [&](const auto& tag) {
+          return prefix == "tag:" ? tag == name : tag == "playbook:" + name || tag.starts_with("playbook:" + name + "@v");
+        });
+      };
+      const auto held = [&](const std::string& symbol) {
+        const auto found = position_tags.find(symbol);
+        if (found != position_tags.end() && matches(found->second)) return true;
+        // Adding a tag to an existing fungible position scopes that whole
+        // position once filled; reserve it before accepting the order too. The
+        // order checked is a scope order of its `without` snapshot, so both
+        // value the same positions and a reducing order is not charged for them.
+        const auto tags = [&](const auto* order) {
+          if (!order->open() || !matches(order->request.tags)) return false;
+          if (!multi_leg(order->request)) return order->request.symbol == symbol;
+          return std::any_of(order->request.legs.begin(), order->request.legs.end(), [&](const auto& leg) { return leg.symbol == symbol; });
+        };
+        return std::any_of(orders.begin(), orders.end(), tags) || std::any_of(scope_orders.begin(), scope_orders.end(), tags);
+      };
+      std::map<std::string, Position> positions;
+      std::map<std::string, StockPosition> stocks;
+      for (const auto& [symbol, p] : ledger.positions()) if (held(symbol)) positions[symbol] = p;
+      for (const auto& [symbol, p] : ledger.stocks()) if (held(symbol)) stocks[symbol] = p;
+      std::vector<Order> selected;
+      for (const auto* order : orders) {
+        if (!order->open()) continue;
+        auto copy = *order;
+        if (!matches(copy.request.tags)) {
+          if (multi_leg(copy.request)) {
+            std::erase_if(copy.request.legs, [&](const auto& leg) { return !held(leg.symbol); });
+            if (copy.request.legs.empty()) continue;
+          } else if (!held(copy.request.symbol)) continue;
+        }
+        selected.push_back(std::move(copy));
+      }
+      std::vector<const Order*> pending;
+      for (const auto& order : selected) pending.push_back(&order);
+      auto scoped_limits = limits;
+      scoped_limits.aggregate = caps;
+      scoped_limits.tag_overrides.clear(); scoped_limits.playbook_overrides.clear();
+      const auto risk = portfolio_risk(Ledger::restore({}, positions, stocks), pending, contracts, valuations,
+          scoped_limits, now, stock_prices, scenarios);
+      result.scopes[prefix + name] = risk.aggregate;
+      result.complete &= risk.complete;
+    }
+  };
+  scoped("tag:", limits.tag_overrides);
+  scoped("playbook:", limits.playbook_overrides);
   finish(result.aggregate);
   for (auto& [name, bucket] : result.underlyings) finish(bucket);
   return result;
@@ -180,6 +334,10 @@ Decision check_exposure(const RiskSnapshot& risk) {
   for (const auto& [name, bucket] : risk.underlyings) {
     auto result = check_bucket(bucket, name);
     if (!result.ok()) return result;
+  }
+  for (const auto& [name, bucket] : risk.scopes) {
+    const auto decision = check_bucket(bucket, name);
+    if (!decision.ok()) return decision;
   }
   return check_bucket(risk.aggregate, "aggregate");
 }
@@ -192,67 +350,102 @@ Decision check_exposure(const RiskSnapshot& risk, const RiskSnapshot& without) {
     auto result = check_bucket(bucket, name, before == without.underlyings.end() ? &empty : &before->second);
     if (!result.ok()) return result;
   }
+  for (const auto& [name, bucket] : risk.scopes) {
+    const auto before = without.scopes.find(name);
+    const auto decision = check_bucket(bucket, name, before == without.scopes.end() ? &empty : &before->second);
+    if (!decision.ok()) return decision;
+  }
   return check_bucket(risk.aggregate, "aggregate", &without.aggregate);
 }
 void validate_scenarios(const ScenarioConfig& c) {
-  bool valid = !c.spot_percent.empty() && !c.vol_points.empty() &&
+  bool valid = !c.spot_percent.empty() && !c.vol_points.empty() && !c.days.empty() && c.days.size() <= 8 &&
                c.spot_percent.size() <= 101 && c.vol_points.size() <= 101 &&
+               c.spot_percent.size() * c.vol_points.size() * c.days.size() <= 20000 &&
                std::isfinite(c.vol_floor) && c.vol_floor > 0 && c.vol_floor <= 10;
   for (double x : c.spot_percent) valid &= std::isfinite(x) && x > -100 && x <= 1000;
   for (double y : c.vol_points) valid &= std::isfinite(y) && std::abs(y) <= 1000;
-  if (!valid) throw TradingError(Reason::INVALID_SCENARIO, "Invalid or oversized spot/vol grid");
+  for (double d : c.days) valid &= std::isfinite(d) && d >= 0 && d <= 366;
+  for (const auto& [name, beta] : c.betas) valid &= std::isfinite(beta) && std::abs(beta) <= 10;
+  if (!valid) throw TradingError(Reason::INVALID_SCENARIO, "Invalid or oversized spot/vol/time grid");
 }
 ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
     const ScenarioConfig& config, Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices) {
   validate_scenarios(config);
-  ScenarioGrid result;
-  struct ValuedPosition {
-    const Position* position;
-    const Valuation* valuation;
-  };
-  std::vector<ValuedPosition> positions;
-  positions.reserve(ledger.positions().size());
-  for (const auto& [symbol, p] : ledger.positions()) {
-    const auto it = valuations.find(symbol);
-    if (now >= p.contract.expiry_time() || it == valuations.end() || !fresh(it->second, p.contract, now, max_age)) {
-      result.complete = false;  // Validation above guarantees at least one cell.
-      continue;
-    }
-    positions.push_back({&p, &it->second});
-  }
-  for (double spot : config.spot_percent) {
-    for (double vol : config.vol_points) {
-      ScenarioCell cell{spot, vol, 0, false};
-      for (const auto& [position, valuation] : positions) {
-        const auto& p = *position;
-        const auto& v = *valuation;
-        const double shocked_vol = v.smile_iv + vol / 100;
-        cell.clamped |= shocked_vol < config.vol_floor;
-        // Avoid subtraction and floor artifacts: zero shock is exactly zero.
-        if (spot == 0 && vol == 0) continue;
-        const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
-        const double shocked = pricing::black_price(p.contract.type, v.forward * (1 + spot / 100),
-            p.contract.strike, v.years, std::max(config.vol_floor, shocked_vol), v.discount);
-        const double pnl = static_cast<double>(p.quantity) * 100 * (shocked - base);
-        if (!std::isfinite(pnl) || !std::isfinite(cell.pnl + pnl)) result.complete = false;
-        else cell.pnl += pnl;
+  if (config.days == std::vector<double>{0} && !config.beta_weighted && !config.term_scaled) {
+    ScenarioGrid result;
+    struct ValuedPosition {
+      const Position* position;
+      const Valuation* valuation;
+    };
+    std::vector<ValuedPosition> positions;
+    positions.reserve(ledger.positions().size());
+    for (const auto& [symbol, p] : ledger.positions()) {
+      const auto it = valuations.find(symbol);
+      if (now >= p.contract.expiry_time() || it == valuations.end() || !fresh(it->second, p.contract, now, max_age)) {
+        result.complete = false;  // Validation above guarantees at least one cell.
+        continue;
       }
-      // Shares move with the underlying; volatility does not touch them.
-      for (const auto& [symbol, stock] : ledger.stocks()) {
-        const auto price = stock_prices.find(symbol);
-        if (price == stock_prices.end()) {
-          result.complete = false;
-          continue;
+      positions.push_back({&p, &it->second});
+    }
+    for (double spot : config.spot_percent) {
+      for (double vol : config.vol_points) {
+        ScenarioCell cell{spot, vol, 0, false};
+        for (const auto& [position, valuation] : positions) {
+          const auto& p = *position;
+          const auto& v = *valuation;
+          const double shocked_vol = v.smile_iv + vol / 100;
+          cell.clamped |= shocked_vol < config.vol_floor;
+          // Avoid subtraction and floor artifacts: zero shock is exactly zero.
+          if (spot == 0 && vol == 0) continue;
+          const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
+          const double shocked = pricing::black_price(p.contract.type, v.forward * (1 + spot / 100),
+              p.contract.strike, v.years, std::max(config.vol_floor, shocked_vol), v.discount);
+          const double pnl = static_cast<double>(p.quantity) * 100 * (shocked - base);
+          if (!std::isfinite(pnl) || !std::isfinite(cell.pnl + pnl)) result.complete = false;
+          else cell.pnl += pnl;
         }
-        const double pnl = static_cast<double>(stock.shares) * price->second * spot / 100;
-        if (!std::isfinite(pnl) || !std::isfinite(cell.pnl + pnl)) result.complete = false;
-        else cell.pnl += pnl;
+        // Shares move with the underlying; volatility does not touch them.
+        for (const auto& [symbol, stock] : ledger.stocks()) {
+          const auto price = stock_prices.find(symbol);
+          if (price == stock_prices.end()) {
+            result.complete = false;
+            continue;
+          }
+          const double pnl = static_cast<double>(stock.shares) * price->second * spot / 100;
+          if (!std::isfinite(pnl) || !std::isfinite(cell.pnl + pnl)) result.complete = false;
+          else cell.pnl += pnl;
+        }
+        result.cells.push_back(cell);
       }
-      result.cells.push_back(cell);
     }
+    // An incomplete grid must not look like a valuation of only the covered subset.
+    if (!result.complete) for (auto& cell : result.cells) cell.pnl = 0;
+    return result;
   }
-  // An incomplete grid must not look like a valuation of only the covered subset.
-  if (!result.complete) for (auto& cell : result.cells) cell.pnl = 0;
+  ProfileConfig profile;
+  profile.percent = config.spot_percent;
+  profile.days = config.days;
+  profile.vol_floor = config.vol_floor;
+  profile.term_scaled = config.term_scaled;
+  if (config.beta_weighted) profile.betas = config.betas;
+  else {
+    for (const auto& [symbol, p] : ledger.positions()) profile.betas[p.contract.underlying] = 1;
+    for (const auto& [symbol, p] : ledger.stocks()) profile.betas[symbol] = 1;
+  }
+  std::vector<RiskProfile> columns;
+  ScenarioGrid result;
+  for (const double vol : config.vol_points) {
+    profile.vol_points = vol;
+    columns.push_back(risk_profile(ledger, valuations, profile, 0, {}, {}, {}, now, max_age, stock_prices));
+    result.complete &= columns.back().complete;
+  }
+  for (std::size_t day = 0; day < config.days.size(); ++day)
+    for (std::size_t spot = 0; spot < config.spot_percent.size(); ++spot)
+      for (std::size_t vol = 0; vol < config.vol_points.size(); ++vol) {
+        const auto& curve = columns[vol].curves[day];
+        result.cells.push_back({config.spot_percent[spot], config.vol_points[vol],
+            result.complete ? curve.pnl[spot] : 0, curve.clamped, config.days[day]});
+      }
   return result;
 }
 void validate_profile(const ProfileConfig& c) {
@@ -292,7 +485,7 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
       result.complete = false;
       continue;
     }
-    clamped |= it->second.smile_iv + config.vol_points / 100 < config.vol_floor;
+    clamped |= !config.term_scaled && it->second.smile_iv + config.vol_points / 100 < config.vol_floor;
     held.push_back({&p, &it->second, beta->second});
   }
   for (const auto& [symbol, stock] : ledger.stocks()) {
@@ -332,8 +525,11 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
           if (v.years > 0) discount = std::pow(v.discount, share);
         }
         const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
+        const double scale = config.term_scaled ? std::sqrt(30.0 / std::max(1.0, life * 365.0)) : 1;
+        const double sigma = v.smile_iv + config.vol_points * scale / 100;
+        curve.clamped |= sigma < config.vol_floor;
         const double shocked = pricing::black_price(p.contract.type, forward * move, p.contract.strike, life,
-            std::max(config.vol_floor, v.smile_iv + config.vol_points / 100), discount);
+            std::max(config.vol_floor, sigma), discount);
         total += static_cast<double>(p.quantity) * 100 * (shocked - base);
       }
       for (const auto& stock : shares) total += stock.shares * stock.price * std::max(-0.9999, stock.beta * percent / 100);

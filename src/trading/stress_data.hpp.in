@@ -1,0 +1,5 @@
+#pragma once
+#include <string_view>
+namespace openport::trading {
+inline constexpr std::string_view kStressData = R"stress(@OPENPORT_STRESS_DATA@)stress";
+}

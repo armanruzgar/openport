@@ -938,8 +938,12 @@ TEST_F(PaperEngine, UnderlyingOverridesRoundTripAndValidateWithoutASubscription)
                                      {"QQQ", {{"dollar_delta", 2000000}, {"vega", 20000}}}};
   auto reply = write(*engine, "PUT", "/api/risk/limits", {{"expected_revision", "1"}, {"limits", limits}});
   ASSERT_EQ(reply.status, 200) << reply.body;
-  EXPECT_EQ(json::parse(reply.body)["limits"]["underlying_overrides"], limits["underlying_overrides"]);
-  EXPECT_EQ(read(*engine, "/api/risk")["limits"]["underlying_overrides"], limits["underlying_overrides"]);
+  // Optional caps that were left out come back as explicit nulls.
+  auto expected = limits["underlying_overrides"];
+  for (auto& [symbol, caps] : expected.items())
+    for (const auto* cap : {"dollar_gamma_1pct", "theta", "worst_grid_loss", "short_vega"}) caps[cap] = nullptr;
+  EXPECT_EQ(json::parse(reply.body)["limits"]["underlying_overrides"], expected);
+  EXPECT_EQ(read(*engine, "/api/risk")["limits"]["underlying_overrides"], expected);
   for (const auto& bad : {json::array(), json(nullptr), json{{"spx", {{"dollar_delta", 1}, {"vega", 1}}}},
                          json{{"SPX", {{"dollar_delta", "1"}, {"vega", 1}}}}}) {
     limits["underlying_overrides"] = bad;
@@ -1890,11 +1894,17 @@ TEST_F(PaperEngine, EquityHistoryReloadsPerAccountWithFillSamplesBoundsAndAGap) 
   seed();
   ASSERT_EQ(write(*engine, "POST", "/api/orders?account=evaluation", order(market, "entry", "4.20")).status, 201);
   const auto initial = read(*engine, "/api/account/equity?account=evaluation")["samples"];
-  ASSERT_GE(initial.size(), 2U);
-  EXPECT_EQ(initial.back()["fill"], "1");
+  ASSERT_GE(initial.size(), 3U);
+  // The fill mark carries no Greeks; the same-minute mark after it records the new book's risk.
+  const auto& filled = initial[initial.size() - 2];
+  EXPECT_EQ(filled["fill"], "1");
+  EXPECT_EQ(filled["equity"], "24989.35");
+  EXPECT_EQ(filled["floor"], "23500.00");
+  EXPECT_EQ(filled["tomorrow_floor"], "23500.00");
+  EXPECT_TRUE(filled["risk"].is_null());
+  EXPECT_TRUE(initial.back()["fill"].is_null());
   EXPECT_EQ(initial.back()["equity"], "24989.35");
-  EXPECT_EQ(initial.back()["floor"], "23500.00");
-  EXPECT_EQ(initial.back()["tomorrow_floor"], "23500.00");
+  EXPECT_GT(initial.back()["risk"]["dollar_delta"].get<double>(), 0);
   EXPECT_EQ(read(*engine, "/api/account/equity")["samples"].back()["equity"], "100000.00");
   engine->stop(); engine.reset();
   engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
@@ -4309,7 +4319,7 @@ TEST_F(PaperEngine, ContractFixture) {
   market.next();
   quote();
   for (const auto* path : {"/api/account", "/api/portfolio", "/api/orders", "/api/fills", "/api/trades", "/api/settlements", "/api/risk",
-                           "/api/plans", "/api/accounts", "/api/account/equity"}) capture("GET", path);
+                           "/api/plans", "/api/accounts", "/api/account/equity", "/api/risk/scenarios", "/api/risk/history"}) capture("GET", path);
   for (const auto* path : {"/api/fills.csv", "/api/trades.csv"})
     test::capture_contract("paper", "GET", path, server::handle_api({"GET", path}, *engine));
   capture("PUT", "/api/trades/1/note", {{"note", "synthetic trade"}, {"tags", {"test"}}});
@@ -5228,4 +5238,55 @@ TEST(PaperPlans, EventTimesTrimOnlyInsignificantZerosAndPreserveJournalTerms) {
   EXPECT_EQ(server::calendar_event_json(old)["time"], "2026-09-23T14:00:00.12Z");
   const trading::PlanEvent date{"earnings", "2026-09-23", "SPY", "before_open", {}};
   EXPECT_EQ(server::calendar_event_json(date)["time"], "2026-09-23");
+}
+
+namespace {
+TEST_F(PaperEngine, ScenarioExplorerAddsDatesAndLeavesRuleGridUnchanged) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "entry", "4.20")).status, 201);
+  const auto before = read(*engine, "/api/risk")["scenarios"];
+  const auto grid = read(*engine, "/api/risk/scenarios?mode=beta&days=0,1,40&term_scaled=true");
+  ASSERT_EQ(grid["slices"].size(), 3U);
+  EXPECT_TRUE(grid["complete"]);
+  EXPECT_EQ(grid["mode"], "beta");
+  EXPECT_EQ(grid["slices"][1]["days"], 1);
+  EXPECT_EQ(read(*engine, "/api/risk")["scenarios"], before);
+  EXPECT_EQ(server::handle_api({"GET", "/api/risk/scenarios?mode=unknown"}, *engine).status, 400);
+}
+TEST_F(PaperEngine, HistoricalRiskLabelsItsInputsAndReportsInsufficientHistory) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "stress-entry", "4.20")).status, 201);
+  const auto response = read(*engine, "/api/risk/history");
+  ASSERT_EQ(response["stress"].size(), 4U);
+  for (const auto& stress : response["stress"]) {
+    EXPECT_EQ(stress["label"], "derived from public closes");
+    EXPECT_TRUE(stress["complete"]);
+    EXPECT_TRUE(stress["pnl"].is_number());
+    EXPECT_TRUE(stress["margin"].is_string());
+    EXPECT_FALSE(stress["sources"].empty());
+  }
+  EXPECT_FALSE(response["sticky_strike"]["complete"]);
+  EXPECT_TRUE(response["sticky_strike"]["var99"].is_null());
+  EXPECT_TRUE(response["sticky_strike"]["tail99_reason"].is_string());
+  EXPECT_TRUE(response["atm_vol_change"]["es95"].is_null());
+}
+TEST_F(PaperEngine, ExtendedCapsRoundTripThroughTheLimitsEndpoint) {
+  seed();
+  auto risk = read(*engine, "/api/risk");
+  auto limits = risk["limits"];
+  limits["aggregate"]["theta"] = 10;
+  limits["aggregate"]["dollar_gamma_1pct"] = 20;
+  limits["aggregate"]["worst_grid_loss"] = 30;
+  limits["aggregate"]["short_vega"] = 40;
+  limits["tag_overrides"]["hedge"] = limits["aggregate"];
+  limits["playbook_overrides"]["weekly"] = limits["aggregate"];
+  const auto response = write(*engine, "PUT", "/api/risk/limits", {{"expected_revision", risk["limits_revision"]}, {"limits", limits}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  risk = read(*engine, "/api/risk");
+  EXPECT_EQ(risk["limits"]["aggregate"]["theta"], 10);
+  EXPECT_EQ(risk["scopes"]["tag:hedge"]["limits"]["worst_grid_loss"], 30);
+  EXPECT_EQ(risk["scopes"]["playbook:weekly"]["limits"]["short_vega"], 40);
+  EXPECT_EQ(write(*engine, "POST", "/api/alerts", {{"scope", "account"}, {"metric", "delta_utilisation"},
+      {"direction", "at_or_above"}, {"level", "0.8"}}).status, 201);
+}
 }

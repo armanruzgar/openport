@@ -254,6 +254,20 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, target.risk)
 
     @server.tool()
+    def risk_history(account: str | None = None, replay: bool = False) -> dict:
+        """Derived historical stress P&L, margin and floor breaches, and one-day historical VaR/ES."""
+        target = selected(account, replay)
+        return result(target, target.risk_history)
+
+    @server.tool()
+    def risk_scenarios(account: str | None = None, mode: str = "parallel", days: list[float] | None = None,
+                       benchmark: str | None = None, vols: list[float] | None = None,
+                       term_scaled: bool = False, replay: bool = False) -> dict:
+        """Read-only spot × volatility × time scenarios, optionally beta-weighted and term-scaled."""
+        target = selected(account, replay)
+        return result(target, lambda: target.risk_scenarios(mode, days, benchmark, vols, term_scaled))
+
+    @server.tool()
     def risk_profile(account: str | None = None, underlying: str | None = None, benchmark: str | None = None,
                      days: list[float | str] | None = None, iv: float | None = None, replay: bool = False) -> dict:
         """The held book's P&L curves over dates (days, or "expiry") and an IV offset, against one underlying

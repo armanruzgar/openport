@@ -49,3 +49,17 @@ it("edits pending overrides, removes a row and validates a new symbol before sav
   await click("Save limits")
   expect(api.updateLimits).toHaveBeenCalledWith(risk.limits_revision, expect.objectContaining({ underlying_overrides: { QQQ: { dollar_delta: 200, vega: 50 } } }), trading.write)
 })
+it("edits optional caps without confusing zero with off and preserves both scope kinds", async () => {
+  const caps = { dollar_delta: 100, vega: 20, dollar_gamma_1pct: 0, theta: 5, worst_grid_loss: 200, short_vega: 8 }
+  const initial = { ...risk, limits: { ...risk.limits, aggregate: { ...risk.limits.aggregate, theta: 5 },
+    tag_overrides: { hedge: caps }, playbook_overrides: { weekly: caps } } }
+  await act(async () => root.render(<QueryClientProvider client={client}><LimitsEditor initial={initial} trading={trading} onClose={() => {}} /></QueryClientProvider>))
+  await change("Aggregate Dollar gamma / 1%", "0")
+  await change("Aggregate Absolute theta / day", "")
+  await change("hedge Worst reachable grid loss ($)", "300")
+  await click("Save limits")
+  expect(api.updateLimits).toHaveBeenCalledWith(risk.limits_revision, expect.objectContaining({
+    aggregate: { ...risk.limits.aggregate, dollar_gamma_1pct: 0, theta: null },
+    tag_overrides: { hedge: { ...caps, worst_grid_loss: 300 } }, playbook_overrides: { weekly: caps },
+  }), trading.write)
+})

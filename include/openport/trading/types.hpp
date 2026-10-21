@@ -36,10 +36,10 @@ enum class Reason {
   MAX_CONTRACTS_HELD, STOP_REQUIRED, MAX_TRADE_RISK,
   TIME_LIMIT, INACTIVITY, INSTRUMENT_NOT_ALLOWED, OUTSIDE_PLAN_HOURS,
   FLAT_TIME, OVERNIGHT_HOLD, SCALING_LIMIT, TRADE_CONSISTENCY, MIN_TRADES, MIN_HOLD, MICROSCALPING,
-  HEDGING, COUNTER_POSITION, MAX_VOLUME_SHARE, NEWS_BLACKOUT, HOLD_RESTRICTED, RESET_LIMIT
+  HEDGING, COUNTER_POSITION, MAX_VOLUME_SHARE, NEWS_BLACKOUT, HOLD_RESTRICTED, RESET_LIMIT, GAMMA_LIMIT, THETA_LIMIT, GRID_LOSS_LIMIT, SHORT_VEGA_LIMIT
 };
 /// The last Reason; recorded codes are strings, so new codes append here.
-inline constexpr Reason kLastReason = Reason::RESET_LIMIT;
+inline constexpr Reason kLastReason = Reason::SHORT_VEGA_LIMIT;
 [[nodiscard]] std::string_view to_string(Reason reason) noexcept;
 
 class TradingError : public std::runtime_error {
@@ -493,6 +493,8 @@ struct Exposure {
 struct ExposureLimits {
   double dollar_delta = 1'000'000;
   double vega = 10'000;
+  std::optional<double> dollar_gamma_1pct = {}, theta = {}, worst_grid_loss = {}, short_vega = {};
+  bool operator==(const ExposureLimits&) const = default;
 };
 struct Limits {
   Quantity max_order_contracts = 100;
@@ -501,6 +503,7 @@ struct Limits {
   ExposureLimits aggregate;
   ExposureLimits per_underlying;
   std::map<std::string, ExposureLimits> underlying_overrides;
+  std::map<std::string, ExposureLimits> tag_overrides, playbook_overrides;
   Money max_daily_loss = Money::from_micros(10'000'000'000);
   Timestamp max_quote_age = 60 * md::kNanosPerSecond;
   Timestamp max_valuation_age = 60 * md::kNanosPerSecond;
@@ -543,6 +546,10 @@ struct ScenarioConfig {
   std::vector<double> spot_percent{-10, -5, -2, -1, 0, 1, 2, 5, 10};
   std::vector<double> vol_points{-5, 0, 5, 10};
   double vol_floor = 0.0001;
+  std::vector<double> days{0};
+  bool beta_weighted = false;
+  std::map<std::string, double> betas = {};
+  bool term_scaled = false;
 };
 
 /// How often the trailing drawdown floor may rise. Breaches are always

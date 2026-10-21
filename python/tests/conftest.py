@@ -148,7 +148,7 @@ class Stub:
         if path.endswith(".csv"):
             return 200, "account,account_version,provider,prices,new_york_date,id,order_id,actor,symbol\n"
         name = {"account": "Account", "portfolio": "Portfolio", "orders": "OrdersResponse", "fills": "FillsResponse",
-                "risk": "Risk", "limits": "Risk", "guardrails": "Risk", "profile": "RiskProfile", "trades": "TradesResponse", "plans": "PlansResponse", "accounts": "AccountsResponse",
+                "risk": "Risk", "limits": "Risk", "guardrails": "Risk", "profile": "RiskProfile", "history": "HistoricalRisk", "scenarios": "ScenarioAnalysis", "trades": "TradesResponse", "plans": "PlansResponse", "accounts": "AccountsResponse",
                 "equity": "EquityHistory", "close": "ClosePositionsResponse", "cancel": "CancelAllResponse",
                 "alerts": "AlertsResponse"}.get(path.rsplit("/", 1)[-1])
         if name:

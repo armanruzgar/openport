@@ -9,6 +9,7 @@ struct ExposureRange {
   double delta_high = 0;
   double vega_low = 0;
   double vega_high = 0;
+  double gamma_low = 0, gamma_high = 0, theta_low = 0, theta_high = 0;
 };
 struct RiskBucket {
   Exposure position;
@@ -16,10 +17,14 @@ struct RiskBucket {
   ExposureLimits limits;
   double delta_utilisation = 0;
   double vega_utilisation = 0;
+  double short_vega = 0;  ///< Gross reachable short vega; longs in other contracts do not offset it.
+  std::optional<double> worst_grid_loss;
+  std::optional<double> gamma_utilisation, theta_utilisation, grid_utilisation, short_vega_utilisation;
 };
 struct RiskSnapshot {
   RiskBucket aggregate;
   std::map<std::string, RiskBucket> underlyings;
+  std::map<std::string, RiskBucket> scopes;
   bool complete = true;
   Money daily_loss;  ///< max(0, start-of-day equity - equity).
   bool kill_latched = false;
@@ -37,10 +42,15 @@ struct RiskSnapshot {
 /// Shares count at their dollar delta, at `stock_prices` (fresh prices by
 /// underlying); a holding without one leaves the result incomplete. `orders` are
 /// the pending orders, by pointer so that a book of many need not be copied.
+/// A tagged open order pulls the positions it trades into its tag's scope;
+/// `scope_orders` do so too without counting as pending, so an order's
+/// `without` snapshot scopes the same positions as the snapshot with it.
 [[nodiscard]] RiskSnapshot portfolio_risk(
     const Ledger& ledger, const std::vector<const Order*>& orders, const Contracts& contracts,
     const Valuations& valuations, const Limits& limits, Timestamp now,
-    const std::map<std::string, double>& stock_prices = {});
+    const std::map<std::string, double>& stock_prices = {}, const ScenarioConfig& scenarios = {},
+    const std::map<std::string, std::vector<std::string>>& position_tags = {},
+    const std::vector<const Order*>& scope_orders = {});
 [[nodiscard]] Decision check_exposure(const RiskSnapshot& risk);
 /// One order's check: `risk` with the order among the pending ones, `without`
 /// the same book without it. A bucket over its limit refuses the order only when
@@ -53,9 +63,10 @@ struct ScenarioCell {
   double vol_points = 0;
   double pnl = 0;  ///< Analytical dollars, not a booked cash amount.
   bool clamped = false;
+  double days = 0;
 };
 struct ScenarioGrid {
-  std::vector<ScenarioCell> cells;  ///< Spot-major, vol-minor.
+  std::vector<ScenarioCell> cells;  ///< Day-major, spot-major, vol-minor.
   bool complete = true;
 };
 void validate_scenarios(const ScenarioConfig& config);
@@ -110,6 +121,7 @@ struct ProfileConfig {
   std::vector<double> days{0};          ///< Each curve's date, in calendar days after `now`.
   double vol_points = 0;                ///< Added to every contract's smile IV.
   double vol_floor = 0.0001;
+  bool term_scaled = false;  ///< Vol shock times sqrt(30 / remaining calendar days), minimum one day.
   std::map<std::string, double> betas;  ///< By underlying; one held without a beta leaves the profile incomplete.
   /// For each curve, the variance of the reference's log price to the date its levels'
   /// touch probabilities are measured to; empty or nullopt leaves them out.

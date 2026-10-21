@@ -17,7 +17,7 @@ def call(server, name, **arguments):
 def test_tool_schemas_name_accounts_and_typed_orders(stub):
     server = create_server(Client(stub.url, "secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "volatility_history", "surface_history", "volatility_scanner", "exposure", "account", "positions", "orders", "risk", "risk_profile", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"}
+    assert set(tools) == {"status", "symbols", "summary", "chain", "volatility", "volatility_history", "surface_history", "volatility_scanner", "exposure", "account", "positions", "orders", "risk", "risk_profile", "risk_history", "risk_scenarios", "probability", "preview_order", "place_order", "trade_stock", "preview_stock", "cancel_order", "flatten", "list_scenarios", "start_replay", "step_replay", "stop_replay"}
     for name in ["start_replay", "step_replay", "stop_replay"]:
         assert "account" in tools[name].input_schema["required"]
     schema = tools["place_order"].input_schema
@@ -148,7 +148,7 @@ def test_share_tools_forward_scoped_and_replay_requests(stub):
 def test_sandbox_tools_default_to_own_account_but_other_writers_still_name_one(stub):
     server = create_server(Client(stub.url, "sandbox_secret"))
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    for name in ["account", "positions", "orders", "risk", "risk_profile", "place_order", "preview_order", "cancel_order", "flatten"]:
+    for name in ["account", "positions", "orders", "risk", "risk_profile", "risk_history", "risk_scenarios", "place_order", "preview_order", "cancel_order", "flatten"]:
         assert "account" not in tools[name].input_schema.get("required", [])
     assert "error" not in call(server, "account")
     assert stub.requests[-1][1] == "/api/account"

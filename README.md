@@ -74,7 +74,9 @@ with generated prices labelled as simulated on every page:
   house requirements and optional IV shocks; share trades for hedges, covered calls
   and collars, with buying-power previews.
 - **Risk**: held-book warnings, what-if adjustments, P&L profiles by date and IV,
-  beta weighting to SPY/SPX, probability cones and a reduce-only kill switch.
+  beta weighting to SPY/SPX, spot × vol × time scenarios, cited historical stress,
+  historical VaR/expected shortfall, Greek history, scoped exposure caps and
+  risk-metric alerts, probability cones and a reduce-only kill switch.
 - **Journal**: whole trades across rolls, entry/exit context, excursions, R-multiples,
   a P&L calendar and exports carrying attempt and replay-run identity.
 - **Replay and playbooks**: multi-day runs, stepping, in-app verification and stress

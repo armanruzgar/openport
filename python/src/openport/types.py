@@ -549,7 +549,11 @@ class Candles(TypedDict):
     bars: list[JSON]
 
 
-class Risk(TypedDict):
+class RiskScopes(TypedDict, total=False):
+    scopes: dict[str, JSON]
+
+
+class Risk(RiskScopes):
     account_version: str
     limits_revision: str
     limits: JSON
@@ -561,7 +565,11 @@ class Risk(TypedDict):
     scenarios: JSON
 
 
-class RiskProfile(TypedDict):
+class RiskProfileOptions(TypedDict, total=False):
+    term_scaled: bool
+
+
+class RiskProfile(RiskProfileOptions):
     account_version: str
     time: str
     underlying: str | None
@@ -681,3 +689,24 @@ class FlattenResult(CancelAllResult):
     stock_fills: list[JSON]
     kept_stocks: list[JSON]
     residuals: list[JSON]
+
+
+class HistoricalRisk(TypedDict):
+    account_version: str
+    time: str
+    stress: list[JSON]
+    sticky_strike: JSON
+    atm_vol_change: JSON
+    model: str
+
+
+class ScenarioAnalysis(TypedDict):
+    account_version: str
+    time: str
+    mode: str
+    benchmark: str
+    betas: list[JSON]
+    term_scaled: bool
+    slices: list[JSON]
+    complete: bool
+    model: str

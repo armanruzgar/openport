@@ -25,6 +25,9 @@ set_target_properties(openport_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(NOT TARGET OpenSSL::Crypto)
   find_package(OpenSSL 3 REQUIRED COMPONENTS Crypto)
 endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/data/risk-stress.json")
+file(READ "${PROJECT_SOURCE_DIR}/data/risk-stress.json" OPENPORT_STRESS_DATA)
+configure_file(trading/stress_data.hpp.in "${CMAKE_CURRENT_BINARY_DIR}/stress_data.hpp" @ONLY)
 add_library(openport_trading
   trading/evaluation.cpp
   trading/events.cpp
@@ -34,6 +37,7 @@ add_library(openport_trading
   trading/dividends.cpp
   trading/ledger.cpp
   trading/risk.cpp
+  trading/stress.cpp
   trading/journal.cpp
   trading/session.cpp
   trading/state_delta.cpp
@@ -44,6 +48,7 @@ add_library(openport_trading
 add_library(openport::trading ALIAS openport_trading)
 target_include_directories(openport_trading PUBLIC
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
+target_include_directories(openport_trading PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
 target_link_libraries(openport_trading PUBLIC openport::core
   PRIVATE OpenSSL::Crypto nlohmann_json::nlohmann_json openport::options)
 set_target_properties(openport_trading PROPERTIES POSITION_INDEPENDENT_CODE ON)

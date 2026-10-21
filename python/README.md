@@ -43,7 +43,7 @@ with zero. It does not coerce monetary strings into floats.
 | `status`, `symbols` | `/api/status`; symbols are its underlying names |
 | `summary`, `series` | `/api/underlyings/{symbol}/summary`; series are its expiries |
 | `chain`, `exposure`, `surface`, `volatility`, `candles`, `probability` | The corresponding underlying views |
-| `account`, `portfolio`, `orders`, `fills`, `trades`, `risk`, `risk_profile`, `plans`, `accounts`, `equity` | The terminal's paper reads |
+| `account`, `portfolio`, `orders`, `fills`, `trades`, `risk`, `risk_profile`, `risk_scenarios`, `risk_history`, `plans`, `accounts`, `equity` | The terminal's paper reads |
 | `place_order`, `preview_order`, `modify_order`, `cancel_order`, `cancel_all`, `cancel_orders`, `flatten` | Paper orders and position closure |
 | `settlements` | Settlement references, proceeds and provenance, newest first (live, replay or history) |
 | `note`, `day_note`, `export_csv` | Trade/day annotations and fills/trades exports |
@@ -194,3 +194,5 @@ keep `error` as string/null and add failure wall/market timestamps and
 `error_recovered`. `account()` and account listings expose a nullable `damaged`
 object with the last verified sequence/time and recovery instructions; a damaged
 account remains readable and refuses writes with `ACCOUNT_DAMAGED`.
+
+Risk scenarios accept beta weighting, days forward and term scaling without changing rule grids. `risk_history()` reports cited historical stresses and 1-day VaR/ES from stored aligned closes; missing data remains null. These read-only methods are also exposed by the MCP server.

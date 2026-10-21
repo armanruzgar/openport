@@ -1,0 +1,106 @@
+[
+  {
+    "id": "volmageddon-2018",
+    "name": "Feb 2018 Volmageddon",
+    "from_date": "2018-02-02",
+    "to_date": "2018-02-05",
+    "label": "derived from public closes",
+    "sources": [
+      "https://fred.stlouisfed.org/series/SP500",
+      "https://www.cboe.com/tradable-products/vix/vix-historical-data",
+      "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+    ],
+    "source_note": "S&P 500 closes 2762.13 to 2648.94; VIX closes 17.31 to 37.32. Spot decline rounded outward to the next 0.1 percent. SPY, XSP and SPXW use the S&P index move as an explicit proxy, not their own observed returns. 30d vol points use the VIX close change as an ATM proxy. 7d and 90d vol changes are derived with sqrt(30/tenor), not historical tenor observations. Instantaneous replay on the current held book; no historical holdings, liquidity, skew, intraday path or settlement reconstruction. NDX/QQQ and RUT/IWM families use a conservative 1.5-times S&P move and VIX-change proxy, not observed returns or implied volatilities for those indexes.",
+    "factors": {
+      "SPX": {"spot_percent": -4.1, "vol_points": [{"days": 7, "points": 41.4246}, {"days": 30, "points": 20.01}, {"days": 90, "points": 11.5528}]},
+      "SPXW": {"spot_percent": -4.1, "vol_points": [{"days": 7, "points": 41.4246}, {"days": 30, "points": 20.01}, {"days": 90, "points": 11.5528}]},
+      "XSP": {"spot_percent": -4.1, "vol_points": [{"days": 7, "points": 41.4246}, {"days": 30, "points": 20.01}, {"days": 90, "points": 11.5528}]},
+      "SPY": {"spot_percent": -4.1, "vol_points": [{"days": 7, "points": 41.4246}, {"days": 30, "points": 20.01}, {"days": 90, "points": 11.5528}]},
+      "NDX": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]},
+      "NDXP": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]},
+      "XND": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]},
+      "QQQ": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]},
+      "RUT": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]},
+      "RUTW": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]},
+      "IWM": {"spot_percent": -6.15, "vol_points": [{"days": 7, "points": 62.1369}, {"days": 30, "points": 30.015}, {"days": 90, "points": 17.3292}]}
+    }
+  },
+  {
+    "id": "covid-2020",
+    "name": "Mar 2020 COVID",
+    "from_date": "2020-03-13",
+    "to_date": "2020-03-16",
+    "label": "derived from public closes",
+    "sources": [
+      "https://fred.stlouisfed.org/series/SP500",
+      "https://www.cboe.com/tradable-products/vix/vix-historical-data",
+      "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+    ],
+    "source_note": "S&P 500 closes 2711.02 to 2386.13; VIX closes 57.83 to 82.69. Spot decline rounded outward to the next 0.1 percent. SPY, XSP and SPXW use the S&P index move as an explicit proxy, not their own observed returns. 30d vol points use the VIX close change as an ATM proxy. 7d and 90d vol changes are derived with sqrt(30/tenor), not historical tenor observations. Instantaneous replay on the current held book; no historical holdings, liquidity, skew, intraday path or settlement reconstruction. NDX/QQQ and RUT/IWM families use a conservative 1.5-times S&P move and VIX-change proxy, not observed returns or implied volatilities for those indexes.",
+    "factors": {
+      "SPX": {"spot_percent": -12, "vol_points": [{"days": 7, "points": 51.4651}, {"days": 30, "points": 24.86}, {"days": 90, "points": 14.3529}]},
+      "SPXW": {"spot_percent": -12, "vol_points": [{"days": 7, "points": 51.4651}, {"days": 30, "points": 24.86}, {"days": 90, "points": 14.3529}]},
+      "XSP": {"spot_percent": -12, "vol_points": [{"days": 7, "points": 51.4651}, {"days": 30, "points": 24.86}, {"days": 90, "points": 14.3529}]},
+      "SPY": {"spot_percent": -12, "vol_points": [{"days": 7, "points": 51.4651}, {"days": 30, "points": 24.86}, {"days": 90, "points": 14.3529}]},
+      "NDX": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]},
+      "NDXP": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]},
+      "XND": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]},
+      "QQQ": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]},
+      "RUT": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]},
+      "RUTW": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]},
+      "IWM": {"spot_percent": -18.0, "vol_points": [{"days": 7, "points": 77.1976}, {"days": 30, "points": 37.29}, {"days": 90, "points": 21.5294}]}
+    }
+  },
+  {
+    "id": "yen-unwind-2024",
+    "name": "Aug 2024 yen unwind",
+    "from_date": "2024-08-02",
+    "to_date": "2024-08-05",
+    "label": "derived from public closes",
+    "sources": [
+      "https://fred.stlouisfed.org/series/SP500",
+      "https://www.cboe.com/tradable-products/vix/vix-historical-data",
+      "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+    ],
+    "source_note": "S&P 500 closes 5346.56 to 5186.33; VIX closes 23.39 to 38.57. Spot decline rounded outward to the next 0.1 percent. SPY, XSP and SPXW use the S&P index move as an explicit proxy, not their own observed returns. 30d vol points use the VIX close change as an ATM proxy. 7d and 90d vol changes are derived with sqrt(30/tenor), not historical tenor observations. Instantaneous replay on the current held book; no historical holdings, liquidity, skew, intraday path or settlement reconstruction. NDX/QQQ and RUT/IWM families use a conservative 1.5-times S&P move and VIX-change proxy, not observed returns or implied volatilities for those indexes.",
+    "factors": {
+      "SPX": {"spot_percent": -3, "vol_points": [{"days": 7, "points": 31.4256}, {"days": 30, "points": 15.18}, {"days": 90, "points": 8.7642}]},
+      "SPXW": {"spot_percent": -3, "vol_points": [{"days": 7, "points": 31.4256}, {"days": 30, "points": 15.18}, {"days": 90, "points": 8.7642}]},
+      "XSP": {"spot_percent": -3, "vol_points": [{"days": 7, "points": 31.4256}, {"days": 30, "points": 15.18}, {"days": 90, "points": 8.7642}]},
+      "SPY": {"spot_percent": -3, "vol_points": [{"days": 7, "points": 31.4256}, {"days": 30, "points": 15.18}, {"days": 90, "points": 8.7642}]},
+      "NDX": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]},
+      "NDXP": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]},
+      "XND": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]},
+      "QQQ": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]},
+      "RUT": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]},
+      "RUTW": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]},
+      "IWM": {"spot_percent": -4.5, "vol_points": [{"days": 7, "points": 47.1384}, {"days": 30, "points": 22.77}, {"days": 90, "points": 13.1463}]}
+    }
+  },
+  {
+    "id": "tariff-2025",
+    "name": "Apr 2025 tariff shock",
+    "from_date": "2025-04-03",
+    "to_date": "2025-04-04",
+    "label": "derived from public closes",
+    "sources": [
+      "https://fred.stlouisfed.org/series/SP500",
+      "https://www.cboe.com/tradable-products/vix/vix-historical-data",
+      "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+    ],
+    "source_note": "S&P 500 closes 5396.52 to 5074.08; VIX closes 30.02 to 45.31. Spot decline rounded outward to the next 0.1 percent. SPY, XSP and SPXW use the S&P index move as an explicit proxy, not their own observed returns. 30d vol points use the VIX close change as an ATM proxy. 7d and 90d vol changes are derived with sqrt(30/tenor), not historical tenor observations. Instantaneous replay on the current held book; no historical holdings, liquidity, skew, intraday path or settlement reconstruction. NDX/QQQ and RUT/IWM families use a conservative 1.5-times S&P move and VIX-change proxy, not observed returns or implied volatilities for those indexes.",
+    "factors": {
+      "SPX": {"spot_percent": -6, "vol_points": [{"days": 7, "points": 31.6533}, {"days": 30, "points": 15.29}, {"days": 90, "points": 8.8277}]},
+      "SPXW": {"spot_percent": -6, "vol_points": [{"days": 7, "points": 31.6533}, {"days": 30, "points": 15.29}, {"days": 90, "points": 8.8277}]},
+      "XSP": {"spot_percent": -6, "vol_points": [{"days": 7, "points": 31.6533}, {"days": 30, "points": 15.29}, {"days": 90, "points": 8.8277}]},
+      "SPY": {"spot_percent": -6, "vol_points": [{"days": 7, "points": 31.6533}, {"days": 30, "points": 15.29}, {"days": 90, "points": 8.8277}]},
+      "NDX": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]},
+      "NDXP": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]},
+      "XND": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]},
+      "QQQ": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]},
+      "RUT": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]},
+      "RUTW": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]},
+      "IWM": {"spot_percent": -9.0, "vol_points": [{"days": 7, "points": 47.48}, {"days": 30, "points": 22.935}, {"days": 90, "points": 13.2416}]}
+    }
+  }
+]
