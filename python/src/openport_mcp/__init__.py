@@ -8,6 +8,7 @@ from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
 from openport import ApiError, Client
+from openport.types import ExposureConvention, ExposureSlice
 
 
 @dataclass
@@ -204,10 +205,17 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.probability(symbol, days, prices))
 
     @server.tool()
-    def exposure(symbol: str, replay: bool = False) -> dict:
-        """Gamma and vanna exposure in the default display window."""
+    def exposure(symbol: str, replay: bool = False, convention: ExposureConvention = "open_interest",
+                 slice: ExposureSlice = "all", expiries: int = 8, window: float = 0.08) -> dict:
+        """Derived OI-weighted GEX, VEX, DEX, daily charm and vomma, with walls/flips.
+
+        Slice uses snapshot New York date. Customer flow is unavailable without
+        aggressor direction; unsigned volume is not a positioning signal.
+        Summary covers the full selected slice; arrays use the display limits.
+        """
         target = selected(replay=replay)
-        return result(target, lambda: target.exposure(symbol))
+        return result(target, lambda: target.exposure(symbol, expiries, window,
+                                                      convention=convention, slice=slice))
 
     @server.tool()
     def account(account: str | None = None, replay: bool = False) -> dict:

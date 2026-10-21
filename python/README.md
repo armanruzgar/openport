@@ -187,3 +187,29 @@ keep `error` as string/null and add failure wall/market timestamps and
 `error_recovered`. `account()` and account listings expose a nullable `damaged`
 object with the last verified sequence/time and recovery instructions; a damaged
 account remains readable and refuses writes with `ACCOUNT_DAMAGED`.
+
+
+### Dealer exposure
+
+```python
+from openport import exposure_frame
+
+exposure = client.exposure("SPX", convention="short_all", slice="0dte", expiries=8, window=0.05)
+frame = exposure_frame(exposure)  # strike/expiry rows: gex, vex, dex, cex, vomex
+levels = exposure["exposure"]["levels"]["cex"]  # flip, positive_wall, negative_wall
+```
+
+`convention` defaults to `open_interest` (dealers long calls, short puts);
+`long_calls_short_puts` names the same assumption. `short_all` shorts both sides.
+`customer_flow` returns unavailable with a reason and null metrics because current
+feeds have no aggressor-side or signed volume data. Unsigned volume supplies no sign.
+`slice` is `all`, `0dte` or `ex_0dte`, using the snapshot's New York calendar date,
+also in replay. The MCP `exposure` tool accepts the same convention, slice, expiries
+and window parameters, plus `replay`.
+
+DEX is dollar delta; CEX is dollar delta change per calendar day at fixed spot and
+fitted carry; VOMEX is dollars per squared volatility point. The frame preserves
+null cells, snapshot time and mode metadata. Summary totals and levels include the
+full selected slice, while `total_*` arrays and frames cover displayed expiries and
+strikes. These are derived positioning assumptions, not observed inventory.
+See [formulas, units and limits](../docs/methods.md#dealer-exposure).
