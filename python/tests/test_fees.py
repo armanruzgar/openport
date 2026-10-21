@@ -12,6 +12,9 @@ def test_fee_wire_types_match_the_contract():
     for wire in (FeeSchedule, FillFees):
         assert set(get_type_hints(wire)) == set(schemas[wire.__name__]["properties"])
     assert get_type_hints(Fill)["fees"] == FillFees | None
+    assert get_type_hints(Fill)["feed"] == str | None
+    assert "feed" in Fill.__optional_keys__
+    assert set(get_type_hints(Fill)) <= set(schemas["Fill"]["properties"])
     assert get_type_hints(OrderPreview)["fee"] == str | None
     assert get_type_hints(OrderPreview)["fees"] == FillFees | None
     assert "fees" in AccountRules.__optional_keys__

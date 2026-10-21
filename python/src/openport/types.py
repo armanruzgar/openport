@@ -143,7 +143,7 @@ class FillFees(TypedDict):
     index: str
 
 
-class Fill(TypedDict):
+class _Fill(TypedDict):
     id: str
     order_id: str
     actor: str
@@ -154,6 +154,10 @@ class Fill(TypedDict):
     fees: FillFees | None
     time: str
     quote: JSON | None
+
+
+class Fill(_Fill, total=False):
+    feed: str | None  # the feed that priced it behind a fallback; absent on older servers
 
 
 class Orders(TypedDict):
