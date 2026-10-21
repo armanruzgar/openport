@@ -1406,6 +1406,56 @@ TEST(PlaybookApi, PassOddsReturnsSeedLabelsAndClearHistoryAndParameterErrors) {
   snapshot->valuation_complete = false;
   EXPECT_EQ(code(server::handle_api({"GET", "/api/account/pass-odds"}, source)), "PASS_ODDS_UNAVAILABLE");
 }
+TEST(PlaybookApi, PassOddsAddChallengeEconomicsForAProgram) {
+  OddsSource source;
+  const auto* plan = server::find_plan("two-step-25k");
+  auto snapshot = std::make_shared<trading::TradingSnapshot>(); snapshot->equity = plan->initial_cash; snapshot->valuation_complete = true;
+  auto& e = snapshot->evaluation;
+  e.starting_balance = e.peak = e.day_open_equity = e.day_close_equity = plan->initial_cash;
+  e.floor = plan->initial_cash - plan->rules.max_drawdown;
+  // Ten days that each make $1,000 and never come near a floor.
+  e.days = history(money("1000"), money("-100"), money("1100"));
+  source.view->snapshot = snapshot; source.view->config.rules = plan->rules;
+  auto response = server::handle_api({"GET", "/api/account/pass-odds?samples=50&seed=7&economics=true"}, source);
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("prop-rules", "GET", "/api/account/pass-odds", response);
+  auto economics = json::parse(response.body).at("economics");
+  ASSERT_EQ(economics.at("available"), true) << economics.dump();
+  ASSERT_EQ(economics.at("steps").size(), 3U);
+  EXPECT_EQ(economics.at("steps")[0].at("plan"), "two-step-25k");
+  EXPECT_EQ(economics.at("steps")[1].at("plan"), "two-step-verify-25k");
+  EXPECT_EQ(economics.at("steps")[2].at("plan"), "two-step-funded-25k");
+  EXPECT_EQ(economics.at("steps")[0].at("pass"), 1);
+  EXPECT_EQ(economics.at("payout_odds"), 1);
+  EXPECT_EQ(economics.at("payout_odds_source"), "simulated");
+  // The first payout is capped at 2% of 25K, $500, of which the trader keeps 80%.
+  EXPECT_EQ(economics.at("payout"), 400);
+  // $100 to buy the challenge and $50 to activate the funded step.
+  EXPECT_EQ(economics.at("expected_cost"), 150);
+  EXPECT_EQ(economics.at("expected_value"), 250);
+  ASSERT_TRUE(economics.at("break_even_pass").is_number());
+  EXPECT_GT(economics.at("break_even_pass").get<double>(), 0);
+  EXPECT_LT(economics.at("break_even_pass").get<double>(), 0.5);
+  response = server::handle_api({"GET", "/api/account/pass-odds?samples=50&economics=true&payout_odds=0.25&payout=100"}, source);
+  ASSERT_EQ(response.status, 200) << response.body;
+  economics = json::parse(response.body).at("economics");
+  EXPECT_EQ(economics.at("payout_odds_source"), "query");
+  EXPECT_EQ(economics.at("expected_value"), -125);
+  EXPECT_EQ(economics.at("break_even_pass"), nullptr);
+  EXPECT_EQ(json::parse(server::handle_api({"GET", "/api/account/pass-odds?samples=50"}, source).body).at("economics"), nullptr);
+  EXPECT_EQ(server::handle_api({"GET", "/api/account/pass-odds?payout_odds=0.5"}, source).status, 400);
+  EXPECT_EQ(server::handle_api({"GET", "/api/account/pass-odds?economics=true&payout_odds=2"}, source).status, 400);
+  EXPECT_EQ(server::handle_api({"GET", "/api/account/pass-odds?economics=yes"}, source).status, 400);
+  // Custom rules follow no program, so they need the funded step's terms.
+  source.view->config.rules.plan = "Custom";
+  response = server::handle_api({"GET", "/api/account/pass-odds?samples=50&economics=true"}, source);
+  test::capture_contract("prop-rules", "GET", "/api/account/pass-odds", response);
+  economics = json::parse(response.body).at("economics");
+  EXPECT_EQ(economics.at("available"), false);
+  economics = json::parse(server::handle_api({"GET", "/api/account/pass-odds?samples=50&economics=true&payout_odds=1&payout=1000"}, source).body).at("economics");
+  EXPECT_EQ(economics.at("available"), true);
+  EXPECT_EQ(economics.at("steps").size(), 1U);
+}
 TEST(Playbooks, AutomaticEntryLimitIsSharedAcrossUnderlyingsWithinOneUpdate) {
   ScenarioFixture fixture(true);
   md::RecordingReader reader(fixture.file.path);

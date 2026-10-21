@@ -1554,6 +1554,25 @@ std::optional<std::int64_t> Desk::option_volume(const std::string& symbol, md::T
     return static_cast<std::int64_t>(option->volume);
   return std::nullopt;
 }
+std::optional<std::int64_t> Desk::minute_volume(const std::string& symbol, md::Timestamp time) const {
+  const auto id = instruments_.find(symbol);
+  if (id == instruments_.end()) return std::nullopt;
+  const auto reports = volume_reports_.find(id->second);
+  if (reports == volume_reports_.end()) return std::nullopt;
+  const auto start = time - 60 * md::kNanosPerSecond;
+  const std::pair<md::Timestamp, double>* before = nullptr;
+  const std::pair<md::Timestamp, double>* latest = nullptr;
+  for (const auto& report : reports->second) {
+    if (report.first > time) break;
+    if (report.first <= start) before = &report;
+    else latest = &report;
+  }
+  const auto whole = [](double v) { return std::isfinite(v) && v >= 0 && v <= 9'007'199'254'740'991.0 && std::trunc(v) == v; };
+  if (!before || !latest || !whole(before->second) || !whole(latest->second) || latest->second < before->second ||
+      md::trading_date(before->first) != md::trading_date(time))
+    return std::nullopt;
+  return static_cast<std::int64_t>(latest->second - before->second);
+}
 std::optional<OpeningRuleInputs> Desk::opening_rule_inputs(const PaperAccount& account, md::Timestamp time) const {
   const auto& rules = account.session->config().rules;
   if (!options_.opening_rule_checks || (!rules.no_counter_positions && rules.max_volume_percent == 0)) return std::nullopt;
@@ -1571,7 +1590,8 @@ Decision Desk::opening_gate(const PaperAccount& account, const OrderRequest& ord
         return other.id != account.id && !other.archived && other.session && !sandbox_ids_.contains(other.id);
       });
   const auto percent = session.config().rules.max_volume_percent;
-  if (!counter && percent == 0) return {};
+  const auto minute_percent = session.config().rules.minute_volume_percent;
+  if (!counter && percent == 0 && minute_percent == 0) return {};
   const auto exposure = session.opening_order(order, time, market, preceding);
   if (!exposure.decision.ok() && (counter || exposure.decision.code != Reason::MISSING_VALUATION)) return exposure.decision;
   if (exposure.opening) {
@@ -1585,6 +1605,8 @@ Decision Desk::opening_gate(const PaperAccount& account, const OrderRequest& ord
         return {Reason::ARITHMETIC_OVERFLOW, "Chained holdings overflow", {}, {}, symbol};
       if (const auto d = volume_share_check(symbol, held, opening, percent, option_volume(symbol, time)); !d.ok()) return d;
     }
+    if (minute_percent != 0) for (const auto& [symbol, opening] : exposure.contracts)
+      if (const auto d = minute_volume_check(symbol, opening, minute_percent, minute_volume(symbol, time)); !d.ok()) return d;
   }
   // Chained entries are accepted with their parent, so take the same server gate
   // now. Execution checks explicit current inputs inside the deterministic reducer.
@@ -2038,6 +2060,12 @@ bool Desk::active() const {
 }
 void Desk::observe(const md::Event& event) {
   book_.apply(event);
+  if (const auto* volume = std::get_if<md::OptionVolume>(&event)) {
+    // Keep the reports a minute's volume needs: the last one a minute or more old, and those since.
+    auto& reports = volume_reports_[volume->id];
+    if (reports.empty() || volume->ts >= reports.back().first) reports.emplace_back(volume->ts, volume->contracts);
+    while (reports.size() > 1 && reports[1].first <= volume->ts - 60 * md::kNanosPerSecond) reports.pop_front();
+  }
   if (const auto* quote = std::get_if<md::UnderlyingQuote>(&event); quote && options_.candles) {
     const auto& underlying = book_.underlyings().at(quote->symbol);
     options_.candles->sample(quote->symbol, underlying.spot_ts, underlying.spot);
@@ -2049,6 +2077,7 @@ void Desk::replay_source(const std::string& input, const md::RecordingHeader& he
   // Instrument IDs are local to each recording. Keep account marks and candles,
   // but never let an old chain row refer to a new recording's reused ID.
   book_ = analytics::ChainBook{};
+  volume_reports_.clear();
   metrics_.clear();
   snapshots_.clear();
   vouched_at_.clear();

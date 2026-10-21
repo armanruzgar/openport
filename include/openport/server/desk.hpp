@@ -157,6 +157,10 @@ class Desk {
   [[nodiscard]] std::vector<trading::CounterExposure> counter_exposures(const PaperAccount& account,
       md::Timestamp time) const;
   [[nodiscard]] std::optional<std::int64_t> option_volume(const std::string& symbol, md::Timestamp time) const;
+  /// Contracts traded in the minute before `time`: the cumulative volume reported
+  /// within that minute less the last one reported a minute or more before, on
+  /// the same market date; absent without both reports.
+  [[nodiscard]] std::optional<std::int64_t> minute_volume(const std::string& symbol, md::Timestamp time) const;
   [[nodiscard]] std::optional<trading::OpeningRuleInputs> opening_rule_inputs(const PaperAccount& account,
       md::Timestamp time) const;
   [[nodiscard]] trading::Decision opening_gate(const PaperAccount& account, const trading::OrderRequest& order,
@@ -193,6 +197,8 @@ class Desk {
   md::Subscription subscription_;
   md::Capabilities capabilities_;
   analytics::ChainBook book_;
+  /// Recent cumulative volume reports by instrument, oldest first, for minute_volume.
+  std::map<md::InstrumentId, std::deque<std::pair<md::Timestamp, double>>> volume_reports_;
   bool stopping_ = false;
   TradingStatus trading_status_;
   std::vector<AccountStatus> account_statuses_;

@@ -1,4 +1,5 @@
 #include "playbook_api.hpp"
+#include "openport/server/plans.hpp"
 #include "openport/server/playbooks.hpp"
 #include "openport/trading/history.hpp"
 #include "strategy_template.hpp"
@@ -27,6 +28,90 @@ std::uint64_t uint_parameter(const json& parameters, const char* key, std::uint6
   const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
   if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) throw std::invalid_argument(std::string("Invalid ") + key);
   return value;
+}
+/// A fresh attempt at `rules` from `balance`, for the odds of a program step not yet started.
+trading::Evaluation fresh_attempt(const trading::Evaluation& current, const trading::AccountRules& rules, trading::Money balance) {
+  trading::Evaluation e;
+  e.started = current.started;
+  e.day = current.day;
+  e.starting_balance = e.peak = e.day_open_equity = e.day_close_equity = balance;
+  e.floor = trading::evaluation_floor(rules, balance, e.floor_locked, balance);
+  return e;
+}
+/// The profit a funded account needs to withdraw `gross`: gross × 100 / withdrawal percent, rounded up to a cent.
+trading::Money payout_profit(const trading::PayoutRules& p, trading::Money gross) {
+  const auto cents = (gross.micros() / 10'000 * 100 + p.withdrawal_percent - 1) / p.withdrawal_percent;
+  return trading::Money::from_micros(cents * 10'000);
+}
+/// Challenge economics (trading::challenge_economics) for the account's program:
+/// its preset and the steps its passes unlock, each from a fresh attempt on the
+/// same history, through the funded step whose first payout's odds the history
+/// gives too; query payout_odds and payout replace those two. Null with a reason
+/// when the account follows no program and gives neither.
+json economics_json(const TradingView& view, const std::vector<trading::EvaluationDay>& history, int days, int samples,
+                    std::uint64_t seed, std::optional<double> payout_odds, std::optional<trading::Money> payout) {
+  using namespace trading;
+  const auto& snapshot = *view.snapshot;
+  const auto& e = snapshot.evaluation;
+  const auto& rules = view.config.rules;
+  const auto id = preset_id(e.starting_balance, rules);
+  struct Step { std::string plan; AccountRules rules; Money balance; bool first; };
+  std::vector<Step> program;
+  if (!id.empty()) {
+    for (const auto* plan = find_plan(id); plan;) {
+      program.push_back({plan->id, plan->rules, plan->initial_cash, program.empty()});
+      if (plan->rules.phase == Phase::Funded) break;
+      const PlanPreset* next = nullptr;
+      for (const auto& candidate : plan_presets()) if (candidate.unlocked_by == plan->id) { next = &candidate; break; }
+      plan = next;
+    }
+  } else {
+    program.push_back({rules.plan.empty() ? "custom" : rules.plan, rules, e.starting_balance, true});
+  }
+  const bool funded = !program.empty() && program.back().rules.phase == Phase::Funded;
+  std::string assumption = "Each step from a fresh attempt on this account's recorded days; resets cost the step's reset fee";
+  std::vector<EconomicsStep> steps;
+  std::optional<double> odds = payout_odds;
+  std::optional<Money> value = payout;
+  for (const auto& step : program) {
+    if (step.rules.phase == Phase::Funded) {
+      const auto& p = step.rules.payouts;
+      // The funded step's activation is its cost; its first payout is what it is worth.
+      steps.push_back({step.plan, 1, step.rules.activation_fee, Money{}, 1});
+      const auto gross = !p.caps.empty() ? p.caps.front() : p.minimum;
+      if (!value && gross > Money{}) value = gross.prorate(p.split_percent, 100);
+      if (!odds && gross > Money{} && p.withdrawal_percent > 0) {
+        auto target = step.rules;
+        target.phase = Phase::Evaluation;
+        target.payouts = {};
+        target.size_scaling.reset();
+        target.profit_target = payout_profit(p, gross);
+        target.min_profitable_days = std::min<std::int64_t>(p.qualifying_days, 366);
+        target.profitable_day_profit = p.qualifying_profit;
+        odds = pass_odds(fresh_attempt(e, target, step.balance), target, step.balance, history, days, samples, seed).pass;
+        assumption += "; payout odds: reaching the first payout's profit with its qualifying days before the floor";
+      }
+      continue;
+    }
+    if (!step.rules.evaluation()) continue;
+    const auto pass = pass_odds(fresh_attempt(e, step.rules, step.balance), step.rules, step.balance, history, days, samples, seed).pass;
+    steps.push_back({step.plan, pass, step.first ? step.rules.evaluation_fee : step.rules.activation_fee, step.rules.reset_fee,
+                     step.rules.max_resets});
+  }
+  if (steps.empty() || !odds || !value)
+    return {{"available", false}, {"reason", funded || payout_odds || payout ? "Give payout_odds and payout for this program"
+        : "This account follows no preset program with a funded step; give payout_odds and payout"}};
+  const auto result = challenge_economics(steps, *odds, *value);
+  json rows = json::array();
+  for (const auto& step : result.steps)
+    rows.push_back({{"plan", step.plan}, {"pass", step.pass}, {"eventual_pass", step.eventual_pass},
+                    {"expected_cost", step.expected_cost}, {"expected_attempts", step.expected_attempts}});
+  return {{"available", true}, {"steps", rows}, {"payout_odds", result.payout_odds}, {"payout", result.payout},
+          {"payout_odds_source", payout_odds ? "query" : "simulated"}, {"payout_source", payout ? "query" : "first payout cap, trader share"},
+          {"expected_cost", result.expected_cost}, {"expected_payout", result.expected_payout},
+          {"expected_value", result.expected_value},
+          {"break_even_pass", result.break_even_pass ? json(*result.break_even_pass) : json(nullptr)},
+          {"assumption", assumption}, {"label", "Illustrative estimate from past results, not a prediction"}};
 }
 std::vector<trading::EvaluationDay> playbook_days(const TradingView& view, const std::string& id) {
   if (id.empty()) return view.snapshot->evaluation.days;
@@ -97,14 +182,34 @@ std::optional<ApiResponse> playbook_read(const ApiRequest& request, const Metric
     const bool odds = path == "/api/account/pass-odds";
     // The query is the request's: a malformed one is 400 INVALID_REQUEST, as on every route.
     std::uint64_t days = 0, samples = 0, seed = 0;
+    bool economics = false;
+    std::optional<double> payout_odds;
+    std::optional<trading::Money> payout;
     try {
-      strict_keys(parameters, odds ? std::initializer_list<std::string_view>{"account", "days", "samples", "seed", "playbook"} : std::initializer_list<std::string_view>{"account", "version"});
+      strict_keys(parameters, odds ? std::initializer_list<std::string_view>{"account", "days", "samples", "seed", "playbook", "economics", "payout_odds", "payout"} : std::initializer_list<std::string_view>{"account", "version"});
       if (path == "/api/playbooks" && parameters.contains("version")) throw std::invalid_argument("version requires a playbook ID");
       if (odds) {
         days = uint_parameter(parameters, "days", 20);
         samples = uint_parameter(parameters, "samples", 1000);
         seed = uint_parameter(parameters, "seed", 81723);
         if (days < 1 || days > 252 || samples < 1 || samples > 10000) throw std::invalid_argument("days must be 1–252 and samples 1–10000");
+        if (parameters.contains("economics") && parameters.at("economics") != "true" && parameters.at("economics") != "false")
+          throw std::invalid_argument("economics must be true or false");
+        economics = parameters.value("economics", "false") == "true";
+        if (parameters.contains("payout_odds")) {
+          const auto text = parameters.at("payout_odds").get<std::string>();
+          double value = -1;
+          const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+          if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !(value >= 0 && value <= 1))
+            throw std::invalid_argument("payout_odds must be a number from 0 to 1");
+          payout_odds = value;
+        }
+        if (parameters.contains("payout")) {
+          try { payout = trading::Money::parse(parameters.at("payout").get<std::string>()); }
+          catch (const std::exception&) { throw std::invalid_argument("payout must be a decimal dollar amount"); }
+          if (*payout < trading::Money{}) throw std::invalid_argument("payout must be nonnegative");
+        }
+        if ((payout_odds || payout) && !economics) throw std::invalid_argument("payout_odds and payout need economics=true");
       }
     } catch (const std::exception& error) { return api_error(400, "INVALID_REQUEST", error.what()); }
     const auto account = query_account(request.target, request.access.sandbox);
@@ -119,11 +224,14 @@ std::optional<ApiResponse> playbook_read(const ApiRequest& request, const Metric
       const auto id = parameters.value("playbook", "");
       if (!id.empty() && !catalogue.at("definitions").contains(id)) return api_error(404, "UNKNOWN_PLAYBOOK", "Unknown playbook");
       trading::PassOdds result;
+      json costs = nullptr;
       try {
+        const auto history = playbook_days(*view, id);
         result = trading::pass_odds(view->snapshot->evaluation, view->config.rules, view->snapshot->equity,
-            playbook_days(*view, id), static_cast<int>(days), static_cast<int>(samples), seed);
+            history, static_cast<int>(days), static_cast<int>(samples), seed);
+        if (economics) costs = economics_json(*view, history, static_cast<int>(days), static_cast<int>(samples), seed, payout_odds, payout);
       } catch (const std::invalid_argument& error) { return api_error(422, "PASS_ODDS_UNAVAILABLE", error.what()); }
-      return ApiResponse{200, json{{"pass", result.pass}, {"fail", result.fail}, {"neither", result.neither},
+      return ApiResponse{200, json{{"economics", costs}, {"pass", result.pass}, {"fail", result.fail}, {"neither", result.neither},
           {"median_days_to_pass", result.median_days_to_pass ? json(*result.median_days_to_pass) : json(nullptr)},
           {"historical_days", result.historical_days}, {"seed", std::to_string(result.seed)}, {"days", days}, {"samples", samples},
           {"block_days", 3}, {"label", "Estimate from past results, not a prediction"},

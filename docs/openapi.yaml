@@ -3946,7 +3946,7 @@
       ],
       "get": {
         "summary": "GET /api/account/pass-odds",
-        "description": "Read the current publication. A seeded block bootstrap of completed days through the plan's rules. 422 PASS_ODDS_UNAVAILABLE without an evaluation rule, with incomplete current marks or with fewer than ten usable days; 400 INVALID_REQUEST for a malformed query; 404 UNKNOWN_ACCOUNT or UNKNOWN_PLAYBOOK.",
+        "description": "Read the current publication. A seeded block bootstrap of completed days through the plan's rules. 422 PASS_ODDS_UNAVAILABLE without an evaluation rule, with incomplete current marks or with fewer than ten usable days; 400 INVALID_REQUEST for a malformed query; 404 UNKNOWN_ACCOUNT or UNKNOWN_PLAYBOOK. With economics=true, challenge economics: expected value and break-even pass rate from each program step's odds, fees and resets, and the funded step's first payout.",
         "x-scope": "read",
         "parameters": [
           {
@@ -3992,6 +3992,36 @@
               "type": "string"
             },
             "description": "Only days attributable to this playbook."
+          },
+          {
+            "name": "economics",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Add challenge economics for the account's program."
+          },
+          {
+            "name": "payout_odds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "description": "Replace the simulated odds of a first funded payout; needs economics=true."
+          },
+          {
+            "name": "payout",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Replace the trader's share of a first payout, in dollars; needs economics=true."
           }
         ],
         "responses": {
@@ -4137,7 +4167,7 @@
       ],
       "get": {
         "summary": "GET /api/account/pass-odds",
-        "description": "Read the current publication. A seeded block bootstrap of completed days through the plan's rules; 400 with fewer than ten usable days.",
+        "description": "Read the current publication. A seeded block bootstrap of completed days through the plan's rules; 400 with fewer than ten usable days. With economics=true, challenge economics: expected value and break-even pass rate from each program step's odds, fees and resets, and the funded step's first payout.",
         "x-scope": "read",
         "parameters": [
           {
@@ -4183,6 +4213,36 @@
               "type": "string"
             },
             "description": "Only days attributable to this playbook."
+          },
+          {
+            "name": "economics",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Add challenge economics for the account's program."
+          },
+          {
+            "name": "payout_odds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "description": "Replace the simulated odds of a first funded payout; needs economics=true."
+          },
+          {
+            "name": "payout",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Replace the trader's share of a first payout, in dollars; needs economics=true."
           }
         ],
         "responses": {
@@ -6182,6 +6242,75 @@
     },
     "/api/replay/history/{run_id}/underlyings/{symbol}/series": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
+    },
+    "/api/account/rules-compare": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "post": {
+        "summary": "POST /api/account/rules-compare",
+        "description": "Read access; live accounts only. Replays the account's recorded attempt (each day's open, recorded low and high in time order, and close) against its own rules and up to eight presets or custom rule sets, as dollar P&L from each set's starting balance. Nothing is re-executed or changed. 400 INVALID_REQUEST for an unknown preset or more than eight sets; 422 for invalid custom rules; 404 UNKNOWN_ACCOUNT.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulesCompareResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RulesCompareRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/rule-packs/validate": {
+      "post": {
+        "summary": "POST /api/rule-packs/validate",
+        "description": "Read access. Checks a versioned rule pack and returns it normalized, each plan's rules as the server reads them; invalid packs list every error. Nothing is stored.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulePackValidation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RulePack"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -10313,6 +10442,40 @@
             "maximum": 100,
             "default": 0,
             "description": "Applies to the first N payouts; zero applies to every payout."
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayoutReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "after_payout": {
+            "anyOf": [
+              {
+                "const": "keep",
+                "type": "string"
+              },
+              {
+                "const": "reset",
+                "type": "string"
+              },
+              {
+                "const": "starting_balance",
+                "type": "string"
+              }
+            ],
+            "default": "keep",
+            "description": "keep: the floor as it is; reset: after the payout the account drops to reset_percent of the starting balance and its floor restarts below it; starting_balance: the floor rises to the starting balance and locks. reset and starting_balance need a drawdown floor."
+          },
+          "reset_percent": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 100
           }
         },
         "required": [
@@ -10881,6 +11044,44 @@
             "maximum": 100000,
             "default": 0,
             "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
+          },
+          "drawdown_basis": {
+            "anyOf": [
+              {
+                "const": "equity",
+                "type": "string"
+              },
+              {
+                "const": "balance",
+                "type": "string"
+              }
+            ],
+            "default": "equity",
+            "description": "What the floor follows and is checked against: fully marked equity, or the closed balance (open P&L left out)."
+          },
+          "open_loss_cap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenLossCap"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "minute_volume_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "default": 0,
+            "description": "An opening order's contracts per leg at most this percent of the contract's volume in the minute before, checked at acceptance; without two cumulative volume reports a minute apart the order is refused MINUTE_VOLUME. Zero disables."
+          },
+          "best_position_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 0,
+            "description": "Profit of one closed whole trade above this percent of the profit target does not count toward it (BEST_POSITION). Needs a target; not funded."
           }
         },
         "required": [
@@ -11378,6 +11579,26 @@
           },
           "balance": {
             "$ref": "#/components/schemas/Money"
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayoutReviewOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "removed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -11491,6 +11712,45 @@
               }
             ],
             "description": "Starting balance plus buffer while it applies to this payout."
+          },
+          "review": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PayoutReviewOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "forfeit": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "after_payout": {
+            "anyOf": [
+              {
+                "const": "keep",
+                "type": "string"
+              },
+              {
+                "const": "reset",
+                "type": "string"
+              },
+              {
+                "const": "starting_balance",
+                "type": "string"
+              }
+            ]
+          },
+          "reset_balance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -11514,7 +11774,11 @@
           "cycle_profit",
           "best_day",
           "consistency_needed",
-          "buffer_balance"
+          "buffer_balance",
+          "review",
+          "forfeit",
+          "after_payout",
+          "reset_balance"
         ]
       },
       "Evaluation": {
@@ -11720,7 +11984,7 @@
                 "type": "null"
               }
             ],
-            "description": "What decided the attempt: PROFIT_TARGET, DRAWDOWN_FLOOR, DAILY_LOSS_LIMIT, TIME_LIMIT or INACTIVITY; null while active. OVERNIGHT_HOLD fails on held positions at plan day rollover. HOLD_RESTRICTED fails at rollover after holding across a restricted boundary."
+            "description": "What decided the attempt: PROFIT_TARGET, DRAWDOWN_FLOOR, DAILY_LOSS_LIMIT, TIME_LIMIT or INACTIVITY; null while active. OVERNIGHT_HOLD fails on held positions at plan day rollover. HOLD_RESTRICTED fails at rollover after holding across a restricted boundary. OPEN_LOSS_CAP fails when a position's open loss reaches an open-loss cap whose action is fail."
           },
           "balance": {
             "$ref": "#/components/schemas/Money",
@@ -11753,7 +12017,8 @@
                     "CONSISTENCY",
                     "TRADE_CONSISTENCY",
                     "MIN_TRADES",
-                    "MICROSCALPING"
+                    "MICROSCALPING",
+                    "BEST_POSITION"
                   ]
                 },
                 "met": {
@@ -11768,7 +12033,7 @@
                       "type": "null"
                     }
                   ],
-                  "description": "Dollars for target; days or whole trades for minimum counts; percent for day/trade consistency and microscalping (null while the profit basis is nonpositive)."
+                  "description": "Dollars for target; days or whole trades for minimum counts; percent for day/trade consistency and microscalping (null while the profit basis is nonpositive). BEST_POSITION: the best closed whole trade as a percent of the target."
                 },
                 "required": {
                   "type": "number"
@@ -12119,6 +12384,94 @@
               }
             ],
             "description": "Positive net profit from completed short round trips; null unless microscalping is enabled in evaluation phase."
+          },
+          "open_loss": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "limit": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "positions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "trades": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "limit",
+                  "positions",
+                  "trades"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "best_position": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "cap": {
+                    "$ref": "#/components/schemas/Money"
+                  },
+                  "excess": {
+                    "$ref": "#/components/schemas/Money"
+                  },
+                  "counted_profit": {
+                    "$ref": "#/components/schemas/Money"
+                  },
+                  "trade": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "pnl": {
+                            "$ref": "#/components/schemas/Money"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pnl"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "cap",
+                  "excess",
+                  "counted_profit",
+                  "trade"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -13683,6 +14036,11 @@
               "type": "string"
             },
             "description": "Preset IDs that a pass unlocks."
+          },
+          "illustrative": {
+            "const": true,
+            "type": "boolean",
+            "description": "Built-in presets are this project's own illustrative terms, not any firm's."
           }
         },
         "required": [
@@ -13693,7 +14051,8 @@
           "rules",
           "unlocked_by",
           "phase",
-          "unlocks"
+          "unlocks",
+          "illustrative"
         ]
       },
       "PlansResponse": {
@@ -16996,6 +17355,32 @@
           },
           "profit_lock": {
             "$ref": "#/components/schemas/Money"
+          },
+          "loss_streak": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 0,
+            "description": "This many losing closes in a row start the cooldown (needs cooldown_minutes) and flag tilt. Zero disables."
+          },
+          "size_creep_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "default": 0,
+            "description": "An opening order above this percent (101-10000) of the median of the recent opening orders flags tilt; zero disables."
+          },
+          "size_creep_window": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 0,
+            "description": "Opening orders in the rolling median, 3-100; zero is 20. The median needs three."
+          },
+          "size_creep_block": {
+            "type": "boolean",
+            "default": false,
+            "description": "Refuse size creep with SIZE_CREEP instead of only flagging it."
           }
         },
         "required": [
@@ -17041,6 +17426,22 @@
                 "type": "null"
               }
             ]
+          },
+          "losing_closes": {
+            "type": "integer"
+          },
+          "recent_opening_sizes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "tilt": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TiltFlag"
+            },
+            "description": "Today's discipline flags, journaled as tilt_flag events; rollover clears them."
           }
         },
         "required": [
@@ -17048,7 +17449,10 @@
           "latched",
           "cooldown_until",
           "cooldown_seconds",
-          "soft_floor"
+          "soft_floor",
+          "losing_closes",
+          "recent_opening_sizes",
+          "tilt"
         ]
       },
       "BreachLevel": {
@@ -19931,6 +20335,16 @@
           "simulated": {
             "const": true,
             "type": "boolean"
+          },
+          "economics": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChallengeEconomics"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -19946,7 +20360,8 @@
           "label",
           "history_basis",
           "path_assumption",
-          "simulated"
+          "simulated",
+          "economics"
         ]
       },
       "BacktestDayInput": {
@@ -22460,7 +22875,12 @@
               "GAMMA_LIMIT",
               "THETA_LIMIT",
               "GRID_LOSS_LIMIT",
-              "SHORT_VEGA_LIMIT"
+              "SHORT_VEGA_LIMIT",
+              "OPEN_LOSS_CAP",
+              "MINUTE_VOLUME",
+              "BEST_POSITION",
+              "LOSS_STREAK",
+              "SIZE_CREEP"
             ]
           },
           "message": {
@@ -23469,6 +23889,44 @@
             "maximum": 100000,
             "default": 0,
             "description": "Annual short-stock borrow rate on closing marked notional, in basis points. Zero disables; no live borrow rate is inferred."
+          },
+          "drawdown_basis": {
+            "anyOf": [
+              {
+                "const": "equity",
+                "type": "string"
+              },
+              {
+                "const": "balance",
+                "type": "string"
+              }
+            ],
+            "default": "equity",
+            "description": "What the floor follows and is checked against: fully marked equity, or the closed balance (open P&L left out)."
+          },
+          "open_loss_cap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenLossCap"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "minute_volume_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "default": 0,
+            "description": "An opening order's contracts per leg at most this percent of the contract's volume in the minute before, checked at acceptance; without two cumulative volume reports a minute apart the order is refused MINUTE_VOLUME. Zero disables."
+          },
+          "best_position_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 0,
+            "description": "Profit of one closed whole trade above this percent of the profit target does not count toward it (BEST_POSITION). Needs a target; not funded."
           }
         },
         "required": [
@@ -25412,6 +25870,32 @@
           },
           "profit_lock": {
             "$ref": "#/components/schemas/Money"
+          },
+          "loss_streak": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 0,
+            "description": "This many losing closes in a row start the cooldown (needs cooldown_minutes) and flag tilt. Zero disables."
+          },
+          "size_creep_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "default": 0,
+            "description": "An opening order above this percent (101-10000) of the median of the recent opening orders flags tilt; zero disables."
+          },
+          "size_creep_window": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 0,
+            "description": "Opening orders in the rolling median, 3-100; zero is 20. The median needs three."
+          },
+          "size_creep_block": {
+            "type": "boolean",
+            "default": false,
+            "description": "Refuse size creep with SIZE_CREEP instead of only flagging it."
           }
         },
         "required": [
@@ -28953,6 +29437,758 @@
           "simulated",
           "provider",
           "units"
+        ]
+      },
+      "OpenLossCap": {
+        "type": "object",
+        "description": "A cap on one position's open (marked) loss. Off when null.",
+        "properties": {
+          "basis": {
+            "anyOf": [
+              {
+                "const": "amount",
+                "type": "string"
+              },
+              {
+                "const": "day_profit",
+                "type": "string"
+              },
+              {
+                "const": "drawdown_room",
+                "type": "string"
+              }
+            ],
+            "description": "amount: a fixed dollar cap; day_profit: percent of the day's opening closed balance above the starting balance (the drawdown room while there is none); drawdown_room: percent of the day's opening equity above the floor in force."
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "1-100 for the percentage bases; 0 with amount."
+          },
+          "action": {
+            "anyOf": [
+              {
+                "const": "flatten",
+                "type": "string"
+              },
+              {
+                "const": "block_adds",
+                "type": "string"
+              },
+              {
+                "const": "fail",
+                "type": "string"
+              }
+            ],
+            "description": "flatten: the account closes the position (system:open_loss:N); block_adds: OPEN_LOSS_CAP refuses adding to it until it is back within the cap; fail: the attempt fails with OPEN_LOSS_CAP."
+          }
+        },
+        "required": [
+          "basis",
+          "amount",
+          "percent",
+          "action"
+        ]
+      },
+      "PayoutReview": {
+        "type": "object",
+        "description": "Trades a payout review reads: positive closed whole trades of the cycle held under min_hold_seconds (short_hold), above max_trade_percent of the cycle's net realised profit (oversized) or that breached the open-loss cap (open_loss). The nth review that finds any takes the nth ladder step; the last repeats.",
+        "properties": {
+          "min_hold_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600
+          },
+          "max_trade_percent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "open_loss": {
+            "type": "boolean",
+            "description": "Needs open_loss_cap."
+          },
+          "ladder": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "anyOf": [
+                {
+                  "const": "warning",
+                  "type": "string"
+                },
+                {
+                  "const": "forfeit",
+                  "type": "string"
+                },
+                {
+                  "const": "cap",
+                  "type": "string"
+                }
+              ]
+            },
+            "default": [
+              "warning",
+              "forfeit",
+              "cap"
+            ]
+          },
+          "cap": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "min_hold_seconds",
+          "max_trade_percent",
+          "open_loss",
+          "ladder",
+          "cap"
+        ]
+      },
+      "ReviewTrade": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "pnl": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "held_seconds": {
+            "type": "integer"
+          },
+          "closed": {
+            "type": "string"
+          },
+          "offences": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "const": "short_hold",
+                  "type": "string"
+                },
+                {
+                  "const": "oversized",
+                  "type": "string"
+                },
+                {
+                  "const": "open_loss",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "pnl",
+          "held_seconds",
+          "closed",
+          "offences"
+        ]
+      },
+      "PayoutReviewOutcome": {
+        "type": "object",
+        "description": "warning: recorded only; forfeit: the offending trades' profit leaves the account with the payout, unpaid; cap: forfeit and the payout capped at PayoutReview.cap.",
+        "properties": {
+          "step": {
+            "anyOf": [
+              {
+                "const": "warning",
+                "type": "string"
+              },
+              {
+                "const": "forfeit",
+                "type": "string"
+              },
+              {
+                "const": "cap",
+                "type": "string"
+              }
+            ]
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewTrade"
+            }
+          },
+          "forfeited": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "step",
+          "trades",
+          "forfeited"
+        ]
+      },
+      "TiltFlag": {
+        "type": "object",
+        "properties": {
+          "time": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "const": "LOSS_STREAK",
+                "type": "string"
+              },
+              {
+                "const": "SIZE_CREEP",
+                "type": "string"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "time",
+          "code",
+          "message"
+        ]
+      },
+      "EconomicsStep": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "string"
+          },
+          "pass": {
+            "type": "number"
+          },
+          "eventual_pass": {
+            "type": "number"
+          },
+          "expected_cost": {
+            "type": "number"
+          },
+          "expected_attempts": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "plan",
+          "pass",
+          "eventual_pass",
+          "expected_cost",
+          "expected_attempts"
+        ]
+      },
+      "ChallengeEconomics": {
+        "type": "object",
+        "description": "Illustrative estimate: each step's pass odds from a fresh attempt on the same history, costs from its fees, and the funded step's first payout. Not a prediction.",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EconomicsStep"
+            }
+          },
+          "payout_odds": {
+            "type": "number"
+          },
+          "payout": {
+            "type": "number"
+          },
+          "payout_odds_source": {
+            "anyOf": [
+              {
+                "const": "simulated",
+                "type": "string"
+              },
+              {
+                "const": "query",
+                "type": "string"
+              }
+            ]
+          },
+          "payout_source": {
+            "type": "string"
+          },
+          "expected_cost": {
+            "type": "number"
+          },
+          "expected_payout": {
+            "type": "number"
+          },
+          "expected_value": {
+            "type": "number"
+          },
+          "break_even_pass": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The first step's single-attempt pass odds at which the expected value is zero."
+          },
+          "assumption": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "available"
+        ]
+      },
+      "RuleReplayDay": {
+        "type": "object",
+        "properties": {
+          "day": {
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "locked",
+                "type": "string"
+              },
+              {
+                "const": "passed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              },
+              {
+                "const": "after",
+                "type": "string"
+              }
+            ]
+          },
+          "close": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "floor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "day",
+          "outcome",
+          "close",
+          "floor"
+        ]
+      },
+      "RuleReplaySet": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "initial_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "rules": {
+            "$ref": "#/components/schemas/AccountRules"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "active",
+                "type": "string"
+              },
+              {
+                "const": "passed",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decided_day": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The recorded observation's time; null when it was a day's open or close."
+          },
+          "decided_equity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked_days": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "closest_floor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleReplayDay"
+            }
+          },
+          "not_replayed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rules in this set that decide orders, positions or the clock, which a replay of recorded equity cannot evaluate."
+          }
+        },
+        "required": [
+          "name",
+          "plan_id",
+          "initial_cash",
+          "rules",
+          "status",
+          "code",
+          "message",
+          "decided_day",
+          "decided_at",
+          "decided_equity",
+          "locked_days",
+          "closest_floor",
+          "days",
+          "not_replayed"
+        ]
+      },
+      "RulesCompareRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "plans": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Preset IDs."
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "initial_cash": {
+                  "$ref": "#/components/schemas/Money"
+                },
+                "rules": {
+                  "$ref": "#/components/schemas/AccountRulesInput"
+                }
+              },
+              "required": [
+                "name",
+                "initial_cash",
+                "rules"
+              ]
+            }
+          },
+          "include_current": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "RulesCompareResponse": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleReplaySet"
+            }
+          },
+          "basis": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "simulated": {
+            "const": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "account",
+          "attempt",
+          "days",
+          "sets",
+          "basis",
+          "label",
+          "simulated"
+        ]
+      },
+      "RulePackPlan": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "initial_cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "rules": {
+            "type": "object"
+          },
+          "unlocked_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "initial_cash",
+          "rules"
+        ]
+      },
+      "RulePack": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "A versioned, importable plan file. Its terms are the author's; built-in preset IDs and names are refused.",
+        "properties": {
+          "format": {
+            "const": "openport.rule-pack",
+            "type": "string"
+          },
+          "version": {
+            "const": 1,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,64}$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "effective_from": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "source": {
+            "type": "string",
+            "description": "http(s) URL of the terms."
+          },
+          "verify": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "How, and when, the terms were checked."
+          },
+          "notes": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "plans": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "$ref": "#/components/schemas/RulePackPlan"
+            }
+          }
+        },
+        "required": [
+          "format",
+          "version",
+          "id",
+          "name",
+          "effective_from",
+          "source",
+          "verify",
+          "plans"
+        ]
+      },
+      "RulePackValidation": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "where": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "where",
+                "message"
+              ]
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pack": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RulePack"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "valid",
+          "errors",
+          "warnings",
+          "pack",
+          "label"
         ]
       }
     }

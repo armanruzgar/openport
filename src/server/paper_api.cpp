@@ -36,15 +36,42 @@ const char* status_name(EvaluationStatus status) {
   constexpr const char* names[] = {"active", "passed", "failed"};
   return names[static_cast<int>(status)];
 }
+constexpr const char* kReviewSteps[] = {"warning", "forfeit", "cap"};
+constexpr const char* kPayoutFloors[] = {"keep", "reset", "starting_balance"};
+json payout_review_json(const std::optional<PayoutReview>& review) {
+  if (!review) return nullptr;
+  json ladder = json::array();
+  for (const auto step : review->ladder) ladder.push_back(kReviewSteps[static_cast<int>(step)]);
+  return {{"min_hold_seconds", review->min_hold_seconds}, {"max_trade_percent", review->max_trade_percent},
+          {"open_loss", review->open_loss}, {"ladder", ladder}, {"cap", positive(review->cap)}};
+}
 json payout_rules_json(const PayoutRules& p) {
   json caps = json::array();
   for (const auto cap : p.caps) caps.push_back(cap.str());
   return {{"qualifying_profit", p.qualifying_profit.str()}, {"qualifying_days", p.qualifying_days},
           {"withdrawal_percent", p.withdrawal_percent}, {"split_percent", p.split_percent},
           {"minimum", p.minimum.str()}, {"caps", caps}, {"consistency_percents", p.consistency_percents},
-          {"buffer", p.buffer.str()}, {"buffer_payouts", p.buffer_payouts}};
+          {"buffer", p.buffer.str()}, {"buffer_payouts", p.buffer_payouts},
+          {"review", payout_review_json(p.review)}, {"after_payout", kPayoutFloors[static_cast<int>(p.after_payout)]},
+          {"reset_percent", p.reset_percent}};
+}
+json review_outcome_json(const std::optional<PayoutReviewOutcome>& review) {
+  if (!review) return nullptr;
+  json trades = json::array();
+  for (const auto& t : review->trades)
+    trades.push_back({{"id", t.id}, {"pnl", t.pnl.str()}, {"held_seconds", t.held / md::kNanosPerSecond},
+                      {"closed", md::format_timestamp(t.closed)}, {"offences", t.offences}});
+  return {{"step", kReviewSteps[static_cast<int>(review->step)]}, {"trades", trades}, {"forfeited", review->forfeited.str()}};
 }
 constexpr const char* kDrawdownModes[] = {"intraday", "end_of_day", "static"};
+constexpr const char* kDrawdownBases[] = {"equity", "balance"};
+constexpr const char* kOpenLossBases[] = {"amount", "day_profit", "drawdown_room"};
+constexpr const char* kOpenLossActions[] = {"flatten", "block_adds", "fail"};
+json open_loss_cap_json(const std::optional<OpenLossCap>& cap) {
+  if (!cap) return nullptr;
+  return {{"basis", kOpenLossBases[static_cast<int>(cap->basis)]}, {"amount", positive(cap->amount)},
+          {"percent", cap->percent}, {"action", kOpenLossActions[static_cast<int>(cap->action)]}};
+}
 constexpr const char* kProfitBases[] = {"equity", "balance"};
 constexpr const char* kDailyLossBases[] = {"equity", "balance", "higher", "peak"};
 constexpr const char* kBreachActions[] = {"lock", "fail"};
@@ -94,6 +121,8 @@ json rules_json(const AccountRules& r, Money initial_cash, const std::optional<S
           {"max_volume_percent", r.max_volume_percent}, {"no_hedging", r.no_hedging}, {"no_counter_positions", r.no_counter_positions},
           {"require_stop_loss", r.require_stop_loss}, {"max_trade_risk", positive(r.max_trade_risk)},
           {"max_trade_risk_percent", r.max_trade_risk_percent},
+          {"drawdown_basis", kDrawdownBases[static_cast<int>(r.drawdown_basis)]}, {"open_loss_cap", open_loss_cap_json(r.open_loss_cap)},
+          {"minute_volume_percent", r.minute_volume_percent}, {"best_position_percent", r.best_position_percent},
           {"evaluation_fee", r.evaluation_fee.str()}, {"reset_fee", r.reset_fee.str()},
           {"activation_fee", r.activation_fee.str()}, {"max_resets", r.max_resets},
           {"expiry_cutoff_seconds", r.expiry_cutoff / md::kNanosPerSecond},
@@ -160,13 +189,19 @@ json time_or_null(Timestamp time) { return time > 0 ? json(md::format_timestamp(
 json guardrails_json(const Guardrails& g) {
   return {{"soft_floor", g.soft_floor.str()}, {"soft_floor_percent", g.soft_floor_percent},
           {"max_opening_trades", g.max_opening_trades}, {"cooldown_loss", g.cooldown_loss.str()},
-          {"cooldown_minutes", g.cooldown_minutes}, {"profit_lock", g.profit_lock.str()}};
+          {"cooldown_minutes", g.cooldown_minutes}, {"profit_lock", g.profit_lock.str()},
+          {"loss_streak", g.loss_streak}, {"size_creep_percent", g.size_creep_percent},
+          {"size_creep_window", g.size_creep_window}, {"size_creep_block", g.size_creep_block}};
 }
 json guardrail_state_json(const TradingSnapshot& s) {
   json latched = json::array();
   for (auto reason : s.guardrails.latched) latched.push_back(to_string(reason));
   if (s.time < s.guardrails.cooldown_until) latched.push_back("COOLDOWN");
+  json tilt = json::array();
+  for (const auto& flag : s.guardrails.tilt)
+    tilt.push_back({{"time", md::format_timestamp(flag.time)}, {"code", to_string(flag.code)}, {"message", flag.message}});
   return {{"opening_trades", s.guardrails.opening_trades}, {"latched", latched},
+          {"losing_closes", s.guardrails.losing_closes}, {"recent_opening_sizes", s.guardrails.opening_sizes}, {"tilt", tilt},
           {"cooldown_until", time_or_null(s.guardrails.cooldown_until)},
           {"cooldown_seconds", std::max<Timestamp>(0, s.guardrails.cooldown_until - s.time) / md::kNanosPerSecond},
           {"soft_floor", money(s.soft_floor)}};
@@ -300,7 +335,9 @@ json payout_json(const TradingView& view) {
           {"best_day", q.best_day ? json{{"day", md::format_date(q.best_day_date)}, {"profit", q.best_day->str()}} : json(nullptr)},
           {"withdrawable", q.withdrawable.str()}, {"cap", money(q.cap)}, {"maximum", q.maximum.str()},
           {"minimum", q.minimum.str()}, {"trader_share", q.trader_share.str()},
-          {"withdrawal_percent", r.payouts.withdrawal_percent}, {"split_percent", r.payouts.split_percent}};
+          {"withdrawal_percent", r.payouts.withdrawal_percent}, {"split_percent", r.payouts.split_percent},
+          {"review", review_outcome_json(q.review)}, {"forfeit", q.forfeit.str()},
+          {"after_payout", kPayoutFloors[static_cast<int>(r.payouts.after_payout)]}, {"reset_balance", money(q.reset_balance)}};
 }
 json buying_power_json(const BuyingPower& power) {
   // short_requirement keeps its historical name; requirement is the same amount
@@ -863,7 +900,18 @@ json account_json(const TradingView& view) {
   json payouts = json::array();
   for (const auto& p : e.payouts)
     payouts.push_back({{"number", p.number}, {"time", md::format_timestamp(p.time)}, {"day", md::format_date(p.day)}, {"amount", p.amount.str()},
-                       {"trader_share", p.trader_share.str()}, {"balance", p.balance.str()}});
+                       {"trader_share", p.trader_share.str()}, {"balance", p.balance.str()},
+                       {"review", review_outcome_json(p.review)}, {"removed", positive(p.removed)}});
+  json open_loss = nullptr;
+  if (r.open_loss_cap) {
+    const auto limit = open_loss_limit(e, r, in);
+    open_loss = {{"limit", money(limit)}, {"positions", e.open_loss_symbols}, {"trades", e.open_loss_trades}};
+  }
+  json best_position = nullptr;
+  if (r.phase != Phase::Funded && r.best_position_percent > 0)
+    best_position = {{"cap", best_position_cap(r).str()}, {"excess", e.position_excess.str()},
+                     {"counted_profit", (attempt_profit(e, r, in) - e.position_excess).str()},
+                     {"trade", e.best_position ? json{{"id", e.best_position->id}, {"pnl", e.best_position->pnl.str()}} : json(nullptr)}};
   json next_plans = json::array();
   if (e.status == EvaluationStatus::Passed) {
     const auto id = preset_id(e.size_scaling ? e.size_scaling->original : e.starting_balance,
@@ -919,6 +967,7 @@ json account_json(const TradingView& view) {
               {"short_profit", r.phase != Phase::Funded && r.microscalp_percent > 0 ? json(e.short_profit.str()) : json(nullptr)},
               {"closed_trades", r.phase != Phase::Funded && r.min_trades > 0 ? json(e.closed_trades) : json(nullptr)},
               {"best_trade", e.best_trade ? json{{"id", e.best_trade->id}, {"pnl", e.best_trade->pnl.str()}} : json(nullptr)},
+              {"open_loss", open_loss}, {"best_position", best_position},
               {"consistency_target", money(consistency_target(e, r, in))},
               {"daily_loss", daily_loss},
               {"next_event", [&] { const auto upcoming = restricting_events_json(r, s.time, false);
@@ -1215,7 +1264,9 @@ json plans_json() {
     plans.push_back({{"id", p.id}, {"name", p.name}, {"summary", p.summary},
                      {"initial_cash", p.initial_cash.str()}, {"rules", rules_json(p.rules, p.initial_cash)},
                      {"phase", p.rules.phase == Phase::Funded ? "funded" : p.rules.phase == Phase::Verification ? "verification" : "evaluation"},
-                     {"unlocked_by", nullable(p.unlocked_by)}, {"unlocks", unlocks_json(p)}});
+                     {"unlocked_by", nullable(p.unlocked_by)}, {"unlocks", unlocks_json(p)},
+                     // Built-in terms are this project's own examples, not any firm's.
+                     {"illustrative", true}});
   return {{"plans", plans}};
 }
 json exposure_limits(const ExposureLimits& limits) {
@@ -1641,9 +1692,19 @@ bool boolean_field(const json& j, const char* key) {
   if (!j.at(key).is_boolean()) throw std::invalid_argument(std::string(key) + " must be a boolean");
   return j.at(key).get<bool>();
 }
+/// One of a rule's named choices; anything else is a malformed request.
+template <class E, std::size_t N>
+E choice_field(const json& j, const char* key, const char* const (&names)[N]) {
+  const auto value = string_field(j, key);
+  for (std::size_t i = 0; i < N; ++i)
+    if (value == names[i]) return static_cast<E>(i);
+  std::string list;
+  for (std::size_t i = 0; i < N; ++i) list += (i == 0 ? "" : i + 1 == N ? " or " : ", ") + std::string(names[i]);
+  throw std::invalid_argument(std::string(key) + " must be " + list);
+}
 PayoutRules parse_payout_rules(const json& j) {
   fields(j, {"qualifying_profit", "qualifying_days", "withdrawal_percent", "split_percent", "minimum", "caps"},
-         {"consistency_percents", "buffer", "buffer_payouts"});
+         {"consistency_percents", "buffer", "buffer_payouts", "review", "after_payout", "reset_percent"});
   PayoutRules p;
   p.qualifying_profit = decimal_field(j, "qualifying_profit");
   p.qualifying_days = integer_field(j, "qualifying_days");
@@ -1659,6 +1720,24 @@ PayoutRules parse_payout_rules(const json& j) {
       throw std::invalid_argument("consistency_percents must be an array of at most 64 whole percentages");
     for (const auto& percent : percents) p.consistency_percents.push_back(integer_field(json{{"consistency_percents", percent}}, "consistency_percents"));
   }
+  if (j.contains("review") && !j.at("review").is_null()) {
+    const auto& v = j.at("review");
+    fields(v, {}, {"min_hold_seconds", "max_trade_percent", "open_loss", "ladder", "cap"});
+    PayoutReview review;
+    if (v.contains("min_hold_seconds")) review.min_hold_seconds = integer_field(v, "min_hold_seconds");
+    if (v.contains("max_trade_percent")) review.max_trade_percent = integer_field(v, "max_trade_percent");
+    if (v.contains("open_loss")) review.open_loss = boolean_field(v, "open_loss");
+    if (v.contains("cap") && !v.at("cap").is_null()) review.cap = decimal_field(v, "cap");
+    if (v.contains("ladder")) {
+      const auto& ladder = v.at("ladder");
+      if (!ladder.is_array() || ladder.size() > 16) throw std::invalid_argument("ladder must be an array of at most 16 steps");
+      review.ladder.clear();
+      for (const auto& step : ladder) review.ladder.push_back(choice_field<ReviewStep>(json{{"ladder", step}}, "ladder", kReviewSteps));
+    }
+    p.review = review;
+  }
+  if (j.contains("after_payout")) p.after_payout = choice_field<PayoutFloor>(j, "after_payout", kPayoutFloors);
+  if (j.contains("reset_percent")) p.reset_percent = integer_field(j, "reset_percent");
   const auto& caps = j.at("caps");
   if (!caps.is_array() || caps.size() > 64) throw std::invalid_argument("caps must be an array of at most 64 amounts");
   for (const auto& cap : caps) {
@@ -1667,16 +1746,6 @@ PayoutRules parse_payout_rules(const json& j) {
     catch (const TradingError& e) { throw std::invalid_argument(std::string("caps: ") + e.what()); }
   }
   return p;
-}
-/// One of a rule's named choices; anything else is a malformed request.
-template <class E, std::size_t N>
-E choice_field(const json& j, const char* key, const char* const (&names)[N]) {
-  const auto value = string_field(j, key);
-  for (std::size_t i = 0; i < N; ++i)
-    if (value == names[i]) return static_cast<E>(i);
-  std::string list;
-  for (std::size_t i = 0; i < N; ++i) list += (i == 0 ? "" : i + 1 == N ? " or " : ", ") + std::string(names[i]);
-  throw std::invalid_argument(std::string(key) + " must be " + list);
 }
 /// "HH:MM", 00:00 to 24:00, as minutes after midnight.
 std::int64_t clock_field(const json& j, const char* key) {
@@ -1782,7 +1851,8 @@ AccountRules parse_rules(const json& j) {
           "min_hold_seconds", "microscalp_seconds", "microscalp_percent", "min_trades", "trade_consistency_percent", "max_volume_percent", "max_contracts_held", "no_hedging", "no_counter_positions", "require_stop_loss", "max_trade_risk", "max_trade_risk_percent",
           "time_limit_days", "inactivity_days", "underlyings", "trading_start", "trading_end", "flat_time", "no_overnight", "scaling", "size_scaling",
           "events", "news_before_minutes", "news_after_minutes", "news_action", "hold_restrictions", "hold_cutoff",
-          "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
+          "evaluation_fee", "reset_fee", "activation_fee", "max_resets",
+          "drawdown_basis", "open_loss_cap", "minute_volume_percent", "best_position_percent"});
 
   if (j.contains("microscalp_seconds") != j.contains("microscalp_percent"))
     throw TradingError(Reason::INVALID_RULES, "Set microscalp_seconds and microscalp_percent together");
@@ -1830,6 +1900,19 @@ AccountRules parse_rules(const json& j) {
   if (j.contains("require_stop_loss")) rules.require_stop_loss = boolean_field(j, "require_stop_loss");
   if (has("max_trade_risk")) rules.max_trade_risk = decimal_field(j, "max_trade_risk");
   if (j.contains("max_trade_risk_percent")) rules.max_trade_risk_percent = integer_field(j, "max_trade_risk_percent");
+  if (has("drawdown_basis")) rules.drawdown_basis = choice_field<DrawdownBasis>(j, "drawdown_basis", kDrawdownBases);
+  if (has("open_loss_cap")) {
+    const auto& v = j.at("open_loss_cap");
+    fields(v, {"basis", "action"}, {"amount", "percent"});
+    OpenLossCap cap;
+    cap.basis = choice_field<OpenLossBasis>(v, "basis", kOpenLossBases);
+    cap.action = choice_field<OpenLossAction>(v, "action", kOpenLossActions);
+    if (v.contains("amount") && !v.at("amount").is_null()) cap.amount = decimal_field(v, "amount");
+    if (v.contains("percent")) cap.percent = integer_field(v, "percent");
+    rules.open_loss_cap = cap;
+  }
+  if (j.contains("minute_volume_percent")) rules.minute_volume_percent = integer_field(j, "minute_volume_percent");
+  if (j.contains("best_position_percent")) rules.best_position_percent = integer_field(j, "best_position_percent");
   parse_time_rules(j, rules);
   if (j.contains("size_scaling") && !j.at("size_scaling").is_null()) {
     const auto& v = j.at("size_scaling");
@@ -2375,9 +2458,14 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     command.kind = TradingCommand::Kind::Guardrails;
     command.expected_revision = identifier(string_field(body, "expected_revision"));
     const auto& g = body.at("guardrails");
-    fields(g, {"soft_floor", "soft_floor_percent", "max_opening_trades", "cooldown_loss", "cooldown_minutes", "profit_lock"});
+    fields(g, {"soft_floor", "soft_floor_percent", "max_opening_trades", "cooldown_loss", "cooldown_minutes", "profit_lock"},
+           {"loss_streak", "size_creep_percent", "size_creep_window", "size_creep_block"});
     command.guardrails = {decimal_field(g, "soft_floor"), integer_field(g, "soft_floor_percent"), integer_field(g, "max_opening_trades"),
         decimal_field(g, "cooldown_loss"), integer_field(g, "cooldown_minutes"), decimal_field(g, "profit_lock")};
+    if (g.contains("loss_streak")) command.guardrails.loss_streak = integer_field(g, "loss_streak");
+    if (g.contains("size_creep_percent")) command.guardrails.size_creep_percent = integer_field(g, "size_creep_percent");
+    if (g.contains("size_creep_window")) command.guardrails.size_creep_window = integer_field(g, "size_creep_window");
+    if (g.contains("size_creep_block")) command.guardrails.size_creep_block = boolean_field(g, "size_creep_block");
     validate_guardrails(command.guardrails);
   } else if (path == "/api/risk/limits") {
     fields(body, {"expected_revision", "limits"});
@@ -2902,6 +2990,192 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
 }
 }  // namespace
 
+/// The rules a replay cannot evaluate: those that decide orders, positions or the
+/// clock rather than the recorded equity path.
+json not_replayed(const AccountRules& r) {
+  json out = json::array();
+  const auto add = [&](bool on, const char* name) { if (on) out.push_back(name); };
+  add(r.open_loss_cap.has_value(), "open_loss_cap"); add(r.minute_volume_percent > 0, "minute_volume_percent");
+  add(r.max_volume_percent > 0, "max_volume_percent"); add(r.max_contracts_held > 0 || !r.scaling.empty(), "contract_caps");
+  add(r.require_stop_loss || r.max_trade_risk > Money{} || r.max_trade_risk_percent > 0, "trade_risk");
+  add(r.buy_only || r.defined_risk || r.no_hedging || r.no_counter_positions, "strategies");
+  add(r.min_hold_seconds > 0, "min_hold_seconds"); add(!r.underlyings.empty() || r.trading_start.has_value(), "instruments_and_hours");
+  add(r.flat_time.has_value() || r.no_overnight || !r.hold_restrictions.empty() || !r.events.empty(), "holding_and_events");
+  return out;
+}
+/// POST /api/account/rules-compare: the account's recorded attempt replayed
+/// against up to eight rule sets, the presets named in `plans` and custom `rules`
+/// (rules_json's shape with a name and starting balance), with its own rules first
+/// unless include_current is false. See trading::replay_rules.
+ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source) {
+  const auto account = query_account(request.target, request.access.sandbox);
+  if (!account) return api_error(400, "INVALID_REQUEST", "account must be an account ID");
+  struct Set { std::string name, plan_id; Money initial_cash; AccountRules rules; };
+  std::vector<Set> sets;
+  bool current = true;
+  try {
+    const auto body = json::parse(request.body.empty() ? "{}" : request.body);
+    fields(body, {}, {"plans", "rules", "include_current"});
+    if (body.contains("include_current")) current = boolean_field(body, "include_current");
+    if (body.contains("plans")) {
+      const auto& plans = body.at("plans");
+      if (!plans.is_array()) throw std::invalid_argument("plans must be an array of preset IDs");
+      for (const auto& id : plans) {
+        const auto* plan = id.is_string() ? find_plan(id.get<std::string>()) : nullptr;
+        if (!plan) throw std::invalid_argument("Unknown plan preset: " + id.dump());
+        sets.push_back({plan->name, plan->id, plan->initial_cash, plan->rules});
+      }
+    }
+    if (body.contains("rules")) {
+      const auto& custom = body.at("rules");
+      if (!custom.is_array()) throw std::invalid_argument("rules must be an array of {name, initial_cash, rules}");
+      for (const auto& item : custom) {
+        fields(item, {"name", "initial_cash", "rules"});
+        auto rules = parse_rules(item.at("rules"));
+        normalize_event_rules(rules);
+        const auto name = string_field(item, "name");
+        if (name.empty() || name.size() > 64) throw std::invalid_argument("A rule set's name is 1-64 bytes");
+        const auto cash = decimal_field(item, "initial_cash");
+        if (cash <= Money{}) throw std::invalid_argument("initial_cash must be positive");
+        sets.push_back({name, preset_id(cash, rules), cash, rules});
+      }
+    }
+  } catch (const TradingError& error) {
+    return api_error(422, to_string(error.code()).data(), error.what());
+  } catch (const std::exception& error) {
+    return api_error(400, "INVALID_REQUEST", error.what());
+  }
+  if (!known_account(source, *account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + *account);
+  const auto view = source.trading_view(*account);
+  if (!view || !view->snapshot) return api_error(503, "TRADING_UNAVAILABLE", "Paper trading is disabled or unavailable");
+  const auto& s = *view->snapshot;
+  const auto& e = s.evaluation;
+  if (current) sets.insert(sets.begin(), {view->config.rules.plan.empty() ? "Current rules" : view->config.rules.plan,
+      preset_id(e.starting_balance, view->config.rules), e.starting_balance, view->config.rules});
+  if (sets.empty() || sets.size() > 8) return api_error(400, "INVALID_REQUEST", "Compare one to eight rule sets");
+  // The attempt's closed whole trades, for the trade objectives from the day each closed.
+  std::map<std::string, ReplayTrade> whole;
+  std::set<std::string> open;
+  for (const auto& life : lifecycles(s.recent_fills, s.closures, view->contracts)) {
+    if (life.first_fill < e.first_fill) continue;
+    const auto id = trade_group(life, s.groups);
+    auto& trade = whole[id];
+    trade.id = id;
+    trade.pnl = trade.pnl + life.gross - life.fees;
+    if (!life.closed) open.insert(id);
+    else trade.closed = std::max(trade.closed, *life.closed);
+    trade.held = std::max(trade.held, (life.closed ? *life.closed : s.time) - life.opened);
+  }
+  std::vector<ReplayTrade> trades;
+  for (const auto& [id, trade] : whole) if (!open.contains(id)) trades.push_back(trade);
+  const auto inputs = plan_inputs(s);
+  json days = json::array();
+  for (const auto& day : e.days) days.push_back(md::format_date(day.day));
+  if (e.started > 0) days.push_back(md::format_date(e.day));
+  json rows = json::array();
+  for (const auto& set : sets) {
+    const auto replay = replay_rules(e, inputs, trades, set.initial_cash, set.rules);
+    json path = json::array();
+    for (const auto& day : replay.days)
+      path.push_back({{"day", md::format_date(day.day)}, {"outcome", day.outcome}, {"close", day.close.str()},
+                      {"floor", positive(day.floor)}});
+    json locked = json::array();
+    for (const auto& day : replay.locked_days) locked.push_back(md::format_date(day));
+    rows.push_back({{"name", set.name}, {"plan_id", nullable(set.plan_id)}, {"initial_cash", set.initial_cash.str()},
+                    {"rules", rules_json(set.rules, set.initial_cash)},
+                    {"status", status_name(replay.status)},
+                    {"code", replay.status == EvaluationStatus::Active ? json(nullptr) : json(to_string(replay.code))},
+                    {"message", nullable(replay.message)},
+                    {"decided_day", replay.decided_day ? json(md::format_date(*replay.decided_day)) : json(nullptr)},
+                    {"decided_at", time_or_null(replay.decided_at)},
+                    {"decided_equity", replay.decided_day ? json(replay.decided_equity.str()) : json(nullptr)},
+                    {"locked_days", locked}, {"closest_floor", money(replay.closest_floor)}, {"days", path},
+                    {"not_replayed", not_replayed(set.rules)}});
+  }
+  return ApiResponse{200, json{{"account", *account}, {"attempt", e.attempt}, {"days", days}, {"sets", rows},
+      {"basis", "Each recorded day's open, its recorded low and high in time order, and its close, as dollar P&L from each rule set's own starting balance"},
+      {"label", "Replay of recorded equity; trades are not re-executed"}, {"simulated", true}}.dump()};
+}
+/// POST /api/rule-packs/validate: checks a versioned rule pack (docs/paper-trading.md)
+/// and returns it normalized, every plan's rules as the server reads them.
+ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& source) {
+  json pack;
+  try { pack = json::parse(request.body); }
+  catch (const std::exception&) { return api_error(400, "INVALID_REQUEST", "Request body must be a JSON rule pack"); }
+  json errors = json::array(), warnings = json::array(), plans = json::array();
+  const auto fail = [&](std::string where, std::string message) { errors.push_back({{"where", std::move(where)}, {"message", std::move(message)}}); };
+  json normalized;
+  try {
+    fields(pack, {"format", "version", "id", "name", "effective_from", "source", "verify", "plans"}, {"notes"});
+    if (pack.at("format") != "openport.rule-pack") fail("format", "format must be openport.rule-pack");
+    if (pack.at("version") != 1) fail("version", "Only version 1 rule packs are understood");
+    const auto id = string_field(pack, "id");
+    if (id.empty() || id.size() > 64 || !std::all_of(id.begin(), id.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; }))
+      fail("id", "id is 1-64 lowercase letters, digits or dashes");
+    const auto name = string_field(pack, "name");
+    if (name.empty() || name.size() > 100) fail("name", "name is 1-100 bytes");
+    const auto effective = string_field(pack, "effective_from");
+    const auto date = csv_date(effective);
+    if (!date) fail("effective_from", "effective_from must be a YYYY-MM-DD date");
+    else if (*date > md::trading_date(source.wall_time())) warnings.push_back("This pack takes effect on " + effective + ", after today");
+    const auto url = string_field(pack, "source");
+    if ((!url.starts_with("https://") && !url.starts_with("http://")) || url.size() > 2000 ||
+        std::any_of(url.begin(), url.end(), [](unsigned char c) { return c <= ' ' || c == 127; }))
+      fail("source", "source must be an http(s) URL of at most 2000 bytes");
+    const auto verify = string_field(pack, "verify");
+    if (verify.empty() || verify.size() > 2000) fail("verify", "verify must say, in at most 2000 bytes, how the terms were checked");
+    if (pack.contains("notes") && (!pack.at("notes").is_string() || pack.at("notes").get<std::string>().size() > 4000))
+      fail("notes", "notes must be text of at most 4000 bytes");
+    const auto& list = pack.at("plans");
+    if (!list.is_array() || list.empty() || list.size() > 16) throw std::invalid_argument("plans must list 1 to 16 plans");
+    std::set<std::string> ids, names;
+    for (const auto& plan : list) if (plan.is_object() && plan.contains("id") && plan.at("id").is_string()) ids.insert(plan.at("id").get<std::string>());
+    std::set<std::string> seen;
+    for (std::size_t i = 0; i < list.size(); ++i) {
+      const auto where = "plans[" + std::to_string(i) + "]";
+      try {
+        const auto& plan = list[i];
+        fields(plan, {"id", "name", "initial_cash", "rules"}, {"summary", "unlocked_by"});
+        const auto plan_id = string_field(plan, "id");
+        if (plan_id.empty() || plan_id.size() > 64 || !seen.insert(plan_id).second)
+          throw std::invalid_argument("Plan IDs are 1-64 bytes and unique within the pack");
+        if (find_plan(plan_id)) throw std::invalid_argument("\"" + plan_id + "\" is a built-in preset's ID; pack plans keep their own");
+        const auto plan_name = string_field(plan, "name");
+        if (plan_name.empty() || plan_name.size() > 64 || !names.insert(plan_name).second)
+          throw std::invalid_argument("Plan names are 1-64 bytes and unique within the pack");
+        if (find_plan_named(plan_name)) throw std::invalid_argument("\"" + plan_name + "\" is a built-in preset's name; pack plans keep their own");
+        const auto cash = decimal_field(plan, "initial_cash");
+        if (cash <= Money{}) throw std::invalid_argument("initial_cash must be positive");
+        auto rules_body = plan.at("rules");
+        if (!rules_body.is_object()) throw std::invalid_argument("rules must be an object");
+        rules_body["plan"] = plan_name;
+        auto rules = parse_rules(rules_body);
+        normalize_event_rules(rules);
+        validate_rules(rules);
+        json unlocked = nullptr;
+        if (plan.contains("unlocked_by") && !plan.at("unlocked_by").is_null()) {
+          const auto prior = string_field(plan, "unlocked_by");
+          if (!ids.contains(prior) || prior == plan_id) throw std::invalid_argument("unlocked_by must name another plan in this pack");
+          unlocked = prior;
+        }
+        const auto summary = plan.contains("summary") ? string_field(plan, "summary") : std::string();
+        if (summary.size() > 500) throw std::invalid_argument("summary is at most 500 bytes");
+        auto read_back = rules_json(rules, cash);
+        read_back.erase("plan_id");
+        plans.push_back({{"id", plan_id}, {"name", plan_name}, {"summary", summary}, {"initial_cash", cash.str()},
+                         {"rules", read_back}, {"unlocked_by", unlocked}});
+      } catch (const TradingError& error) { fail(where, error.what()); }
+      catch (const std::exception& error) { fail(where, error.what()); }
+    }
+    normalized = {{"format", "openport.rule-pack"}, {"version", 1}, {"id", id}, {"name", name}, {"effective_from", effective},
+                  {"source", url}, {"verify", verify}, {"plans", plans}};
+    if (pack.contains("notes")) normalized["notes"] = pack.at("notes");
+  } catch (const TradingError& error) { fail("pack", error.what()); }
+  catch (const std::exception& error) { fail("pack", error.what()); }
+  return ApiResponse{200, json{{"valid", errors.empty()}, {"errors", errors}, {"warnings", warnings},
+      {"pack", errors.empty() ? normalized : json(nullptr)},
+      {"label", "Imported terms are the pack author's; this server checks only that they are well formed"}}.dump()};
+}
 std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSource& source) {
   const auto question = request.target.find('?');
   const auto path = request.target.substr(0, question);
@@ -3100,6 +3374,13 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
         else complete({200, source.notifications()->status().dump()});
       } else complete(api_error(404, "NOT_FOUND", "Unknown notification endpoint or method"));
     } catch (...) { complete(api_error(400, "INVALID_REQUEST", "Invalid notification settings or test request")); }
+    return;
+  }
+  if (const auto bare = request.target.substr(0, request.target.find('?')); request.method == "POST" &&
+      (bare == "/api/account/rules-compare" || bare == "/api/rule-packs/validate")) {
+    if (bare == "/api/account/rules-compare") complete(rules_compare(request, source));
+    else if (request.target != bare) complete(api_error(400, "INVALID_REQUEST", "Unknown query parameter"));
+    else complete(validate_rule_pack(request, source));
     return;
   }
   if (playbook_write(request, source, complete)) return;
