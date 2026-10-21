@@ -33,6 +33,15 @@ describe("rule alerts", () => {
     expect(reloaded.fresh("main", 1, "2026-09-23", alerts)).toHaveLength(1)
     expect(reloaded.fresh("main", 1, "2026-09-23", alerts)).toEqual([])
   })
+  it("drops an account's claims from earlier days and attempts", () => {
+    let text: string | null = JSON.stringify(["{", JSON.stringify(["second", 1, "2026-09-20", "floor-50"])])
+    const store = createRuleAlertStore(() => ({ getItem: () => text, setItem: (_key: string, value: string) => { text = value } }))
+    const alerts = [{ id: "floor-50", title: "Floor", body: "room" }]
+    store.fresh("main", 1, "2026-09-22", alerts)
+    store.fresh("main", 1, "2026-09-23", alerts)
+    store.fresh("main", 2, "2026-09-23", alerts)
+    expect(JSON.parse(text!)).toEqual(["{", JSON.stringify(["second", 1, "2026-09-20", "floor-50"]), JSON.stringify(["main", 2, "2026-09-23", "floor-50"])])
+  })
   it("alerts again for a new attempt started on the same day", () => {
     const store = createRuleAlertStore(() => { throw new Error("denied") })
     const alerts = [{ id: "floor-25", title: "Floor", body: "room" }]

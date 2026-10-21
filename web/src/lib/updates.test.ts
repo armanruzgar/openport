@@ -153,6 +153,20 @@ describe("browser update checks", () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
   })
 
+  it("checks once a day on plain HTTP, where browsers offer no locks", async () => {
+    vi.stubGlobal("navigator", {})
+    const { storage, fetcher, now, advance } = setup()
+    const store = createUpdateStore(storage, fetcher, now)
+    store.setEnabled(true)
+    await store.check("0.3.0")
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(store.get().release?.version).toBe("v0.4.0")
+    advance(updateInterval - 1)
+    await createUpdateStore(storage, fetcher, now).check("0.3.0")
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    vi.unstubAllGlobals()
+  })
+
   it("skips checks when storage cannot preserve the daily limit", async () => {
     const fetcher = vi.fn<typeof fetch>()
     const store = createUpdateStore(() => { throw new Error("blocked") }, fetcher, Date.now, unlocked)

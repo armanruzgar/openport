@@ -113,7 +113,8 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
   const [permission, setPermission] = useState(notificationPermission)
   const spot = underlyings.find((u) => u.symbol === symbol)?.spot
   const value = Number(level)
-  const valid = symbol !== "" && /^\d+(\.\d+)?$/.test(level.trim()) && value > 0
+  // The direction comes from the price now, so an alert waits for one.
+  const valid = symbol !== "" && /^\d+(\.\d+)?$/.test(level.trim()) && value > 0 && isNum(spot)
   const direction = directionFor(value, isNum(spot) ? spot : null)
   const delay = status?.provider.delay_seconds
   function add() {
@@ -135,6 +136,7 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
             onChange={(e) => setLevel(e.target.value)} /></label>
         <button type="submit" className="trade-button" disabled={!valid}>Add alert</button>
       </form>
+      {symbol !== "" && !isNum(spot) && <p className="text-xs text-muted">Alerts need a price for {symbol} to tell rising from falling.</p>}
       {valid && <p className="text-xs text-muted">Alerts once when {describeAlert({ symbol, direction, level: value })}{isNum(spot) ? `, from ${spot.toFixed(2)} now` : ""}.</p>}
       {settings.prices.length ? <ul className="divide-y divide-border/60 text-sm">
         {settings.prices.map((alert) => <li key={alert.id} className="flex items-center justify-between gap-2 py-1.5">

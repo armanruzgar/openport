@@ -193,6 +193,15 @@ describe("morning brief", () => {
     await act(async () => saveBriefLevels(false))
     expect(host.querySelector('svg[aria-label="SPX 5-minute candles"]')?.textContent).not.toContain("Prior high")
   })
+  it("flips chart levels when storage reads but refuses writes", () => {
+    localStorage.setItem("openport.brief-levels", "false")
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError") })
+    saveBriefLevels(true)
+    expect(loadBriefLevels()).toBe(true)
+    write.mockRestore()
+    saveBriefLevels(false)
+    expect(loadBriefLevels()).toBe(false)
+  })
   it("uses existing chart lines for coincident and off-screen brief levels", async () => {
     await render(<CandleChart bars={intraday.bars} interval="1m" height={220} width={700} label="Brief lines" formatPrice={value => value.toFixed(2)} levels={[
       { kind: "brief", price: 7070, label: "Prior high / Call wall" }, { kind: "brief", price: 6950, label: "Gamma flip" },
