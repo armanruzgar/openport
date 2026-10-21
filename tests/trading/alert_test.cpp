@@ -356,5 +356,38 @@ TEST(TradingAlerts, RepeatingAlertsAndDeletedBooksRecoverAndReplayDeterministica
   std::filesystem::remove_all(pattern);
 }
 
+TEST(TradingAlerts, RiskMetricsUseCompleteValuationsAndTheExistingRepeatLifecycle) {
+  test::ScriptedMarket f;
+  auto config = roomy(); config.limits.aggregate.dollar_delta = 1000000; config.limits.aggregate.vega = 10000;
+  TradingSession session(config, f.time); f.seed(session);
+  for (const auto* metric : {"delta_utilisation", "vega_utilisation", "dollar_gamma_1pct", "grid_loss"})
+    ASSERT_TRUE(session.create_alert(alert(AlertScope::Account, metric, "", TriggerDirection::AtOrAbove, "0.001", true), f.time).decision.ok());
+  ASSERT_TRUE(session.submit(f.market("entry", 1), f.time).decision.ok());
+  quote(session, f, "4", "4.20");
+  for (std::uint64_t id = 1; id <= 4; ++id) EXPECT_EQ(find(session, id).fired, 1U);
+  EXPECT_EQ(find(session, 1).value, m("0.25"));
+  ASSERT_TRUE(session.submit(f.market("close", 1, Side::Sell), f.time).decision.ok());
+  quote(session, f, "4", "4.20");
+  ASSERT_TRUE(session.submit(f.market("again", 1), f.time).decision.ok());
+  quote(session, f, "4", "4.20");
+  EXPECT_EQ(find(session, 1).fired, 2U);
+  // A new valuation-dependent alert does not fire against stale analytics.
+  f.time += 2 * md::kNanosPerMinute;
+  ASSERT_TRUE(session.create_alert(alert(AlertScope::Account, "vega", "", TriggerDirection::AtOrAbove, "0"), f.time).decision.ok());
+  EXPECT_EQ(find(session, 5).fired, 0U);
+}
+TEST(TradingAlerts, FloorOddsNeedObservedVarianceAndAreUnavailableWithoutAFloor) {
+  test::ScriptedMarket f;
+  auto config = roomy(); config.rules.max_drawdown = m("1000");
+  TradingSession session(config, f.time); f.seed(session);
+  ASSERT_TRUE(session.submit(f.market("entry", 2), f.time).decision.ok());
+  ASSERT_TRUE(session.create_alert(alert(AlertScope::Account, "floor_touch_probability", "", TriggerDirection::AtOrAbove, "0"), f.time).decision.ok());
+  EXPECT_EQ(find(session, 1).fired, 0U);
+  f.next(); session.on_quotes({f.quote("4", "4.20")}, {f.valuation()}, f.time, {}, {{"SPX", "close_sigma", f.time, m("2")}});
+  EXPECT_EQ(find(session, 1).fired, 1U);
+  TradingSession no_floor(roomy(), f.time); f.seed(no_floor);
+  ASSERT_TRUE(no_floor.create_alert(alert(AlertScope::Account, "floor_touch_probability", "", TriggerDirection::AtOrAbove, "0"), f.time).decision.ok());
+  EXPECT_EQ(find(no_floor, 1).fired, 0U);
+}
 }  // namespace
 }  // namespace openport::trading

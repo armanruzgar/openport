@@ -35,6 +35,7 @@ std::string_view to_string(Reason reason) noexcept {
     CASE(TRADE_CONSISTENCY); CASE(MIN_TRADES); CASE(MIN_HOLD); CASE(MICROSCALPING);
     CASE(HEDGING); CASE(COUNTER_POSITION); CASE(MAX_VOLUME_SHARE);
     CASE(NEWS_BLACKOUT); CASE(HOLD_RESTRICTED); CASE(RESET_LIMIT);
+    CASE(GAMMA_LIMIT); CASE(THETA_LIMIT); CASE(GRID_LOSS_LIMIT); CASE(SHORT_VEGA_LIMIT);
   }
 #undef CASE
   return "UNKNOWN";
@@ -101,7 +102,8 @@ bool alert_metric(AlertScope scope, std::string_view metric) {
       {AlertScope::Contract, {"bid", "ask", "mark", "iv", "delta", "gamma", "theta", "vega"}},
       {AlertScope::Spread, {"mark"}},
       {AlertScope::Underlying, {"price", "iv30", "iv7", "term_ratio"}},
-      {AlertScope::Account, {"equity", "day_pnl", "unrealised", "floor_room", "buying_power", "dollar_delta", "vega", "theta"}}};
+      {AlertScope::Account, {"equity", "day_pnl", "unrealised", "floor_room", "buying_power", "dollar_delta", "vega", "theta", "dollar_gamma_1pct",
+          "delta_utilisation", "vega_utilisation", "grid_loss", "floor_touch_probability"}}};
   const auto it = metrics.find(scope);
   return it != metrics.end() && std::find(it->second.begin(), it->second.end(), metric) != it->second.end();
 }
@@ -203,7 +205,10 @@ bool valid_valuation(const Valuation& v) {
 }
 void validate_limits(const Limits& l) {
   auto exposure_ok = [](const ExposureLimits& e) {
-    return std::isfinite(e.dollar_delta) && e.dollar_delta >= 0 && std::isfinite(e.vega) && e.vega >= 0;
+    bool valid = std::isfinite(e.dollar_delta) && e.dollar_delta >= 0 && std::isfinite(e.vega) && e.vega >= 0;
+    for (const auto& cap : {e.dollar_gamma_1pct, e.theta, e.worst_grid_loss, e.short_vega})
+      valid &= !cap || (std::isfinite(*cap) && *cap >= 0);
+    return valid;
   };
   bool valid = l.max_order_contracts > 0 && l.price_band_absolute >= Money{} &&
                std::isfinite(l.price_band_relative) && l.price_band_relative >= 0 &&
@@ -211,6 +216,13 @@ void validate_limits(const Limits& l) {
                l.max_quote_age >= 0 && l.max_valuation_age >= 0 &&
                exposure_ok(l.aggregate) && exposure_ok(l.per_underlying);
   for (const auto& [name, limit] : l.underlying_overrides) valid &= !name.empty() && exposure_ok(limit);
+  for (const auto& [name, limit] : l.tag_overrides)
+    valid &= name.size() <= 32 && name.find(',') == std::string::npos &&
+        std::none_of(name.begin(), name.end(), [](unsigned char c) { return c < 32 || c == 127 || (c >= 'A' && c <= 'Z'); });
+  for (const auto* scopes : {&l.tag_overrides, &l.playbook_overrides}) {
+    valid &= scopes->size() <= 100;
+    for (const auto& [name, limit] : *scopes) valid &= !name.empty() && name.size() <= 100 && exposure_ok(limit);
+  }
   if (!valid) throw TradingError(Reason::INVALID_LIMITS, "Limits must be finite and nonnegative; order size must be positive");
 }
 void validate_time_rules(const AccountRules& r) {

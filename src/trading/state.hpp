@@ -225,8 +225,35 @@ inline void from_json(const Json& j, Valuation& v) {
   added_field(j, "spot_source", v.spot_source);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Exposure, dollar_delta, dollar_gamma_1pct, vega, theta)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ExposureLimits, dollar_delta, vega)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Limits, max_order_contracts, price_band_absolute, price_band_relative, aggregate, per_underlying, underlying_overrides, max_daily_loss, max_quote_age, max_valuation_age)
+inline void to_json(Json& j, const ExposureLimits& e) {
+  j = Json{{"dollar_delta", e.dollar_delta}, {"vega", e.vega}};
+  if (e.dollar_gamma_1pct) j["dollar_gamma_1pct"] = *e.dollar_gamma_1pct;
+  if (e.theta) j["theta"] = *e.theta;
+  if (e.worst_grid_loss) j["worst_grid_loss"] = *e.worst_grid_loss;
+  if (e.short_vega) j["short_vega"] = *e.short_vega;
+}
+inline void from_json(const Json& j, ExposureLimits& e) {
+  j.at("dollar_delta").get_to(e.dollar_delta); j.at("vega").get_to(e.vega);
+  added_field(j, "dollar_gamma_1pct", e.dollar_gamma_1pct); added_field(j, "theta", e.theta);
+  added_field(j, "worst_grid_loss", e.worst_grid_loss); added_field(j, "short_vega", e.short_vega);
+}
+inline void to_json(Json& j, const Limits& l) {
+  j = Json{{"max_order_contracts", l.max_order_contracts}, {"price_band_absolute", l.price_band_absolute}, {"price_band_relative", l.price_band_relative}, {"aggregate", l.aggregate}, {"per_underlying", l.per_underlying}, {"underlying_overrides", l.underlying_overrides}, {"max_daily_loss", l.max_daily_loss}, {"max_quote_age", l.max_quote_age}, {"max_valuation_age", l.max_valuation_age}};
+  if (!l.tag_overrides.empty()) j["tag_overrides"] = l.tag_overrides;
+  if (!l.playbook_overrides.empty()) j["playbook_overrides"] = l.playbook_overrides;
+}
+inline void from_json(const Json& j, Limits& l) {
+  j.at("max_order_contracts").get_to(l.max_order_contracts);
+  j.at("price_band_absolute").get_to(l.price_band_absolute);
+  j.at("price_band_relative").get_to(l.price_band_relative);
+  j.at("aggregate").get_to(l.aggregate);
+  j.at("per_underlying").get_to(l.per_underlying);
+  j.at("underlying_overrides").get_to(l.underlying_overrides);
+  j.at("max_daily_loss").get_to(l.max_daily_loss);
+  j.at("max_quote_age").get_to(l.max_quote_age);
+  j.at("max_valuation_age").get_to(l.max_valuation_age);
+  added_field(j, "tag_overrides", l.tag_overrides); added_field(j, "playbook_overrides", l.playbook_overrides);
+}
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Guardrails, soft_floor, soft_floor_percent, max_opening_trades, cooldown_loss, cooldown_minutes, profit_lock)
 inline void to_json(Json& j, const GuardrailState& g) {
   j = Json{{"opening_trades", g.opening_trades}, {"cooldown_until", g.cooldown_until},

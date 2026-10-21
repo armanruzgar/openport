@@ -107,5 +107,40 @@ TEST(TradingProfile, UnderlyingsMoveByTheirBetaAndOneWithoutABetaLeavesTheProfil
   EXPECT_THROW((void)risk_profile(ledger, {}, p, 600, m("10000"), {}, {}, time, md::kNanosPerMinute, prices), TradingError);
 }
 
+TEST(TradingProfile, ScenarioAxesReuseBetaAndTimePricingAndRequireAllBetas) {
+  test::ScriptedMarket f;
+  Ledger ledger;
+  ledger.fill(f.contract, 1, Money::parse("4.20"), {});
+  ledger.trade_stock("QQQ", 10, Money::parse("100"), {});
+  Valuations values{{f.symbol(), f.valuation()}};
+  ScenarioConfig grid;
+  grid.spot_percent = {-1, 0, 1}; grid.vol_points = {0, 5}; grid.days = {0, 1, 40};
+  grid.beta_weighted = true; grid.betas = {{"SPX", 1}, {"QQQ", 2}};
+  const auto result = scenario_grid(ledger, values, grid, f.time, md::kNanosPerMinute, {{"QQQ", 100}});
+  ASSERT_TRUE(result.complete);
+  ASSERT_EQ(result.cells.size(), 18U);
+  EXPECT_EQ(result.cells[2].pnl, 0);
+  EXPECT_EQ(result.cells[6].days, 1);
+  EXPECT_LT(result.cells[8].pnl, 0);
+  grid.betas.erase("QQQ");
+  const auto missing = scenario_grid(ledger, values, grid, f.time, md::kNanosPerMinute, {{"QQQ", 100}});
+  EXPECT_FALSE(missing.complete);
+  for (const auto& cell : missing.cells) EXPECT_EQ(cell.pnl, 0);
+  grid.days = {-1};
+  EXPECT_THROW(validate_scenarios(grid), TradingError);
+}
+TEST(TradingProfile, TermScalingIncreasesShortTenorVolShocksAndClampsAtTheFloor) {
+  test::ScriptedMarket f;
+  Ledger ledger; ledger.fill(f.contract, 1, Money::parse("4.20"), {});
+  auto value = f.valuation(); value.years = 7.0 / 365;
+  Valuations values{{f.symbol(), value}};
+  ScenarioConfig grid; grid.spot_percent = {0}; grid.vol_points = {5};
+  const auto flat = scenario_grid(ledger, values, grid, f.time, md::kNanosPerMinute);
+  grid.term_scaled = true;
+  const auto scaled = scenario_grid(ledger, values, grid, f.time, md::kNanosPerMinute);
+  EXPECT_GT(scaled.cells[0].pnl, flat.cells[0].pnl);
+  grid.vol_points = {-50};
+  EXPECT_TRUE(scenario_grid(ledger, values, grid, f.time, md::kNanosPerMinute).cells[0].clamped);
+}
 }  // namespace
 }  // namespace openport::trading
