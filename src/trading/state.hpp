@@ -196,6 +196,8 @@ inline void to_json(Json& j, const Fill& f) {
            {"time", f.time}, {"context", f.context}, {"actor", f.actor}};
   if (f.quote) j["quote"] = *f.quote;
   if (f.fees) j["fees"] = *f.fees;
+  // Only a fill a named feed priced records it; every other fill keeps its bytes.
+  if (!f.feed.empty()) j["feed"] = f.feed;
 }
 inline void from_json(const Json& j, Fill& f) {
   j.at("id").get_to(f.id); j.at("order_id").get_to(f.order_id); j.at("symbol").get_to(f.symbol);
@@ -203,18 +205,19 @@ inline void from_json(const Json& j, Fill& f) {
   j.at("fee").get_to(f.fee); j.at("observation").get_to(f.observation);
   j.at("quote_time").get_to(f.quote_time); j.at("time").get_to(f.time);
   added_field(j, "context", f.context); added_field(j, "actor", f.actor); added_field(j, "quote", f.quote);
-  added_field(j, "fees", f.fees);
+  added_field(j, "fees", f.fees); added_field(j, "feed", f.feed);
 }
 inline void to_json(Json& j, const QuoteObservation& q) {
   j = Json{{"symbol", q.symbol}, {"observation", q.observation}, {"time", q.time}, {"bid", q.bid}, {"ask", q.ask},
            {"bid_size", q.bid_size}, {"ask_size", q.ask_size}};
   // Only a quote first given before its time records that; others keep their bytes.
   if (q.quoted != 0) j["quoted"] = q.quoted;
+  if (!q.feed.empty()) j["feed"] = q.feed;
 }
 inline void from_json(const Json& j, QuoteObservation& q) {
   j.at("symbol").get_to(q.symbol); j.at("observation").get_to(q.observation); j.at("time").get_to(q.time);
   j.at("bid").get_to(q.bid); j.at("ask").get_to(q.ask); j.at("bid_size").get_to(q.bid_size);
-  j.at("ask_size").get_to(q.ask_size); added_field(j, "quoted", q.quoted);
+  j.at("ask_size").get_to(q.ask_size); added_field(j, "quoted", q.quoted); added_field(j, "feed", q.feed);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(Valuation, symbol, time, delta, gamma, vega, theta, spot, forward, discount, years, smile_iv, valid, spot_source)
 inline void from_json(const Json& j, Valuation& v) {

@@ -107,10 +107,12 @@ validate values with [`options.hpp`](../include/openport/providers/options.hpp),
 and extend `validate_subscription()` if needed. Both
 [daemon](../apps/openportd/main.cpp) and [probe](../apps/probe/main.cpp) look up
 `<UPPERCASE_PROVIDER_NAME>_API_KEY`; the broker factory instead reads
-`TRADIER_ACCESS_TOKEN` or tastytrade's OAuth environment variables. Keep secrets out of URLs, exceptions and status
+`TRADIER_ACCESS_TOKEN`, tastytrade's and Schwab's OAuth variables or Alpaca's
+`APCA_API_KEY_ID` and `APCA_API_SECRET_KEY`. Keep secrets out of URLs, exceptions and status
 messages. Add source files to [src/CMakeLists.txt](../src/CMakeLists.txt) and tests
 to [tests/CMakeLists.txt](../tests/CMakeLists.txt). Optional vendor SDKs must remain
-behind a build option, as Databento does.
+behind a build option, as Databento does; Interactive Brokers sits behind
+`OPENPORT_WITH_IBKR` in the same way, though it needs no SDK.
 
 ## Events and ordering
 
@@ -197,8 +199,8 @@ remains the shutdown exception documented in [runtime](runtime.md).
 
 These are implementation maps, not live certification. As the
 [configuration notes](configuration.md#providers) state, Databento, Massive,
-ThetaData, Tradier and tastytrade have sample-response tests but have not yet been
-run live with credentials.
+ThetaData, Tradier, tastytrade, Schwab, Alpaca and Interactive Brokers have
+sample-response tests but have not yet been run live with credentials.
 
 | Adapter | Mapping and code to read |
 | --- | --- |
@@ -208,9 +210,14 @@ run live with credentials.
 | [Databento](../src/providers/databento.cpp) | OPRA parent symbols cover every root (`.OPT`). `DatabentoMapper::on_record()` maps definitions, CBBO/CMBP-1 quotes, trades and OI statistics. It converts fixed-point prices, handles undefined sentinels and ignores data for unknown instruments. OPRA provides neither underlying prices nor vendor Greeks here. Definitions and statistics are subscribed with replay before the current quote stream. |
 | [Tradier](../src/providers/tradier.cpp) | Expirations and lookup accept both documented shapes and object/array/null lists. Lookup resolves root/date pairs, including SPXW; every selected chain is fetched before publication. Compact OCC symbols become canonical padded OSI. Quotes retain millisecond clocks; underlying last keeps its own clock. OI and ORATS Greeks are mapped; chain volume uses its own `trade_date`. Greek update times without a zone stay unknown. Option sizes default to contracts with an explicit override. `TradierBudget` accounts for each request and rate-limit headers. Production index timing remains unconfirmed. |
 | [tastytrade](../src/providers/tastytrade.cpp) | OAuth refresh uses JSON and environment credentials. Nested chains supply canonical OSI definitions and streamer-symbol mappings; instrument responses supply index streamer names. `TastytradeMapper` applies filters and maps Quote, Greeks, Summary OI and Trade session volume/underlying prices. Unused Profile subscriptions are omitted. `DxlinkProtocol` implements the handshake, accepted COMPACT field order, keepalive and paced add/remove subscriptions independently of `net::WebSocket`. Reconnect repeats the handshake with the retained subscription set. Summary uses a supplied `eventTime`, otherwise zero. DXLink Greeks use the documented per-point/day units; the timestamp option can withhold clocks if their millisecond units are unconfirmed. No complete snapshots or inferred trades are emitted. |
+| [Charles Schwab](../src/providers/schwab.cpp) | `SchwabApi` refreshes OAuth with a form body and Basic client credentials, keeps a rotated refresh token in memory and retries a 401 once. `parse_schwab_chain()` walks `callExpDateMap`/`putExpDateMap`, checks each padded OSI symbol against its side, strike and expiry key, keeps `quoteTimeInLong` and the underlying's own clocks, reads an option's prices from the published schema's `bidPrice`/`askPrice` (falling back to `bid`/`ask`, which some clients read; sizes, `totalVolume`, `openInterest` and the underlying's fields already match it), and maps OI, `totalVolume`, delta and gamma (`-999` is unavailable). `/expirationchain` selects the nearest dates for `fromDate`/`toDate`. `isDelayed` decides `Live`, `Delayed` or, when absent, `Stale`. |
+| [Alpaca](../src/providers/alpaca.cpp) | `parse_alpaca_option_page()` reads one page of option snapshots keyed by compact OCC symbol; `parse_alpaca_stock_snapshot()` the underlying's latest trade or quote. RFC 3339 times must carry a zone. Pages are followed by `next_page_token` before publication; the strike window becomes request bounds widened to defined strikes. Index underlyings are rejected. The indicative feed reports `Delayed`; OPRA `Live`. |
+| [Interactive Brokers](../src/providers/ibkr.cpp) | Client Portal Web API via the local gateway. `/tickle` keeps the session and reports its authentication; search, strikes and info map conids to OSI from trading class, maturity, right and strike, cached for the day. `parse_ibkr_snapshot()` reads display strings (`1.2K`, `C` closes) and `_updated` clocks; first snapshots of a contract only warm its line. One `RequestBudget` paces requests; market-data lines are counted across underlyings. |
 
 The broker adapters allowlist their REST paths and use non-redirecting HTTP calls.
-OAuth is the only POST. Error messages exclude server bodies and tokens. Broker
+OAuth refreshes and the Interactive Brokers keepalive are the only POSTs.
+[`RequestBudget`](../include/openport/providers/request_budget.hpp) is a rolling
+request window with exponential backoff for adapters without Tradier's headers. Error messages exclude server bodies and tokens. Broker
 rate timers use operational time, independently of market-event clocks. See
 [runtime limitations](runtime.md#broker-market-data) for unverified units and the
 consequences for paper fills.
@@ -252,6 +259,18 @@ A negotiated Summary extension carrying `dayVolume` is accepted with `eventTime`
 Summary OI uses [embedded event creation time](https://docs.dxfeed.com/dxfeed/api/com/dxfeed/event/market/MarketEvent.html#getEventTime--)
 when present; this is not an OI effective-date claim. Network events may supply
 zero; OpenPort keeps it unknown. All these volume mappings still need live validation.
+
+## Failover
+
+[`FailoverProvider`](../src/providers/failover.cpp) wraps two adapters for
+`--fallback-provider`. It is itself an `md::Provider`: each child publishes into its
+own sink, definitions are remapped by OSI symbol into one id space, and per-underlying
+routes decide which child's events pass. `ProviderStatus::feed` names the feed in
+charge; it is not recorded. A new adapter needs nothing extra to serve as either
+feed, but its health matters: `Error` and `Stopped` count as failing; a `Live` or
+`Delayed` status, or a `SnapshotComplete` whose market time advanced, as fresh, so
+`Stale` with advancing snapshots keeps the primary. Tests drive two hand-made feeds and an injected clock
+through `tick()` ([tests](../tests/providers/failover_test.cpp)).
 
 ## Historical day imports
 
@@ -365,13 +384,16 @@ Useful examples:
   [tastytrade tests](../tests/providers/tastytrade_test.cpp) cover OAuth and mapping;
   [DXLink tests](../tests/providers/dxlink_test.cpp) use a fake transport and clock
   for recorded message shapes, keepalive, subscription caps and resubscription.
+  [Schwab](../tests/providers/schwab_test.cpp), [Alpaca](../tests/providers/alpaca_test.cpp)
+  and [Interactive Brokers](../tests/providers/ibkr_test.cpp) tests cover OAuth,
+  pagination, conid mapping, warming lines, keepalive, pacing and line limits.
 - [Runtime tests](../tests/providers/runtime_test.cpp): cancellation between
   requests, option validation and probe readiness.
 
 After building, run the focused cases and then the full suite:
 
 ```sh
-./build/tests/openport_tests --gtest_filter='Cboe*:Massive*:ThetaData*:Databento*:Tradier*:Tastytrade*:Dxlink*:BrokerFactory*:SnapshotPublisher*:PollingProvider*:ProviderOptions*:Replay*:Cli*'
+./build/tests/openport_tests --gtest_filter='Cboe*:Massive*:ThetaData*:Databento*:Tradier*:Tastytrade*:Dxlink*:Schwab*:Alpaca*:Ibkr*:RequestBudget*:BrokerJson*:BrokerFactory*:SnapshotPublisher*:PollingProvider*:ProviderOptions*:Replay*:Cli*'
 ./build/tests/openport_tests
 ```
 

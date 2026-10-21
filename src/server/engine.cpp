@@ -3,6 +3,7 @@
 #include "openport/server/run.hpp"
 #include "openport/providers/demo_feed.hpp"
 #include "openport/providers/demo.hpp"
+#include "openport/providers/failover.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -59,6 +60,8 @@ Engine::Engine(md::Provider& provider, md::Subscription subscription, Options op
   // Replays and the demo market never write the volatility history.
   if (options_.replay || provider.name().starts_with("replay") || provider.name() == "demo") options_.series.reset();
   status_.provider = std::string(provider.name());
+  if (const auto* failover = dynamic_cast<providers::FailoverProvider*>(&provider_))
+    status_.fallback = FallbackInfo{std::string(failover->primary_name()), std::string(failover->backup_name()), failover->after()};
   status_.capabilities = provider.capabilities();
   status_.trading.fee_per_contract = options_.paper.fee_per_contract;
   status_.trading.initial_cash = options_.paper.initial_cash;
@@ -276,10 +279,12 @@ EngineStatus Engine::status() const {
 void Engine::update_health(const md::Event& event, md::Timestamp received) {
   if (const auto* feed = std::get_if<md::ProviderStatus>(&event)) {
     auto update = [&](UnderlyingHealth& health) {
-      if (health.state != feed->state || health.message != feed->message) {
+      if (health.state != feed->state || health.message != feed->message ||
+          (!feed->feed.empty() && health.feed != feed->feed)) {
         health_changed_ = true;
         health.state = feed->state;
         health.message = feed->message;
+        if (!feed->feed.empty()) health.feed = feed->feed;
       }
       if (feed->state == md::FeedState::Live || feed->state == md::FeedState::Delayed) {
         health.last_success = received;

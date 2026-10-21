@@ -139,6 +139,9 @@ recording and hosting a public demo.
 | ThetaData | `thetadata` | Snapshots from your local Theta Terminal | Theta Terminal login |
 | Tradier | `tradier` | Chain snapshots, real-time in production, delayed in its sandbox | `TRADIER_ACCESS_TOKEN` |
 | tastytrade | `tastytrade` | DXLink quotes from a funded brokerage account | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN` |
+| Charles Schwab | `schwab` | Trader API chain snapshots, real-time or delayed as each response states | `SCHWAB_CLIENT_ID`, `SCHWAB_CLIENT_SECRET`, `SCHWAB_REFRESH_TOKEN` |
+| Alpaca | `alpaca` | Equity and ETF option snapshots, free indicative feed or OPRA; no SPX | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
+| Interactive Brokers | `ibkr` | Client Portal snapshots through your logged-in local gateway | gateway login |
 | Demo | `demo` | Simulated SPX, SPY, QQQ, XSP, NDX, RUT and VIX days | none |
 | Replay | `replay` | A recording played back as the feed | none |
 
@@ -148,6 +151,8 @@ and attach its redacted JSON/Markdown reports to a
 [provider report issue](https://github.com/38st/openport/issues/new?template=provider-report.yml).
 [Certification commands and limits](docs/providers.md#live-certification-reports).
 The broker adapters read market data only.
+`--fallback-provider NAME` keeps a second feed ready to take over an underlying while
+the main one is stale or failing.
 [Configuration](docs/configuration.md) has each provider's details and every flag.
 
 ## Documentation

@@ -2503,6 +2503,7 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   Fill fill{static_cast<std::uint64_t>(s.fills.size() + 1), id, symbol, side,
             quantity, price, fee, quote.observation, quote.time, s.time, context, order.actor, taken,
             s.config.rules.fees ? std::optional(fees) : std::nullopt};
+  fill.feed = quote.feed;
   s.fills.push_back(fill);
   event(events, "fill", fill);
   count_execution(s, order);
@@ -2603,6 +2604,7 @@ void match_combo(State& s, OrderId id, Events& events, std::optional<OrderId> in
     Fill fill{static_cast<std::uint64_t>(s.fills.size() + 1), id, slice.symbol, slice.side,
               size, price, fee, quote.observation, quote.time, s.time, context, actor, taken,
               s.config.rules.fees ? std::optional(slice_fees[i]) : std::nullopt};
+    fill.feed = quote.feed;
     s.fills.push_back(fill);
     event(events, "fill", fill);
   }

@@ -6,16 +6,22 @@
 #include <stdexcept>
 #include <string>
 
+#include "openport/providers/alpaca.hpp"
 #include "openport/providers/cboe.hpp"
+#include "openport/providers/failover.hpp"
 #include "openport/providers/massive.hpp"
 #include "openport/providers/options.hpp"
 #include "openport/providers/replay.hpp"
+#include "openport/providers/schwab.hpp"
 #include "openport/providers/demo_feed.hpp"
 #include "openport/providers/thetadata.hpp"
 #include "openport/providers/tradier.hpp"
 #include "openport/providers/tastytrade.hpp"
 #ifdef OPENPORT_WITH_DATABENTO
 #include "openport/providers/databento.hpp"
+#endif
+#ifdef OPENPORT_WITH_IBKR
+#include "openport/providers/ibkr.hpp"
 #endif
 
 namespace openport::providers {
@@ -65,6 +71,11 @@ std::vector<std::string_view> provider_names() {
       "thetadata",
       "tradier",
       "tastytrade",
+      "schwab",
+      "alpaca",
+#ifdef OPENPORT_WITH_IBKR
+      "ibkr",
+#endif
       "replay",
       "demo",
   };
@@ -86,6 +97,13 @@ void validate_subscription(std::string_view provider, const md::Subscription& su
       (subscription.max_expiries != 0 || subscription.strike_window != 0))
     throw std::invalid_argument("replay: --expiries and --window must be zero; "
                                 "the recording already contains the original subscription filters");
+  if (provider == "alpaca")
+    for (const auto& symbol : subscription.underlyings)
+      if (md::is_index_underlying(symbol))
+        throw std::invalid_argument("alpaca: no index options such as " + symbol + "; use an equity or ETF such as SPY");
+  if (provider == "ibkr" && (subscription.max_expiries == 0 || subscription.strike_window == 0))
+    throw std::invalid_argument("ibkr: --expiries and --window are required; every contract holds one of the "
+                                "account's market-data lines");
   if (provider == "databento" &&
       (subscription.max_expiries != 0 || subscription.strike_window != 0))
     throw std::invalid_argument(
@@ -117,6 +135,28 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
       throw std::invalid_argument("tastytrade: dxlink_time_unit must be unknown or milliseconds");
     options.timestamps_in_milliseconds = unit == "milliseconds";
     return std::make_unique<TastytradeProvider>(std::move(options));
+  }
+  if (config.name == "schwab") {
+    validate_keys(config, {"poll_seconds"});
+    SchwabProvider::Options options;
+    options.credentials = {environment("SCHWAB_CLIENT_ID"), environment("SCHWAB_CLIENT_SECRET"),
+                           environment("SCHWAB_REFRESH_TOKEN")};
+    options.poll_seconds = seconds_option(config, "poll_seconds", std::chrono::seconds(0));
+    return std::make_unique<SchwabProvider>(std::move(options));
+  }
+  if (config.name == "alpaca") {
+    validate_keys(config, {"feed", "stock_feed", "poll_seconds", "requests_per_minute"});
+    AlpacaProvider::Options options;
+    options.key_id = environment("APCA_API_KEY_ID");
+    options.secret_key = environment("APCA_API_SECRET_KEY");
+    const auto feed = option_or(config, "feed", "indicative");
+    if (feed != "indicative" && feed != "opra") throw std::invalid_argument("alpaca: feed must be indicative or opra");
+    options.feed = feed == "opra" ? AlpacaProvider::Feed::Opra : AlpacaProvider::Feed::Indicative;
+    options.stock_feed = option_or(config, "stock_feed", options.stock_feed);
+    options.requests_per_minute = parse_integer(option_or(config, "requests_per_minute", "200"),
+                                                "alpaca requests_per_minute", 1, 10000);
+    options.poll_seconds = seconds_option(config, "poll_seconds", std::chrono::seconds(0));
+    return std::make_unique<AlpacaProvider>(std::move(options));
   }
   if (config.name == "demo") {
     validate_keys(config, {"days", "speed", "revision"});
@@ -178,6 +218,18 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
     return std::make_unique<DatabentoProvider>(std::move(options));
   }
 #endif
+#ifdef OPENPORT_WITH_IBKR
+  if (config.name == "ibkr") {
+    validate_keys(config, {"base_url", "max_lines", "requests_per_second", "poll_seconds"});
+    IbkrProvider::Options options;
+    options.base_url = option_or(config, "base_url", options.base_url);
+    options.max_lines = parse_integer(option_or(config, "max_lines", "100"), "ibkr max_lines", 2, 10000);
+    options.requests_per_second =
+        parse_integer(option_or(config, "requests_per_second", "5"), "ibkr requests_per_second", 1, 10);
+    options.poll_seconds = seconds_option(config, "poll_seconds", options.poll_seconds);
+    return std::make_unique<IbkrProvider>(std::move(options));
+  }
+#endif
   if (config.name == "massive") {
     validate_keys(config, {"base_url", "poll_seconds"});
     MassiveProvider::Options options;
@@ -194,6 +246,17 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
     return std::make_unique<ThetaDataProvider>(std::move(options));
   }
   throw std::invalid_argument("unknown provider: " + config.name);
+}
+
+std::unique_ptr<md::Provider> make_failover_provider(const md::ProviderConfig& primary,
+                                                    const md::ProviderConfig& backup, std::chrono::seconds after) {
+  for (const auto* config : {&primary, &backup})
+    if (config->name == "replay" || config->name == "demo")
+      throw std::invalid_argument("--fallback-provider: " + config->name + " is not a live feed");
+  if (primary.name == backup.name) throw std::invalid_argument("--fallback-provider must name a different provider");
+  FailoverProvider::Options options;
+  options.after = after;
+  return std::make_unique<FailoverProvider>(make_provider(primary), make_provider(backup), std::move(options));
 }
 
 }  // namespace openport::providers

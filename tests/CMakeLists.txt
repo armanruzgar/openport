@@ -44,6 +44,9 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/tradier_test.cpp
     providers/tastytrade_test.cpp
     providers/dxlink_test.cpp
+    providers/schwab_test.cpp
+    providers/alpaca_test.cpp
+    providers/failover_test.cpp
     server/api_test.cpp
     server/candles_test.cpp
     server/flow_test.cpp
@@ -72,6 +75,9 @@ if(OPENPORT_BUILD_PROVIDERS)
                         nlohmann_json::nlohmann_json)
   if(OPENPORT_WITH_DATABENTO)
     target_sources(openport_tests PRIVATE providers/databento_test.cpp providers/databento_history_test.cpp)
+  endif()
+  if(OPENPORT_WITH_IBKR)
+    target_sources(openport_tests PRIVATE providers/ibkr_test.cpp)
   endif()
 else()
   target_link_libraries(openport_tests PRIVATE openport::core)

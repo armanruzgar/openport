@@ -127,6 +127,9 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/tradier.cpp
     providers/tastytrade.cpp
     providers/dxlink.cpp
+    providers/schwab.cpp
+    providers/alpaca.cpp
+    providers/failover.cpp
   )
   add_library(openport::providers ALIAS openport_providers)
   if(OPENPORT_BUILD_TESTS AND OPENPORT_SANITIZE)
@@ -142,6 +145,11 @@ if(OPENPORT_BUILD_PROVIDERS)
     target_sources(openport_providers PRIVATE providers/databento.cpp providers/databento_history.cpp)
     target_link_libraries(openport_providers PUBLIC databento::databento)
     target_compile_definitions(openport_providers PUBLIC OPENPORT_WITH_DATABENTO)
+  endif()
+  if(OPENPORT_WITH_IBKR)
+    # No SDK: the Client Portal Web API is plain HTTPS to the operator's local gateway.
+    target_sources(openport_providers PRIVATE providers/ibkr.cpp)
+    target_compile_definitions(openport_providers PUBLIC OPENPORT_WITH_IBKR)
   endif()
 endif()
 

@@ -110,7 +110,8 @@ class PollingProvider : public md::Provider {
   /// Status to report after a successful poll: Live or Delayed.
   [[nodiscard]] virtual md::FeedState healthy_state() const noexcept = 0;
   [[nodiscard]] virtual std::chrono::seconds poll_interval() const noexcept { return interval_; }
-  bool sleep(std::chrono::seconds duration);
+  /// Waits unless stopped; false once stop() is called. Seconds convert implicitly.
+  bool sleep(std::chrono::milliseconds duration);
 
  private:
   void run(md::Subscription subscription, md::EventSink* sink);

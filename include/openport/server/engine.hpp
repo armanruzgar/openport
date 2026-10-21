@@ -38,6 +38,14 @@ struct UnderlyingHealth {
   md::Timestamp last_success = 0;  ///< local receipt time, never the delayed market-data clock
   std::string last_error;
   md::Timestamp last_error_time = 0;
+  std::string feed;  ///< the feed a failover names for it; empty for a single feed
+};
+
+/// The backup feed behind `--fallback-provider`, when one is configured.
+struct FallbackInfo {
+  std::string primary;
+  std::string backup;
+  std::chrono::seconds after{0};
 };
 
 /// A consistent picture of the feed and the engine for the status endpoint.
@@ -46,6 +54,7 @@ struct EngineStatus {
   TradingStatus trading;  ///< The main account's.
   std::vector<AccountStatus> accounts;  ///< Every account, the main one first.
   std::string provider;
+  std::optional<FallbackInfo> fallback;
   md::Capabilities capabilities;
   md::FeedState feed_state = md::FeedState::Connecting;
   std::string feed_message;

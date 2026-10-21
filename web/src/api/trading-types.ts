@@ -932,6 +932,8 @@ export interface Fill {
   fee: Money
   quote_time: string
   time: string
+  /** The feed whose quote priced it, when a fallback named one; null otherwise, absent on older servers. */
+  feed?: string | null
 }
 export interface Position {
   symbol: string

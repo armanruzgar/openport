@@ -166,7 +166,7 @@ TEST(TradeReviewApi, CsvDateUsesNewYorkCalendarDateIncludingDst) {
       "run_id", "scenario", "seed", "recording", "id", "attempt", "order_id", "actor", "symbol", "underlying", "side", "quantity", "price", "fee", "quote_time", "time", "context.spot",
       "context.spot_source", "context.iv", "context.delta", "context.years", "context.equity", "context.floor_room", "context.buying_power",
       "quote.observation", "quote.bid", "quote.ask", "quote.bid_size", "quote.ask_size", "quote.size_left", "quote.quoted_at",
-      "quote.age_seconds", "fees.commission", "fees.clearing", "fees.regulatory", "fees.index"};
+      "quote.age_seconds", "fees.commission", "fees.clearing", "fees.regulatory", "fees.index", "feed"};
   EXPECT_EQ(server::paper_csv_columns(true), fill_columns);
   const auto trade_columns = server::paper_csv_columns(false);
   ASSERT_EQ(trade_columns.size(), 110U);

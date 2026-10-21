@@ -288,6 +288,9 @@ json underlyings_json(const MetricsSource& source, const EngineStatus& status, b
       item["last_error"] = h.last_error.empty() ? json(nullptr) : json(h.last_error);
       item["last_error_time"] =
           h.last_error_time > 0 ? json(md::format_timestamp(h.last_error_time)) : json(nullptr);
+      // Which feed supplies it, when a fallback is configured; null for a single feed.
+      item["feed"] = h.feed.empty() ? json(nullptr) : json(h.feed);
+      item["fallback"] = status.fallback.has_value() && !h.feed.empty() && h.feed == status.fallback->backup;
     }
     const auto m = source.metrics(symbol);
     auto market_time = m ? m->as_of : 0;
@@ -369,7 +372,10 @@ json status_json(const MetricsSource& source) {
         {"delay_seconds", s.capabilities.delay.count()},
         {"trades", s.capabilities.trades},
         {"open_interest", s.capabilities.open_interest},
-        {"vendor_greeks", s.capabilities.vendor_greeks}}},
+        {"vendor_greeks", s.capabilities.vendor_greeks},
+        {"fallback", s.fallback ? json{{"primary", s.fallback->primary}, {"backup", s.fallback->backup},
+                                       {"after_seconds", s.fallback->after.count()}}
+                                : json(nullptr)}}},
       {"feed",
        {{"state", md::to_string(s.feed_state)},
         {"message", s.feed_message},

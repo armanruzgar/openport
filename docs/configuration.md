@@ -12,6 +12,9 @@ Providers, command-line flags, terminal settings and who may write.
 | ThetaData | `thetadata` | Snapshots from your local Theta Terminal (v3), polled every 2 s | Theta Terminal login |
 | Tradier | `tradier` | Option chain snapshots and underlying prices; production options are real-time, index timing is unconfirmed. Sandbox is 15-minute delayed. Polling follows the request budget. Not yet run live with an account; reports welcome | `TRADIER_ACCESS_TOKEN` |
 | tastytrade | `tastytrade` | Production DXLink option quotes, session volume, open interest, vendor Greeks and underlying prices. Not yet run live with an account; reports welcome | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`; optional `TASTYTRADE_CLIENT_ID` |
+| Charles Schwab | `schwab` | Trader API option chain snapshots with the underlying quote, open interest, volume, delta and gamma; real-time or delayed as each response's `isDelayed` says. Polling follows the 120 requests a minute budget. Not yet run live with an account; reports welcome | `SCHWAB_CLIENT_ID`, `SCHWAB_CLIENT_SECRET`, `SCHWAB_REFRESH_TOKEN` |
+| Alpaca | `alpaca` | Option chain snapshots for equity and ETF underlyings (Alpaca lists no index options, so no SPX, NDX, RUT or VIX), from the free indicative feed (`--option feed=indicative`, derived quotes, not the OPRA NBBO) or OPRA with a subscription (`feed=opra`); volume, delta and gamma, no open interest. Not yet run live with an account; reports welcome | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
+| Interactive Brokers | `ibkr` | Client Portal Web API snapshots through the local gateway you have logged in to, with open interest, delta and gamma; needs `--expiries` and `--window`, because every contract takes one of the account's market-data lines. Build option `OPENPORT_WITH_IBKR` (on by default). Not yet run live with an account; reports welcome | the gateway's own login |
 | Demo | `demo` | Simulated SPX, SPY and QQQ regular sessions, rotating on successive trading dates; `--option days=trend,chop --option speed=60` | none |
 | Replay | `replay` | A recording played back as the whole feed, at 1×, 10×, 60× or full speed (`--option file=PATH --option speed=10`) | none |
 
@@ -19,8 +22,10 @@ Databento, Massive and ThetaData follow their documented APIs and are tested aga
 sample responses, but have not yet been run live with a key. If you have one, an
 [issue](https://github.com/38st/openport/issues) saying how it went is welcome.
 
-Tradier and tastytrade adapters read market data only. They never send broker
-orders or read accounts. Credentials come from environment variables, never flags.
+The Tradier, tastytrade, Schwab, Alpaca and Interactive Brokers adapters read market
+data only. They never send broker orders or read balances or positions; the
+Interactive Brokers gateway requires one call listing account IDs before market
+data, and its answer is discarded. Credentials come from environment variables, never flags.
 tastytrade requires a funded production account; its sandbox has no market data.
 Tradier option sizes are read as contracts and DXLink times as milliseconds, each with
 an option to override. Documented ORATS and DXLink IV/Greek units are mapped, with
@@ -28,7 +33,7 @@ session volume when its source clock is known; these mappings are not yet valida
 live. ThetaData maps IV, delta and vega/rho (divided by 100), leaving its ambiguous
 theta time basis unknown. [Unit sources](providers.md#vendor-units-and-source-references).
 See [broker operation and limitations](runtime.md#broker-market-data) before
-using either feed for paper trading.
+using any of these feeds for paper trading.
 
 Providers deliver very different things: Databento sends raw exchange quotes with no
 Greeks and no underlying price, while others ship their own Greeks. OpenPort normalises
@@ -47,6 +52,7 @@ To add a feed, see [writing a provider adapter](providers.md).
 | --- | --- |
 | `--provider NAME`, `--poll-seconds N`, `--option KEY=VALUE` | The market-data provider and its settings, such as `quotes=cmbp-1` for Databento or `sandbox=true` for Tradier; Tradier validates poll intervals against its request budget |
 | `--provider demo --option days=ID,ID,... --option speed=N` | Built-in regular scenarios in the given order; default all regular scenarios at 1×, supported speeds 1, 2, 5, 10, 30, 60, 120, 300. Symbols default to their coverage. Network services are off; candles stay in memory unless `--candle-dir` is given |
+| `--fallback-provider NAME`, `--fallback-seconds N`, `--fallback-option KEY=VALUE` | A second live provider that supplies an underlying once the main one has been in error or silent for N seconds (default 30, at most 3600), until it has been fresh again for N seconds; its options and key work as for `--provider`. Data from the backup reports `delayed` with a fallback label, and fills name their feed ([failover](runtime.md#feed-failover)) |
 | `--symbols SPX,SPY,QQQ,IWM,DIA`, `--expiries N`, `--window F` | The underlyings (default SPX, SPY, QQQ, IWM and DIA), the nearest N expiries and strikes within ±F of spot |
 | `--rate R` | The rate assumed when no index curve is available |
 | `--address`, `--port`, `--web-root`, `--allowed-origin`, `--allowed-host`, `--write-token`, `--write-token-file` | The web server and who may write (see [Security](#security)) |

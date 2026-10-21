@@ -3,7 +3,7 @@ import { api } from "../api/client"
 import { marketNow, useLive } from "../api/live"
 import { count, fixed, isNum, price } from "../lib/format"
 import { matchingPayload } from "../lib/payload"
-import { providerLabel } from "../lib/provider"
+import { fallbackLabel, fallbackTitle, providerLabel } from "../lib/provider"
 import { useTheme } from "../lib/theme"
 import { AlertsButton } from "./Alerts"
 import { AsOf } from "./AsOf"
@@ -36,6 +36,7 @@ export function Header({
   const summaryData = symbol ? matchingPayload(summary.data, symbol) : undefined
   const inferredSpot = summaryData?.version === current?.version && summaryData?.spot_source === "parity" && isNum(current?.spot)
   const dataLabel = provider ? providerLabel(provider, feed?.state) : ""
+  const fallback = fallbackLabel(provider, current)
 
   return (
     <header className="relative z-20 border-b border-border bg-panel/95 backdrop-blur lg:sticky lg:top-0">
@@ -78,6 +79,9 @@ export function Header({
             </span>
           )}
           {feed && <FeedBadge state={feed.state} message={feed.message} />}
+          {fallback && provider && (
+            <span className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-warn" title={fallbackTitle(provider)}>{fallback}</span>
+          )}
           {engine && (
             <span className="hidden tabular md:inline" title="contracts tracked · events per second · last analytics pass">
               {count(engine.contracts)} contracts · {fixed(engine.analytics_ms, 1)} ms

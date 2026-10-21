@@ -150,13 +150,18 @@ Supported `openportd --option KEY=VALUE` keys:
 | ThetaData | `poll_seconds`, `base_url` |
 | Tradier | `sandbox=true` or `false` (default), `poll_seconds` (default: calculated from the cycle request count), `option_size_unit=contracts` (default), `hundreds` or `unknown` |
 | tastytrade | `sandbox=false` only; `dxlink_time_unit=milliseconds` (default) or `unknown` |
+| Schwab | `poll_seconds` (default: calculated from the cycle request count, at least 5) |
+| Alpaca | `feed=indicative` (default) or `opra`, `stock_feed=iex` (default), `sip` or `delayed_sip`, `requests_per_minute=1..10000` (default 200, the Basic plan), `poll_seconds` |
+| Interactive Brokers | `base_url` (default `https://localhost:5000/v1/api`, loopback only), `max_lines=2..10000` (default 100), `requests_per_second=1..10` (default 5), `poll_seconds` (default 5) |
 | Databento | `quotes=cbbo-1s` or `quotes=cmbp-1`, `trades=on` or `trades=off` |
 | Replay | `file=PATH` (required), `speed=1`, `10`, `60` or `max`, `loop=on` or `off` |
 | Demo | `days=ID,ID,...`, `speed=1`, `2`, `5`, `10`, `30`, `60`, `120` or `300` (default 1), `revision=1..8` (default 8) |
 
 Databento parent subscriptions stream the entire option chain upstream. Both
 CLIs reject nonzero `--expiries` or `--window` with that provider; those filters
-cannot reduce upstream traffic.
+cannot reduce upstream traffic. Interactive Brokers is the opposite: both are
+required, because each contract streamed holds one of the account's market-data
+lines. Alpaca rejects index underlyings such as SPX; it lists no index options.
 
 ## Provider certification
 
@@ -186,15 +191,19 @@ last known snapshot time. Operational status messages still use the wall clock.
 
 ## Broker market data
 
-Both broker adapters are data only. Neither reads accounts nor sends orders.
-Only the documented market-data paths and tastytrade's OAuth refresh POST are
-allowed; broker requests do not follow redirects. Credentials are environment
-variables, not `--option` values or command-line flags:
+The broker adapters are data only. None reads balances or positions, and none
+sends orders. Only the documented market-data paths, the OAuth refresh POSTs of
+tastytrade and Schwab, and the Interactive Brokers gateway's `/tickle` keepalive
+POST are allowed; broker requests do not follow redirects. Credentials are
+environment variables, not `--option` values or command-line flags:
 
 | Provider | Environment |
 | --- | --- |
 | Tradier | `TRADIER_ACCESS_TOKEN` |
 | tastytrade | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`; `TASTYTRADE_CLIENT_ID` is optional and must match the grant if supplied |
+| Schwab | `SCHWAB_CLIENT_ID` (the app key), `SCHWAB_CLIENT_SECRET`, `SCHWAB_REFRESH_TOKEN` |
+| Alpaca | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
+| Interactive Brokers | none: log in to the Client Portal gateway in a browser first |
 
 Set those variables in your shell or service environment, then run, for example:
 
@@ -288,9 +297,171 @@ live. Underlying events are not requested because entitlement to that DXLink
 event type is unverified; Quote and Trade supply the underlying instead.
 Streaming emits no `SnapshotComplete`.
 
-Both adapters are tested with generated fixtures shaped like broker documentation,
-not live accounts. Empty response shapes, index symbols, entitlement and the noted
-units still need account validation. No new journal or recording fields are added.
+### Charles Schwab
+
+```sh
+./build/apps/openportd --provider schwab --symbols SPX,SPY --expiries 2 --window 0.05
+```
+
+The adapter calls `https://api.schwabapi.com/marketdata/v1/chains` with
+`contractType=ALL`, `includeUnderlyingQuote=true` and `strategy=SINGLE`. Index
+symbols take Schwab's `$` prefix (`$SPX`). With `--expiries N`, an
+`/expirationchain` request first selects the nearest dates, plus any already
+defined, and the chain is asked for from the first to the last of them; without it
+the whole chain is requested once a cycle, which for SPX is very large. OAuth uses
+the documented refresh grant: a form body with HTTP Basic client credentials, the
+only POST. Access tokens refresh before `expires_in` (30 minutes if absent) and
+once after a 401. A rotated refresh token is kept in memory only. Schwab refresh
+tokens expire seven days after the browser authorisation; OpenPort does not run
+that authorisation flow, so create a new token with Schwab's tools and restart.
+
+Each response's `isDelayed` decides health: `false` reports `Live`, `true`
+`Delayed`, and a response without it `Stale` with timing unconfirmed. Option
+symbols are padded OSI; the call/put side, strike and expiry key must agree with
+the symbol. `quoteTimeInLong` and the underlying's `tradeTime`/`quoteTime` are
+millisecond clocks; a priced side without one is rejected rather than stamped
+with the receipt time. Sizes are contracts. Open interest and `totalVolume` are
+mapped. Delta and gamma are mapped as price derivatives, Schwab's `-999` means
+unavailable, and IV (a percentage in the examples), vega, theta and rho stay NaN
+because their scaling is not documented. Option prices are read from the published
+schema's `bidPrice` and `askPrice`, or `bid` and `ask` when those are absent.
+Schwab's published schema names the flags `isNonStandard` and `isMini`, while some
+client libraries read `nonStandard` and `mini`; either spelling, or a multiplier
+other than 100, marks a contract nonstandard. The default interval is the cycle's
+requests × 60 / 120 seconds, at least 5; HTTP 429 backs off exponentially and
+honours `Retry-After`.
+
+### Alpaca
+
+```sh
+./build/apps/openportd --provider alpaca --symbols SPY,QQQ --window 0.05
+./build/apps/openportd --provider alpaca --symbols SPY --option feed=opra --option stock_feed=sip
+```
+
+Alpaca lists equity and ETF options only, so SPX, NDX, RUT, VIX and other index
+underlyings are rejected at startup; SPY is the closest substitute. Each cycle
+reads `/v2/stocks/{symbol}/snapshot` for the underlying, then every page of
+`/v1beta1/options/snapshots/{symbol}` (1,000 contracts a page, up to 100 pages)
+before publishing. Expired series are excluded with `expiration_date_gte`, and a
+`--window` becomes `strike_price_gte`/`strike_price_lte`, widened to keep every
+contract already defined.
+
+The free `indicative` feed's option quotes are derived from OPRA rather than the
+NBBO itself, so its health is `Delayed` and the status says so; `feed=opra` needs
+Alpaca's OPRA subscription and reports `Live`. `stock_feed=iex` (the free default)
+is a single venue's prices. Quote, trade and bar times are RFC 3339 times in UTC;
+an unzoned time is rejected. The daily bar's volume is used only with a trade on the
+same trading date, at that trade's time. Delta and gamma are mapped; implied
+volatility and the other Greeks stay NaN. Alpaca's snapshots carry no open
+interest. Requests are budgeted at `requests_per_minute` (200 by default, the Basic
+plan's limit); HTTP 429 backs off and 403 reports a missing subscription.
+
+### Interactive Brokers
+
+```sh
+./build/apps/openportd --provider ibkr --symbols SPX,SPY --expiries 1 --window 0.02
+```
+
+The `ibkr` adapter talks to the Client Portal Web API through the gateway on your
+own machine, after you have logged in to it in a browser; `base_url` must be a
+loopback address. The gateway serves a self-signed certificate that OpenPort does
+not accept, so either give the gateway a certificate your system trusts, or
+configure it to listen on plain HTTP on loopback only and pass
+`--option base_url=http://localhost:5000/v1/api`. Build with
+`-DOPENPORT_WITH_IBKR=OFF` to leave the adapter out.
+
+Session keepalive: `POST /tickle` runs at least once a minute and checks the
+returned authentication status. An unauthenticated or disconnected gateway, or a
+competing session for the same username, is an error naming the cause; log in again
+through the gateway. `/iserver/accounts` is read once, because the gateway requires
+it before market data, and its answer is discarded.
+
+Contract ids: `/iserver/secdef/search` finds the underlying's conid and option
+months, `/iserver/secdef/strikes` each month's strikes, and `/iserver/secdef/info`
+the conids for one strike and right, across that month's expiries. The month's
+strike nearest spot is looked up first, in month order, until the nearest
+`--expiries` dates are known; then every strike inside `--window` for those months.
+Each conid is mapped to a padded OSI symbol from its trading class, maturity, right
+and strike, so SPXW stays separate from SPX. Mappings are kept for the day; at the
+first poll of a new date, `/iserver/marketdata/unsubscribeall` releases the lines
+once and the chain is mapped again.
+
+Pacing: every request goes through one budget of `requests_per_second` (5 by
+default, half the gateway's documented 10 a second). HTTP 429 waits at least a
+minute, since repeated violations can block the address for longer. The first
+lookups for a wide window therefore take several seconds.
+
+Market-data lines: each contract snapshot and the underlying holds one of the
+account's lines (100 by default, more with quote boosters; set `max_lines`). The
+adapter counts lines across all subscribed underlyings and refuses a chain that
+would exceed the limit, naming the count needed. Contracts already defined keep
+updating, so they count too until the next date.
+
+Snapshots ask for fields 31, 84, 85, 86, 88, 7308, 7309, 7638 and 6509: last,
+bid, ask size, ask, bid size, delta, gamma, open interest and availability. A
+contract's first snapshot only subscribes its line; until data arrives it is left
+unpriced and the status counts the contracts still warming up. Quote times are
+the row's `_updated` time, when IBKR last updated it. Prices marked `C` (a
+previous close) or `H` (halted) are not used as current. Availability `R` reports
+`Live`, `D` `Delayed`, and `Z`/`Y` (frozen values from the last session) `Stale`.
+Size suffixes such as `1.2K` and thousands separators are expanded; implied
+volatility and the other Greeks stay NaN.
+
+All five broker adapters are tested with generated fixtures shaped like broker
+documentation, not live accounts. Empty response shapes, index symbols,
+entitlement and the noted units still need account validation. No new journal or
+recording fields are added for them.
+
+## Feed failover
+
+`--fallback-provider NAME` keeps a second live provider in reserve:
+
+```sh
+./build/apps/openportd --provider tradier --symbols SPX,SPY --expiries 2 --window 0.05 \
+  --fallback-provider cboe --fallback-seconds 45
+```
+
+The backup takes its own options from `--fallback-option KEY=VALUE` and its key from
+the environment, as `--provider` would. Neither feed may be `demo` or `replay`, and
+the two must differ. Both must accept the subscription's filters.
+
+Each underlying is routed on its own. The main feed keeps it until its status has
+been `Error` or `Stopped` for `--fallback-seconds` (default 30), or it has sent no
+fresh update for that long beyond the engine's stale window (three poll intervals,
+at least a minute). Freshness is judged apart from the state label: a `live` or
+`delayed` status, or a complete snapshot whose market time advanced, is fresh. So a
+feed whose healthy state is `stale` because it cannot confirm its timing (Schwab
+without `isDelayed`, IBKR without its delay fields, Tradier's indexes) keeps its
+underlyings, and still reports `stale`. A provider-wide error counts for every
+underlying. A streaming feed that does not report its own health, such as Databento,
+proves itself with quotes, as it does to the engine. The backup starts at the first
+switch and then keeps running. No underlying moves onto a backup that could not start
+or reports `error` or `stopped`; it stays on the main feed, whose status message adds
+`fallback cboe unavailable: ...`. An underlying returns to the main feed once that
+feed has been fresh, without an error, for `--fallback-seconds`, so a flapping feed
+stays on the backup.
+
+The two feeds' contracts share one id space, mapped by OSI symbol as the demo feed
+maps its days; only the feed in charge of an underlying reaches the engine. A switch
+first reports the underlying's status naming the new feed, then sends that feed's
+latest quote, open interest, Greeks and spot. Contracts it does not price keep their
+previous, aging quotes until its first complete snapshot (or, for a stream, its first
+healthy status) vouches for its chain; then they are cleared without a market time.
+
+While the backup supplies an underlying, its health is `delayed` at best, never
+`live`, with a message such as `fallback cboe: Cboe delayed; primary tradier error`.
+`GET /api/status` lists the fallback under `provider.fallback` and each underlying's
+`feed` and `fallback` flag; the terminal's header shows a `fallback · cboe` badge and
+Status lists the feed per underlying. Paper trading keeps every freshness check: quotes
+keep their own market times, so a delayed backup behind a real-time main feed leaves
+orders waiting, and every fill records the feed that priced it (`feed` in
+`GET /api/fills`, the order views and the journal).
+
+Adapters that report `Stale` while healthy count as failing: Tradier's index
+subscriptions (timing unconfirmed), a Schwab response without `isDelayed`, and
+Interactive Brokers' frozen values. Pair such a feed with a backup only if that is the
+intent. Recordings name both feeds in their provider (`tradier+cboe`) and keep the
+status messages, but not the per-quote feed. `openport-probe` takes one provider.
 
 ## Chain volume and liquidity
 
@@ -312,6 +483,8 @@ With `trades=off`, volume is unknown. Tradier maps chain `volume` using
 `bid_date`/`ask_date` (its daily reset is not filed under the prior day); tastytrade maps DXLink Trade `dayVolume` using `time`, and accepts
 Summary `dayVolume` extensions using `eventTime`. Both are cumulative session
 counts, not inferred trades, and are not yet validated live.
+Schwab maps `totalVolume` at the option's quote time and Alpaca its daily bar's
+volume at the latest trade's time. Interactive Brokers does not yet emit volume.
 
 The chain shows volume, `(ask - bid) / ((ask + bid) / 2)` and a liquidity cue per
 side. Hover volume for volume/OI; zero or unknown OI leaves the ratio unknown.

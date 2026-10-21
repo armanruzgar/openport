@@ -175,6 +175,6 @@ export function fillBook(fill: Fill): { book: string; detail: string } | null {
   const taken = fill.side === "buy" ? q.ask_size : q.bid_size
   return {
     book: `${formatMoney(q.bid)} × ${formatMoney(q.ask)}`,
-    detail: `${q.bid_size} × ${q.ask_size} · ${q.size_left} of ${taken} left · quoted ${formatDuration(q.age_seconds)} before`,
+    detail: `${q.bid_size} × ${q.ask_size} · ${q.size_left} of ${taken} left · quoted ${formatDuration(q.age_seconds)} before${fill.feed ? ` · via ${fill.feed}` : ""}`,
   }
 }

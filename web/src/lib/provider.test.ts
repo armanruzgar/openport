@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { FeedState, ProviderInfo } from "../api/types"
-import { providerLabel } from "./provider"
+import { fallbackLabel, fallbackTitle, providerLabel } from "./provider"
 
 const provider: ProviderInfo = {
   name: "test", realtime: true, delay_seconds: 900,
@@ -33,5 +33,23 @@ describe("provider label", () => {
       expect(providerLabel({ ...provider, realtime_plan_dependent }, "delayed")).toBe("real-time")
       expect(providerLabel({ ...provider, realtime_plan_dependent, realtime: false }, "live")).toBe("15-min delay")
     }
+  })
+})
+
+describe("fallback label", () => {
+  const fallback = { primary: "tradier", backup: "cboe", after_seconds: 30 }
+  const spx = { symbol: "SPX", spot: 7400, as_of: null, version: 1 }
+
+  it("names the backup only while it supplies the underlying", () => {
+    expect(fallbackLabel({ ...provider, fallback }, { ...spx, feed: "cboe", fallback: true })).toBe("fallback · cboe")
+    expect(fallbackLabel({ ...provider, fallback }, { ...spx, feed: "tradier", fallback: false })).toBeNull()
+    expect(fallbackLabel(provider, { ...spx, fallback: true })).toBeNull()
+    expect(fallbackLabel({ ...provider, fallback: null }, spx)).toBeNull()
+  })
+
+  it("explains when the backup took over and that its data is delayed", () => {
+    expect(fallbackTitle({ ...provider, fallback })).toContain("tradier has been in error or silent for 30 s")
+    expect(fallbackTitle({ ...provider, fallback })).toContain("reported as delayed")
+    expect(fallbackTitle(provider)).toBe("")
   })
 })

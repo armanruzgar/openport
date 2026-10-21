@@ -6753,6 +6753,17 @@
           },
           "vendor_greeks": {
             "type": "boolean"
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FallbackInfo"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The backup feed behind --fallback-provider: it supplies an underlying once the primary has been in Error, Stopped or silent for after_seconds, until the primary has been fresh again for after_seconds. Null without one; absent on older servers."
           }
         },
         "required": [
@@ -6762,6 +6773,25 @@
           "trades",
           "open_interest",
           "vendor_greeks"
+        ]
+      },
+      "FallbackInfo": {
+        "type": "object",
+        "properties": {
+          "primary": {
+            "type": "string"
+          },
+          "backup": {
+            "type": "string"
+          },
+          "after_seconds": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "primary",
+          "backup",
+          "after_seconds"
         ]
       },
       "EngineMetrics": {
@@ -6949,6 +6979,21 @@
                 "type": "null"
               }
             ]
+          },
+          "feed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The feed supplying the underlying when a fallback is configured; null otherwise."
+          },
+          "fallback": {
+            "type": "boolean",
+            "description": "True while the backup feed supplies the underlying; its health is then delayed at best."
           }
         },
         "required": [
@@ -7052,6 +7097,21 @@
                 "type": "null"
               }
             ]
+          },
+          "feed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The feed supplying the underlying when a fallback is configured; null otherwise."
+          },
+          "fallback": {
+            "type": "boolean",
+            "description": "True while the backup feed supplies the underlying; its health is then delayed at best."
           },
           "expiries": {
             "type": "number"
@@ -15727,6 +15787,17 @@
               }
             ],
             "description": "Null under flat fees; absent on older servers."
+          },
+          "feed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The feed whose quote priced the fill, when a fallback named one: the primary or the backup. Null from a single feed; absent on older servers."
           }
         },
         "required": [

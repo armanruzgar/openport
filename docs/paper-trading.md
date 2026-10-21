@@ -642,6 +642,12 @@ do. Past the tolerance they are no longer offered, age, and new orders reject; a
 a gap, such as overnight, the account waits for the next complete snapshot.
 Streaming feeds mark no snapshots, so their quotes keep the time they last changed.
 
+With a [fallback feed](runtime.md#feed-failover), these checks apply to whichever feed
+supplies the underlying. The backup's quotes keep their own market times: a delayed
+backup behind a real-time primary shows quotes the freshness window refuses, so orders
+wait rather than fill against data minutes old. Each fill names the feed whose quote
+priced it in `feed` (null from a single feed), and the journal keeps it.
+
 Current is not new. An option quote carries the market time its own underlying's
 latest snapshot arrived (or its own later timestamp), not a newer time another
 underlying's data has moved the clock to. So fill latency waits for that
@@ -3892,7 +3898,7 @@ focus at the top of the ticket.
 | `POST /api/orders/cancel` | Optional `underlying`, or `orders` (one to sixteen distinct order IDs, not with `underlying`); cancels every open order, that underlying's, or those listed that are still open, together in one transaction, and returns version and `cancelled_orders`. An unknown listed ID is 404 `UNKNOWN_ORDER` and a list with none open 409 `ORDER_TERMINAL`; neither cancels anything |
 | `POST /api/positions/close` | Optional `underlying`; cancels the open orders in scope but the bracket exits and closes its positions at market with reduce-only orders that keep working until filled, returning version, `cancelled_orders`, the closing `orders` (each with its status and reason), their `fills`, the shares it closed (`stock_fills`) and those it could not (`kept_stocks`: symbol, shares and reason), and each position still open (`residuals`: symbol, underlying, signed `quantity`, the contracts still `working` and the `reason` the rest are not, or null). 422 with the reason, and nothing changed, when nothing in scope can close ([flattening](#changing-cancelling-and-flattening)) |
 | `POST /api/positions/close/preview` | Optional `underlying`; the flatten's dry run on a private copy: `decision` and `reason`, `cancelled_orders`, the closing `orders` without IDs and their `fills`, `stock_fills`, `kept_stocks`, `remaining` and `remaining_shares` in scope, and the account `current` and `after`; `simulated: true`, nothing recorded ([flattening](#changing-cancelling-and-flattening)) |
-| `GET /api/fills` | Version and fills, newest first, with pre-execution `context` and the `quote` each took: `observation`, `bid`, `ask`, `bid_size`, `ask_size`, `size_left` (displayed size still free for paper orders before the fill), `quoted_at` (when the quote was first given) and `age_seconds` (both null on older fills) |
+| `GET /api/fills` | Version and fills, newest first, with pre-execution `context` and the `quote` each took: `observation`, `bid`, `ask`, `bid_size`, `ask_size`, `size_left` (displayed size still free for paper orders before the fill), `quoted_at` (when the quote was first given) and `age_seconds` (both null on older fills), and `feed`, the feed whose quote priced it when a fallback is configured (null otherwise) |
 | `GET /api/trades.csv`, `GET /api/fills.csv` | CSV downloads with `account`, inclusive New York `from`/`to` dates, fixed columns and exact money; see [CSV downloads](#csv-downloads) |
 | `PUT /api/days/{YYYY-MM-DD}/note` | Required `plan` and `review` strings replace the day note; returns version, `day` and `note`. Invalid text returns `INVALID_NOTE` (422); invalid dates return 400 |
 | `GET /api/risk` | Version, active/pending limits and guardrails, guardrail progress, pending activation, daily loss, kill state, aggregate/underlying buckets, scenario matrices and `breach` |

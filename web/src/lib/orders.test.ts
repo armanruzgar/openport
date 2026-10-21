@@ -126,6 +126,8 @@ describe("fill quotes", () => {
     expect(fillBook(fill)).toBeNull()
     const quote = { observation: "7", bid: "4.50", ask: "4.60", bid_size: 10, ask_size: 3, size_left: 2, quoted_at: fill.time, age_seconds: 75 }
     expect(fillBook({ ...fill, quote })).toEqual({ book: "$4.50 × $4.60", detail: "10 × 3 · 2 of 3 left · quoted 1m 15s before" })
+    expect(fillBook({ ...fill, quote, feed: "cboe" })?.detail).toBe("10 × 3 · 2 of 3 left · quoted 1m 15s before · via cboe")
+    expect(fillBook({ ...fill, quote, feed: null })?.detail).toBe("10 × 3 · 2 of 3 left · quoted 1m 15s before")
     expect(fillBook({ ...fill, side: "sell", quote: { ...quote, bid: null, age_seconds: 0 } }))
       .toEqual({ book: "— × $4.60", detail: "10 × 3 · 2 of 10 left · quoted 0s before" })
   })

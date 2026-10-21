@@ -195,6 +195,30 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   provider writes the same files as before.
 - The Python client and MCP server can read the tape, the earnings history and
   analysis portfolios.
+### Providers
+
+- **Charles Schwab market data.** `--provider schwab` polls Trader API option
+  chains with the underlying quote, open interest, volume, delta and gamma, using
+  an OAuth refresh token from the environment. Health follows each response's
+  `isDelayed`; `isMini`/`isNonStandard` and `mini`/`nonStandard` both mark a
+  nonstandard contract. Tested against documentation-shaped samples; not yet run live.
+- **Alpaca market data.** `--provider alpaca` polls option snapshots for equity
+  and ETF underlyings from the free indicative feed (reported as delayed, derived
+  quotes) or OPRA with a subscription. Alpaca has no index options, so SPX and
+  other indexes are refused. Not yet run live.
+- **Interactive Brokers market data.** `--provider ibkr` reads Client Portal Web
+  API snapshots through your logged-in local gateway: it keeps the session alive,
+  maps contract ids to OSI symbols, paces requests and counts market-data lines.
+  Requires `--expiries` and `--window`. Build option `OPENPORT_WITH_IBKR` (on by
+  default). Not yet run live.
+- **Feed failover.** `--fallback-provider NAME` switches an underlying to a second
+  provider once the main one has been in error or silent for
+  `--fallback-seconds` (default 30), and back once it has been fresh for as long.
+  A primary labelled stale whose snapshots advance keeps its underlyings, and none
+  move onto a backup that could not start or reports an error. Contracts map by OSI
+  symbol; the backup reports delayed with a fallback label in status and the
+  terminal. Paper trading keeps its freshness checks, and every fill names the feed
+  that priced it (`feed` in the fills API and journal).
 
 ## 0.4.0 (2026-10-06)
 

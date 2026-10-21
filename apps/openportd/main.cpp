@@ -71,6 +71,8 @@ void on_signal(int signal) {
 
 struct Settings {
   md::ProviderConfig provider{"cboe", "", {}};
+  md::ProviderConfig fallback{"", "", {}};
+  std::optional<int> fallback_seconds;
   bool explicit_symbols = false;
   md::Subscription subscription{{"SPX", "SPY", "QQQ", "IWM", "DIA"}, 0, 0.0};
   std::string address = "127.0.0.1";
@@ -133,6 +135,7 @@ int usage(const char* error = nullptr) {
       "                 [--scenario-dir DIR] [--web-root DIR] [--expiries N] [--window F] [--poll-seconds N]\n"
       "                 [--record-keep-days N] [--record-max-gb X]\n"
       "                 [--record FILE] [--record-dir DIR] [--rate R] [--option KEY=VALUE]... [--allowed-origin ORIGIN]...\n"
+      "                 [--fallback-provider NAME [--fallback-seconds N] [--fallback-option KEY=VALUE]...]\n"
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
       "                 [--paper-journal PATH] [--plan ID] [--paper-cash DECIMAL] [--paper-fee DECIMAL]\n"
@@ -195,6 +198,15 @@ int usage(const char* error = nullptr) {
       "         --option option_size_unit=contracts only after confirming option size units\n"
       "tastytrade: production OAuth only; DXLink time units unknown unless confirmed with\n"
       "            --option dxlink_time_unit=milliseconds\n"
+      "schwab: Trader API OAuth refresh token; poll interval follows the request budget\n"
+      "alpaca: equity and ETF options only (no SPX); --option feed=indicative|opra\n"
+      "        --option stock_feed=iex|sip|delayed_sip\n"
+      "ibkr: local Client Portal gateway you have logged in to; needs --expiries and --window;\n"
+      "      --option base_url=https://localhost:5000/v1/api --option max_lines=100\n"
+      "fallback: another live provider takes over an underlying once the main one has been\n"
+      "          in error or silent for N seconds (default 30), and hands it back once it\n"
+      "          has been fresh for as long; its data reports delayed and fills name the feed\n"
+      "          that priced them\n"
       "record: create a new compressed event file (existing files are never overwritten);\n"
       "        --record-dir rolls at each trading-date boundary; retention defaults off\n"
       "        --record-keep-days N (calendar days), --record-max-gb X (decimal GB); the\n"
@@ -216,7 +228,9 @@ int usage(const char* error = nullptr) {
   std::fprintf(out,
                "\nkeys are read from the environment: DATABENTO_API_KEY, MASSIVE_API_KEY,\n"
                "TRADIER_ACCESS_TOKEN, TASTYTRADE_CLIENT_SECRET, TASTYTRADE_REFRESH_TOKEN,\n"
-               "and optionally TASTYTRADE_CLIENT_ID. No broker credential flags.\n");
+               "optionally TASTYTRADE_CLIENT_ID, SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET,\n"
+               "SCHWAB_REFRESH_TOKEN, APCA_API_KEY_ID and APCA_API_SECRET_KEY. No broker\n"
+               "credential flags.\n");
   std::fprintf(out, "\nplan presets (--plan seeds any of them in a new journal; over HTTP, steps marked 'after X' need a pass of X first):\n");
   for (const auto& plan : server::plan_presets()) {
     std::fprintf(out, "  %s", plan.id.c_str());
@@ -558,6 +572,14 @@ int run(int argc, char** argv) {
         return usage("--rate must be a finite number in [-0.05, 0.25]");
     } else if (arg == "--poll-seconds") {
       settings.provider.options["poll_seconds"] = value;
+    } else if (arg == "--fallback-provider") {
+      settings.fallback.name = value;
+    } else if (arg == "--fallback-seconds") {
+      settings.fallback_seconds = providers::parse_integer(value, "--fallback-seconds", 1, 3600);
+    } else if (arg == "--fallback-option") {
+      const std::size_t eq = value.find('=');
+      if (eq == std::string::npos) return usage("--fallback-option takes KEY=VALUE");
+      settings.fallback.options[value.substr(0, eq)] = value.substr(eq + 1);
     } else if (arg == "--option") {
       const std::size_t eq = value.find('=');
       if (eq == std::string::npos) return usage("--option takes KEY=VALUE");
@@ -570,6 +592,9 @@ int run(int argc, char** argv) {
   if (settings.sandboxes.capacity && !demo) return usage("--sandboxes requires --provider demo");
   if (settings.sandboxes.capacity && !settings.paper_enabled) return usage("--sandboxes requires paper trading");
   const bool offline = demo || settings.provider.name == "replay";
+  if (settings.fallback.name.empty() && (settings.fallback_seconds || !settings.fallback.options.empty()))
+    return usage("--fallback-seconds and --fallback-option require --fallback-provider");
+  if (!settings.fallback.name.empty() && offline) return usage("--fallback-provider needs a live --provider");
   if (settings.paper_journal.empty()) {
     if (const auto* home = std::getenv("HOME"))
       settings.paper_journal = std::filesystem::path(home) /
@@ -659,9 +684,16 @@ int run(int argc, char** argv) {
         "openportd " OPENPORT_VERSION " " OPENPORT_BUILD_REVISION " " OPENPORT_BUILD_PLATFORM); }
     catch (const std::exception& error) { std::fprintf(stderr, "openportd: %s\n", error.what()); }
   }
+  if (!settings.fallback.name.empty()) {
+    providers::validate_subscription(settings.fallback.name, settings.subscription);
+    settings.fallback.api_key = env_key_for(settings.fallback.name);
+  }
   // A SIGKILLed run leaves its generated days behind; nothing else would remove them.
   providers::remove_orphaned_demo_directories();
-  auto provider = providers::make_provider(settings.provider);
+  auto provider = settings.fallback.name.empty()
+      ? providers::make_provider(settings.provider)
+      : providers::make_failover_provider(settings.provider, settings.fallback,
+                                          std::chrono::seconds(settings.fallback_seconds.value_or(30)));
   if (const auto* feed = dynamic_cast<providers::DemoProvider*>(provider.get())) {
     if (!settings.explicit_symbols) settings.subscription.underlyings = feed->symbols();
     feed->validate(settings.subscription);
@@ -833,7 +865,7 @@ int run(int argc, char** argv) {
     symbols += (symbols.empty() ? "" : ", ") + symbol;
   }
   std::printf("OpenPort on http://%s:%u  (provider %s: %s)\n", settings.address.c_str(), web.port(),
-              settings.provider.name.c_str(), symbols.c_str());
+              std::string(provider->name()).c_str(), symbols.c_str());
   std::printf("web terminal: %s\n", settings.web_root.string().c_str());
   if (token_from_file)
     std::fputs(startup::token_file_notice(settings.write_token_file, settings.address, web.port(),
