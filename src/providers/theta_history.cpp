@@ -60,6 +60,8 @@ std::string clock_text(md::Timestamp time) {
 class ThetaHistory final : public HistorySource {
  public:
   ThetaHistory(net::HttpClient& http, HistoryWait wait) : http_(http), wait_(std::move(wait)) {}
+  /// Its trade rows can name the exchange.
+  bool trade_venues() const noexcept override { return true; }
 
   void prepare(const ImportDay& request, HistoryWindow day, md::EventSink& sink) override {
     request_ = request;

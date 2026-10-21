@@ -112,7 +112,8 @@ void Engine::start() {
       recording.clock = options_.clock;
       recorder_ = std::make_unique<md::RecordingSink>(
           options_.record_file, md::RecordingHeader{std::string(provider_.name()),
-          provider_.capabilities(), subscription_, status_.started, false, provider_.market_controls()}, queue_, std::move(recording));
+          provider_.capabilities(), subscription_, status_.started, false, provider_.market_controls(),
+          provider_.trade_venues()}, queue_, std::move(recording));
     }
     provider_started_ = true;
     provider_.start(subscription_, recorder_ ? static_cast<md::EventSink&>(*recorder_) : queue_);

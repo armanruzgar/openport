@@ -50,6 +50,8 @@ class Provider {
   [[nodiscard]] virtual Capabilities capabilities() const noexcept = 0;
   /// Whether recordings need v4 heartbeat and halt events. Fixed before start().
   [[nodiscard]] virtual bool market_controls() const noexcept { return false; }
+  /// Whether option trades can carry a venue, which recordings keep in version 5. Fixed before start().
+  [[nodiscard]] virtual bool trade_venues() const noexcept { return false; }
 
   /// Starts delivering events to `sink` on the adapter's own thread(s) and returns
   /// immediately. `sink` must outlive the provider.

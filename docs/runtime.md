@@ -435,7 +435,18 @@ enables market controls; ordinary replay sources keep version 2. Writers choose
 the format from the provider before recording begins. A heartbeat or halt reaching
 a sink without `market_controls` stops recording with a visible error instead of
 writing an unsupported tag; downstream delivery continues.
-Readers accept versions 1–4; older builds refuse v4. Version 4 retains the v3 header
+
+**Format v5.** Providers whose option trades carry a venue (Databento with trades,
+and ThetaData and Databento imports) write version 5; so does re-recording a v5
+replay. Every other provider writes the version it wrote before, byte for byte.
+Version 5 appends a `u8` `market_controls` boolean after `imported`, so venues do
+not imply heartbeats or halts, and lets an option trade (tag 2) end with a `u16`
+venue, omitted when the venue is unknown. A trade with a venue reaching a sink
+without a v5 header stops recording with a visible error. Readers accept versions
+1–5; older builds refuse v5 at the header instead of failing mid-file, and a
+trailing venue in an earlier version is rejected as an extra field.
+
+Readers accept versions 1–4 as before; older builds refuse v4. Version 4 retains the v3 header
 and adds tag 10 (`SnapshotHeartbeat`: underlying string, timestamp i64), and tag 11
 (`TradingHalt`: start and exclusive end i64 timestamps). A heartbeat is a batch
 boundary advancing market time without confirming quotes. Halt intervals are
@@ -452,7 +463,7 @@ padding, locale-dependent text, or lossy numeric conversion.
 
 The uncompressed prefix is eight magic bytes `OPREC\r\n\0`, a `u32` version
 (2 for ordinary live/scenario/replay recordings, 3 for imports, 4 for demo-feed and
-market-control recordings), and a `u32` header-payload length. The payload, in order, is:
+market-control recordings, 5 for recordings whose trades carry venues), and a `u32` header-payload length. The payload, in order, is:
 
 | Field | Encoding |
 | --- | --- |
@@ -463,6 +474,7 @@ market-control recordings), and a `u32` header-payload length. The payload, in o
 | Subscription | `u32` symbol count, then strings, `i32` max expiries, binary64 strike window |
 | Start wall time | `i64` Unix nanoseconds |
 | Imported (v3 and later) | `u8` boolean; imported start time is the first scheduled session's market time |
+| Market controls (v5) | `u8` boolean; implied by version 4 |
 
 The rest is concatenated independent zstd frames (level 1, content checksum).
 Their decompressed contents are a stream of `u32` record-payload lengths followed
@@ -474,7 +486,7 @@ prices/sizes/Greeks are binary64, and strings use the encoding above.
 | --- | --- | --- |
 | 0 | Contract definition | id; root; underlying; expiry year, month, day (three `i32`); strike; type (`u8`: call=0, put=1); style (`u8`: European=0, American=1); settlement (`u8`: AM=0, PM=1); multiplier; standard (`u8` boolean) |
 | 1 | Option quote | id, ts, bid, ask, bid size, ask size |
-| 2 | Option trade | id, ts, price, size |
+| 2 | Option trade | id, ts, price, size; in v5, an optional trailing `u16` venue (exchange or publisher id), absent when unknown |
 | 3 | Open interest | id, ts, contracts |
 | 4 | Vendor Greeks | id, ts, iv, delta, gamma, vega, theta, rho |
 | 5 | Underlying quote | symbol, ts, bid, ask, last |

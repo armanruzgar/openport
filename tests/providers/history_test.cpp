@@ -67,6 +67,8 @@ TEST(HistoryImport, ThetaSavedResponsesRoundTripWithMarketClocksDefinitionsAndFi
   const md::RecordingReader reader(path);
   EXPECT_EQ(reader.header().provider, "thetadata");
   EXPECT_TRUE(reader.header().imported);
+  EXPECT_TRUE(reader.header().trade_venues);  // a v5 import, so older builds refuse it at the header
+  EXPECT_FALSE(reader.header().market_controls);
   EXPECT_EQ(reader.header().started, md::new_york_to_utc({2026, 9, 22}, 9, 30));
   EXPECT_EQ(reader.header().capabilities.poll_interval.count(), 0);
   const auto records = read(path);

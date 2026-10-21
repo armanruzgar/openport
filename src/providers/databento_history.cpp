@@ -18,6 +18,7 @@ class DatabentoHistory final : public HistorySource {
  public:
   explicit DatabentoHistory(DatabentoHistoryFetch fetch) : fetch_(std::move(fetch)) {}
   md::Timestamp receipt_time() const noexcept override { return forward_.received; }
+  bool trade_venues() const noexcept override { return true; }
   void prepare(const ImportDay& request, HistoryWindow day, md::EventSink&) override {
     day_ = day;
     for (const auto& symbol : request.subscription.underlyings) {

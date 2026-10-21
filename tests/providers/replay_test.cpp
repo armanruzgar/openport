@@ -125,6 +125,19 @@ TEST(Replay, FiltersEverySymbolScopedEventAndKeepsGapsAcrossFilteredEvents) {
   EXPECT_EQ(waits[2], 9s);
 }
 
+TEST(Replay, ReRecordingKeepsTheSourceVersion) {
+  for (const bool venues : {false, true}) {
+    test::RecordingFile file;
+    auto header = test::recording_header();
+    header.trade_venues = venues;
+    test::record_events(file.path, session(), header);
+    providers::ReplayProvider replay({.file = file.path, .speed = 1, .loop = false, .clock = {}});
+    // A replay of a v5 recording records v5 again; one without venues keeps its older version.
+    EXPECT_EQ(replay.trade_venues(), venues);
+    EXPECT_FALSE(replay.market_controls());
+  }
+}
+
 TEST(Replay, UnknownSymbolsFailSynchronouslyAndListAvailableSymbols) {
   test::RecordingFile file;
   test::record_events(file.path, session());

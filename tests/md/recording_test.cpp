@@ -58,6 +58,7 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
   events.push_back(md::ContractDefinition{0, contract});
   auto header = test::recording_header();
   header.market_controls = true;
+  header.trade_venues = true;
   header.started = lo;
   header.subscription.strike_window = nan;
   md::RecordingSink::Options options;
@@ -69,7 +70,8 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
   EXPECT_EQ(h.provider, header.provider);
   EXPECT_EQ(h.started, header.started);
   EXPECT_TRUE(h.market_controls);
-  EXPECT_EQ(contents(file.path).substr(8, 4), std::string("\4\0\0\0", 4));
+  EXPECT_TRUE(h.trade_venues);
+  EXPECT_EQ(contents(file.path).substr(8, 4), std::string("\5\0\0\0", 4));
   EXPECT_EQ(h.subscription.underlyings, header.subscription.underlyings);
   EXPECT_EQ(h.subscription.max_expiries, header.subscription.max_expiries);
   test::exact_double(header.subscription.strike_window, h.subscription.strike_window);
@@ -95,19 +97,71 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
   ASSERT_TRUE(reader.next());
 }
 
-TEST(Recording, TradesWithoutAVenueKeepTheirEarlierBytes) {
-  test::RecordingFile plain, venued;
-  test::record_events(plain.path, {md::OptionTrade{1, 2, 3, 4}});
-  test::record_events(venued.path, {md::OptionTrade{1, 2, 3, 4, 9}});
-  md::RecordingReader reader(venued.path);
-  const auto record = reader.next();
-  ASSERT_TRUE(record);
-  EXPECT_EQ(std::get<md::OptionTrade>(record->event).venue, 9);
-  md::RecordingReader old(plain.path);
-  const auto unchanged = old.next();
-  ASSERT_TRUE(unchanged);
-  EXPECT_EQ(std::get<md::OptionTrade>(unchanged->event).venue, 0);
-  EXPECT_TRUE(reader.diagnostic().empty() && old.diagnostic().empty());
+TEST(Recording, TradeVenuesWriteVersionFiveAndOthersKeepTheirEarlierBytes) {
+  const std::vector<md::Event> plain_events{md::OptionTrade{1, 2, 3, 4}, md::OptionQuote{1, 2, 3, 4, 5, 6}};
+  for (const bool controls : {false, true}) {
+    SCOPED_TRACE(controls ? "market controls" : "plain");
+    auto header = test::recording_header();
+    header.market_controls = controls;
+    test::RecordingFile before, venued;
+    // Providers without venues still write v2 or v4, with no extra header byte.
+    test::record_events(before.path, plain_events, header);
+    const auto bytes = contents(before.path);
+    EXPECT_EQ(bytes.substr(8, 4), controls ? std::string("\4\0\0\0", 4) : std::string("\2\0\0\0", 4));
+    header.trade_venues = true;
+    test::record_events(venued.path, {md::OptionTrade{1, 2, 3, 4, 9}, md::OptionTrade{1, 2, 3, 4}}, header);
+    EXPECT_EQ(contents(venued.path).substr(8, 4), std::string("\5\0\0\0", 4));
+    md::RecordingReader reader(venued.path);
+    EXPECT_TRUE(reader.header().trade_venues);
+    // Version 5 says whether it has market controls; venues do not imply them.
+    EXPECT_EQ(reader.header().market_controls, controls);
+    const auto first = reader.next(), second = reader.next();
+    ASSERT_TRUE(first && second);
+    EXPECT_EQ(std::get<md::OptionTrade>(first->event).venue, 9);
+    EXPECT_EQ(std::get<md::OptionTrade>(second->event).venue, 0);
+    md::RecordingReader old(before.path);
+    EXPECT_FALSE(old.header().trade_venues);
+    EXPECT_EQ(old.header().market_controls, controls);
+    const auto unchanged = old.next();
+    ASSERT_TRUE(unchanged);
+    EXPECT_EQ(std::get<md::OptionTrade>(unchanged->event).venue, 0);
+    EXPECT_TRUE(reader.diagnostic().empty() && old.diagnostic().empty());
+  }
+}
+
+TEST(Recording, EarlierHeadersRefuseTradeVenues) {
+  for (const bool controls : {false, true}) {
+    test::RecordingFile file;
+    test::EventCollector downstream;
+    auto header = test::recording_header();
+    header.market_controls = controls;
+    md::RecordingSink sink(file.path, header, downstream, {});
+    sink.publish(md::OptionTrade{1, 2, 3, 4, 9});
+    sink.close();
+    EXPECT_NE(sink.error().find("requires a v5 header with trade_venues enabled"), std::string::npos) << sink.error();
+    EXPECT_EQ(sink.stats().events, 0U);
+    md::RecordingReader reader(file.path);
+    EXPECT_FALSE(reader.next());
+  }
+}
+
+TEST(Recording, VersionFourRejectsATrailingVenue) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.market_controls = header.trade_venues = true;
+  test::record_events(file.path, {md::OptionTrade{1, 2, 3, 4, 9}}, header);
+  auto bytes = contents(file.path);
+  ASSERT_EQ(bytes[8], 5);
+  // Rewrite the v5 header as v4: drop its market-controls byte and shorten the length.
+  bytes[8] = 4;
+  const auto length = static_cast<unsigned char>(bytes[12]);
+  bytes.erase(16 + length - 1, 1);
+  bytes[12] = static_cast<char>(length - 1);
+  replace(file.path, bytes);
+  md::RecordingReader reader(file.path);
+  EXPECT_TRUE(reader.header().market_controls);
+  EXPECT_FALSE(reader.header().trade_venues);
+  EXPECT_THROW((void)reader.next(), std::runtime_error);
 }
 
 TEST(Recording, EmptySessionAndFalseCapabilitiesAreClean) {
@@ -170,8 +224,8 @@ TEST(Recording, RejectsBadMagicVersionAndMalformedOrTruncatedHeader) {
   bytes[0] = '!';
   rejects(bytes, "magic");
   bytes = original;
-  bytes[8] = 5;
-  rejects(bytes, "version 5");
+  bytes[8] = 6;
+  rejects(bytes, "version 6");
   rejects(original.substr(0, 8), "truncated header");
   rejects(original.substr(0, 20), "truncated header");
   bytes = original;
