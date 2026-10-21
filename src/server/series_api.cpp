@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <optional>
 #include <set>
 #include <sstream>
 #include "openport/analytics/volatility_history.hpp"
@@ -33,6 +34,35 @@ std::optional<md::Timestamp> timestamp(const std::string& value, bool end) {
   return md::parse_datetime(value, md::Zone::Utc);
 }
 md::Timestamp close_time(md::Date date) { return md::new_york_to_utc(date, md::regular_close_hour(date), 0); }
+json scanner_metrics(const MetricsSource& source, const std::string& symbol,
+                     const std::shared_ptr<const analytics::UnderlyingMetrics>& m) {
+  const auto v = cached_volatility(m);
+  const auto& iv = std::isfinite(v.mfiv[1].vol) ? v.mfiv[1] : v.atm[1];
+  const auto proxy = analytics::iv_proxy(symbol);
+  const auto rank = analytics::iv_rank(analytics::historical_iv(own_days(source, symbol, m->as_of), daily_bars(source, proxy), proxy, m->as_of), iv.vol, m->as_of);
+  std::vector<analytics::HistoricalValue> skew;
+  if (source.series()) for (const auto& sample : source.series()->rows(symbol, 0, m->as_of, true))
+    skew.push_back({md::new_york_time(sample.time).date, sample.values[12], "own"});
+  const auto rr = analytics::history_rank(skew, v.skew25.rr, m->as_of);
+  auto bars = daily_bars(source, symbol);
+  std::erase_if(bars, [&](const auto& bar) {
+    const auto date = md::new_york_time(bar.start).date;
+    return close_time(date) > m->as_of || !md::market_session(md::new_york_to_utc(date, 9, 30)).open;
+  });
+  const auto rv = analytics::realized_window(bars, 21).close_to_close.vol;
+  const auto moves = analytics::implied_moves(*m, v);
+  return {{"as_of", md::format_timestamp(m->as_of)}, {"version", m->version}, {"iv30", number(iv.vol)},
+      {"iv_basis", std::isfinite(v.mfiv[1].vol) ? "own_mfiv" : std::isfinite(iv.vol) ? "own_atm" : "missing"},
+      {"iv_rank", number(rank.rank)}, {"iv_percentile", number(rank.percentile)}, {"history_sessions", rank.sessions},
+      {"proxy_sessions", rank.proxy_sessions}, {"proxy_name", proxy.empty() ? json(nullptr) : json(proxy)},
+      {"vrp", number(analytics::variance_risk_premium(iv, rv).spread)}, {"rr25", number(v.skew25.rr)},
+      {"realized_as_of", bars.empty() ? json(nullptr) : json(md::format_date(md::new_york_time(bars.back().start).date))},
+      {"rr25_rank", number(rr.rank)}, {"rr25_sessions", rr.sessions}, {"term_ratio", number(v.ratio9_30)},
+      {"today_percent", number(moves.today_percent)}, {"today_points", number(moves.today_points)},
+      {"truncated", iv.truncated || v.mfiv[0].truncated || moves.today_truncated},
+      {"proxy", iv.proxy || !std::isfinite(v.mfiv[1].vol) || v.skew_proxy || moves.today_proxy},
+      {"reason", iv.reason.empty() ? json(nullptr) : json(iv.reason)}};
+}
 }
 
 json series_status_json(const MetricsSource& source) {
@@ -54,32 +84,19 @@ ApiResponse volatility_scanner_response(const MetricsSource& source) {
     const auto health = status.underlyings.find(symbol);
     row["feed_state"] = std::string(md::to_string(health == status.underlyings.end() ? status.feed_state : health->second.state));
     if (const auto m = source.metrics(symbol)) {
-      const auto v = cached_volatility(m);
-      const auto& iv = std::isfinite(v.mfiv[1].vol) ? v.mfiv[1] : v.atm[1];
-      const auto proxy = analytics::iv_proxy(symbol);
-      const auto rank = analytics::iv_rank(analytics::historical_iv(own_days(source, symbol, m->as_of), daily_bars(source, proxy), proxy, m->as_of), iv.vol, m->as_of);
-      std::vector<analytics::HistoricalValue> skew;
-      if (source.series()) for (const auto& sample : source.series()->rows(symbol, 0, m->as_of, true))
-        skew.push_back({md::new_york_time(sample.time).date, sample.values[12], "own"});
-      const auto rr = analytics::history_rank(skew, v.skew25.rr, m->as_of);
-      auto bars = daily_bars(source, symbol);
-      std::erase_if(bars, [&](const auto& bar) {
-        const auto date = md::new_york_time(bar.start).date;
-        return close_time(date) > m->as_of || !md::market_session(md::new_york_to_utc(date, 9, 30)).open;
-      });
-      const auto rv = analytics::realized_window(bars, 21).close_to_close.vol;
-      const auto moves = analytics::implied_moves(*m, v);
-      row.update({{"as_of", md::format_timestamp(m->as_of)}, {"version", m->version}, {"iv30", number(iv.vol)},
-          {"iv_basis", std::isfinite(v.mfiv[1].vol) ? "own_mfiv" : std::isfinite(iv.vol) ? "own_atm" : "missing"},
-          {"iv_rank", number(rank.rank)}, {"iv_percentile", number(rank.percentile)}, {"history_sessions", rank.sessions},
-          {"proxy_sessions", rank.proxy_sessions}, {"proxy_name", proxy.empty() ? json(nullptr) : json(proxy)},
-          {"vrp", number(analytics::variance_risk_premium(iv, rv).spread)}, {"rr25", number(v.skew25.rr)},
-          {"realized_as_of", bars.empty() ? json(nullptr) : json(md::format_date(md::new_york_time(bars.back().start).date))},
-          {"rr25_rank", number(rr.rank)}, {"rr25_sessions", rr.sessions}, {"term_ratio", number(v.ratio9_30)},
-          {"today_percent", number(moves.today_percent)}, {"today_points", number(moves.today_points)},
-          {"truncated", iv.truncated || v.mfiv[0].truncated || moves.today_truncated},
-          {"proxy", iv.proxy || !std::isfinite(v.mfiv[1].vol) || v.skew_proxy || moves.today_proxy},
-          {"reason", iv.reason.empty() ? json(nullptr) : json(iv.reason)}});
+      // Rows are recomputed only when the symbol publishes a new snapshot; polling tabs reuse them.
+      const auto cache = surface_cache(m);
+      std::optional<json> cached;
+      {
+        const std::lock_guard lock(cache->mutex);
+        if (const auto found = cache->scanner_rows.find(&source); found != cache->scanner_rows.end()) cached = found->second;
+      }
+      if (!cached) {
+        cached = scanner_metrics(source, symbol, m);
+        const std::lock_guard lock(cache->mutex);
+        cache->scanner_rows[&source] = *cached;
+      }
+      row.update(*cached);
     }
     rows.push_back(std::move(row));
   }

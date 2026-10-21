@@ -552,4 +552,22 @@ TEST(SeriesApi, ScannerIncludesAllSubscriptionsAndMarksMissingAndSimulatedValues
   EXPECT_EQ(json::parse(server::handle_api({"GET", "/api/volatility/scanner"}, source).body)["simulated"], true);
   EXPECT_EQ(server::handle_api({"GET", "/api/volatility/scanner?symbols=SPX"}, source).status, 400);
 }
+TEST(SeriesApi, ScannerReusesRowsUntilTheSymbolPublishesAgain) {
+  SeriesSource source;
+  auto metrics = *source.snapshot; metrics.as_of = ny(16, 0);
+  source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(metrics);
+  source.store.insert("SPX", server::series_row(source.snapshot));
+  const auto scan = [&] { return json::parse(server::handle_api({"GET", "/api/volatility/scanner"}, source).body)["rows"][0]; };
+  EXPECT_EQ(scan()["history_sessions"], 1);
+  source.store.insert("SPX", row(ny(15, 59, {2026, 9, 21}), 18));
+  source.state.underlyings["SPX"].state = md::FeedState::Live;
+  const auto cached = scan();
+  EXPECT_EQ(cached["history_sessions"], 1);
+  EXPECT_EQ(cached["feed_state"], "live");
+  ++metrics.version;
+  source.snapshot = std::make_shared<const analytics::UnderlyingMetrics>(metrics);
+  const auto fresh = scan();
+  EXPECT_EQ(fresh["history_sessions"], 2);
+  EXPECT_EQ(fresh["version"], metrics.version);
+}
 }  // namespace
