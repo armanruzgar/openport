@@ -513,3 +513,27 @@ TEST(Scenarios, StressRecordingsAreByteIdentical) {
     if (std::holds_alternative<md::SnapshotHeartbeat>(event->event)) ++heartbeats;
   EXPECT_EQ(heartbeats, 390U * 4);
 }
+
+namespace {
+TEST(Scenarios, MachineObjectivesValidateTypesLimitsAndSessionDeadlines) {
+  auto source = valid();
+  source["objectives"] = {{{"id", "flat"}, {"type", "flat_by"}, {"at", "15:45"}},
+                           {{"id", "room"}, {"type", "min_floor_room"}, {"limit", 25}}};
+  const auto parsed = providers::parse_scenario(source.dump(), "test.json");
+  ASSERT_EQ(parsed.objectives.size(), 2U);
+  EXPECT_EQ(parsed.objectives.front().at, "15:45");
+  for (const auto& bad : std::vector<json>{
+      {{"id", "x"}, {"type", "magic"}, {"limit", 1}},
+      {{"id", "x"}, {"type", "min_floor_room"}, {"limit", 101}},
+      {{"id", "x"}, {"type", "max_loss"}, {"limit", -1}},
+      {{"id", "x"}, {"type", "flat_by"}, {"at", "25:00"}},
+      {{"id", "x"}, {"type", "flat_by"}, {"at", "10:00"}, {"session", 2}},
+      {{"id", "x"}, {"type", "max_net_vega"}, {"limit", 100}},
+      {{"id", "x"}, {"type", "max_loss"}, {"limit", 100}, {"at", "10:00"}}}) {
+    source["objectives"] = json::array({bad});
+    EXPECT_THROW((void)providers::parse_scenario(source.dump(), "test.json"), std::invalid_argument) << bad;
+  }
+  source["objectives"] = json::array({{{"id", "x"}, {"type", "max_loss"}, {"limit", 100}}, {{"id", "x"}, {"type", "max_loss"}, {"limit", 100}}});
+  EXPECT_THROW((void)providers::parse_scenario(source.dump(), "test.json"), std::invalid_argument);
+}
+}

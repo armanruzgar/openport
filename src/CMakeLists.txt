@@ -157,6 +157,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/plans.cpp
     server/api.cpp
     server/replay_host.cpp
+    server/practice.cpp
     server/sandboxes.cpp
     server/web_server.cpp
   )

@@ -18,6 +18,7 @@
 #include "openport/providers/demo.hpp"
 #include "openport/providers/replay.hpp"
 #include "openport/server/plans.hpp"
+#include "openport/server/practice.hpp"
 #include "openport/server/run.hpp"
 #include "openport/server/playbooks.hpp"
 #include "run_json.hpp"
@@ -86,6 +87,7 @@ json demo_json(const providers::Scenario& d) {
   return {{"id", d.id}, {"title", d.title}, {"description", d.description}, {"goal", d.goal},
           {"session", d.overnight ? "overnight" : "regular"}, {"date", md::format_date(d.date)},
           {"seed", std::to_string(d.seed)}, {"generator", d.generator}, {"provider", providers::kDemoProvider},
+          {"events", scenario_marks(d, d.date)}, {"objectives", drill_objectives(d, d.date)},
           {"symbols", d.symbols}, {"started", md::format_timestamp(providers::scenario_open(d, d.date))},
           {"sessions", sessions_json(windows)}, {"end", md::format_timestamp(windows.back().last)}};
 }
@@ -341,6 +343,7 @@ struct ReplayHost::Session {
   std::string file;
   bool demo = false;
   std::string id, scenario, seed, date, start_at, plan;
+  json events = json::array(), objectives = json::array(), challenge = nullptr;
   int generator = 0;
   md::Timestamp target = 0;
   bool durable = false;
@@ -365,6 +368,9 @@ struct ReplayHost::Session {
     out["date"] = date;
     out["start_at"] = start_at;
     out["plan"] = plan;
+    out["events"] = events;
+    out["objectives"] = objectives;
+    if (!challenge.is_null()) out["challenge"] = challenge;
     out["durable"] = durable;
     out["fast_forwarding"] = provider->fast_forwarding();
     out["stepping"] = provider->stepping() || restarting.load();
@@ -502,6 +508,14 @@ class ReplayHost::History {
     const bool finalized = session.provider->finished();
     auto value = session.state();
     value["finished"] = finalized;
+    if (finalized && !session.objectives.empty()) {
+      auto grade = grade_drill(trading::FileJournal::read(journal(session.id).string()), session.objectives);
+      const bool full = !session.windows.empty() && session.provider->settled_through() >= session.windows.back().last && session.start_at.empty() && session.restarted_from.is_null();
+      grade["complete_run"] = full;
+      if (!full) grade["score"] = nullptr;
+      value["drill"] = std::move(grade);
+      value["completed_at"] = md::format_timestamp(md::now());
+    }
     if (finalized) {
       const auto view = session.engine->trading_view();
       if (!view || view->journal_head.empty()) return;
@@ -605,6 +619,10 @@ class ReplayHost::History {
         if (!std::filesystem::exists(file, ec)) continue;  // deleted while listing
         item["error"] = error.what();
       }
+      if (item.contains("drill") && (item.contains("error") || item.value("torn", false) || item.value("truncated", false) || item.value("mismatch", false))) {
+        item["drill"]["score"] = nullptr;
+        item["drill"]["complete_run"] = false;
+      }
       item["id"] = id;  // A copied sidecar cannot redirect its journal's history routes.
       if (!item.contains("plan") && item.contains("plan_name")) item["plan"] = plan_id(item.at("plan_name").get<std::string>());
       // Interrupted metadata still holds the start state: playback stopped and
@@ -623,6 +641,13 @@ class ReplayHost::History {
       item["read_only"] = true;
       out.push_back(std::move(item));
     }
+    std::map<std::string, double> best;
+    for (const auto& run : out) if (run.contains("drill") && run.at("drill").at("score").is_number()) {
+      const auto scenario = run.value("scenario", std::string());
+      best[scenario] = std::max(best[scenario], run.at("drill").at("score").get<double>());
+    }
+    for (auto& run : out) if (run.contains("scenario") && run.at("scenario").is_string() && best.contains(run.at("scenario").get<std::string>()))
+      run["personal_best"] = best.at(run.at("scenario").get<std::string>());
     return out;
   }
   json stamp(const std::string& id) const {
@@ -798,6 +823,23 @@ ReplayHost::ReplayHost(Options options)
       scenarios_(providers::load_scenarios(options_.scenario_dir,
           [](const auto& error) { std::fprintf(stderr, "scenario skipped: %s\n", error.c_str()); })),
       history_(std::make_unique<History>(options_.engine)) {
+  if (!options_.engine.paper_journal.empty()) {
+    const auto directory = options_.engine.paper_journal.parent_path() / "scenario-packs";
+    std::error_code ec;
+    if (std::filesystem::is_directory(directory, ec)) for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+      if (entry.path().extension() != ".pack") continue;
+      try {
+        std::ifstream file(entry.path());
+        const auto pack = json::parse(file);
+        auto scenario = providers::read_scenario(directory / (pack.at("scenario").at("id").get<std::string>() + ".json"));
+        if (json::parse(scenario.source) != pack.at("scenario")) throw std::invalid_argument("Pack definition disagrees with its saved source");
+        const auto existing = std::find_if(scenarios_.begin(), scenarios_.end(), [&](const auto& s) { return s.id == scenario.id; });
+        if (existing != scenarios_.end() && json::parse(existing->source) != json::parse(scenario.source)) throw std::invalid_argument("Scenario id conflicts with catalogue");
+        packs_[scenario.id] = pack.dump();
+        if (existing == scenarios_.end()) scenarios_.push_back(std::move(scenario));
+      } catch (const std::exception& error) { std::fprintf(stderr, "scenario pack skipped: %s\n", error.what()); }
+    }
+  }
   worker_ = std::thread([this] { work(); });
 }
 ReplayHost::~ReplayHost() {
@@ -860,6 +902,7 @@ void ReplayHost::work() {
       continue;
     }
     if (std::string_view(job.request.target).starts_with("/api/replay/history/")) history(job.request, job.complete);
+    else if (std::string_view(job.request.target).starts_with("/api/replay/packs")) packs(job.request, job.complete);
     else control(job.request, job.complete);
   }
 }
@@ -924,6 +967,7 @@ bool ReplayHost::handle(const ApiRequest& request, const ApiCompletion& complete
   const auto rest = target.substr(prefix.size());
   if (!rest.empty() && rest.front() != '?' && rest.front() != '/') return false;
   const bool controls = rest.empty() || rest.front() == '?';
+  if (rest == "/packs" || rest.starts_with("/packs/")) { enqueue(request, complete); return true; }
   if (rest == "/history" && request.method == "GET") {
     const std::lock_guard handoff(handoff_mutex_);
     complete(ok({{"history", history_->list(current())}}));
@@ -1125,7 +1169,8 @@ void ReplayHost::history(const ApiRequest& request, const ApiCompletion& complet
 }
 
 void ReplayHost::resume(const std::string& id, int speed, bool paused, const ApiCompletion& complete,
-                        bool restart, const std::string& at) {
+                        bool restart, const std::string& at, const std::string& trade, const std::string& actor) {
+  const bool sandbox = !trade.empty();
   const auto refuse = [&](const std::string& message) { complete(api_error(409, restart ? "REPLAY_NOT_RESTARTABLE" : "REPLAY_NOT_RESUMABLE", message)); };
   std::shared_ptr<Session> source;
   bool source_paused = true;
@@ -1231,7 +1276,8 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
       for (const auto& scenario : scenarios_) if (scenario.id == input.at("id").get<std::string>()) day = &scenario;
       if (!day) return refuse("The run's scenario is no longer listed");
       if (restart && !day->builtin) {
-        source_scenario = providers::read_scenario(day->source_file);
+        try { source_scenario = providers::read_scenario(day->source_file); }
+        catch (const std::exception& error) { return refuse(error.what()); }
         day = &*source_scenario;
       }
       date = input.at("date").get<md::Date>();
@@ -1243,6 +1289,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
         if (input.contains("revision")) identity["revision"] = revision;
         else identity.erase("revision");
       }
+      if (input.contains("challenge")) identity["challenge"] = input.at("challenge");
       if (identity != input) return refuse("The scenario or its generator has changed since the run started");
     } else {
       recording = input.at("file").get<std::string>();
@@ -1254,6 +1301,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     session->id = id;
     session->file = metadata.value("file", id);
     session->scenario = day ? day->id : "";
+    if (input.contains("challenge") && !sandbox) session->challenge = input.at("challenge");
     session->seed = day ? std::to_string(seed) : "";
     session->generator = day ? day->generator : 0;
     session->plan = metadata.value("plan", std::string("practice"));
@@ -1261,7 +1309,11 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     session->start_at = metadata.value("start_at", std::string());
     session->target = target;
     if (metadata.contains("restarted_from")) session->restarted_from = metadata.at("restarted_from");
-    if (day) session->windows = providers::scenario_windows(*day, date);
+    if (day) {
+      session->windows = providers::scenario_windows(*day, date);
+      session->events = scenario_marks(*day, date);
+      session->objectives = drill_objectives(*day, date);
+    }
     if (restart) {
       const auto first_boundary = std::find_if(inputs.begin(), inputs.end(), [](const auto& operation) { return operation.at("kind") == "boundary"; });
       if (first_boundary == inputs.end()) return refuse("The source run has no complete market batch");
@@ -1287,6 +1339,21 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
         if (const auto settled = md::parse_datetime(metadata.at("settled_through").get<std::string>(), md::Zone::Utc)) run_end = std::max(run_end, *settled);
       }
       target = at.empty() ? run_start : start_time(at, session->windows, first_market, trading_date, overnight);
+      if (sandbox) {
+        const auto account = trading::TradingSession::recover(recovery);
+        std::optional<md::Timestamp> opened;
+        if (trade.starts_with("s")) {
+          for (const auto& trip : trading::share_lifecycles(account.snapshot()->stock_fills, account.snapshot()->dividends))
+            if ("s" + std::to_string(trip.fills.front()) == trade) opened = trip.opened;
+        } else {
+          for (const auto& trip : trading::lifecycles(account.snapshot()->recent_fills, account.snapshot()->closures, account.contracts()))
+            if (std::to_string(trip.first_fill) == trade) opened = trip.opened;
+        }
+        if (!opened) throw std::invalid_argument("No trade with this id in the source run");
+        target = std::max(first_market, *opened - 5 * md::kNanosPerMinute);
+        for (const auto& w : session->windows) if (*opened >= w.first && *opened <= w.last) target = std::max(target, w.first);
+        run_start = first_market;
+      }
       if (target < run_start || target > run_end)
         throw std::invalid_argument("Restart at must be between the run's start " + md::format_timestamp(run_start) + " and its end " + md::format_timestamp(run_end));
       // Commands are input-first; their record can have the preceding account's
@@ -1318,8 +1385,8 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     playback.speed = speed;
     if (!session->windows.empty()) playback.known_end = session->windows.back().last;
     // The recorded batches replay unpaced, and playback continues from the last one.
-    playback.start_at = restart ? 0 : target;
-    playback.start_through = restart ? target : 0;
+    playback.start_at = restart && !sandbox ? 0 : target;
+    playback.start_through = restart && !sandbox ? target : 0;
     playback.paused = restart ? true : paused;
     for (const auto& window : session->windows) if (session->windows.size() > 1) playback.max_gap = std::max(playback.max_gap, window.step);
     session->provider = std::make_unique<providers::ReplayProvider>(std::move(playback));
@@ -1333,27 +1400,32 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     // Every option the run's start recorded comes from the run, not from this server's flags.
     engine.paper = first.at("state").at("config").get<trading::SessionConfig>();
     if (!session->windows.empty()) engine.replay_end = session->windows.back().last;
-    engine.initial_actor = first.value("actor", std::string("system"));
+    engine.initial_actor = sandbox ? actor : first.value("actor", std::string("system"));
     engine.initial_playbooks = start.contains("playbooks") && !start.at("playbooks").is_null() ? start.at("playbooks").dump() : "";
     engine.analytics = start.at("analytics").get<analytics::AnalyticsOptions>();
     engine.dividends = start.at("dividends").get<std::vector<trading::Dividend>>();
-    engine.resume = std::make_shared<const trading::JournalRecovery>(std::move(recovery));
+    if (!sandbox) engine.resume = std::make_shared<const trading::JournalRecovery>(std::move(recovery));
+    else engine.resume.reset();
     std::unique_lock handoff(handoff_mutex_);
     if (restart) {
       if (target > session->provider->end_time()) throw std::invalid_argument("Restart at exceeds the recording's end");
       created = session->id;
       engine.paper_journal = history_->create(*session, engine.paper);
-      trading::FileJournal::Options journal_options;
-      journal_options.sync_policy = trading::FileJournal::SyncPolicy::Batched;
-      auto prefix = trading::FileJournal::create(engine.paper_journal.string(), journal_options);
-      for (const auto& record : engine.resume->records) prefix->append(record.time, record.type, record.payload);
-      prefix->flush();
+      if (!sandbox) {
+        trading::FileJournal::Options journal_options;
+        journal_options.sync_policy = trading::FileJournal::SyncPolicy::Batched;
+        auto prefix = trading::FileJournal::create(engine.paper_journal.string(), journal_options);
+        for (const auto& record : engine.resume->records) prefix->append(record.time, record.type, record.payload);
+        prefix->flush();
+      }
     } else {
       history_->rebuild(id);
       engine.paper_journal = file;
     }
     engine.replay = true;
-    engine.run_input = input.dump();
+    auto identity = input;
+    if (sandbox) identity.erase("challenge");
+    engine.run_input = identity.dump();
     engine.run_id = session->id;
     engine.paper_accounts.clear();
     engine.paper_sink.reset();
@@ -1398,6 +1470,60 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
   } catch (const std::exception& error) { refuse(error.what()); }
 }
 
+void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete) {
+  try {
+    if (request.method == "GET") {
+      json packs = json::array();
+      if (options_.demo) for (const auto& scenario : scenarios_) {
+        if (packs_.contains(scenario.id)) packs.push_back(json::parse(packs_.at(scenario.id)));
+        else packs.push_back({{"version", 1}, {"scenario", json::parse(scenario.source)}, {"seed", std::to_string(scenario.seed)}, {"plan", "practice"}});
+      }
+      if (request.target != "/api/replay/packs") {
+        const auto id = request.target.substr(std::string("/api/replay/packs/").size());
+        for (const auto& pack : packs) if (pack.at("scenario").at("id") == id) {
+          auto response = ok(pack); response.download = id + "-pack.json"; complete(std::move(response)); return;
+        }
+        complete(api_error(404, "NOT_FOUND", "No scenario pack with this id")); return;
+      }
+      complete(ok({{"packs", packs}})); return;
+    }
+    if (request.method != "POST" || request.target != "/api/replay/packs") { complete(api_error(405, "METHOD_NOT_ALLOWED", "Use GET to export, POST /api/replay/packs to import")); return; }
+    if (!options_.demo || !history_->writable()) { complete(api_error(403, "WRITE_DISABLED", "Scenario packs require demo mode and writable replay storage")); return; }
+    auto pack = parse_body(request, {"version", "scenario", "seed", "plan", "challenge"});
+    if (pack.value("version", 0) != 1) throw std::invalid_argument("Scenario pack version must be 1");
+    const auto directory = options_.engine.paper_journal.parent_path() / "scenario-packs";
+    auto scenario = providers::parse_scenario(pack.at("scenario").dump(), directory / "import.json");
+    pack["seed"] = std::to_string(seed_field(pack.at("seed"), scenario));
+    const auto* plan = find_plan(pack.at("plan").get<std::string>());
+    if (!plan || !plan->unlocked_by.empty()) throw std::invalid_argument("Pack plan must be an unlocked plan id");
+    if (pack.contains("challenge")) {
+      const auto& c = pack.at("challenge");
+      if (!c.is_object() || c.size() != 2 || !c.contains("id") || !c.contains("title") || !c.at("id").is_string() || !c.at("title").is_string() ||
+          c.at("id").get<std::string>().empty() || c.at("id").get<std::string>().size() > 80 || c.at("title").get<std::string>().empty() || c.at("title").get<std::string>().size() > 100)
+        throw std::invalid_argument("challenge needs id (1–80 bytes) and title (1–100 bytes)");
+    }
+    const std::lock_guard handoff(handoff_mutex_);
+    const auto existing = std::find_if(scenarios_.begin(), scenarios_.end(), [&](const auto& s) { return s.id == scenario.id; });
+    if (existing != scenarios_.end() && json::parse(existing->source) != pack.at("scenario")) throw std::invalid_argument("Scenario id already exists with different content; use a new id");
+    std::filesystem::create_directories(directory);
+    const auto source = directory / (scenario.id + ".json");
+    const auto target = directory / (scenario.id + ".pack");
+    const auto write = [](const std::filesystem::path& path, const std::string& data) {
+      trading::check_storage_space(path, data.size());
+      const auto staged = path.string() + ".tmp";
+      std::ofstream file(staged); file << data; file.close();
+      if (!file) throw std::runtime_error("Cannot save scenario pack");
+      std::filesystem::rename(staged, path);
+    };
+    write(source, scenario.source);
+    write(target, pack.dump());
+    scenario.source_file = std::filesystem::absolute(source);
+    packs_[scenario.id] = pack.dump();
+    if (existing == scenarios_.end()) scenarios_.push_back(std::move(scenario));
+    complete(ok(pack, 201));
+  } catch (const std::exception& error) { complete(api_error(400, "INVALID_REQUEST", error.what())); }
+}
+
 void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complete) {
   if (request.target != "/api/replay") {
     complete(api_error(400, "INVALID_REQUEST", "/api/replay takes no query parameters"));
@@ -1416,7 +1542,27 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
     } else if (options_.engine.write_mode == "disabled") {
       complete(api_error(403, "WRITE_DISABLED", "Replay writes are disabled"));
     } else if (request.method == "POST") {
-      const auto body = parse_body(request, {"file", "demo", "scenario", "speed", "plan", "seed", "date", "start_at", "paused", "resume", "restart", "at", "copy_settings_from"});
+      auto body = parse_body(request, {"file", "demo", "scenario", "speed", "plan", "seed", "date", "start_at", "paused", "resume", "restart", "at", "copy_settings_from", "replay_from", "trade", "pack"});
+      json challenge = nullptr;
+      if (body.contains("pack")) {
+        for (const auto& [key, value] : body.items()) if (key != "pack" && key != "paused" && key != "speed") throw std::invalid_argument("pack fixes scenario, seed, date and plan; only speed and paused may vary");
+        if (!body.at("pack").is_string()) throw std::invalid_argument("pack must be a scenario id");
+        const auto id = body.at("pack").get<std::string>();
+        const auto found = std::find_if(scenarios_.begin(), scenarios_.end(), [&](const auto& s) { return s.id == id; });
+        if (found == scenarios_.end()) throw std::invalid_argument("Unknown pack; import custom packs before starting them");
+        const auto pack = packs_.contains(id) ? json::parse(packs_.at(id)) : json{{"version", 1}, {"scenario", json::parse(found->source)}, {"seed", std::to_string(found->seed)}, {"plan", "practice"}};
+        body.erase("pack");
+        body["scenario"] = pack.at("scenario").at("id");
+        body["seed"] = pack.at("seed"); body["plan"] = pack.at("plan"); body["date"] = pack.at("scenario").at("date");
+        if (pack.contains("challenge")) challenge = pack;
+      }
+      if (body.contains("replay_from")) {
+        if (body.size() != 2 || !body.at("replay_from").is_string() || !body.contains("trade") || !body.at("trade").is_string() || body.at("trade").get<std::string>().empty())
+          throw std::invalid_argument("replay_from takes a saved run id and a trade id");
+        resume(body.at("replay_from").get<std::string>(), 1, true, complete, true, {}, body.at("trade").get<std::string>(), request.actor);
+        return;
+      }
+      if (body.contains("trade")) throw std::invalid_argument("trade requires replay_from");
       if (body.contains("restart")) {
         for (const auto& [key, value] : body.items())
           if (key != "restart" && key != "at" && key != "speed" && key != "paused") throw std::invalid_argument("restart takes only at, speed and paused besides it");
@@ -1506,8 +1652,13 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
       session->seed = demo ? std::to_string(seed) : "";
       session->generator = demo ? day->generator : 0;
       session->plan = plan->id;
+      session->challenge = challenge;
       if (body.contains("start_at")) session->start_at = body.at("start_at").get<std::string>();
-      if (demo) session->windows = providers::scenario_windows(*day, date);
+      if (demo) {
+        session->windows = providers::scenario_windows(*day, date);
+        session->events = scenario_marks(*day, date);
+        session->objectives = drill_objectives(*day, date);
+      }
       md::Timestamp first = demo ? session->windows.front().first : 0;
       md::Timestamp last = demo ? session->windows.back().last : 0;
       bool overnight = demo && day->overnight;
@@ -1601,6 +1752,11 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
         engine.replay = true;
         engine.initial_actor = request.actor;
         engine.run_input = demo ? scenario_input(*day, date, seed) : recording_input(path);
+        if (!challenge.is_null()) {
+          auto identity = json::parse(engine.run_input);
+          identity["challenge"] = challenge;
+          engine.run_input = identity.dump();
+        }
         engine.run_id = session->id;
         engine.paper_accounts.clear();
         engine.paper_sink.reset();

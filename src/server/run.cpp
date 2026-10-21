@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 #include "openport/providers/replay_batches.hpp"
+#include "openport/server/practice.hpp"
+#include "openport/server/plans.hpp"
 #include "run_json.hpp"
 
 namespace openport::server {
@@ -366,6 +368,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     const auto& input = start.at("input");
     const md::ScheduledDaysScope calendar(start.value("calendar", std::vector<md::ScheduledDay>{}));
     std::unique_ptr<TemporaryInput> generated_input;
+    std::optional<providers::Scenario> graded_scenario;
     const auto open_input = [&](const json& identity) {
       if (identity.at("version") != 1) throw std::runtime_error("Unsupported run driver version");
       if (identity.contains("file")) private_paths.emplace_back(identity.at("file").get<std::string>());
@@ -394,6 +397,17 @@ RunVerification verify_run(const std::filesystem::path& journal,
         }
         if (hash_text(scenario.source) != identity.at("sha256").get<std::string>())
           throw std::runtime_error("Scenario input changed: " + scenario.id);
+        if (identity.contains("challenge")) {
+          const auto& pack = identity.at("challenge");
+          const auto* plan = find_plan(pack.at("plan").get<std::string>());
+          const auto config = json::parse(expected.records.front().payload).at("state").at("config").get<trading::SessionConfig>();
+          if (pack.at("scenario") != json::parse(scenario.source) || pack.at("seed") != std::to_string(identity.at("seed").get<std::uint64_t>()) ||
+              pack.at("scenario").at("date") != md::format_date(identity.at("date").get<md::Date>()) || !plan ||
+              json(config.rules) != json(plan->rules) || config.initial_cash != plan->initial_cash)
+            throw std::runtime_error("Challenge inputs disagree with the recorded run");
+        }
+        if (identity == input) graded_scenario = scenario;
+        else graded_scenario.reset();
         if (scenario.generator != identity.at("generator").get<decltype(scenario.generator)>()) throw std::runtime_error("Scenario generator version changed");
         // Runs from before revisions regenerate the first revision's chain.
         const auto revision = identity.value("revision", 1);
@@ -481,6 +495,17 @@ RunVerification verify_run(const std::filesystem::path& journal,
     const auto view = desk.trading_view();
     if (!view || view->snapshot->equity != restored.snapshot()->equity || comparison->head() != expected.head)
       throw std::runtime_error("Final equity or head hash differs");
+    if (graded_scenario && !graded_scenario->objectives.empty()) {
+      const auto date = input.at("date").get<md::Date>();
+      auto grade = grade_drill(expected, drill_objectives(*graded_scenario, date));
+      std::ifstream metadata(std::filesystem::path(journal).replace_extension(".json"));
+      const auto saved = metadata ? json::parse(metadata, nullptr, false) : json();
+      const bool from_start = saved.is_object() && saved.value("start_at", std::string()).empty() && !saved.contains("restarted_from");
+      const bool complete = result.time >= providers::scenario_end(*graded_scenario, date) && !comparison->cut && from_start;
+      grade["complete_run"] = complete;
+      if (!complete) grade["score"] = nullptr;
+      result.run["drill"] = std::move(grade);
+    }
     result.matched = true;
     result.cut = comparison->cut;
     result.transactions = comparison->sequence();

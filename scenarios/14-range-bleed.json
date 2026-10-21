@@ -64,5 +64,17 @@
       "at": "15:00",
       "iv": -0.004
     }
+  ],
+  "objectives": [
+    {
+      "id": "loss-budget",
+      "type": "max_loss",
+      "limit": 500
+    },
+    {
+      "id": "flat-before-close",
+      "type": "flat_by",
+      "at": "15:45"
+    }
   ]
 }

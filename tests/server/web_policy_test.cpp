@@ -672,7 +672,7 @@ TEST(WebPolicy, NamedTokensEnforceEveryRouteFamilyAndAccount) {
     EXPECT_TRUE(check(method, "/api" + path, "reader-secret")) << path;
   }
   for (const auto& [method, path] : std::vector<std::pair<std::string, std::string>>{
-      {"POST", "/api/replay/history/run/verify"}, {"DELETE", "/api/replay/history/run"}}) {
+      {"POST", "/api/replay/history/run/verify"}, {"DELETE", "/api/replay/history/run"}, {"POST", "/api/replay/packs"}}) {
     EXPECT_FALSE(check(method, path, "replay-secret"));
     EXPECT_TRUE(check(method, path, "reader-secret"));
     EXPECT_TRUE(check(method, path, "agent-secret"));

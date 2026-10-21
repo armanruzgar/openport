@@ -37,5 +37,23 @@
       "at": "10:30",
       "iv": -0.06
     }
+  ],
+  "objectives": [
+    {
+      "id": "vega-after-crush",
+      "type": "max_net_vega",
+      "at": "10:15",
+      "limit": 1000
+    },
+    {
+      "id": "loss-budget",
+      "type": "max_loss",
+      "limit": 1000
+    },
+    {
+      "id": "flat-afternoon",
+      "type": "flat_by",
+      "at": "15:45"
+    }
   ]
 }

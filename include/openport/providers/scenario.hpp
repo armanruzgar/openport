@@ -41,8 +41,15 @@ struct ScenarioSession {
   std::optional<double> previous_close = std::nullopt; ///< log return relative to the ungapped opening level
 };
 
+struct ScenarioObjective {
+  std::string id, type, at;
+  double limit = 0;
+  std::size_t session = 1;  ///< One-based session index for a deadline.
+};
+
 struct Scenario {
   std::string id, title, description, goal;
+  std::vector<ScenarioObjective> objectives;
   std::vector<std::string> symbols;
   bool overnight = false;  ///< The (first) session is overnight.
   md::Date date;  ///< The (first) session's trading date.
