@@ -5,7 +5,7 @@
   const out = $('out'), form = $('prompt'), input = $('cmd'), hintTape = $('hint-tape'), copyStatus = $('copy-status');
   const themeLabel = $('theme-label'), hero = document.querySelector('.hero');
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const INSTALL = $('install-command').textContent.trim();
+  const installCommand = () => $('install-command').textContent.trim();
 
   for (const el of document.querySelectorAll('[data-js]')) el.hidden = false;
 
@@ -179,7 +179,7 @@
   const COMMANDS = {
     help(res) {
       const rows = [
-        ['install', 'Docker quick start, no key needed'],
+        ['install', 'Docker or Homebrew, no key needed'],
         ['demo', 'Play the 15 s trading demo'],
         ['tape', 'Show the simulated options tape'],
         ['pause', 'Pause or resume the tape'],
@@ -192,9 +192,10 @@
       res.innerHTML = '<dl class="cmds">' + rows.map(([c, d]) => `<div><dt><button type="button" data-cmd="${c}">${c}</button></dt><dd>${d}</dd></div>`).join('') + '</dl>';
     },
     install(res) {
-      res.innerHTML = '# Needs Docker. Cboe’s free 15-minute delayed feed, no key.\n'
-        + `<code>${INSTALL}</code><button class="copy" type="button" data-copy>copy</button>\n`
-        + '# Then open the http://localhost:8080/#token=… link it prints.';
+      const brew = $('install-homebrew').getAttribute('aria-selected') === 'true';
+      res.innerHTML = `# Needs ${brew ? 'Homebrew on macOS' : 'Docker'}. Cboe’s free 15-minute delayed feed, no key.\n`
+        + `<code>${installCommand()}</code><button class="copy" type="button" data-copy>copy</button>\n`
+        + (brew ? '# The last command opens the terminal with its saved token.' : '# Then open the http://localhost:8080/#token=… link it prints.');
     },
     demo(res) {
       res.textContent = 'Playing the demo below. Prices, volume and fills are simulated.';
@@ -272,12 +273,13 @@
     label.dataset.label ??= label.textContent;
     clearTimeout(button.reset);
     try {
-      await navigator.clipboard.writeText(INSTALL);
+      await navigator.clipboard.writeText(button.closest('.res')?.querySelector('code')?.textContent || installCommand());
       label.textContent = 'Copied';
       copyStatus.textContent = 'Command copied to clipboard.';
     } catch {
       // Keep manual copying possible when clipboard access is unavailable or denied.
-      const command = $('install-command');
+      const command = button.closest('.res')?.querySelector('code') || $('install-command');
+      command.tabIndex = 0;
       command.focus();
       const range = document.createRange();
       range.selectNodeContents(command);

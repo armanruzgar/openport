@@ -1,0 +1,14 @@
+title: ""
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Which workflow would this improve?
+      description: Describe the task, who needs it and what is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Your idea
+      description: Outline the behavior and any simulation or market-data limitations.

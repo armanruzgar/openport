@@ -130,6 +130,9 @@ figcaption { margin-top: 1em; font: 13px/1.65 var(--mono); color: var(--dim); ma
 figcaption b { font-weight: 500; }
 
 .term { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.6em 1.5em; padding: 1.1em 1.25em; background: var(--chip); }
+.install-tabs { display: flex; gap: 1.5em; margin-bottom: 0.8em; }
+.install-tabs [aria-selected="false"] { color: var(--dim); }
+.install-tabs [aria-selected="true"] span { text-decoration: underline; text-underline-offset: 0.3em; }
 .term pre { font: 15px/1.75 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .term pre code { font-size: inherit; }
 .term pre::before { content: "~ $ "; color: var(--dim); }
