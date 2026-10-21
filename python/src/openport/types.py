@@ -644,6 +644,8 @@ class Risk(RiskScopes):
 
 class RiskProfileOptions(TypedDict, total=False):
     term_scaled: bool
+    held: bool
+    legs: list[JSON]
 
 
 class RiskProfile(RiskProfileOptions):
@@ -664,6 +666,93 @@ class RiskProfile(RiskProfileOptions):
     weighted_dollar_delta: float | None
     weighted_delta: float | None
     complete: bool
+    model: str
+
+
+class StrategySearchLeg(TypedDict):
+    symbol: str
+    side: Literal["buy", "sell"]
+    ratio: int
+    type: Literal["call", "put"]
+    strike: float
+    expiry: str
+    bid: float | None
+    ask: float | None
+    mid: float | None
+    iv: float
+
+
+class StrategyCandidate(TypedDict):
+    name: str
+    structure: str
+    legs: list[StrategySearchLeg]
+    shares: int
+    net: float
+    max_loss: float
+    max_profit: float | None
+    breakevens: list[float]
+    pop: JSON
+    expected: JSON
+    return_on_risk: float
+    quantity: int
+    valued_at: str
+    sigma: JSON
+
+
+class StrategySearch(TypedDict):
+    symbol: str
+    as_of: str
+    spot: float
+    target_price: float
+    target_date: str
+    target_time: str
+    budget: float
+    vol_points: float
+    rank: str
+    price: str
+    structures: list[str]
+    expiries: list[str]
+    skipped: list[JSON]
+    considered: int
+    evaluated: int
+    unbounded: int
+    over_budget: int
+    within_budget: int
+    truncated: bool
+    max_candidates: int
+    candidates: list[StrategyCandidate]
+    label: str
+    model: str
+
+
+class Hedge(TypedDict):
+    name: str
+    kind: Literal["shares", "option"]
+    underlying: str
+    instrument: str | None
+    beta_hedge: bool
+    feasible: bool
+    reason: str | None
+    side: Literal["buy", "sell"] | None
+    quantity: int | None
+    price: float | None
+    premium: float | None
+    spread_cost: float | None
+    residual: JSON | None
+    order: JSON | None
+    stock_trade: JSON | None
+    exceeds_order_limit: bool
+
+
+class HedgeSuggestions(TypedDict):
+    account_version: str
+    time: str
+    scope: str
+    target: Literal["delta", "vega", "grid"]
+    utilisation: float
+    current: JSON
+    hedges: list[Hedge]
+    simulated: bool
     model: str
 
 
