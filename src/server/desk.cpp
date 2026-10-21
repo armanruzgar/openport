@@ -354,7 +354,9 @@ BetaEstimate estimate_beta(const std::vector<md::Bar>& asset, const std::vector<
   if (!(variance_b > 0)) return estimate;
   estimate.beta = covariance / variance_b;
   if (variance_a > 0) estimate.correlation = covariance / std::sqrt(variance_a * variance_b);
-  if (!std::isfinite(estimate.beta)) estimate.beta = 0;
+  // Risk profiles accept betas within +/-10, as a given one must be: beyond that
+  // there is no usable estimate, and the weighted values stay unknown.
+  if (!std::isfinite(estimate.beta) || std::abs(estimate.beta) > 10) estimate.beta = 0;
   else estimate.source = "estimated";
   return estimate;
 }

@@ -172,7 +172,8 @@ struct BetaEstimate {
   std::string source;
 };
 /// Beta from bars matched by start time; consecutive bars of one series whose gap
-/// exceeds `max_gap` (0 for any) are not paired into a return.
+/// exceeds `max_gap` (0 for any) are not paired into a return. A beta beyond +/-10
+/// is no estimate (empty source), as risk profiles accept none.
 [[nodiscard]] BetaEstimate estimate_beta(const std::vector<md::Bar>& asset, const std::vector<md::Bar>& benchmark,
                                          std::size_t max_returns, md::Timestamp max_gap = 0);
 /// Whether two symbols follow the same index (SPX, SPXW, XSP and SPY; NDX, NDXP, XND

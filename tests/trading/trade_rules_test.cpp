@@ -476,6 +476,22 @@ TEST(TradeRules, StopRiskUsesExactEntryTermsAndExcludesFees) {
   EXPECT_EQ(s.submit(stopped(f.market("short", 1, Side::Sell), "5.20"), f.time).decision.code, Reason::NONE);
 }
 
+TEST(TradeRules, AWalkingOrderIsMeasuredAtItsWalkCap) {
+  ScriptedMarket f;
+  AccountRules rules;
+  rules.max_trade_risk = m("120");
+  TradingSession s(config(rules), f.time);
+  f.seed(s);
+  // From 4.00 it can walk to 4.30 and fill there: 1.30 above the 3.00 stop.
+  auto walking = stopped(f.limit("walk", 1, "4.00"));
+  walking.walk = Walk{m("0.10"), 10, m("4.30")};
+  EXPECT_EQ(s.preview(walking, f.time).trade_risk, m("130"));
+  EXPECT_EQ(s.submit(walking, f.time).decision.code, Reason::MAX_TRADE_RISK);
+  walking.client_order_id = "walk-within";
+  walking.walk->limit = m("4.20");
+  EXPECT_TRUE(s.submit(walking, f.time).decision.ok());
+}
+
 TEST(TradeRules, MissingAndUnderlyingStopsUseBoundedExpiryLossNeverTheScenarioGrid) {
   ScriptedMarket f;
   AccountRules rules;

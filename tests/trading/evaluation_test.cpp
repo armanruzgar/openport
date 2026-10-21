@@ -303,6 +303,33 @@ TEST(TradingEvaluation, ExpiryCutoffCancelsWorkingOrdersAutoClosesAndBlocksOpeni
   EXPECT_EQ(s.submit(f.market("late"), f.time).decision.code, Reason::EXPIRY_CUTOFF);
 }
 
+TEST(TradingEvaluation, TheAutoCloseKeepsCoverForAShortItCouldBuyBackOnlyInPart) {
+  ScriptedMarket f;  // the short 5000 call
+  f.time = md::new_york_to_utc({2026, 10, 22}, 15, 50);
+  ScriptedMarket g = f;  // the long 4900 call
+  g.contract = *md::parse_osi("SPXW261022C04900000");
+  AccountRules rules;
+  rules.expiry_cutoff = 5 * md::kNanosPerMinute;
+  TradingSession s(rules_config("100000", rules), f.time);
+  s.define(f.contract, f.time);
+  s.define(g.contract, f.time);
+  s.on_quotes({f.quote(), g.quote("9.00", "9.20")}, {f.valuation(), g.valuation(0.6)}, f.time);
+  ASSERT_TRUE(s.submit(g.market("long", 2), f.time).decision.ok());
+  ASSERT_TRUE(s.submit(f.market("short", 2, Side::Sell), f.time).decision.ok());
+  f.time = md::new_york_to_utc({2026, 10, 22}, 15, 56);
+  ++f.observation;
+  g.time = f.time;
+  g.observation = f.observation;
+  // Only one is offered to buy the short back: one long stays to cover the other.
+  s.on_quotes({f.quote("4.00", "4.20", 1), g.quote("9.00", "9.20")}, {f.valuation(), g.valuation(0.6)}, f.time);
+  const auto held = [&](const std::string& symbol) {
+    for (const auto& p : s.snapshot()->positions) if (p.position.contract.osi_symbol() == symbol) return p.position.quantity;
+    return Quantity{0};
+  };
+  EXPECT_EQ(held(f.symbol()), -1);
+  EXPECT_EQ(held(g.symbol()), 1);
+}
+
 TEST(TradingEvaluation, TheAutoCloseBuysShortsBackBeforeSellingTheLongsThatCoverThem) {
   ScriptedMarket f;  // the short 5000 call
   f.time = md::new_york_to_utc({2026, 10, 22}, 15, 50);

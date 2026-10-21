@@ -1913,7 +1913,9 @@ TradeRisk trade_risk(const State& s, const OrderRequest& r) {
   if (legs.empty()) legs.push_back({r.symbol, r.side, 1});
   Money net;
   if (r.limit_price) {
-    net = !multi_leg(r) && r.side == Side::Sell ? -*r.limit_price : *r.limit_price;
+    // A walking order can fill anywhere up to its walk's cap: the worst entry.
+    const auto price = r.walk ? r.walk->limit : *r.limit_price;
+    net = !multi_leg(r) && r.side == Side::Sell ? -price : price;
   } else {
     for (const auto& leg : legs) {
       const auto& q = s.books.at(leg.symbol).quote;
@@ -2995,14 +2997,16 @@ std::vector<PlannedClose> plan_closes(const State& s, const std::vector<std::str
 /// Submit a reducer-owned market IOC that closes one position against the
 /// current fresh book. Without executable liquidity nothing is recorded, so a
 /// rule keeps retrying on later transactions instead of accumulating orders.
-void flatten(State& s, const std::string& symbol, std::string_view why, Events& events) {
+void flatten(State& s, const std::string& symbol, std::string_view why, Events& events, Quantity keep = 0) {
   const auto q = held(s, symbol);
   const auto contract = s.contracts.find(symbol);
   if (q == 0 || contract == s.contracts.end() || s.time >= contract->second.expiry_time() ||
       !regular(contract->second, s.time) || !quote_check(s, symbol).ok())
     return;
   const auto side = q > 0 ? Side::Sell : Side::Buy;
-  const auto quantity = s.evaluation.status != EvaluationStatus::Active ? closing_capacity(s, symbol, side) : magnitude(q);
+  // `keep` contracts of a long stay as cover for a short that could not be closed.
+  const auto quantity = std::min(s.evaluation.status != EvaluationStatus::Active ? closing_capacity(s, symbol, side) : magnitude(q),
+                                 std::max<Quantity>(magnitude(q) - keep, 0));
   if (quantity == 0) return;
   const auto& book = s.books.at(symbol);
   if (s.config.rules.impact_ticks == 0 && (side == Side::Sell ? book.bid_left : book.ask_left) <= 0) return;
@@ -3320,11 +3324,29 @@ void monitor_rules(State& s, Events& events) {
   // Shorts first, as Flatten closes them: a short bought back before the long that
   // covers it is sold never leaves a naked short, even for one event.
   std::stable_partition(symbols.begin(), symbols.end(), [&](const std::string& symbol) { return held(s, symbol) < 0; });
+  // A short this pass could not buy back in full (stale quote, thin ask, partial IOC)
+  // still needs its cover: longs of its underlying and type keep that many.
+  std::map<std::pair<std::string, pricing::OptionType>, Quantity> uncovered;
+  const auto cover = [&](const std::string& symbol) -> Quantity& {
+    const auto& c = s.contracts.at(symbol);
+    return uncovered[{c.underlying, c.type}];
+  };
+  const auto close = [&](const std::string& symbol, std::string_view why) {
+    if (held(s, symbol) < 0) {
+      flatten(s, symbol, why, events);
+      cover(symbol) += magnitude(held(s, symbol));
+      return;
+    }
+    auto& need = cover(symbol);
+    const auto keep = std::min(need, magnitude(held(s, symbol)));
+    need -= keep;
+    flatten(s, symbol, why, events, keep);
+  };
   for (const auto& symbol : symbols) {
     if (soft || decided || locked) {
       // The plan's decision names the liquidation, then a locked day, even when the
       // soft floor latched with it.
-      flatten(s, symbol, decided || locked ? liquidation_label(e, decided) : "soft_floor", events);
+      close(symbol, decided || locked ? liquidation_label(e, decided) : "soft_floor");
       continue;
     }
     // The cutoff counts back from the last trade: 15:55 for SPXW, 16:10 for SPY,
@@ -3335,7 +3357,7 @@ void monitor_rules(State& s, Events& events) {
       for (const auto id : open_ids(s))
         if (const auto& o = s.orders[id - 1]; !o.system && touches(o.request, symbol))
           cancel_order(s, id, failure(Reason::EXPIRY_CUTOFF, "Pre-expiry cutoff: the position is being closed"), events);
-      flatten(s, symbol, "expiry", events);
+      close(symbol, "expiry");
     }
   }
 }
@@ -4791,7 +4813,8 @@ PayoutQuote payout_quote(const TradingSnapshot& s, const AccountRules& rules) {
   q.number = e.payouts.size() + 1;
   q.funded = rules.phase == Phase::Funded && p.qualifying_days > 0;
   q.active = e.status == EvaluationStatus::Active;
-  q.flat = s.positions.empty() && s.open_orders.empty();
+  // Shares count as holdings: their marks are in equity, not in cash.
+  q.flat = s.positions.empty() && s.stocks.empty() && s.open_orders.empty();
   q.qualifying_days = e.qualifying_days;
   q.required_days = p.qualifying_days;
   const auto add_day = [&](md::Date day, Money profit) {
@@ -4844,7 +4867,7 @@ PayoutQuote payout_quote(const TradingSnapshot& s, const AccountRules& rules) {
   };
   if (!q.funded) block(Reason::PAYOUT_UNAVAILABLE, "Payouts are available on funded accounts");
   if (!q.active) block(Reason::PAYOUT_UNAVAILABLE, "The funded account is closed");
-  if (!q.flat) block(Reason::PAYOUT_NOT_ELIGIBLE, "Close every position and working order before requesting a payout");
+  if (!q.flat) block(Reason::PAYOUT_NOT_ELIGIBLE, "Close every position, share holding and working order before requesting a payout");
   if (static_cast<std::int64_t>(q.qualifying_days) < q.required_days)
     block(Reason::PAYOUT_NOT_ELIGIBLE, "Not enough qualifying days in this payout cycle",
           static_cast<double>(q.qualifying_days), static_cast<double>(q.required_days));

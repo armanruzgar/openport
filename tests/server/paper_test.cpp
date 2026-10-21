@@ -4207,6 +4207,17 @@ TEST(PaperBeta, BetaIsTheCovarianceOverTheBenchmarksVarianceOfPairedReturns) {
   EXPECT_EQ(server::estimate_beta(asset, benchmark, 252, md::kNanosPerDay).observations, 37U);
   EXPECT_EQ(server::estimate_beta(asset, benchmark, 252, md::kNanosPerMinute).observations, 0U);
   EXPECT_TRUE(server::estimate_beta({}, benchmark, 252).source.empty());
+  // Beyond +/-10 a risk profile would refuse it: no estimate rather than a failed profile.
+  std::vector<md::Bar> wild;
+  double w = 100;
+  for (std::size_t i = 0; i < benchmark.size(); ++i) {
+    if (i) w *= std::exp(15 * std::log(benchmark[i].close / benchmark[i - 1].close));
+    wild.push_back({benchmark[i].start, w, w, w, w});
+  }
+  const auto extreme = server::estimate_beta(wild, benchmark, 252);
+  EXPECT_TRUE(extreme.source.empty());
+  EXPECT_EQ(extreme.beta, 0);
+  EXPECT_EQ(extreme.observations, 39U);
   EXPECT_TRUE(server::same_index("SPY", "SPX"));
   EXPECT_TRUE(server::same_index("QQQ", "NDX"));
   EXPECT_FALSE(server::same_index("QQQ", "SPY"));

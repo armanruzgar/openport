@@ -83,6 +83,8 @@ std::vector<EquitySample> fill_equity_samples(const trading::TradingSession& ses
   state.peak = ratcheted.peak;
   state.floor = ratcheted.floor;
   state.floor_locked = ratcheted.floor_locked;
+  // Size scaling keeps a raised floor from falling back when the peak next moves.
+  state.size_scaling = ratcheted.size_scaling;
   state.status = before.evaluation.status;
   // Objectives, or a target on the closed balance, can hold a pass back: only the
   // reducer's own pass stops the ratchet.
