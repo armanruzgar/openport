@@ -901,6 +901,92 @@
         }
       }
     },
+    "/api/account-groups": {
+      "get": {
+        "summary": "GET /api/account-groups",
+        "description": "Paper trading only. Named groups of accounts that POST /api/orders/copy mirrors one order to. 404 NOT_FOUND when the server offers none (sandbox servers, servers without a journal). Sandbox tokens cannot read them.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountGroupsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/account-groups/{name}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        }
+      ],
+      "put": {
+        "summary": "PUT /api/account-groups/{name}",
+        "description": "Creates or replaces a group: one to sixteen distinct existing accounts (\"main\" for the main account) and its allocation. Requires admin scope. Kept in account-groups.json beside the main journal, at most 32 groups. 404 UNKNOWN_ACCOUNT for a member the server does not have.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountGroup"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountGroupInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "DELETE /api/account-groups/{name}",
+        "description": "Deletes a group; accounts and their orders are unchanged. Requires admin scope. 404 UNKNOWN_GROUP.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountGroupDeleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/account/equity": {
       "parameters": [
         {
@@ -1188,6 +1274,90 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/WhatIfRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/copy": {
+      "post": {
+        "summary": "POST /api/orders/copy",
+        "description": "Paper trading only. Mirrors one order to every account of a group as that account's own submission, with its own checks, journal and client_order_id namespace, sized by the group's allocation (ratio: quantity times the member's ratio, rounded down; equity: the quantity split in proportion to marked equity, largest remainders first). Members allocated no units are skipped. 200 when every member accepted, 207 when any was skipped or refused; each result carries that account's HTTP status and response. Requires trade:* (or admin). Chained (then/oco) and exits_only orders are refused. Equity allocation needs every member fully marked (409 STALE_QUOTE).",
+        "x-scope": "trade",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "207": {
+            "description": "Some members skipped or refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyOrderRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/copy/preview": {
+      "post": {
+        "summary": "POST /api/orders/copy/preview",
+        "description": "The same fan-out as POST /api/orders/copy, previewing each member's order on a private copy of its account; nothing is recorded.",
+        "x-scope": "trade",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "207": {
+            "description": "Some members skipped or refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyOrderRequest"
               }
             }
           }
@@ -28958,6 +29128,217 @@
           "provider",
           "units"
         ]
+      },
+      "AccountGroupMember": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "ratio": {
+            "$ref": "#/components/schemas/Money",
+            "description": "Ratio allocation only: units per unit of the copied order, 0.0001 to 100."
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroup": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "allocation": {
+            "anyOf": [
+              {
+                "const": "ratio",
+                "type": "string"
+              },
+              {
+                "const": "equity",
+                "type": "string"
+              }
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountGroupMember"
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "name",
+          "allocation",
+          "members"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroupInput": {
+        "type": "object",
+        "properties": {
+          "allocation": {
+            "anyOf": [
+              {
+                "const": "ratio",
+                "type": "string"
+              },
+              {
+                "const": "equity",
+                "type": "string"
+              }
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountGroupMember"
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "allocation",
+          "members"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroupsResponse": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountGroup"
+            }
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroupDeleted": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "additionalProperties": false
+      },
+      "CopyOrderRequest": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "order": {
+            "$ref": "#/components/schemas/NewOrder"
+          }
+        },
+        "required": [
+          "group",
+          "order"
+        ],
+        "additionalProperties": false
+      },
+      "CopyOrderResult": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "The account's own HTTP status for its submission."
+          },
+          "response": {
+            "description": "The account's own response body: SubmitOrderResponse, OrderPreview or an error.",
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "account",
+          "quantity",
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "CopyOrderResponse": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "allocation": {
+            "anyOf": [
+              {
+                "const": "ratio",
+                "type": "string"
+              },
+              {
+                "const": "equity",
+                "type": "string"
+              }
+            ]
+          },
+          "client_order_id": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "preview": {
+            "type": "boolean"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CopyOrderResult"
+            }
+          }
+        },
+        "required": [
+          "group",
+          "allocation",
+          "client_order_id",
+          "quantity",
+          "preview",
+          "results"
+        ],
+        "additionalProperties": false
       }
     }
   }

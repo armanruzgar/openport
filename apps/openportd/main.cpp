@@ -718,6 +718,16 @@ int run(int argc, char** argv) {
   engine_options.paper = settings.paper;
   engine_options.dividends = settings.dividends;
   engine_options.demo_dividends = !settings.dividends_source;
+  // Account groups for copied orders live beside the main journal.
+  if (settings.paper_enabled && !settings.paper_journal.empty() && !settings.sandboxes.capacity) {
+    try {
+      engine_options.account_groups = std::make_shared<server::AccountGroups>(
+          std::filesystem::absolute(settings.paper_journal).parent_path() / "account-groups.json");
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "openportd: %s\n", error.what());
+      return 1;
+    }
+  }
   if (settings.cboe_soq)
     for (const auto& symbol : settings.subscription.underlyings)
       if (!providers::cboe_soq_index(symbol).empty()) engine_options.published_opening_quotations.push_back(symbol);

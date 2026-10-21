@@ -1135,6 +1135,15 @@ export interface CancelAllResponse { account_version: string; cancelled_orders: 
 export type CancelRequest = { underlying?: string; orders?: never } | { orders: string[]; underlying?: never }
 export interface AccountListItem { damaged?: AccountDamage | null; journal_size?: JournalSize; id: string; name: string; archived?: boolean; sandbox_idle_seconds?: number; trading: TradingStatus; equity: Money | null }
 export interface AccountsResponse { accounts: AccountListItem[] }
+/** A named group of live accounts one order can be copied to. Ratio members carry their ratio. */
+export interface AccountGroupMember { account: string; ratio?: Money }
+export interface AccountGroup { name: string; allocation: "equity" | "ratio"; members: AccountGroupMember[] }
+export interface AccountGroupInput { allocation: "equity" | "ratio"; members: AccountGroupMember[] }
+export interface AccountGroupsResponse { groups: AccountGroup[] }
+export interface AccountGroupDeleted { deleted: string }
+/** One member's part of a copied order: its size, and its own HTTP status and response. */
+export interface CopyOrderResult { account: string; quantity: number; ok: boolean; skipped?: boolean; message?: string; status?: number; response?: object | null }
+export interface CopyOrderResponse { group: string; allocation: "equity" | "ratio"; client_order_id: string; quantity: number; preview: boolean; results: CopyOrderResult[] }
 export type CreateAccountRequest = { name: string; copy_settings_from?: string; fill_model?: FillModel; fee_model?: FeeModel } & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
 export interface CreateAccountResponse { account: { id: string; name: string; account_version: string; plan: string | null; plan_id?: string | null; equity: Money } }
 /** Delivered shares a flatten could not close, as held after it, and why. */

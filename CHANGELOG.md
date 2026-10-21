@@ -123,6 +123,8 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 
 ### API, Python and automation
 
+- **Copy and allocation trading.** Named account groups (`PUT/DELETE /api/account-groups/{name}`, `GET /api/account-groups`, admin to change) and `POST /api/orders/copy` (and `/preview`) mirror one order to every member as its own submission, sized by fixed ratio or split by marked equity, each with its own checks and journal; the reply lists each account's status and response. The Python client adds `account_groups`, `put_account_group`, `delete_account_group`, `copy_order` and `preview_copy_order`; Manage accounts edits groups and the option ticket offers **Copy to group**.
+
 - Versioned account WebSocket events with bounded delivery and typed Python iteration.
   The stream dispatches only to the addressed account's subscribers and sends `floor`
   only on entering or leaving the warning band.

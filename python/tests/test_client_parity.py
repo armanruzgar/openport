@@ -28,6 +28,8 @@ CALLS = [
     ("place_order", {}), ("preview_order", {}), ("preview_change", "{id}"), ("what_if", []),
     ("modify_order", "{id}"), ("cancel_order", "{id}"), ("cancel_all",), ("flatten",), ("preview_flatten",),
     ("note", "{id}"), ("day_note", "{day}"), ("group_trades", []), ("ungroup_trades", []),
+    ("account_groups",), ("put_account_group", "{name}", "ratio", []), ("delete_account_group", "{name}"),
+    ("copy_order", "desk", {}), ("preview_copy_order", "desk", {}),
     ("create_account", "test"), ("rename_account", "{id}", "test"), ("delete_account", "{id}"),
     ("reset_account", "test"), ("payout", "1.00"), ("limits", "1", {}), ("guardrails", "1", {}),
     ("kill", "on", "test"), ("settle", "test", "1.00"), ("exercise", "test", 1), ("abandon", "test"),

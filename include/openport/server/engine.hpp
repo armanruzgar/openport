@@ -22,6 +22,7 @@
 #include "openport/md/provider.hpp"
 #include "openport/md/recording.hpp"
 #include "openport/md/recording_directory.hpp"
+#include "openport/server/account_groups.hpp"
 #include "openport/server/candles.hpp"
 #include "openport/server/series.hpp"
 #include "openport/analytics/volatility.hpp"
@@ -79,6 +80,8 @@ class MetricsSource {
   /// Public settings remain visible even when this source cannot forward events.
   [[nodiscard]] virtual const Notifications* configured_notifications() const { return notifications(); }
   [[nodiscard]] virtual Sandboxes* sandboxes() const { return nullptr; }
+  /// Named groups of accounts that copied orders fan out to; nullptr when not offered.
+  [[nodiscard]] virtual AccountGroups* account_groups() const { return nullptr; }
   [[nodiscard]] virtual md::Timestamp wall_time() const { return md::now(); }
   /// The main account's publication.
   [[nodiscard]] virtual std::shared_ptr<const TradingView> trading_view() const { return {}; }
@@ -112,6 +115,8 @@ class Engine final : public MetricsSource {
     std::size_t command_capacity = 256;
     /// Revision 4 demo accounts use the generated calendar unless a source is explicit.
     bool demo_dividends = true;
+    /// Groups of accounts copied orders fan out to; absent offers none.
+    std::shared_ptr<AccountGroups> account_groups;
     std::filesystem::path record_file;
     md::RecordingSink::Options recording;
     std::filesystem::path record_dir;
@@ -162,6 +167,7 @@ class Engine final : public MetricsSource {
   [[nodiscard]] std::vector<trading::PlanEvent> event_calendar() const override { return options_.event_calendar; }
   [[nodiscard]] const CandleStore* candles() const override { return options_.candles.get(); }
   [[nodiscard]] const SeriesStore* series() const override { return options_.series.get(); }
+  [[nodiscard]] AccountGroups* account_groups() const override { return options_.account_groups.get(); }
   bool post_trading(TradingCommand command, TradingCompletion completion) override;
   [[nodiscard]] md::RecordingStats recording_stats() const;
   [[nodiscard]] std::string recording_error() const;

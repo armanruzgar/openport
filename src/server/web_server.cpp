@@ -416,6 +416,12 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool replay_settings = replay &&
       ((request.method == "POST" && (path == "/account/reset" || path == "/risk/kill" || path == "/account/cash-flows" || path == "/market/halt")) ||
        (request.method == "PUT" && (path == "/risk/limits" || path == "/risk/guardrails")));
+  // A copied order trades every account of its group, so it needs every account's
+  // trade scope; the groups themselves are server configuration.
+  const bool copy = !replay && (path == "/orders/copy" || path == "/orders/copy/preview");
+  const bool groups = !replay && (path == "/account-groups" || path.starts_with("/account-groups/"));
+  if (!read && (copy || groups) && !has("admin") && !(copy && has("trade:*")))
+    return api_error(403, "SCOPE_REQUIRED", copy ? "Copied orders require trade:* scope" : "Account groups require admin scope");
   const bool permitted = (create_sandbox && sandbox.empty()) || has("admin") || (read ? has("read") || !policy.require_token :
       ((path == "/replay" || (replay && path == "/packs") || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
        (replay_settings && has("replay")) || (trade && (replay ? has("replay") : has("trade:*") || has("trade:" + account)))));

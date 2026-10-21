@@ -33,6 +33,7 @@ beforeEach(() => {
   vi.spyOn(api, "liveAccounts").mockResolvedValue({ accounts })
   vi.spyOn(api, "updateAccount").mockResolvedValue({ account: { id: "swing", name: "Changed", archived: false } })
   vi.spyOn(api, "deleteAccount").mockResolvedValue({ deleted: "swing" })
+  vi.spyOn(api, "accountGroups").mockResolvedValue({ groups: [] })
 })
 afterEach(async () => {
   await act(async () => root.unmount()); host.remove(); client.clear()

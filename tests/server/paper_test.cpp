@@ -5417,3 +5417,151 @@ TEST(PaperRecovery, WithoutAPublishedOpeningQuotationAMPositionsSettleByHandAfte
   EXPECT_TRUE(engine.trading_view()->snapshot->positions.empty());
   engine.stop();
 }
+
+TEST(AccountGroups, AllocateByRatioOrByEquity) {
+  server::AccountGroup group{"desk", server::Allocation::Ratio,
+      {{"main", Money::parse("1")}, {"small", Money::parse("0.5")}, {"big", Money::parse("2.5")}}};
+  EXPECT_EQ(server::allocate(group, 3), (std::vector<trading::Quantity>{3, 1, 7}));
+  EXPECT_EQ(server::allocate(group, 0), (std::vector<trading::Quantity>{0, 0, 0}));
+  group.allocation = server::Allocation::Equity;
+  // 10 units by equity 50k, 25k, 25k: 5, 2.5, 2.5; the tie's remainder goes to the earlier member.
+  EXPECT_EQ(server::allocate(group, 10, {Money::parse("50000"), Money::parse("25000"), Money::parse("25000")}),
+            (std::vector<trading::Quantity>{5, 3, 2}));
+  // Without positive equity a member takes none, and the others take every unit.
+  EXPECT_EQ(server::allocate(group, 7, {Money::parse("100"), std::nullopt, Money::parse("-5")}),
+            (std::vector<trading::Quantity>{7, 0, 0}));
+  EXPECT_EQ(server::allocate(group, 7, {}), (std::vector<trading::Quantity>{0, 0, 0}));
+  const auto sizes = server::allocate(group, 1'000'001, {Money::parse("3"), Money::parse("3"), Money::parse("3")});
+  EXPECT_EQ(sizes[0] + sizes[1] + sizes[2], 1'000'001);
+}
+
+TEST(AccountGroups, ValidateAndPersistGroups) {
+  const auto directory = std::filesystem::temp_directory_path() / ("openport-groups-" + std::to_string(md::now()));
+  std::filesystem::create_directories(directory);
+  const auto file = directory / "account-groups.json";
+  const server::AccountGroup desk{"desk", server::Allocation::Ratio, {{"main", Money::parse("1")}, {"other", Money::parse("2")}}};
+  {
+    server::AccountGroups groups(file);
+    EXPECT_TRUE(groups.list().empty());
+    for (const auto& bad : std::vector<server::AccountGroup>{
+             {"Desk", server::Allocation::Ratio, desk.members},
+             {"desk", server::Allocation::Ratio, {}},
+             {"desk", server::Allocation::Ratio, {{"main"}, {"main"}}},
+             {"desk", server::Allocation::Ratio, {{"main", Money::parse("101")}}},
+             {"desk", server::Allocation::Ratio, {{"main", Money::parse("0")}}},
+             {"desk", server::Allocation::Ratio, {{"Main"}}}})
+      EXPECT_THROW(groups.put(bad), std::invalid_argument);
+    groups.put(desk);
+    groups.put({"equal", server::Allocation::Equity, {{"other"}}});
+    EXPECT_FALSE(groups.remove("none"));
+  }
+  server::AccountGroups reloaded(file);
+  ASSERT_EQ(reloaded.list().size(), 2u);
+  EXPECT_EQ(*reloaded.find("desk"), desk);
+  EXPECT_EQ(reloaded.find("equal")->allocation, server::Allocation::Equity);
+  EXPECT_TRUE(reloaded.remove("equal"));
+  EXPECT_EQ(server::AccountGroups(file).list().size(), 1u);
+  std::ofstream(file) << "{\"schema\":1,\"groups\":[{\"name\":\"x\",\"allocation\":\"sideways\",\"members\":[]}]}";
+  EXPECT_THROW(server::AccountGroups{file}, std::runtime_error);
+  std::filesystem::remove_all(directory);
+}
+
+TEST_F(PaperEngine, CopiedOrdersFanOutAsEachAccountsOwnSubmission) {
+  engine.reset();
+  const auto path = paper_path();
+  auto options = paper_options();
+  options.paper_journal = path.string();
+  options.paper_accounts = path.parent_path() / "accounts";
+  options.account_groups = std::make_shared<server::AccountGroups>(path.parent_path() / "account-groups.json");
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  seed("4.00", "4.20", 100);
+  auto response = write(*engine, "POST", "/api/accounts", {{"name", "Half"}, {"plan", "practice"}});
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto half = json::parse(response.body)["account"]["id"].get<std::string>();
+  response = write(*engine, "POST", "/api/accounts", {{"name", "Small"}, {"plan", "practice"}});
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto small = json::parse(response.body)["account"]["id"].get<std::string>();
+  engine->synchronize().get();
+
+  expect_error(write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"}, {"members", {{{"account", "nobody"}}}}}),
+               404, "UNKNOWN_ACCOUNT");
+  expect_error(write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"}, {"members", json::array()}}),
+               400, "INVALID_REQUEST");
+  response = write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"},
+      {"members", {{{"account", "main"}, {"ratio", "1.5"}}, {{"account", half}, {"ratio", "0.5"}}, {{"account", small}, {"ratio", "0.1"}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("paper", "PUT", "/api/account-groups/{name}", response);
+  response = write(*engine, "GET", "/api/account-groups");
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("paper", "GET", "/api/account-groups", response);
+  EXPECT_EQ(json::parse(response.body)["groups"][0]["members"][1]["ratio"], "0.50");
+
+  auto copied = order(market, "copy-1", "4.20");
+  copied["quantity"] = 2;
+  response = write(*engine, "POST", "/api/orders/copy/preview", {{"group", "desk"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  auto body = json::parse(response.body);
+  EXPECT_TRUE(body["preview"]);
+  EXPECT_TRUE(read(*engine, "/api/orders")["orders"].empty());
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "desk"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  test::capture_contract("paper", "POST", "/api/orders/copy", response);
+  body = json::parse(response.body);
+  ASSERT_EQ(body["results"].size(), 3);
+  EXPECT_EQ(body["results"][0]["account"], "main");
+  EXPECT_EQ(body["results"][0]["quantity"], 3);
+  EXPECT_EQ(body["results"][0]["status"], 201) << response.body;
+  EXPECT_EQ(body["results"][1]["quantity"], 1);
+  EXPECT_TRUE(body["results"][1]["ok"]);
+  // 2 x 0.1 rounds down to nothing: that account is skipped, not sent an order.
+  EXPECT_EQ(body["results"][2]["quantity"], 0);
+  EXPECT_TRUE(body["results"][2]["skipped"]);
+  EXPECT_EQ(read(*engine, "/api/orders")["orders"][0]["quantity"], 3);
+  EXPECT_EQ(read(*engine, "/api/orders?account=" + half)["orders"][0]["quantity"], 1);
+  EXPECT_TRUE(read(*engine, "/api/orders?account=" + small)["orders"].empty());
+  // A retry is answered by each account as first submitted.
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "desk"}, {"order", copied}});
+  body = json::parse(response.body);
+  EXPECT_EQ(body["results"][0]["status"], 200);
+  EXPECT_EQ(read(*engine, "/api/orders")["orders"].size(), 1);
+
+  // Equity allocation splits the order's own size; each account's checks still apply.
+  response = write(*engine, "PUT", "/api/account-groups/even", {{"allocation", "equity"},
+      {"members", {{{"account", half}}, {{"account", small}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  copied["client_order_id"] = "copy-2";
+  copied["quantity"] = 3;
+  // Each account keeps its own checks: four contracts more would pass main's delta limit.
+  response = write(*engine, "PUT", "/api/account-groups/solo", {{"allocation", "ratio"}, {"members", {{{"account", "main"}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  copied["quantity"] = 4;
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "solo"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  EXPECT_EQ(json::parse(response.body)["results"][0]["response"]["error"]["code"], "DELTA_LIMIT");
+  ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/solo").status, 200);
+  copied["quantity"] = 3;
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "even"}, {"order", copied}});
+  body = json::parse(response.body);
+  ASSERT_EQ(body["results"].size(), 2) << response.body;
+  // The account that paid the first copy's fee has a little less equity, so the
+  // remainder of the even split goes to the other one.
+  EXPECT_EQ(body["results"][0]["quantity"], 1);
+  EXPECT_EQ(body["results"][1]["quantity"], 2);
+  EXPECT_EQ(response.status, 200) << response.body;
+  copied["then"] = order(market, "next", "4.00");
+  expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "even"}, {"order", copied}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "none"}, {"order", order(market)}}), 404, "UNKNOWN_GROUP");
+  expect_error(write(*engine, "POST", "/api/orders/copy?account=" + half, {{"group", "even"}, {"order", order(market)}}), 400, "INVALID_REQUEST");
+  ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/even").status, 200);
+  expect_error(write(*engine, "DELETE", "/api/account-groups/even"), 404, "UNKNOWN_GROUP");
+  engine->stop();
+  // The groups outlive the server.
+  EXPECT_EQ(server::AccountGroups(path.parent_path() / "account-groups.json").list().size(), 1u);
+  std::filesystem::remove_all(path.parent_path());
+}
+
+TEST_F(PaperEngine, AccountGroupsAreNotOfferedWithoutAStore) {
+  expect_error(write(*engine, "GET", "/api/account-groups"), 404, "NOT_FOUND");
+}

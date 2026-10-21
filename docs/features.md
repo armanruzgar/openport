@@ -434,6 +434,10 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   retained. Preset IDs accompany names. Copy limits/guardrails to accounts or replays,
   with notices when queued settings need a reset. Per-underlying limits are editable.
   [Accounts](paper-trading.md#accounts).
+- Account groups mirror one order to several named accounts, sized by fixed ratio or
+  split by marked equity. Each account receives its own submission, rule checks and
+  journal, and the reply lists every account's result.
+  [Copied orders](paper-trading.md#account-groups-and-copied-orders).
 - Practice deposits and withdrawals have retry-safe IDs and appear in Dashboard
   cash-flow history. Transfers stay out of P&L; evaluation, verification and funded
   accounts refuse them. [Cash transfers](paper-trading.md#cash-transfers-and-financing).

@@ -33,6 +33,7 @@ beforeEach(() => {
   vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
   vi.spyOn(api, "orders").mockResolvedValue({ account_version: "17", orders: [] })
   vi.spyOn(api, "submitOrder").mockResolvedValue({ account_version: "18", order, fills: [] })
+  vi.spyOn(api, "accountGroups").mockResolvedValue({ groups: [] })
   vi.spyOn(api, "account").mockResolvedValue({ ...account, rules: { ...account.rules, buy_only: false } })
   vi.spyOn(api, "portfolio").mockResolvedValue({ ...portfolio, positions: [] })
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll })

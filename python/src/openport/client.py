@@ -338,6 +338,25 @@ class Client:
             raise ValueError("kind must be fills or trades")
         return self._request("GET", "/" + kind + ".csv", params=params, scoped=True)
 
+    def account_groups(self) -> JSON:
+        """Named groups of live accounts that copy_order mirrors one order to."""
+        return self._request("GET", "/account-groups", control=True)
+
+    def put_account_group(self, name: str, allocation: str, members: list[JSON]) -> JSON:
+        """Create or replace a group. allocation is "ratio" (members carry a decimal "ratio") or "equity"."""
+        return self._request("PUT", "/account-groups/" + quote(name, safe=""),
+                             {"allocation": allocation, "members": members}, control=True)
+
+    def delete_account_group(self, name: str) -> JSON:
+        return self._request("DELETE", "/account-groups/" + quote(name, safe=""), control=True)
+
+    def copy_order(self, group: str, order: JSON | None = None, **fields) -> JSON:
+        """Submit one order to every account of a group, each as its own submission; see results per account."""
+        return self._request("POST", "/orders/copy", {"group": group, "order": self._order(order, fields)}, control=True)
+
+    def preview_copy_order(self, group: str, order: JSON | None = None, **fields) -> JSON:
+        return self._request("POST", "/orders/copy/preview", {"group": group, "order": self._order(order, fields)}, control=True)
+
     def create_account(self, name: str, **settings) -> JSON:
         return self._request("POST", "/accounts", {"name": name, **settings})
 

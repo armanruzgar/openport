@@ -1,6 +1,7 @@
 #include "paper_json.hpp"
 #include "event_calendar.hpp"
 #include "openport/server/sandboxes.hpp"
+#include "openport/server/account_groups.hpp"
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
 
@@ -3083,6 +3084,180 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   return ApiResponse{200, body.dump()};
 }
 
+namespace {
+json account_group_json(const AccountGroup& group) {
+  json members = json::array();
+  for (const auto& m : group.members) {
+    members.push_back({{"account", m.account}});
+    if (group.allocation == Allocation::Ratio) members.back()["ratio"] = m.ratio.str();
+  }
+  return {{"name", group.name}, {"allocation", group.allocation == Allocation::Equity ? "equity" : "ratio"}, {"members", members}};
+}
+AccountGroup parse_account_group(std::string name, const json& body) {
+  fields(body, {"allocation", "members"});
+  AccountGroup group;
+  group.name = std::move(name);
+  const auto allocation = string_field(body, "allocation");
+  if (allocation != "ratio" && allocation != "equity") throw std::invalid_argument("allocation must be ratio or equity");
+  group.allocation = allocation == "equity" ? Allocation::Equity : Allocation::Ratio;
+  const auto& members = body.at("members");
+  if (!members.is_array()) throw std::invalid_argument("members must be an array");
+  for (const auto& m : members) {
+    if (group.allocation == Allocation::Ratio) fields(m, {"account"}, {"ratio"});
+    else fields(m, {"account"});
+    GroupMember member{string_field(m, "account")};
+    if (m.contains("ratio")) member.ratio = decimal_field(m, "ratio");
+    group.members.push_back(std::move(member));
+  }
+  validate_group(group);
+  return group;
+}
+
+/// One copied order's progress: each member's command and quantity, and its answer
+/// once its account has replied. The last reply completes the request.
+struct CopyFanOut {
+  std::mutex mutex;
+  AccountGroup group;
+  OrderRequest order;
+  bool preview = false;
+  std::vector<Quantity> quantities;
+  std::vector<std::optional<json>> results;
+  std::size_t pending = 0;
+  ApiCompletion complete;
+  void finish() {
+    json list = json::array();
+    bool all = true;
+    for (std::size_t i = 0; i < results.size(); ++i) {
+      list.push_back(*results[i]);
+      if (!list.back().value("ok", false)) all = false;
+    }
+    json body{{"group", group.name}, {"allocation", group.allocation == Allocation::Equity ? "equity" : "ratio"},
+              {"client_order_id", order.client_order_id}, {"quantity", order.quantity}, {"preview", preview}, {"results", list}};
+    // 207: some members were skipped or refused; each result says which and why.
+    complete({all ? 200 : 207, body.dump()});
+  }
+};
+
+/// /api/account-groups and /api/orders/copy: named groups of accounts and one order
+/// mirrored to each of a group's accounts as its own submission.
+bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiCompletion& complete) {
+  const auto question = request.target.find('?');
+  const std::string path = request.target.substr(0, question);
+  constexpr std::string_view prefix = "/api/account-groups";
+  const bool groups_path = path == prefix || path.starts_with(std::string(prefix) + "/");
+  const bool copy_path = path == "/api/orders/copy" || path == "/api/orders/copy/preview";
+  if (!groups_path && !copy_path) return false;
+  auto* groups = source.account_groups();
+  if (!groups) { complete(api_error(404, "NOT_FOUND", "Account groups are not offered by this source")); return true; }
+  if (!request.access.sandbox.empty()) {
+    complete(api_error(403, "ACCOUNT_PROTECTED", "Sandbox visitors trade their own account only"));
+    return true;
+  }
+  if (question != std::string::npos) { complete(api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter")); return true; }
+  try {
+    if (groups_path) {
+      if (path == prefix) {
+        if (request.method != "GET") { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return true; }
+        json list = json::array();
+        for (const auto& group : groups->list()) list.push_back(account_group_json(group));
+        complete({200, json{{"groups", list}}.dump()});
+        return true;
+      }
+      const auto name = path.substr(prefix.size() + 1);
+      if (!valid_group_name(name)) throw std::invalid_argument("A group name is 1-40 lowercase letters, digits or single hyphens");
+      if (request.method == "PUT") {
+        if (request.body.size() > 64 * 1024) throw std::invalid_argument("Body exceeds 64 KiB");
+        auto group = parse_account_group(name, strict_json(request.body));
+        for (const auto& m : group.members)
+          if (!known_account(source, m.account == kMainAccount ? std::string() : m.account)) {
+            complete(api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + m.account));
+            return true;
+          }
+        groups->put(group);
+        complete({200, account_group_json(group).dump()});
+      } else if (request.method == "DELETE") {
+        if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
+        complete(groups->remove(name) ? ApiResponse{200, json{{"deleted", name}}.dump()} : api_error(404, "UNKNOWN_GROUP", "No account group " + name));
+      } else {
+        complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method"));
+      }
+      return true;
+    }
+    if (request.method != "POST") { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return true; }
+    if (request.body.size() > 64 * 1024) throw std::invalid_argument("Body exceeds 64 KiB");
+    const auto body = strict_json(request.body);
+    fields(body, {"group", "order"});
+    const auto name = string_field(body, "group");
+    const auto group = groups->find(name);
+    if (!group) { complete(api_error(404, "UNKNOWN_GROUP", "No account group " + name)); return true; }
+    auto order = parse_order(body.at("order"));
+    if (!order.then.empty() || !order.oco.empty() || order.exits_only)
+      throw std::invalid_argument("A copied order takes no then, oco or exits_only: each account sizes its own");
+    std::vector<std::optional<Money>> equity;
+    if (group->allocation == Allocation::Equity)
+      for (const auto& m : group->members) {
+        const auto view = source.trading_view(m.account == kMainAccount ? std::string() : m.account);
+        if (!view || !view->snapshot) {
+          complete(api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + m.account));
+          return true;
+        }
+        if (!view->snapshot->valuation_complete) {
+          complete(api_error(409, "STALE_QUOTE", "Equity allocation needs every member's positions marked; " + m.account + "'s are not"));
+          return true;
+        }
+        equity.push_back(view->snapshot->equity);
+      }
+    auto fan = std::make_shared<CopyFanOut>();
+    fan->group = *group;
+    fan->order = order;
+    fan->preview = path.ends_with("/preview");
+    fan->quantities = allocate(*group, order.quantity, equity);
+    fan->results.resize(group->members.size());
+    fan->complete = std::move(complete);
+    std::vector<std::pair<std::size_t, TradingCommand>> commands;
+    for (std::size_t i = 0; i < group->members.size(); ++i) {
+      const auto& account = group->members[i].account;
+      if (fan->quantities[i] <= 0) {
+        fan->results[i] = json{{"account", account}, {"quantity", 0}, {"ok", false}, {"skipped", true},
+                               {"message", "The allocation gives this account no units"}};
+        continue;
+      }
+      TradingCommand command;
+      command.kind = fan->preview ? TradingCommand::Kind::Preview : TradingCommand::Kind::Submit;
+      command.account = account == kMainAccount ? std::string() : account;
+      command.actor = request.actor;
+      command.order = order;
+      command.order.quantity = fan->quantities[i];
+      commands.emplace_back(i, std::move(command));
+    }
+    fan->pending = commands.size();
+    if (commands.empty()) { fan->finish(); return true; }
+    for (auto& [index, command] : commands) {
+      const auto i = index;
+      const auto record = [fan, i](ApiResponse response) {
+        json result{{"account", fan->group.members[i].account}, {"quantity", fan->quantities[i]}, {"status", response.status},
+                    {"ok", response.status >= 200 && response.status < 300}};
+        try { result["response"] = json::parse(response.body); } catch (const std::exception&) { result["response"] = nullptr; }
+        const std::lock_guard lock(fan->mutex);
+        fan->results[i] = std::move(result);
+        if (--fan->pending == 0) fan->finish();
+      };
+      if (!source.post_trading(command, [command, record](TradingReply reply) { record(command_response(command, reply)); }))
+        record(api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable"));
+    }
+  } catch (const PlanRestrictionError& error) {
+    complete(api_error(422, "INVALID_RULES", error.what()));
+  } catch (const TradingError& error) {
+    complete(api_error(reason_status(error.code()), std::string(to_string(error.code())), error.what()));
+  } catch (const std::invalid_argument& error) {
+    complete(api_error(400, "INVALID_REQUEST", error.what()));
+  } catch (const std::exception& error) {
+    complete(api_error(503, "GROUPS_UNAVAILABLE", error.what()));
+  }
+  return true;
+}
+}  // namespace
+
 void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompletion complete) {
   if (request.method == "POST" && request.target.substr(0, request.target.find('?')) == "/api/sandboxes") {
     if (source.sandboxes()) source.sandboxes()->create(request, source, std::move(complete));
@@ -3090,6 +3265,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (auto rejection = sandbox_visibility(request, source)) { complete(std::move(*rejection)); return; }
+  if (account_group_api(request, source, complete)) return;
   if (request.method == "GET") { complete(handle_api(request, source)); return; }
   if (request.target.starts_with("/api/notifications/")) {
     if (!source.notifications()) { complete(api_error(503, "NOTIFICATIONS_UNAVAILABLE", "Notifications are unavailable on this source")); return; }

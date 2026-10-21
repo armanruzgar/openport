@@ -159,6 +159,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/playbooks.cpp
     server/playbook_api.cpp
     server/desk_playbooks.cpp
+    server/account_groups.cpp
     server/desk.cpp
     server/run.cpp
     server/backtest.cpp

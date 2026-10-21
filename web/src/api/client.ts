@@ -6,7 +6,7 @@ import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
 import type { NotificationChannel, NotificationStatus, TokenReloadResponse } from "./types"
 import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, Summary, Surface, RunVerification } from "./types"
-import type { Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
+import type { Account, AccountGroupDeleted, AccountGroupInput, AccountGroup, AccountGroupsResponse, AccountsResponse, CopyOrderResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
 import { activeAccount, MAIN_ACCOUNT } from "../lib/active-account"
 import { dataSource } from "../lib/data-source"
 import { isSandboxToken, writeToken } from "../lib/write-token"
@@ -241,6 +241,12 @@ export const api = {
   updateAccount: (id: string, request: UpdateAccountRequest, mode: WriteMode) => write<UpdateAccountResponse>(`/api/accounts/${encodeURIComponent(id)}`, "PATCH", mode, request),
   deleteAccount: (id: string, mode: WriteMode) => write<DeleteAccountResponse>(`/api/accounts/${encodeURIComponent(id)}`, "DELETE", mode),
   createAccount: (request: CreateAccountRequest, mode: WriteMode) => write<CreateAccountResponse>("/api/accounts", "POST", mode, request),
+  accountGroups: (signal?: AbortSignal) => request<AccountGroupsResponse>("/api/account-groups", { signal, headers: readHeaders() }),
+  putAccountGroup: (name: string, group: AccountGroupInput, mode: WriteMode) => write<AccountGroup>(`/api/account-groups/${encodeURIComponent(name)}`, "PUT", mode, group),
+  deleteAccountGroup: (name: string, mode: WriteMode) => write<AccountGroupDeleted>(`/api/account-groups/${encodeURIComponent(name)}`, "DELETE", mode),
+  /** One order to every account of a group, each its own submission; never scoped to the active account. */
+  copyOrder: (group: string, order: NewOrder, mode: WriteMode) => write<CopyOrderResponse>("/api/orders/copy", "POST", mode, { group, order }),
+  previewCopyOrder: (group: string, order: NewOrder, mode: WriteMode) => write<CopyOrderResponse>("/api/orders/copy/preview", "POST", mode, { group, order }),
   resetAccount: (request: ResetRequest, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/reset"), "POST", mode, request),
   transferCash: (client_id: string, amount: Money, mode: WriteMode) => accountWrite<Account>(scoped("/api/account/cash-flows"), "POST", mode, { client_id, amount }),
   haltUnderlying: (symbol: string, minutes: number, mode: WriteMode) => accountWrite<Account>(scoped("/api/market/halt"), "POST", mode, { symbol, minutes }),

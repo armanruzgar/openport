@@ -3640,6 +3640,49 @@ record includes the settings; replay verification and recovery never consult the
 source again. Unknown sources return 404 `UNKNOWN_ACCOUNT`; malformed IDs return
 400 `INVALID_REQUEST`. Copying is not offered when resuming an existing run.
 
+#### Account groups and copied orders
+
+An **account group** names up to sixteen live accounts (`main` for the main account)
+and how a copied order is sized across them. `PUT /api/account-groups/{name}` creates
+or replaces one with `{"allocation": "ratio" | "equity", "members": [{"account":
+"main", "ratio": "1"}, ...]}`; `DELETE` removes it and `GET /api/account-groups`
+lists them. Names follow the account ID rules. Writes need admin scope, every member
+must exist (404 `UNKNOWN_ACCOUNT` otherwise), and the server keeps at most 32 groups
+in `account-groups.json` beside the main journal, replaced atomically. Groups are
+configuration, not trading: no journal records them, and deleting one changes no
+account. Sandbox servers and visitors are not offered them.
+
+`POST /api/orders/copy` takes `{"group": name, "order": {...}}`, the order as
+`POST /api/orders` takes it, and mirrors it in the server layer: each member account
+receives its own submission of the order at its own size, through its own inbox,
+rule checks, journal and client order ID namespace, exactly as if it had been posted
+to `/api/orders?account=<id>`. Nothing is shared between the submissions; one account's
+refusal (a delta limit, a plan rule, a decided attempt) does not stop another's.
+
+- **Ratio**: each member trades the order's quantity times its ratio (0.0001 to 100),
+  rounded down: a 3-lot copied at ratios 1, 0.5 and 2.5 is 3, 1 and 7.
+- **Equity**: the order's quantity is split across the members in proportion to their
+  marked equity when the request arrives, each taking the floor of its share and the
+  largest remainders (earlier members first on ties) the units rounding leaves, so the
+  sizes add up to the order's. Every member needs complete marks (409 `STALE_QUOTE`).
+
+The sizes are computed once, before the submissions, and each journal records only its
+own order. A member allocated no units is skipped and sent nothing. The reply is 200
+when every member accepted and 207 when any was skipped or refused, with
+`results[]` giving each account, its `quantity`, `ok`, and its own HTTP `status` and
+`response` (the `SubmitOrderResponse` or error it would have answered alone).
+`POST /api/orders/copy/preview` previews every member's order on a private copy, as
+`/api/orders/preview` does. A retry with the same `client_order_id` is answered by each
+account as first submitted; under equity allocation a retry after equity moved may
+size an account differently and get `DUPLICATE_CLIENT_ID` from it. Copied orders take
+no `then`, `oco` or `exits_only` (each account sizes its own exits; brackets are
+allowed and size with each fill), nor a query parameter. They need `trade:*` (or
+admin) scope, since they trade every member.
+
+The terminal's **Manage accounts** dialog creates, edits and deletes groups, and the
+option ticket's **Copy to group** sends the order to a group instead of the active
+account, listing each account's outcome.
+
 Risk replies include `pending_requires_reset`. It is true when pending limits or
 guardrails exist and the replay's last complete batch does not reach a later plan
 trading day. Reset the replay account while it is writable to apply them now;
@@ -4073,9 +4116,9 @@ for the last successful load, without names. Protect the file as a credential.
 | Scope | Permission |
 | --- | --- |
 | `read` | Every API GET, CSV export and WebSocket ticks |
-| `trade:ACCOUNT` / `trade:*` | Orders and previews, cancels, flatten, exercise, stock closure, notes and sending or dismissing playbook stages on the named account / all live accounts |
+| `trade:ACCOUNT` / `trade:*` | Orders and previews, cancels, flatten, exercise, stock closure, notes and sending or dismissing playbook stages on the named account / all live accounts; copied orders to account groups need `trade:*` |
 | `replay` | Start, control and stop replays; trade, reset, set limits/guardrails and operate the kill switch on their isolated accounts |
-| `admin` | Everything, including limits, guardrails, kill switch, resets, payouts, settlements, account creation/rename/archive/delete, playbook definitions and modes, replay history deletion and token reload |
+| `admin` | Everything, including limits, guardrails, kill switch, resets, payouts, settlements, account creation/rename/archive/delete, account groups, playbook definitions and modes, replay history deletion and token reload |
 
 `POST /api/replay/account/reset`, `PUT /api/replay/risk/limits`,
 `PUT /api/replay/risk/guardrails` and `POST /api/replay/risk/kill` accept `replay`

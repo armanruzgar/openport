@@ -5,12 +5,13 @@ import { useRef, useState } from "react"
 import { useLive } from "../api/live"
 import type { AccountListItem, TradingStatus } from "../api/trading-types"
 import { useWriteToken } from "../lib/write-token"
+import { AccountGroupsEditor } from "./AccountGroups"
 import { Dialog } from "./Dialog"
 import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
 
 export function ManageAccountsDialog({ trading, onClose }: { trading: TradingStatus; onClose: () => void }) {
   const api = useActionApi()
-  const { account, switchAccount } = useLive()
+  const { account, switchAccount, source } = useLive()
   const client = useQueryClient()
   const token = useWriteToken()
   const list = useQuery({ queryKey: ["live-accounts"], queryFn: ({ signal }) => api.liveAccounts(signal), staleTime: 0 })
@@ -64,5 +65,6 @@ export function ManageAccountsDialog({ trading, onClose }: { trading: TradingSta
         onClick={() => void run(deleting.id, () => api.deleteAccount(deleting.id, trading.write), true)}>Confirm delete</button>
         <button type="button" className="trade-button" disabled={pending} onClick={() => setDeleting(undefined)}>Cancel</button></div>
     </div>}
+    {source === "live" && list.data && <AccountGroupsEditor trading={trading} accounts={list.data.accounts} />}
   </Dialog>
 }
