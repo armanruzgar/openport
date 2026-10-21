@@ -111,8 +111,10 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
   const auto path = request.target.substr(0, request.target.find('?'));
   if (path != "/api/backtests" && !path.starts_with("/api/backtests/")) return false;
   auto& host = *impl_;
-  const auto id = path == "/api/backtests" ? std::string{} : path.substr(15);
-  if (!id.empty() && id != "compare" && !run_id(id)) { complete(api_error(404, "NOT_FOUND", "Unknown backtest")); return true; }
+  const bool sweep = path == "/api/backtests/sweeps" || path.starts_with("/api/backtests/sweeps/");
+  const auto root = sweep ? std::string("/api/backtests/sweeps") : std::string("/api/backtests");
+  const auto id = path == root ? std::string{} : path.substr(root.size() + 1);
+  if (!id.empty() && (id != "compare" || sweep) && !run_id(id)) { complete(api_error(404, "NOT_FOUND", "Unknown backtest")); return true; }
   ApiResponse response;
   try {
     const std::lock_guard lock(host.mutex);
@@ -120,7 +122,18 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
     const auto question = request.target.find('?');
     const auto query = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!query) throw std::invalid_argument("Invalid query parameters");
+    if (sweep && request.method != "GET" && request.method != "POST" && request.method != "DELETE") {
+      complete(api_error(405, "METHOD_NOT_ALLOWED", "Unsupported sweep method")); return true;
+    }
+    if (!id.empty() && id != "compare") {
+      const auto state = !host.current.is_null() && host.current.at("id") == id ? host.current
+          : std::filesystem::is_regular_file(host.options.directory / id / "state.json") ? host.saved(id, false) : json();
+      if (!state.is_null() && state.value("kind", "backtest") != (sweep ? "sweep" : "backtest")) {
+        complete(api_error(404, "NOT_FOUND", "Unknown backtest")); return true;
+      }
+    }
     const bool purge = request.method == "DELETE" && query->contains("purge") && query->at("purge") == "true";
+    if (sweep && !query->empty()) throw std::invalid_argument("Sweeps do not accept query parameters");
     for (const auto& [key, value] : *query) {
       (void)value;
       if (!(request.method == "GET" && id == "compare" && key == "ids") &&
@@ -162,13 +175,20 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
     else if (request.method == "GET") {
       if (!id.empty()) {
         if (!std::filesystem::is_regular_file(host.options.directory / id / "state.json")) response = api_error(404, "NOT_FOUND", "Unknown backtest");
-        else response.body = host.saved(id, true).dump();
+        else {
+          const auto state = host.saved(id, true);
+          if (state.value("kind", "backtest") != (sweep ? "sweep" : "backtest")) response = api_error(404, "NOT_FOUND", "Unknown backtest");
+          else response.body = state.dump();
+        }
       } else {
         json runs = json::array();
         auto ids = host.ids();
         std::reverse(ids.begin(), ids.end());
-        for (const auto& item : ids) runs.push_back(host.saved(item, false));
-        if (!host.current.is_null() && std::find(ids.begin(), ids.end(), host.current.at("id").get<std::string>()) == ids.end()) runs.insert(runs.begin(), host.current);
+        for (const auto& item : ids) {
+          const auto state = host.saved(item, false);
+          if (state.value("kind", "backtest") == (sweep ? "sweep" : "backtest")) runs.push_back(state);
+        }
+        if (!host.current.is_null() && host.current.value("kind", "backtest") == (sweep ? "sweep" : "backtest") && std::find(ids.begin(), ids.end(), host.current.at("id").get<std::string>()) == ids.end()) runs.insert(runs.begin(), host.current);
         if (query->contains("playbook")) {
           const auto& selector = query->at("playbook");
           if (selector.empty()) throw std::invalid_argument("playbook filter must be ID or ID@VERSION");
@@ -185,7 +205,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
           }
           runs = std::move(filtered);
         }
-        response.body = json{{"runs", runs}, {"active", host.running ? host.current.at("id") : json(nullptr)}, {"label", kBacktestLabel}}.dump();
+        response.body = json{{"runs", runs}, {"active", host.running && host.current.value("kind", "backtest") == (sweep ? "sweep" : "backtest") ? host.current.at("id") : json(nullptr)}, {"label", kBacktestLabel}}.dump();
       }
     } else if (!host.options.enabled || source.status().trading.write == "disabled") {
       response = api_error(403, "WRITE_DISABLED", "Backtest writes are disabled");
@@ -197,7 +217,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         else if (!std::filesystem::is_regular_file(host.options.directory / id / "state.json")) response = api_error(404, "NOT_FOUND", "Unknown backtest");
         else if (!finished(host.saved(id, false))) response = api_error(409, "BACKTEST_RUNNING", "Run is not finished");
         else { host.purge(id); response.body = json{{"id", id}, {"deleted", true}}.dump(); }
-      } else if (!host.running || (!id.empty() && host.current.at("id") != id)) response = api_error(409, "BACKTEST_NOT_RUNNING", "No matching backtest is running");
+      } else if (!host.running || host.current.value("kind", "backtest") != (sweep ? "sweep" : "backtest") || (!id.empty() && host.current.at("id") != id)) response = api_error(409, "BACKTEST_NOT_RUNNING", "No matching backtest is running");
       else {
         host.cancel = true;
         host.current["status"] = "cancelling";
@@ -230,7 +250,14 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         const auto view = source.trading_view();
         if (!view || view->playbooks_json.empty()) throw std::invalid_argument("Playbooks are unavailable");
         BacktestRequest job;
-        try { job = parse_backtest(json::parse(request.body), json::parse(view->playbooks_json), host.scenarios, host.options.recordings); }
+        json grid;
+        std::size_t variants = 1;
+        try {
+          auto body = json::parse(request.body);
+          if (sweep) { grid = body.at("parameter_grid"); body.erase("parameter_grid"); }
+          job = parse_backtest(body, json::parse(view->playbooks_json), host.scenarios, host.options.recordings);
+          if (sweep) variants = expand_backtest_grid(job, grid).size();
+        }
         catch (const std::exception& error) { throw std::invalid_argument(error.what()); }
         job.analytics = host.options.analytics;
         job.dividends = host.options.dividends;
@@ -256,18 +283,21 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         if (host.worker.joinable()) host.worker.join();
         host.cancel = false;
         host.current = {{"id", name.str()}, {"status", "running"}, {"phase", "days"}, {"completed", 0},
-            {"keep", false}, {"bytes", 0}, {"total", job.days.size() * 2}, {"directory", std::filesystem::absolute(directory).string()}, {"label", kBacktestLabel}, {"report", nullptr}};
+            {"keep", false}, {"bytes", 0}, {"total", job.days.size() * 2 * variants}, {"directory", std::filesystem::absolute(directory).string()}, {"label", kBacktestLabel}, {"report", nullptr}};
+        if (sweep) host.current["kind"] = "sweep";
         host.running = true;
         try {
-          host.worker = std::thread([&host, job = std::move(job), directory] {
+          host.worker = std::thread([&host, job = std::move(job), directory, grid] {
             json report;
             try {
-              report = run_backtest(job, directory, host.cancel, [&](std::size_t completed, std::string_view phase) {
+              const auto progress = [&](std::size_t completed, std::string_view phase) {
                 const std::lock_guard progress_lock(host.mutex);
                 host.current["completed"] = completed;
                 host.current["phase"] = phase;
                 write_backtest_report(directory / "state.json", host.current);
-              });
+              };
+              report = grid.is_null() ? run_backtest(job, directory, host.cancel, progress)
+                  : run_backtest_sweep(job, grid, directory, host.cancel, progress);
             } catch (const std::exception& error) {
               report = {{"status", "failed"}, {"message", error.what()}};
             }
@@ -289,7 +319,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
       }
     } else response = api_error(405, "METHOD_NOT_ALLOWED", "Unsupported backtest method");
     // A newly queued job may not have created its directory yet.
-    if (request.method == "GET" && !id.empty() && !host.current.is_null() && host.current.at("id") == id && response.status == 404) {
+    if (request.method == "GET" && !id.empty() && !host.current.is_null() && host.current.at("id") == id && host.current.value("kind", "backtest") == (sweep ? "sweep" : "backtest") && response.status == 404) {
       response.status = 200;
       response.body = host.current.dump();
     }

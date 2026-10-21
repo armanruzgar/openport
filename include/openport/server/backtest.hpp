@@ -37,6 +37,12 @@ struct BacktestRequest {
 [[nodiscard]] nlohmann::json run_backtest(const BacktestRequest& request, const std::filesystem::path& directory,
     const std::atomic_bool& cancel, const std::function<void(std::size_t, std::string_view)>& progress = {});
 [[nodiscard]] nlohmann::json compare_backtests(const nlohmann::json& runs);
+/// Single-playbook JSON-pointer grid; 1-4 fields and 2-8 variants, validated before launch.
+[[nodiscard]] std::vector<std::pair<nlohmann::json, BacktestRequest>> expand_backtest_grid(
+    const BacktestRequest& request, const nlohmann::json& grid);
+[[nodiscard]] nlohmann::json run_backtest_sweep(const BacktestRequest& request, const nlohmann::json& grid,
+    const std::filesystem::path& directory, const std::atomic_bool& cancel,
+    const std::function<void(std::size_t, std::string_view)>& progress = {});
 void write_backtest_report(const std::filesystem::path& file, const nlohmann::json& report);
 
 /// One background job per host. Completed reports are read from disk after restart.
