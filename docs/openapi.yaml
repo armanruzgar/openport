@@ -29611,6 +29611,10 @@
           "max_candidates": {
             "type": "integer"
           },
+          "variance_fallback": {
+            "type": "boolean",
+            "description": "True when the chain had no at-the-money term structure for a valuation time, so its distributions used the first searched expiry settling then or later: its at-the-money IV squared times the years to that time."
+          },
           "candidates": {
             "type": "array",
             "items": {
@@ -29645,6 +29649,7 @@
           "within_budget",
           "truncated",
           "max_candidates",
+          "variance_fallback",
           "candidates",
           "label",
           "model"

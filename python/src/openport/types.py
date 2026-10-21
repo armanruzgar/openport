@@ -720,6 +720,7 @@ class StrategySearch(TypedDict):
     within_budget: int
     truncated: bool
     max_candidates: int
+    variance_fallback: bool
     candidates: list[StrategyCandidate]
     label: str
     model: str

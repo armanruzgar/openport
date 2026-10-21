@@ -846,6 +846,8 @@ export interface StrategySearch {
   within_budget: number
   truncated: boolean
   max_candidates: number
+  /** No at-the-money term structure: the distributions used an expiry's ATM IV over the time instead. */
+  variance_fallback: boolean
   candidates: StrategyCandidate[]
   label: string
   model: string

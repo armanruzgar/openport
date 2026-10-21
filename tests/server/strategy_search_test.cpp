@@ -185,6 +185,32 @@ TEST(StrategySearch, BudgetsAndCandidateCapsBoundTheSearch) {
                std::invalid_argument);
 }
 
+// A chain without an at-the-money term structure still has a spread of outcomes:
+// the variance falls back to the expiry's ATM IV over the time to the valuation.
+TEST(StrategySearch, WithoutATermStructureTheDistributionUsesTheExpirysAtmIv) {
+  auto metrics = spx();
+  for (auto& slice : metrics.slices)
+    for (auto& row : slice.strikes) row.iv = analytics::kNaN;  // quotes keep their own IVs
+  const auto date = md::trading_date(metrics.as_of);
+  const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
+  ASSERT_FALSE(server::implied_variance_until(metrics, close).has_value());
+  const auto query = std::map<std::string, std::string>{{"target", "5000"}, {"budget", "100000"}, {"structures", "vertical"},
+                                                        {"limit", "5"}, {"date", md::format_date(date)}};
+  const auto result = server::search_strategies(metrics, parse(query));
+  EXPECT_TRUE(result["variance_fallback"]);
+  ASSERT_FALSE(result["candidates"].empty());
+  const double atm = metrics.slices.front().atm_iv;
+  ASSERT_GT(atm, 0);
+  const double sigma = atm * std::sqrt(md::years_between(metrics.as_of, close));
+  for (const auto& candidate : result["candidates"]) {
+    EXPECT_NEAR(candidate["sigma"]["risk_neutral"].get<double>(), sigma, 1e-9);
+    EXPECT_GT(candidate["pop"]["risk_neutral"].get<double>(), 0);
+    EXPECT_LT(candidate["pop"]["risk_neutral"].get<double>(), 1);
+  }
+  // With the smile in place the term structure answers, and nothing falls back.
+  EXPECT_FALSE(server::search_strategies(spx(), parse(query))["variance_fallback"]);
+}
+
 TEST(StrategySearch, ThePoolRefusesWorkBeyondItsQueue) {
   server::StrategySearchPool pool(1, 1);
   std::promise<void> release;

@@ -35,7 +35,7 @@ function profileFor(query: RiskProfileQuery): RiskProfile {
 const search: StrategySearch = {
   symbol: "SPX", as_of: "2026-09-23T15:30:00Z", spot: 7000, target_price: 7000, target_date: "2026-10-16", target_time: "2026-10-16T20:00:00Z",
   budget: 1000, vol_points: 0, rank: "expected", price: "natural", structures: ["vertical"], expiries: [expiry.id], skipped: [],
-  considered: 12, evaluated: 12, unbounded: 0, over_budget: 3, within_budget: 1, truncated: false, max_candidates: 5000, label: "Derived estimates", model: "Fixture model",
+  considered: 12, evaluated: 12, unbounded: 0, over_budget: 3, within_budget: 1, truncated: false, max_candidates: 5000, variance_fallback: false, label: "Derived estimates", model: "Fixture model",
   candidates: [{ name: "Bull call 7050/7100 Oct 16", structure: "vertical", shares: 0, net: 10.5, max_loss: 1050, max_profit: 3950, breakevens: [7060.5],
     pop: { risk_neutral: 0.41, user: 0.47 }, expected: { risk_neutral: -50, user: 25 }, return_on_risk: 0.024, quantity: 1, valued_at: "2026-10-16T20:00:00Z",
     sigma: { risk_neutral: 0.05, user: 0.05 },

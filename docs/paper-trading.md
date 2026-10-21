@@ -3316,10 +3316,17 @@ at = min(target date's close, first leg's expiry)
 leg value(S) = Black76(S*(S0 + (F - S0) T'/T)/S0, K, T', IV_strike + shift, D^(T'/T)), or intrinsic once expired
 P&L(S) = sum(±ratio * 100 * value) + shares * (S - S0) - net * 100
 v = implied_variance_until(at)                   (as the probability route's)
+    or, without a term structure, IV_atm^2 * t   (first searched expiry settling at or after at)
 market:  ln S_at ~ N(ln S0 - v/2, v)             (forward at spot)
 user:    sigma_u = max(1%, sqrt(v / t) + vol_points / 100), v_u = sigma_u^2 t
          ln S_at ~ N(ln target - v_u/2, v_u)     (mean at the target)
 ```
+
+When the chain has no at-the-money term structure for a valuation time (no strike
+IVs to interpolate, say), the distributions use the at-the-money IV of the first
+searched expiry settling then or later (else its nearest kept strike's), as strikes
+are chosen, and `variance_fallback` is true; an expiry with no IV at all lists no
+strikes and is skipped.
 
 `max_loss` and `max_profit` (null when calls are net long) are the extremes over a
 price grid from 0.01% to ten times the larger of spot and target, the strikes and both

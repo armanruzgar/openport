@@ -75,6 +75,9 @@ struct Expiry {
   std::string id;
   std::vector<double> strikes;  ///< Ascending; each has a usable call, put or both.
   std::map<double, Quote> calls, puts;
+  /// Without a term structure the distribution's variance is this IV² times the
+  /// years to the valuation time: the slice's at-the-money IV, else its nearest kept strike's.
+  double fallback_iv = 0;
   const Quote* find(OptionType type, double strike) const {
     const auto& side = type == OptionType::Call ? calls : puts;
     const auto it = side.find(strike);
@@ -288,7 +291,7 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
     const auto variance = implied_variance_until(metrics, slice->expiry_time).value_or(slice->atm_iv * slice->atm_iv * slice->years);
     const double sd = std::sqrt(std::max(variance, 0.0001));
     const double low = std::min(spot, request.target_price) * std::exp(-2.5 * sd), high = std::max(spot, request.target_price) * std::exp(2.5 * sd);
-    Expiry expiry{slice, id, {}, {}, {}};
+    Expiry expiry{slice, id, {}, {}, {}, 0};
     for (const auto& row : slice->strikes) {
       if (!(row.strike >= low && row.strike <= high)) continue;
       add_quote(expiry.calls, row.strike, row.iv, row.call);
@@ -306,6 +309,13 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
     }
     std::sort(expiry.strikes.begin(), expiry.strikes.end());
     if (expiry.strikes.empty()) { skipped.push_back({{"expiry", id}, {"reason", "No tradable two-sided quotes near the spot and target"}}); continue; }
+    expiry.fallback_iv = slice->atm_iv;
+    if (!(expiry.fallback_iv > 0) || !finite(expiry.fallback_iv)) {
+      double distance = std::numeric_limits<double>::infinity();
+      for (const auto* side : {&expiry.calls, &expiry.puts})
+        for (const auto& [strike, quote] : *side)
+          if (std::abs(strike - spot) < distance) { distance = std::abs(strike - spot); expiry.fallback_iv = quote.iv; }
+    }
     expiries.push_back(std::move(expiry));
   }
 
@@ -327,6 +337,7 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
     if (calls < -1e-9) { ++unbounded; return; }
     listed.push_back(std::move(candidate));
   };
+  bool fallback = false;
   const auto value = [&](Candidate candidate) {
     md::Timestamp at = close;
     double net = candidate.shares * spot / 100, calls = candidate.shares / 100.0;
@@ -339,10 +350,18 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
     ++evaluated;
     auto& [neutral, user] = distributions[at];
     if (neutral.center == 0) {
-      const double variance = implied_variance_until(metrics, at).value_or(0);
-      neutral = {spot, variance};
       const double years = std::max(md::years_between(now, at), 1e-9);
-      const double vol = std::max(0.01, std::sqrt(variance / years) + request.vol_points / 100);
+      // No term structure to interpolate: the IV of the first searched expiry
+      // settling at or after the time, as its strikes were chosen.
+      auto variance = implied_variance_until(metrics, at);
+      if (!variance) {
+        const auto first = std::find_if(expiries.begin(), expiries.end(), [&](const Expiry& e) { return e.slice->expiry_time >= at; });
+        const double iv = first == expiries.end() ? 0.0 : first->fallback_iv;
+        variance = iv * iv * years;
+        fallback = true;
+      }
+      neutral = {spot, *variance};
+      const double vol = std::max(0.01, std::sqrt(*variance / years) + request.vol_points / 100);
       user = {request.target_price, vol * vol * years};
     }
     Scored scored;
@@ -487,13 +506,16 @@ json search_strategies(const analytics::UnderlyingMetrics& metrics, const Strate
           {"structures", request.structures}, {"expiries", searched}, {"skipped", skipped},
           {"considered", considered}, {"evaluated", evaluated}, {"unbounded", unbounded}, {"over_budget", over_budget},
           {"within_budget", results.size()}, {"truncated", truncated}, {"max_candidates", request.max_candidates},
+          {"variance_fallback", fallback},
           {"candidates", candidates},
           {"label", "Derived estimates from current quotes, not a forecast or investment advice"},
           {"model", "Per unit, entered at the far sides (or mids) and valued at the target date's close or the first leg's expiry: "
                     "Black-76 on each strike's smile IV (plus vol_points for the user's distribution), remaining life, carry and discounting "
                     "shrinking as in the risk profile; expired legs at intrinsic value. Lognormal distributions on the at-the-money implied "
                     "variance to that time: risk-neutral with the forward at spot, the user's with its mean at the target price and its "
-                    "volatility changed by vol_points. Fees and early exercise are not modelled; net short calls (unbounded loss) are excluded."}};
+                    "volatility changed by vol_points; where the chain has no at-the-money term structure (variance_fallback), the at-the-money IV "
+                    "(else the nearest strike's) of the first searched expiry settling at or after that time, squared, times the years to it. "
+                    "Fees and early exercise are not modelled; net short calls (unbounded loss) are excluded."}};
 }
 
 struct StrategySearchPool::Impl {
