@@ -3219,7 +3219,7 @@ running replay at `/api/replay/risk/profile` and for saved replay runs at
 | `iv` | Vol points added to every contract's smile IV, -100 to 100; default 0 |
 | `range`, `steps` | The moves run evenly from -`range`% to +`range`% (at most 99) in an odd number of `steps` (3 to 201); default 10 and 41 |
 | `betas` | `SYMBOL:BETA` overrides, comma-separated, each within 10 of zero |
-| `legs` | Up to eight `OSI:QUANTITY` hypothetical legs (padded OSI, signed whole contracts within 10000 of zero), comma-separated; requires `underlying` |
+| `legs` | Up to eight `OSI:QUANTITY` hypothetical legs (padded OSI, signed whole contracts from -10000 to 10000 with at most one sign, so `+-5` is refused), comma-separated; requires `underlying`. A leg larger than the held position flips it |
 | `held` | `false` values the legs alone, without the held book or its floors; default `true` |
 
 ```text

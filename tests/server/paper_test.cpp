@@ -4344,6 +4344,9 @@ TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
     for (std::size_t i = 0; i < 5; ++i)
       EXPECT_NEAR(alone["curves"][day]["pnl"][i].get<double>(), held["curves"][day]["pnl"][i].get<double>(), 1e-9) << day << "/" << i;
   // With the held book, a leg that closes it leaves nothing; one that doubles it, twice.
+  // The largest leg flips the held contract short.
+  const auto flipped = read(*engine, query + leg + ":-10000");
+  EXPECT_NEAR(flipped["curves"][1]["pnl"][4].get<double>(), -9999 * held["curves"][1]["pnl"][4].get<double>(), 1e-3);
   const auto closed = read(*engine, query + leg + ":-1");
   for (const auto& value : closed["curves"][1]["pnl"]) EXPECT_EQ(value, 0);
   EXPECT_TRUE(closed["held"]);
@@ -4351,6 +4354,10 @@ TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
   EXPECT_NEAR(doubled["curves"][1]["pnl"][4].get<double>(), 2 * held["curves"][1]["pnl"][4].get<double>(), 1e-6);
   test::capture_contract("paper", "GET", query + leg + ":1", server::handle_api({"GET", query + leg + ":1"}, *engine));
   for (const auto* bad : {"&legs=SPXW%20%20261022C05000000:0", "&legs=SPXW261022C05000000:1", "&legs=SPXW%20%20261022C05000000:x",
+                          "&legs=SPXW%20%20261022C05000000:-9223372036854775808", "&legs=SPXW%20%20261022C05000000:9223372036854775807",
+                          "&legs=SPXW%20%20261022C05000000:10001", "&legs=SPXW%20%20261022C05000000:-10001",
+                          "&legs=SPXW%20%20261022C05000000:%2B-5", "&legs=SPXW%20%20261022C05000000:-%2B5",
+                          "&legs=SPXW%20%20261022C05000000:%2B%2B5", "&legs=SPXW%20%20261022C05000000:--5",
                           "&held=false", "&held=maybe"})
     EXPECT_EQ(server::handle_api({"GET", query + std::string(bad)}, *engine).status, 400) << bad;
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/profile?legs=SPXW%20%20261022C05000000:1"}, *engine).status, 400);

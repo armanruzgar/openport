@@ -2729,10 +2729,14 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
         const auto colon = item.rfind(':');
         Quantity quantity = 0;
         const auto text = colon == std::string_view::npos ? std::string_view{} : item.substr(colon + 1);
-        const auto [end, ec] = std::from_chars(text.data() + (text.starts_with('+') ? 1 : 0), text.data() + text.size(), quantity);
+        // One optional sign: from_chars takes a minus itself, so "+-5" must be refused here.
+        const auto digits = text.substr(text.starts_with('+') ? 1 : 0);
+        const auto [end, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), quantity);
         const std::string symbol(item.substr(0, colon == std::string_view::npos ? 0 : colon));
-        valid &= colon != std::string_view::npos && ec == std::errc{} && end == text.data() + text.size() && quantity != 0 &&
-                 std::abs(quantity) <= 10000 && symbol.size() == 21 && md::parse_osi(symbol).has_value() &&
+        // Bounds compared directly: std::abs of the most negative quantity overflows.
+        valid &= colon != std::string_view::npos && !(text.starts_with('+') && digits.starts_with('-')) && ec == std::errc{} &&
+                 end == digits.data() + digits.size() && quantity != 0 && quantity >= -10000 && quantity <= 10000 &&
+                 symbol.size() == 21 && md::parse_osi(symbol).has_value() &&
                  std::none_of(legs.begin(), legs.end(), [&](const auto& leg) { return leg.first == symbol; });
         if (!valid) break;
         legs.emplace_back(symbol, quantity);
@@ -2935,8 +2939,12 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
     for (std::size_t i = 0; i < legs.size(); ++i) {
       const auto& [symbol, quantity] = legs[i];
       auto& position = positions.try_emplace(symbol, Position{leg_options[i]->contract, 0, {}, {}, {}}).first->second;
+      const bool was_long = position.quantity > 0;
       position.quantity += quantity;
       if (position.quantity == 0) positions.erase(symbol);
+      // A leg past the held size flips its side; the profile values marks, not
+      // cost, so the flipped hypothetical position carries no basis.
+      else if ((position.quantity > 0) != was_long) position.basis = position.fees = Money{};
       if (!valuations.contains(symbol)) valuations[symbol] = valuation_for(symbol, leg_options[i]->contract, leg_metrics);
       leg_list.push_back({{"symbol", symbol}, {"quantity", quantity}});
     }

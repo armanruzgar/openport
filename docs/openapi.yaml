@@ -929,7 +929,7 @@
           "name": "legs",
           "in": "query",
           "required": false,
-          "description": "Up to eight comma-separated OSI:QUANTITY legs (padded OSI, signed whole contracts within 10000 of zero) added to the profile as if held; they need underlying.",
+          "description": "Up to eight comma-separated OSI:QUANTITY legs (padded OSI, signed whole contracts from -10000 to 10000 with at most one sign) added to the profile as if held; they need underlying.",
           "schema": {
             "type": "string"
           }
@@ -3119,7 +3119,7 @@
           "name": "legs",
           "in": "query",
           "required": false,
-          "description": "Up to eight comma-separated OSI:QUANTITY legs (padded OSI, signed whole contracts within 10000 of zero) added to the profile as if held; they need underlying.",
+          "description": "Up to eight comma-separated OSI:QUANTITY legs (padded OSI, signed whole contracts from -10000 to 10000 with at most one sign) added to the profile as if held; they need underlying.",
           "schema": {
             "type": "string"
           }
