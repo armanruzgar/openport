@@ -464,6 +464,91 @@ json compare_backtests(const json& runs) {
   return result;
 }
 
+std::vector<std::pair<json, BacktestRequest>> expand_backtest_grid(const BacktestRequest& request, const json& grid) {
+  if (request.playbook.empty()) throw std::invalid_argument("Sweeps require one playbook");
+  if (!grid.is_object() || grid.empty() || grid.size() > 4) throw std::invalid_argument("Grid requires 1-4 JSON-pointer fields");
+  std::vector<std::pair<json, BacktestRequest>> variants{{json::object(), request}};
+  for (const auto& [path, values] : grid.items()) {
+    if (path.size() > 256 || (!path.starts_with("/structure/") && !path.starts_with("/management/") && !path.starts_with("/sizing/") &&
+         !path.starts_with("/conditions/") && !path.starts_with("/guardrails/") && !path.starts_with("/window/")) ||
+        !values.is_array() || values.empty() || values.size() > 8 || variants.size() * values.size() > 8)
+      throw std::invalid_argument("Grid permits 2-8 variants over playbook rule fields");
+    json unique = json::array();
+    std::vector<std::pair<json, BacktestRequest>> next;
+    for (const auto& value : values) {
+      if (value.is_structured() || value.is_null() || std::find(unique.begin(), unique.end(), value) != unique.end())
+        throw std::invalid_argument("Grid values must be distinct non-null scalars");
+      unique.push_back(value);
+      for (const auto& [parameters, base] : variants) {
+        auto job = base;
+        auto selected = parameters;
+        selected[path] = value;
+        auto& definition = job.playbooks["definitions"][job.playbook]["versions"].back();
+        // Optional object fields may be added, then validated. Never grow an
+        // array or create intermediate containers from a caller's pointer.
+        const json::json_pointer pointer(path);
+        auto& parent = definition.at(pointer.parent_pointer());
+        if (parent.is_object()) parent[pointer.back()] = value;
+        else definition.at(pointer) = value;
+        next.emplace_back(std::move(selected), std::move(job));
+      }
+    }
+    variants = std::move(next);
+  }
+  if (variants.size() < 2) throw std::invalid_argument("Grid requires at least two variants");
+  for (const auto& [parameters, job] : variants) {
+    (void)parameters;
+    validate_playbook(job.playbooks.at("definitions").at(job.playbook).at("versions").back());
+  }
+  return variants;
+}
+
+json run_backtest_sweep(const BacktestRequest& request, const json& grid, const std::filesystem::path& directory,
+    const std::atomic_bool& cancel, const std::function<void(std::size_t, std::string_view)>& progress) {
+  const auto variants = expand_backtest_grid(request, grid);
+  if (!std::filesystem::create_directory(directory)) throw std::invalid_argument("Sweep output directory already exists");
+  json report{{"schema", 1}, {"mode", "sweep"}, {"simulated", true}, {"label", kBacktestLabel}, {"status", "running"},
+      {"parameter_grid", grid}, {"variants", json::array()}, {"ranking", json::array()}, {"comparison", nullptr}};
+  json runs = json::array();
+  std::size_t completed = 0;
+  if (progress) progress(0, "variants");
+  for (std::size_t index = 0; index < variants.size(); ++index) {
+    if (cancel) { report["status"] = "cancelled"; break; }
+    std::ostringstream name;
+    name << std::setfill('0') << std::setw(6) << index + 1;
+    const auto id = name.str();
+    const auto& [parameters, job] = variants[index];
+    json result;
+    try {
+      result = run_backtest(job, directory / id, cancel, [&](std::size_t count, std::string_view) {
+        if (progress) progress(completed + count, "variants");
+      });
+    } catch (const std::exception& error) {
+      result = {{"status", "failed"}, {"message", error.what()}};
+    }
+    completed += job.days.size() * 2;
+    const auto status = result.at("status");
+    report["variants"].push_back({{"id", id}, {"parameters", parameters}, {"status", status}, {"report", result}});
+    if (result.contains("summary")) {
+      runs.push_back({{"id", id}, {"status", status}, {"report", result}});
+      const auto mean = result.at("summary").at("daily_pnl").at("mean");
+      if (status == "completed" && !mean.is_null()) report["ranking"].push_back({{"id", id}, {"parameters", parameters},
+          {"mean_daily_pnl", mean}, {"pass_rate", result.at("summary").at("pass_rate")}});
+    }
+    if (status != "completed") report["status"] = status;
+    if (runs.size() >= 2) report["comparison"] = compare_backtests(runs);
+    auto& ranking = report["ranking"];
+    std::stable_sort(ranking.begin(), ranking.end(), [](const auto& a, const auto& b) {
+      return Money::parse(a.at("mean_daily_pnl").template get<std::string>()) > Money::parse(b.at("mean_daily_pnl").template get<std::string>());
+    });
+    write_backtest_report(directory / "report.json", report);
+  }
+  if (report.at("status") == "running") report["status"] = "completed";
+  report["ranking_basis"] = "Completed variants by mean daily P&L, descending; ties keep grid order. Historical simulation, not a prediction.";
+  write_backtest_report(directory / "report.json", report);
+  return report;
+}
+
 BacktestRequest parse_backtest(const json& body, const json& catalogue,
     const std::vector<providers::Scenario>& scenarios, const std::filesystem::path& recordings, bool confined) {
   keys(body, {"playbook", "playbooks", "plan", "days", "scenarios", "scenario", "seed", "workers"});

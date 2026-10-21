@@ -136,6 +136,7 @@ The web terminal uses these routes, so anything it does can be scripted:
 | `POST /api/positions/close/preview` | A flatten's dry run: what it would cancel and close now, and the account after it, without doing it |
 | `GET/POST /api/playbooks`, `GET/PUT/DELETE /api/playbooks/{id}` | Versioned definitions, archive, account stages, forward-test windows/results and adherence/expectancy reports; `?version=N` reads an old version |
 | `PUT /api/playbooks/{id}/mode`, `POST /api/playbooks/staged/{stage}/send`, `/dismiss` | Enable staging or automatic live paper/replay trading; send or dismiss a current stage |
+| `POST /api/playbooks/{id}/evaluate`, `POST /api/signals/{id}`, `GET/POST/DELETE /api/playbooks/{id}/signal-secret` | Evaluate one live paper playbook now with a bearer token or a per-playbook webhook secret; issue, rotate or revoke that secret (admin) ([details](#signed-inbound-signals)) |
 | `GET /api/backtests/compare?ids=A,B` | Compare 2–8 finished/partial single or joint reports and sum independent run daily P&L; `combined.includes_joint` flags joint members; input/plan mismatches are flagged |
 | `GET/POST/DELETE /api/backtests`, `GET/PUT/DELETE /api/backtests/{id}` | Start a batch with exactly one of `playbook: "ID[@VERSION]"` or joint `playbooks: ["a@2", "b"]` (2–8 distinct IDs, lexical ID order), watch progress, read reports, pin, cancel or purge (`?purge=true`); mutations need replay scope |
 | `GET /api/account/pass-odds?days=N&samples=M&playbook=ID&seed=S` | Seeded estimate from historical equity days, not a prediction; needs ten days with intraday extremes (422 `PASS_ODDS_UNAVAILABLE` otherwise) |
@@ -416,3 +417,180 @@ The account's `costs` reports amounts paid by kind, `total`, `resets_used`,
 and `fee_kind`. Attempts expose their starting charge and phase in `rules`.
 See [program costs](paper-trading.md#program-costs-and-reset-limits-f64) for precise
 identity, purchase, historical-journal and illustrative-pricing semantics.
+
+## Paper event stream (v1)
+
+`/ws/events?version=1&account=main&source=live` is an opt-in WebSocket sibling
+of `/ws`. The existing `/ws` tick channel is unchanged. `source=replay` selects
+the active replay's events; `run_id` identifies the replay. Live also includes
+the synthetic demo market. History does not emit recovered events. The first
+message is `{type:"event_stream", version:1, account, source}`, confirming the
+subscription is installed. Subsequent messages are:
+
+```json
+{"type":"event","version":1,"sequence":"17","event":"fill","account":"main","source":"live","run_id":null,"market_time":null,"simulated":true,"message":"Synthetic example","details":{"id":"1","order_id":"1","symbol":"example","side":"buy","quantity":1,"price":"1.25"}}
+```
+
+Kinds reuse the notification publisher: `fill`, `order_state`, `order_rejected`,
+`alert`, `rule_trip`, `playbook_ready`, `floor`, `assignment`, `exercise` (future
+kinds may be added). The stream always includes `order_state`, which outbound
+channels receive only when listed. `floor` fires only when the account enters or
+leaves the default $500 warning band of `breach.room` (inclusive), with
+`details.warning` true on entry and false on exit and `details.floor_distance`;
+unchanged observations and unknown room are silent. `details` carries fill/order/alert/stage IDs and kind-specific
+evidence. `market_time` is the engine's event timestamp, null when unknown;
+`simulated:true` describes paper execution, not the provenance of market prices.
+Read `status.provider` to distinguish recorded, generated and provider quotes.
+`sequence` is a process-local decimal-string counter shared across accounts;
+gaps can belong to another account. It is not a durable cursor.
+
+Authentication, named-token revocation, Host, Origin and sandbox restrictions
+match the existing WebSocket transport. Sandbox credentials may subscribe only
+to their own live account. Read access follows the HTTP read policy; use
+`--require-token` for private reads. A 256-message FIFO bounds each connection;
+a slow consumer is disconnected rather than silently losing a fill. There is no
+resume or exactly-once delivery guarantee. On startup and every disconnect,
+reconcile `/api/fills` and `/api/orders`. `openport.stream.events()` yields typed
+`Event` objects; `openport.bot.Runner` uses the stream to wake REST reconciliation
+and falls back to polling if streaming is unavailable. Outbound notification
+configuration is independent: the local channel works on demo/replay without
+enabling external notification delivery.
+
+## Signed inbound signals
+
+Two routes request a fresh evaluation of one existing live paper playbook using its
+normal conditions, sizing and risk checks:
+
+| Route | Credential | For |
+| --- | --- | --- |
+| `POST /api/signals/{playbook}?account=ID` | That playbook and account's signal secret; bearer tokens are refused (403 `SIGNAL_BEARER_REJECTED`) | Webhook senders such as TradingView or a script |
+| `POST /api/playbooks/{id}/evaluate?account=ID` | Bearer token with `trade:ID`, `trade:*` or admin; body `{}` or empty | `Client.signal()`, the MCP `evaluate_playbook` tool |
+
+A webhook sender never holds an API token, and an API token is never a signing key.
+Replay and sandbox accounts are refused on both routes.
+
+### Signal secrets
+
+An admin issues one secret per playbook and account:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' -d '{}' \
+  'https://openport.example/api/playbooks/morning/signal-secret?account=main'
+# {"playbook":"morning","account":"main","secret":"opsig_…","created_at":"…","rotated":false}
+```
+
+The secret is `opsig_` plus 32 random bytes in hex, returned only by this call
+(HTTP 201). Posting again rotates it: the previous secret stops working at once.
+`DELETE` revokes it; `GET` reports only `configured` and `created_at`. The secret
+authorises only evaluating that playbook on that account through `/api/signals`;
+it is not a bearer token and opens no other route. Unknown pairs and wrong secrets
+both return 403 `INVALID_SIGNAL_SIGNATURE`. At most 256 secrets exist.
+
+Only the SHA-256 digest is stored, in `signal-secrets.json` beside the paper
+journal and `playbooks.json`, written owner-only and replaced atomically; without
+a journal the store lasts for the process. Standard HMAC first hashes keys longer
+than its 64-byte block, so the digest is enough to verify signatures; treat the file
+as a credential. It is never returned by the API.
+
+### HMAC mode (preferred)
+
+Send `X-OpenPort-Timestamp: UNIX_SECONDS` and `X-OpenPort-Signature: sha256=HEX`
+with the body `{"action":"evaluate","nonce":"UNIQUE"}`, where HEX is HMAC-SHA256
+keyed by the secret text over:
+
+```text
+TIMESTAMP\nPOST\n/api/signals/PLAYBOOK?account=ID\nRAW_JSON_BODY
+```
+
+The timestamp, method, exact encoded request target (including query order),
+newlines and raw body bytes all participate; sign after serialization. The
+`sha256=` prefix is optional. The timestamp may differ from the server clock by up
+to 300 seconds in either direction (409 `SIGNAL_EXPIRED` otherwise) and must not be
+earlier than server startup, since nonces are kept in memory. A sender whose clock
+lags may therefore be refused for that lag just after a restart.
+
+```python
+import hashlib, hmac, json, time, urllib.request, uuid
+secret, target = "opsig_…", "/api/signals/morning?account=main"
+body = json.dumps({"action": "evaluate", "nonce": str(uuid.uuid4())}).encode()
+stamp = str(int(time.time()))
+signature = hmac.new(secret.encode(), f"{stamp}\nPOST\n{target}\n".encode() + body, hashlib.sha256).hexdigest()
+urllib.request.urlopen(urllib.request.Request("https://openport.example" + target, body, method="POST", headers={
+    "Content-Type": "application/json", "X-OpenPort-Timestamp": stamp, "X-OpenPort-Signature": "sha256=" + signature}))
+```
+
+`openport.Client.send_signal(id, secret)` does the same.
+
+### Static mode (senders that cannot set headers)
+
+Without the signature headers, the body carries the secret and a dedupe ID:
+`{"action":"evaluate","nonce":"DEDUPE_ID","secret":"opsig_…"}`. The secret never
+goes in the URL, where proxies and logs keep it. It is compared in constant time.
+openportd serves plain HTTP, so static mode is refused with 403
+`SIGNAL_TLS_REQUIRED` unless:
+
+- the operator configured a trusted proxy with `--client-ip-header` and that proxy
+  sends `X-Forwarded-Proto: https` (the proxy must set or overwrite it, as it does
+  the client IP header), or
+- no proxy is configured and the connection comes from loopback without
+  `X-Forwarded-Proto` naming another scheme.
+
+openportd cannot see whether a local proxy without `--client-ip-header` received
+the request over TLS: such a proxy must terminate TLS itself. A captured static
+request is replayable once its dedupe ID expires, so prefer HMAC where possible.
+
+A TradingView alert, for example, posts its message as the body to a webhook URL
+behind an HTTPS proxy. Use a unique dedupe ID per alert firing:
+
+```text
+Webhook URL: https://openport.example/api/signals/morning?account=main
+Message:     {"action":"evaluate","nonce":"{{ticker}}-{{timenow}}","secret":"opsig_…"}
+```
+
+TradingView retries and duplicate firings with the same `{{timenow}}` are refused as
+replays.
+
+### Nonces, limits and outcome
+
+Nonces are 1–128 letters, digits, `_`, `-`, `.` or `:` and are consumed per secret
+before evaluation, even if evaluation fails. Reuse returns 409 `SIGNAL_REPLAY`.
+HMAC nonces are kept until their timestamp leaves the window; static dedupe IDs
+for 24 hours. Each secret allows 60 accepted signals per rolling minute and 2048
+retained nonces; saturation returns 429 `SIGNAL_RATE_LIMIT` with Retry-After.
+Rotating or revoking a secret discards its nonces. Do not automatically retry an
+uncertain signal: inspect playbooks/orders before deciding on a new nonce.
+
+Mode is never changed: `off` refuses evaluation; `stage` leaves an order for manual
+review/send; `auto` can submit paper orders. A valid signal may still produce no
+order because a condition, cooldown, entry cap, session or risk check fails. The
+response is the account's playbook publication with stages and reasons. Webhook
+evaluations are attributed to the actor `signal`.
+
+## Parameter sweeps
+
+`POST /api/backtests/sweeps` accepts the single-playbook backtest body plus
+`parameter_grid`, an object of JSON-pointer paths to distinct scalar values:
+
+```json
+{"playbook":"morning@2","plan":"eod-50k","scenarios":5,"seed":"81723","workers":2,"parameter_grid":{"/structure/template/width":[5,10],"/management/take_profit_percent":[25,50]}}
+```
+
+One to four fields produce two to eight Cartesian variants. Paths may address
+`structure`, `conditions`, `sizing`, `management`, `guardrails` or `window` children.
+Parent objects and array elements must exist; optional scalar object fields may
+be added. Identity and version cannot change. Every variant validates before the job starts.
+Variants run sequentially; each uses the same pinned inputs, seeds and plan and
+retains its exact changed definition, trades and journals. The catalogue is not
+modified. Six-digit variant IDs are local to their sweep, not ordinary backtest IDs.
+`GET /api/backtests/sweeps` lists sweeps separately from ordinary runs;
+`GET /api/backtests/sweeps/{id}` reads progress and reports; `DELETE` cancels an
+active sweep, and `DELETE …?purge=true` removes a finished sweep and its variant
+files as it does a single run. Mutations require replay scope. The same one-job limit and retention
+policy cover ordinary runs and sweeps.
+
+Completed variants with available mean daily P&L are ranked descending using exact
+money comparisons; ties retain deterministic grid order. Cancelled/failed variants
+remain visible but are not ranked. `comparison` uses the existing backtest comparison
+calculation and flags input/plan mismatches. This is historical simulated performance,
+not a prediction; parameter searches can overfit. Client and MCP expose start, list,
+status/report and cancel operations. See [playbooks](playbooks.md).

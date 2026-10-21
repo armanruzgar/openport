@@ -5,8 +5,9 @@ simulator on the data openportd has, often delayed. They cannot send live orders
 Scenario and demo prices are generated, and are labelled simulated. Account money
 is decimal text; use `decimal.Decimal` for calculations.
 
-The client supports Python 3.10+ and has no runtime dependencies. Install from a
-checkout with `python -m pip install ./python`. Optional extras are `./python[pandas]`
+The client supports Python 3.10+ and has no runtime dependencies. The intended
+release command is `pip install openport-client` (the import name stays `openport`);
+install this unreleased client from a checkout with `python -m pip install ./python`. Optional extras are `./python[pandas]`
 for frames, `./python[ws]` for WebSockets, and `./python[mcp]` for the MCP server
 (`mcp>=2.2,<3`). A source checkout also works with `PYTHONPATH=python/src`.
 
@@ -113,7 +114,8 @@ Volatility accepts an account for plan event estimates. Surface history defaults
 to prior-close, week and month comparisons; set `compare=false` for the range list.
 Scanner rows retain individual market timestamps inside the shared source envelope.
 
-Every tool result includes `as_of` from market data, `feed` with provider and delay,
+Batch tools label simulated trading and leave aggregate market time/feed null;
+each report day retains its own input provenance. Other tool results include `as_of` from market data, `feed` with provider and delay,
 and `simulated`. Unavailable source metadata is null. Source timestamps precede a
 command unless its response contains a newer market timestamp; replay controls
 refresh the replay's published quote times. Replay receipt clocks are not used as
@@ -196,3 +198,112 @@ object with the last verified sequence/time and recovery instructions; a damaged
 account remains readable and refuses writes with `ACCOUNT_DAMAGED`.
 
 Risk scenarios accept beta weighting, days forward and term scaling without changing rule grids. `risk_history()` reports cited historical stresses and 1-day VaR/ES from stored aligned closes; missing data remains null. These read-only methods are also exposed by the MCP server.
+
+Client parity includes `get_order`, `playbooks`, `get_playbook(id, version)`,
+`create_playbook`, `version_playbook` (pass the current version), `archive_playbook`,
+`playbook_mode`, `send_staged_order`, `dismiss_staged_order`, `notifications`,
+`test_notification`, `configure_notification`, `create_sandbox`, `calendar_events`,
+`pass_odds`, `strategy_template`, `replay_history` and `get_replay`. Notification
+status comes from `status`; configuration/test require admin. Sandbox creation
+returns a secret token; store it privately. MCP intentionally omits credential
+issuance and notification administration. It exposes the other copilot reads and
+playbook, alert, journal, what-if, backtest and order-change tools. Preview before
+placing or modifying orders; review staged terms before sending. Playbook
+definition/mode changes require admin; ordinary trade scope cannot enable auto.
+
+## Strategies, events and exports
+
+`openport.bot.Strategy` has `on_start()`, `on_tick(tick)`, `on_bar(symbol, bar)`,
+`on_fill(fill)` and `on_stop()` hooks. Hooks can be sync or async and run serially;
+`self.client` is assigned before start. Run with
+`asyncio.run(openport.bot.run(strategy, client, symbols=("SPX",)))`, or construct
+`Runner` to request `stop()` and inspect `event_error`. `poll_interval` defaults
+to one second; `max_ticks` bounds an offline test. The runner never places orders
+by itself: preview and use stable client IDs in your hooks.
+
+Live and `for_replay()` clients prime existing fills, observe new fills once per
+runner, and emit closed bars only when a newer observed bar exists. `on_tick`
+receives a status snapshot on each poll or event wakeup. They do not
+fabricate missing bars. Events wake fill reconciliation; REST polling also runs
+when WebSockets are unavailable or disconnected. `event_error` retains a streaming
+failure. Create a new runner to reconnect; REST remains the source of full fill
+quote evidence. Slow hooks may delay callbacks. Keep a replay runner attached to
+one run; create a new runner after restarting the replay. History clients walk
+saved equity/fills in timestamp order and finish, without inventing unavailable
+historical market bars. `on_stop` runs on cancellation and hook errors too.
+
+`openport.stream.events(url, token=..., account=..., source="live")` yields typed
+v1 `Event` instances, separately from coalescing `ticks()`. It closes on context
+exit and does not reconnect automatically. The stream is bounded, not a durable
+log; reconcile fills/orders after disconnect. See [event semantics](../docs/api.md#paper-event-stream-v1).
+`examples/bot_monitor.py` observes live/history; `examples/bot_replay.py SCENARIO`
+uses the previewed spread example on a synthetic replay, leaving it paused.
+
+Install `openport[pandas]` for `fills_frame`, `trades_frame`, `equity_frame`,
+`backtest_frame`, `chain_frame` and `smile_frame`. Install `openport[arrow]` for
+`arrow_table(data, kind)`, `write_parquet(data, path, kind)` and
+`write_arrow(data, path, kind)`, which do not need pandas. Kinds are `fills`,
+`trades`, `equity`, `backtest`, `chain`; backtests take `section="days"` or
+`"attempts"`. Select a sweep variant's report before export.
+
+Dtype policy: decimal money strings, IDs and ISO timestamps stay strings; pandas
+uses nullable string columns, Arrow uses UTF-8. Numeric market analytics remain
+numeric. Missing values stay null; no timestamp is inferred. Nested lists/objects
+become canonical JSON strings in Arrow/Parquet, preserving their decimal text;
+frames retain them as Python objects. All-null columns have Arrow null type until
+data establishes a type, and empty exports have no inferred columns. Schema
+metadata records the money/nesting/time policy. Use `Decimal` explicitly for money
+arithmetic, or cast a known column to a suitably sized Arrow decimal type yourself.
+The offline `examples/columnar.ipynb` demonstrates exact round trips.
+
+```python
+job = client.start_sweep("morning@2", "eod-50k",
+    {"/structure/template/width": [5, 10], "/management/take_profit_percent": [25, 50]},
+    scenarios=5, seed="81723", workers=2)
+report = client.get_sweep(job["id"])
+client.purge_sweep(job["id"])  # once finished, removes the saved sweep and its files
+# Evaluate now with this bearer token's trade scope, obeying the saved playbook mode;
+# never automatically retried:
+result = client.signal("morning")
+```
+
+Webhook senders do not get an API token. An admin issues a secret that authorises
+only one playbook on one account; it is returned once and stored by the server
+only as a SHA-256 digest:
+
+```python
+admin = Client("https://openport.example", ADMIN_TOKEN, "main")
+secret = admin.issue_signal_secret("morning")["secret"]  # again to rotate
+admin.signal_secret("morning")          # {"configured": true, "created_at": ...}
+# The sender signs timestamp, method, target and body (HMAC-SHA256) and sends no bearer token:
+Client("https://openport.example", account="main").send_signal("morning", secret)
+admin.revoke_signal_secret("morning")
+```
+
+`openport.sign_signal(secret, timestamp, method, target, body)` computes the
+`X-OpenPort-Signature` value for other senders. Senders that cannot set headers,
+such as TradingView alerts, may put the secret in the JSON body with a dedupe ID
+over HTTPS only; see the [signal contract](../docs/api.md#signed-inbound-signals).
+The MCP `evaluate_playbook` tool uses the bearer route and never handles secrets.
+
+## Python releases
+
+The intended release installation is `pip install openport-client` (or
+`pip install 'openport-client[ws,mcp,arrow]'`); code still imports `openport`.
+The PyPI name `openport` belongs to an unrelated project, so the distribution is
+named `openport-client`. Until a release is verified on PyPI, install the checkout
+as above. The `python-release.yml` workflow builds and checks an sdist and wheel,
+then uses [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/)
+with OIDC, without a stored API token. It triggers on `python-vVERSION` tags,
+requires an exact match to `python/pyproject.toml`, and refuses a tag whose commit
+is not on `main` (`git merge-base --is-ancestor`). Build/test and publish use
+separate jobs; only the publish job can request an identity token, and the publish
+action is pinned to a full commit SHA (v1.14.3).
+
+The workflow file cannot enforce GitHub's environment protection. Before the first
+release, a repository admin must configure the `pypi` environment under
+Settings > Environments with a deployment tag rule that allows only `python-v*`
+tags and at least one required reviewer. The package owner must also register
+`openport-client` on PyPI with a trusted publisher for repository `38st/openport`,
+workflow `python-release.yml` and environment `pypi`. No package has been
+published and no GitHub settings were changed as part of this change.

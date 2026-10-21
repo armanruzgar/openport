@@ -154,8 +154,8 @@ class Contract:
             path = template.replace("{symbol}", quote(symbol, safe="")).replace("{run_id}", quote(run_id or "", safe=""))
             if playbook is not None:
                 path = path.replace("/playbooks/{id}", "/playbooks/" + quote(playbook, safe=""))
-            if path == "/api/backtests/{id}":
-                path = "/api/backtests/000000"  # A missing saved run exercises the documented error.
+            if path in {"/api/backtests/{id}", "/api/backtests/sweeps/{id}"}:
+                path = path.replace("{id}", "000000")  # A missing saved run exercises the documented error.
             path = path.replace("/orders/{id}", "/orders/1")
             if "{" in path:
                 continue

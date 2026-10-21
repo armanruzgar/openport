@@ -5118,6 +5118,386 @@
         "x-scope": "read"
       }
     },
+    "/ws/events": {
+      "get": {
+        "summary": "Subscribe to versioned account events",
+        "x-scope": "read",
+        "description": "Opt-in sibling of /ws. Starts with EventStreamReady, then PaperEvent messages from Notifications::publish. Live includes demo paper accounts; replay carries run_id. No historical delivery or resume; sequence is process-local and gaps may belong to other accounts. Reconcile REST fills/orders after every disconnect. A slow consumer exceeding 256 queued messages is disconnected. Existing token, origin, host and sandbox account checks apply. Times come from the engine; missing market time stays null.",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "const": 1
+            }
+          },
+          {
+            "name": "account",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "live",
+                "replay"
+              ],
+              "default": "live"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "x-messages": [
+          {
+            "$ref": "#/components/schemas/EventStreamReady"
+          },
+          {
+            "$ref": "#/components/schemas/PaperEvent"
+          }
+        ]
+      }
+    },
+    "/api/signals/{playbook}": {
+      "parameters": [
+        {
+          "name": "playbook",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,15}$"
+          }
+        },
+        {
+          "name": "account",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "summary": "Evaluate a named live paper playbook from a webhook signal",
+        "x-scope": "signal-secret",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybooksResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignalRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-OpenPort-Timestamp",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{1,12}$"
+            },
+            "description": "HMAC mode: Unix wall-clock seconds, within 300 seconds of the server clock in either direction and not before server startup."
+          },
+          {
+            "name": "X-OpenPort-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(sha256=)?[0-9a-fA-F]{64}$"
+            },
+            "description": "HMAC mode: hex HMAC-SHA256 keyed by the signal secret over TIMESTAMP + newline + METHOD + newline + exact request target + newline + raw body. The sha256= prefix is optional."
+          }
+        ],
+        "description": "Authenticated only by the per-playbook, per-account secret from POST /api/playbooks/{id}/signal-secret; an Authorization header is refused with 403 SIGNAL_BEARER_REJECTED (bearer clients use POST /api/playbooks/{id}/evaluate). HMAC mode sends X-OpenPort-Timestamp and X-OpenPort-Signature with body {action, nonce}. Static mode, for senders that cannot set headers, puts the secret in the body {action, nonce, secret} (never the URL); it is refused with 403 SIGNAL_TLS_REQUIRED unless the peer is loopback or the configured trusted proxy (--client-ip-header) reports X-Forwarded-Proto: https. A secret authorises only its own playbook and account; unknown pairs and wrong secrets both return 403 INVALID_SIGNAL_SIGNATURE. Nonces (dedupe IDs) are consumed per secret before evaluation, including failed evaluations: 409 SIGNAL_REPLAY on reuse, kept for the timestamp window (HMAC) or 24 hours (static). Old or future timestamps return 409 SIGNAL_EXPIRED. 60 accepted signals per rolling minute and 2048 retained nonces per secret; 429 SIGNAL_RATE_LIMIT includes Retry-After. Never automatically retry an uncertain signal. Evaluates only the named playbook/account through normal conditions, sizing and risk checks: off is refused, stage remains manual, auto may place paper orders. Does not bypass conditions or change mode."
+      }
+    },
+    "/api/backtests/sweeps": {
+      "get": {
+        "summary": "List saved parameter sweeps",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestSweepListing"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Start a bounded playbook parameter sweep",
+        "x-scope": "replay",
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestSweepState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BacktestSweepRequest"
+              }
+            }
+          }
+        },
+        "description": "2-8 Cartesian variants over 1-4 scalar JSON-pointer fields under structure, conditions, sizing, management, guardrails or window. Every resulting definition validates before launch. One sweep/backtest job at a time. Variants run sequentially, using identical pinned days, seeds and plan. Ranked by completed mean daily P&L, descending; ties retain grid order. No prediction or parameter optimization guarantee. Reports preserve exact changed definitions; saved catalogue versions are untouched. Sweeps are listed separately from ordinary backtests."
+      }
+    },
+    "/api/backtests/sweeps/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Read sweep progress, variants and ranking",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BacktestSweepState"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Cancel an active parameter sweep or purge a saved one",
+        "x-scope": "replay",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BacktestSweepState"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BacktestDeleted"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "description": "Without purge, request cancellation of the active sweep. With purge=true, permanently remove a finished, cancelled, failed or interrupted sweep and all its variant files, including pinned sweeps, as for single runs. 409 while active: cancel first and wait. 404 unknown sweep or an ordinary run ID.",
+        "parameters": [
+          {
+            "name": "purge",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "const": true
+            },
+            "description": "Omit to cancel; true to delete a saved sweep."
+          }
+        ]
+      }
+    },
+    "/api/playbooks/{id}/evaluate": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,15}$"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "post": {
+        "summary": "Evaluate a named live paper playbook with a bearer token",
+        "description": "The bearer-authenticated sibling of /api/signals/{playbook}, used by Client.signal and the MCP evaluate_playbook tool. Requires trade scope for the account (or admin) and no signal secret or signature. Replay and sandbox credentials are refused. Same evaluation semantics: off is refused, stage remains manual, auto may place paper orders; mode is never changed. Never automatically retry.",
+        "x-scope": "trade:ACCOUNT",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybooksResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/playbooks/{id}/signal-secret": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,15}$"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "summary": "Whether a webhook signal secret exists",
+        "description": "Admin. Reports only whether a secret exists and when it was issued; never the secret or its digest.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalSecretStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Issue or rotate a webhook signal secret",
+        "description": "Admin. Generates 32 random bytes and returns the secret (opsig_ plus 64 hex digits) once, with 201. Only its SHA-256 digest is stored, in signal-secrets.json beside the paper journal (owner-only). Issuing again rotates: the previous secret stops working at once. The secret authorises only evaluating this playbook on this account through /api/signals. Sandbox accounts are refused; at most 256 secrets (409 SIGNAL_SECRET_LIMIT). Because standard HMAC hashes keys longer than 64 bytes, the stored digest can verify signatures; protect the file like a credential.",
+        "x-scope": "admin",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalSecretIssued"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Revoke a webhook signal secret",
+        "description": "Admin. The secret stops working at once. 404 when none exists.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignalSecretRevoked"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/account/cash-flows": {
       "parameters": [
         {
@@ -20905,6 +21285,10 @@
             "type": "string"
           },
           {
+            "const": "order_state",
+            "type": "string"
+          },
+          {
             "const": "order_rejected",
             "type": "string"
           },
@@ -25281,6 +25665,1283 @@
           "entry_reasons",
           "rule_trips"
         ]
+      },
+      "PaperEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "event"
+          },
+          "version": {
+            "const": 1
+          },
+          "sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          },
+          "event": {
+            "type": "string",
+            "description": "fill, order_state, order_rejected, alert, rule_trip, playbook_ready, floor, assignment, exercise; future kinds may be added."
+          },
+          "account": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "replay"
+            ]
+          },
+          "run_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "market_time": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simulated": {
+            "const": true
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "type",
+          "version",
+          "sequence",
+          "event",
+          "account",
+          "source",
+          "run_id",
+          "market_time",
+          "simulated",
+          "message",
+          "details"
+        ],
+        "additionalProperties": true
+      },
+      "EventStreamReady": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "const": "event_stream"
+          },
+          "version": {
+            "const": 1
+          },
+          "account": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "live",
+              "replay"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "version",
+          "account",
+          "source"
+        ],
+        "additionalProperties": false
+      },
+      "SignalRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "HMAC mode, with signature headers.",
+            "properties": {
+              "action": {
+                "const": "evaluate"
+              },
+              "nonce": {
+                "$ref": "#/components/schemas/SignalNonce"
+              }
+            },
+            "required": [
+              "action",
+              "nonce"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "description": "Static mode, for senders that cannot set headers; requires HTTPS or loopback.",
+            "properties": {
+              "action": {
+                "const": "evaluate"
+              },
+              "nonce": {
+                "$ref": "#/components/schemas/SignalNonce"
+              },
+              "secret": {
+                "type": "string",
+                "description": "The signal secret, sent only in the body over TLS."
+              }
+            },
+            "required": [
+              "action",
+              "nonce",
+              "secret"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "BacktestSweepRequest": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string",
+            "description": "ID or ID@VERSION; latest is pinned at start. Exactly one of playbook and playbooks."
+          },
+          "plan": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "initial_cash": {
+                    "$ref": "#/components/schemas/Money"
+                  },
+                  "rules": {
+                    "type": "object",
+                    "properties": {
+                      "plan": {
+                        "type": "string"
+                      },
+                      "profit_target": {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      "max_drawdown": {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      "drawdown_mode": {
+                        "anyOf": [
+                          {
+                            "const": "intraday",
+                            "type": "string"
+                          },
+                          {
+                            "const": "end_of_day",
+                            "type": "string"
+                          },
+                          {
+                            "const": "static",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "intraday: the floor trails every equity high; end_of_day: it trails each day's close at rollover; static: it stays at the starting balance less max_drawdown."
+                      },
+                      "buy_only": {
+                        "type": "boolean"
+                      },
+                      "defined_risk": {
+                        "type": "boolean"
+                      },
+                      "buying_power": {
+                        "type": "boolean"
+                      },
+                      "slippage_ticks": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10
+                      },
+                      "margin": {
+                        "enum": [
+                          "strategy",
+                          "portfolio"
+                        ]
+                      },
+                      "lock_balance": {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      "expiry_cutoff": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "max_contracts_held": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100000,
+                        "description": "Held option contracts plus working opening contracts; shares excluded. Zero disables."
+                      },
+                      "require_stop_loss": {
+                        "type": "boolean",
+                        "description": "Opening orders require a protective bracket stop trigger; user cancellation is refused while its position remains open. Default false."
+                      },
+                      "max_trade_risk": {
+                        "$ref": "#/components/schemas/Money",
+                        "description": "Maximum per-order loss before fees; null or zero disables. At the option/combo stop price, otherwise bounded expiry payoff. Unbounded or unknown loss refuses."
+                      },
+                      "max_trade_risk_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Percent of equity minus the plan floor at entry/change, rounded down to micro-dollars. Zero disables; ignored without a floor. The tighter active risk limit applies."
+                      },
+                      "time_limit_days": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 366,
+                        "description": "Calendar days; zero disables. Evaluation and verification only; funded requires zero."
+                      },
+                      "inactivity_days": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 366,
+                        "description": "Calendar days; zero disables. Own executions reset activity; system closes do not."
+                      },
+                      "underlyings": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Z0-9.]{1,12}$"
+                        },
+                        "maxItems": 32,
+                        "uniqueItems": true,
+                        "description": "Allowed opening underlyings; empty permits all. SPX includes SPXW options."
+                      },
+                      "trading_start": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "HH:MM New York; both hours set, start before end, or both null. Start inclusive, end exclusive; reducing orders exempt."
+                      },
+                      "trading_end": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "HH:MM New York; both hours set, start before end, or both null. Start inclusive, end exclusive; reducing orders exempt."
+                      },
+                      "phase": {
+                        "anyOf": [
+                          {
+                            "const": "evaluation",
+                            "type": "string"
+                          },
+                          {
+                            "const": "verification",
+                            "type": "string"
+                          },
+                          {
+                            "const": "funded",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "payouts": {
+                        "type": "object",
+                        "properties": {
+                          "qualifying_profit": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/qualifying_profit"
+                          },
+                          "qualifying_days": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/qualifying_days"
+                          },
+                          "withdrawal_percent": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/withdrawal_percent"
+                          },
+                          "split_percent": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/split_percent"
+                          },
+                          "minimum": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/minimum"
+                          },
+                          "caps": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/caps"
+                          },
+                          "consistency_percents": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/consistency_percents"
+                          },
+                          "buffer": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/buffer"
+                          },
+                          "buffer_payouts": {
+                            "$ref": "#/components/schemas/PayoutRules/properties/buffer_payouts"
+                          }
+                        },
+                        "required": [
+                          "qualifying_days"
+                        ],
+                        "additionalProperties": false,
+                        "description": "Custom funded plans require qualifying_days; other payout fields retain their defaults."
+                      },
+                      "lock_at_start": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "The trailing floor locks at the attempt's starting balance (not with lock_balance or a static floor)."
+                      },
+                      "profit_basis": {
+                        "anyOf": [
+                          {
+                            "const": "equity",
+                            "type": "string"
+                          },
+                          {
+                            "const": "balance",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "What counts as profit for the target, consistency and profitable days: marked equity, or the closed balance (cash plus the positions' cost). A balance target also needs every position closed. Default equity."
+                      },
+                      "daily_loss_basis": {
+                        "anyOf": [
+                          {
+                            "const": "equity",
+                            "type": "string"
+                          },
+                          {
+                            "const": "balance",
+                            "type": "string"
+                          },
+                          {
+                            "const": "higher",
+                            "type": "string"
+                          },
+                          {
+                            "const": "peak",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "What the daily loss limit is measured from: the day's opening equity (default), its opening closed balance, the higher of the two, or the day's equity high."
+                      },
+                      "daily_loss_action": {
+                        "anyOf": [
+                          {
+                            "const": "lock",
+                            "type": "string"
+                          },
+                          {
+                            "const": "fail",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "lock (default): close every position and refuse opening orders until the next trading day; fail: fail the attempt."
+                      },
+                      "consistency_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "default": 0,
+                        "description": "A pass needs the best day's profit at most this percent of consistency_basis; 0 disables."
+                      },
+                      "consistency_basis": {
+                        "anyOf": [
+                          {
+                            "const": "total",
+                            "type": "string"
+                          },
+                          {
+                            "const": "positive_days",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "What the best day is compared with: the attempt's total profit (default) or the sum of its profitable days."
+                      },
+                      "min_trading_days": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 366,
+                        "default": 0,
+                        "description": "A pass needs this many days with an execution of the trader's own orders."
+                      },
+                      "min_profitable_days": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 366,
+                        "default": 0,
+                        "description": "A pass needs this many days whose profit reaches profitable_day_profit."
+                      },
+                      "account_type": {
+                        "anyOf": [
+                          {
+                            "const": "margin",
+                            "type": "string"
+                          },
+                          {
+                            "const": "cash",
+                            "type": "string"
+                          },
+                          {
+                            "const": "ira",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "margin (default): anything its margin allows. cash: calls sold only against 100 shares each, short puts secured with their strike, no spreads netted, no short sales. ira: as cash, but spreads net and a long call covers a short one. Cash and IRA accounts use strategy margin and enforce buying power."
+                      },
+                      "house_margin_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 400,
+                        "default": 0,
+                        "description": "A broker's house margin, in percent on top of Reg T's naked requirement and a short sale's margin (strategy), or of each underlying's scan (portfolio)."
+                      },
+                      "pm_vol_shock": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 50,
+                        "default": 0,
+                        "description": "Portfolio margin also scans implied volatility this many points up and down."
+                      },
+                      "fill_latency_ms": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 60000,
+                        "default": 0,
+                        "description": "Wait for a valid quote at or after acceptance (trigger time for stops) plus this market-time delay."
+                      },
+                      "impact_ticks": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 0,
+                        "description": "Simulated adverse ticks per extra displayed-size block; zero retains displayed-size caps."
+                      },
+                      "inside_fill_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "default": 0,
+                        "description": "Off at zero (omitted in responses and journals). A limit strictly inside a spread fills at its limit when this percent of the way from own side to far side. Net combos allocate improvement by leg spread. Displayed size only; latency applies, slippage and impact do not worsen an inside fill. Markets and stops are unchanged."
+                      },
+                      "daily_loss_limit": {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      "profitable_day_profit": {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      "day_end_minutes": {
+                        "type": "integer",
+                        "minimum": 975,
+                        "maximum": 1440,
+                        "description": "Plan day boundary in New York minutes, 16:15 through 24:00."
+                      },
+                      "flat_time": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Optional HH:MM New York mandatory close time, strictly before day_end_minutes (00:00 to 23:59). Null disables. Once per plan trading date, cancels openings and closes tradable options and shares; remaining closes retry on fresh quotes. FLAT_TIME blocks openings until day_end_minutes, with actual=current NY HH:MM, limit=flat_time HH:MM, scope=account."
+                      },
+                      "no_overnight": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Fail an active evaluation or funded attempt with OVERNIGHT_HOLD on a plan date change with held positions, excluding options awaiting settlement. No marks required. Liquidation uses system:overnight:N option orders and rule stock fills. Independent of flat_time. Takes precedence over HOLD_RESTRICTED if both fail at the same rollover."
+                      },
+                      "events": {
+                        "type": "array",
+                        "maxItems": 256,
+                        "items": {
+                          "$ref": "#/components/schemas/PlanEvent"
+                        },
+                        "default": [],
+                        "description": "Saved in the plan journal, sorted and deduplicated by time, kind, symbol, session and label. Only these events restrict the reducer."
+                      },
+                      "news_before_minutes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 240,
+                        "default": 0
+                      },
+                      "news_after_minutes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 240,
+                        "default": 0,
+                        "description": "News window is [time-before,time+after); both zero disables."
+                      },
+                      "news_action": {
+                        "type": "string",
+                        "enum": [
+                          "block",
+                          "flatten"
+                        ],
+                        "default": "block"
+                      },
+                      "hold_restrictions": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "weekend",
+                            "earnings",
+                            "ex_dividend",
+                            "split"
+                          ]
+                        },
+                        "default": [],
+                        "description": "A set; duplicates are removed. Empty disables holding restrictions."
+                      },
+                      "hold_cutoff": {
+                        "type": "string",
+                        "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$",
+                        "default": "15:45",
+                        "description": "New York HH:MM, strictly before day_end. The first transaction at/after cutoff acts once even across a gap. Flat time closes first on same-transaction ties; existing system closes retain their labels and do not duplicate."
+                      },
+                      "scaling": {
+                        "type": "array",
+                        "maxItems": 16,
+                        "items": {
+                          "$ref": "#/components/schemas/ScalingStep"
+                        },
+                        "description": "Empty disables. First profit is zero; profits strictly increase; contracts do not decrease. Gross option contracts held, each leg counted, shares excluded. Closed balance less start selects the next session limit at rollover; losses can lower it. Excess openings are refused with SCALING_LIMIT, without a grace period."
+                      },
+                      "size_scaling": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/components/schemas/SizeScaling"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "no_hedging": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Reducer rule: refuse an opening order whose dollar delta opposes held dollar delta on its underlying, including shares. Pure reductions and system exits are exempt; unknown/stale delta refuses with MISSING_VALUATION."
+                      },
+                      "no_counter_positions": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Acceptance and fill checks against opposite held dollar delta and each working opening order in other live accounts. Working orders are compared separately, without netting. Only the ordering account setting counts. Archived, replay and sandbox accounts are excluded. Acceptance refusal is not journaled; a resting order that would violate the rule cancels with COUNTER_POSITION and recorded evidence at fill. Replay and single-account servers have no other accounts."
+                      },
+                      "max_volume_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "default": 0,
+                        "description": "At acceptance and each proposed fill, per option leg, (absolute held contracts + opening contracts including ratio) * 100 <= percent * current trading-date volume. Zero disables. Unknown/invalid/stale volume refuses MAX_VOLUME_SHARE. Pure reductions and shares are exempt. Acceptance refusal is not journaled. At fill, violations cancel the remaining order with MAX_VOLUME_SHARE and its evidence; prior partial fills remain. Scenario backtests support this rule using current-revision generated option volume. Recording days without usable current-date option volume reject with HTTP 400."
+                      },
+                      "trade_consistency_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "F29: best profitable closed whole option trade, net of fees, at most this percent of attempt profit under profit_basis. Zero disables; ignored in funded phase. Satisfied when no profitable closed trade exists."
+                      },
+                      "min_trades": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10000,
+                        "description": "F30: minimum fully closed whole option trades; includes settlement, expiry, assignment and account liquidation. Zero disables; ignored in funded phase."
+                      },
+                      "min_hold_seconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "description": "Minimum market-time age for ordinary user reductions, measured from first opening fill. Zero disables. Protective triggers, brackets, OCO, trailing stops, flatten and system exits bypass. MIN_HOLD reports actual and limit seconds."
+                      },
+                      "microscalp_seconds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 3600,
+                        "description": "Round trips with final close strictly before this many seconds are short. Set with microscalp_percent; seconds 1-3600 when active, zero allowed while disabled."
+                      },
+                      "microscalp_percent": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 100,
+                        "description": "Maximum share of attempt profit from positive net P&L of short closed option/share round trips. Set with microscalp_seconds; 0 disables, 1-100 enables. Evaluation and verification only."
+                      },
+                      "evaluation_fee": {
+                        "type": "string",
+                        "pattern": "^\\d+(\\.\\d{1,6})?$",
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                      },
+                      "reset_fee": {
+                        "type": "string",
+                        "pattern": "^\\d+(\\.\\d{1,6})?$",
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                      },
+                      "activation_fee": {
+                        "type": "string",
+                        "pattern": "^\\d+(\\.\\d{1,6})?$",
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                      },
+                      "max_resets": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1000000,
+                        "default": 0,
+                        "description": "Same-plan reset allowance; zero (default) is unlimited."
+                      }
+                    },
+                    "required": [],
+                    "additionalProperties": false,
+                    "description": "Unspecified rules use AccountRules defaults; expiry_cutoff is nanoseconds. Custom evaluation and verification rules require a positive target. Custom funded reset and backtest rules require payouts and can enable size_scaling; they do not withdraw automatically. Account creation refuses custom funded rules because a funded account starts from an account that passed its evaluation. Locked verification and funded preset IDs remain refused. Program fees are decimal-string bookkeeping costs, independent of paper balances.",
+                    "allOf": [
+                      {
+                        "if": {
+                          "required": [
+                            "trading_start"
+                          ],
+                          "properties": {
+                            "trading_start": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "then": {
+                          "required": [
+                            "trading_end"
+                          ],
+                          "properties": {
+                            "trading_end": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "required": [
+                            "trading_end"
+                          ],
+                          "properties": {
+                            "trading_end": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "then": {
+                          "required": [
+                            "trading_start"
+                          ],
+                          "properties": {
+                            "trading_start": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "required": [
+                            "phase"
+                          ],
+                          "properties": {
+                            "phase": {
+                              "const": "funded"
+                            }
+                          }
+                        },
+                        "then": {
+                          "properties": {
+                            "time_limit_days": {
+                              "const": 0
+                            }
+                          },
+                          "required": [
+                            "payouts"
+                          ]
+                        }
+                      },
+                      {
+                        "if": {
+                          "required": [
+                            "payouts"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "phase"
+                          ],
+                          "properties": {
+                            "phase": {
+                              "const": "funded"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "required": [
+                            "size_scaling"
+                          ],
+                          "properties": {
+                            "size_scaling": {
+                              "type": "object"
+                            }
+                          }
+                        },
+                        "then": {
+                          "required": [
+                            "phase"
+                          ],
+                          "properties": {
+                            "phase": {
+                              "const": "funded"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "microscalp_percent": {
+                              "minimum": 1
+                            }
+                          },
+                          "required": [
+                            "microscalp_percent"
+                          ]
+                        },
+                        "then": {
+                          "required": [
+                            "microscalp_seconds"
+                          ],
+                          "properties": {
+                            "microscalp_seconds": {
+                              "minimum": 1
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "dependentRequired": {
+                      "microscalp_seconds": [
+                        "microscalp_percent"
+                      ],
+                      "microscalp_percent": [
+                        "microscalp_seconds"
+                      ]
+                    }
+                  },
+                  "fee_per_contract": {
+                    "$ref": "#/components/schemas/Money"
+                  }
+                },
+                "required": [
+                  "initial_cash",
+                  "rules"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BacktestDayInput"
+            },
+            "minItems": 1,
+            "maxItems": 252
+          },
+          "scenarios": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 252
+          },
+          "seed": {
+            "oneOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9]{1,20}$"
+              },
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 18446744073709551615
+              }
+            ]
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "workers": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "default": 4
+          },
+          "parameter_grid": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 4,
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": [
+                  "number",
+                  "string",
+                  "boolean"
+                ]
+              }
+            },
+            "propertyNames": {
+              "pattern": "^/(structure|conditions|sizing|management|guardrails|window)/",
+              "maxLength": 256
+            },
+            "description": "JSON pointers to playbook rule fields. Parent objects and array elements must exist; optional scalar object fields may be added. Every final combination must validate; Cartesian size is capped at eight."
+          }
+        },
+        "required": [
+          "plan",
+          "playbook",
+          "parameter_grid"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "oneOf": [
+              {
+                "required": [
+                  "days"
+                ],
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "scenarios"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "seed"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "scenario"
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "scenarios",
+                  "seed"
+                ],
+                "not": {
+                  "required": [
+                    "days"
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "BacktestSweepReport": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "const": 1
+          },
+          "mode": {
+            "const": "sweep"
+          },
+          "simulated": {
+            "const": true
+          },
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "completed",
+              "cancelled",
+              "failed"
+            ]
+          },
+          "parameter_grid": {
+            "type": "object",
+            "minProperties": 1,
+            "maxProperties": 4,
+            "additionalProperties": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "uniqueItems": true,
+              "items": {
+                "type": [
+                  "number",
+                  "string",
+                  "boolean"
+                ]
+              }
+            },
+            "propertyNames": {
+              "pattern": "^/(structure|conditions|sizing|management|guardrails|window)/",
+              "maxLength": 256
+            }
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9]{6}$",
+                  "description": "Local to this sweep; not an ID for /api/backtests/{id}."
+                },
+                "parameters": {
+                  "type": "object"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/BacktestReport"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "const": "failed"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "message"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "parameters",
+                "status",
+                "report"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "ranking": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[0-9]{6}$",
+                  "description": "Local to this sweep; not an ID for /api/backtests/{id}."
+                },
+                "parameters": {
+                  "type": "object"
+                },
+                "mean_daily_pnl": {
+                  "type": "string"
+                },
+                "pass_rate": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "parameters",
+                "mean_daily_pnl",
+                "pass_rate"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "comparison": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BacktestComparison"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ranking_basis": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema",
+          "mode",
+          "simulated",
+          "label",
+          "status",
+          "parameter_grid",
+          "variants",
+          "ranking",
+          "comparison"
+        ],
+        "additionalProperties": false
+      },
+      "BacktestSweepState": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]{6}$"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "cancelling",
+              "cancelled",
+              "completed",
+              "failed",
+              "interrupted"
+            ]
+          },
+          "phase": {
+            "enum": [
+              "days",
+              "variants",
+              "finished"
+            ]
+          },
+          "completed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "directory": {
+            "type": "string"
+          },
+          "label": {
+            "const": "Simulated trading on recorded or generated days. Not a prediction. Not investment advice."
+          },
+          "error": {
+            "type": "string"
+          },
+          "report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BacktestSweepReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "playbook": {
+            "type": "object",
+            "description": "Saved report identity on listing; absent from older servers and runs without a report.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/BacktestReport/properties/summary"
+          },
+          "keep": {
+            "type": "boolean",
+            "description": "Exempt from automatic retention; defaults to false for older runs."
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Logical file bytes in the run directory, without following symlinks."
+          },
+          "mode": {
+            "const": "joint"
+          },
+          "playbooks": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "version",
+                "name"
+              ]
+            }
+          },
+          "kind": {
+            "const": "sweep"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "phase",
+          "completed",
+          "total",
+          "label",
+          "report",
+          "kind"
+        ]
+      },
+      "BacktestSweepListing": {
+        "type": "object",
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BacktestSweepState"
+            }
+          },
+          "active": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "const": "Simulated trading on recorded or generated days. Not a prediction. Not investment advice."
+          }
+        },
+        "required": [
+          "runs",
+          "active",
+          "label"
+        ]
+      },
+      "SignalNonce": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+        "description": "Unique per signal; reuse is refused as a replay. Use a stable alert ID such as TICKER-TIME as a dedupe ID."
+      },
+      "SignalSecretStatus": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "playbook",
+          "account",
+          "configured",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "SignalSecretIssued": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^opsig_[0-9a-f]{64}$",
+            "description": "Shown only in this response."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "rotated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "playbook",
+          "account",
+          "secret",
+          "created_at",
+          "rotated"
+        ],
+        "additionalProperties": false
+      },
+      "SignalSecretRevoked": {
+        "type": "object",
+        "properties": {
+          "playbook": {
+            "type": "string"
+          },
+          "account": {
+            "type": "string"
+          },
+          "revoked": {
+            "const": true
+          }
+        },
+        "required": [
+          "playbook",
+          "account",
+          "revoked"
+        ],
+        "additionalProperties": false
       },
       "CashFlow": {
         "type": "object",

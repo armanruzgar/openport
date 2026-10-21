@@ -24,6 +24,11 @@ struct ApiRequest {
   std::optional<std::string> origin;
   std::string host;
   std::string authorization;
+  std::string signal_timestamp;  ///< X-OpenPort-Timestamp, for webhook signals only.
+  std::string signal_signature;  ///< X-OpenPort-Signature, for webhook signals only.
+  /// The transport saw a loopback peer, or the configured trusted proxy reported HTTPS.
+  bool signal_secure = false;
+  bool signal_verified = false;  ///< Set only after transport secret and nonce checks.
   std::string actor = "unknown";  ///< Set by transport authentication, never request JSON.
   ApiAccess access;
   std::string client_ip;  ///< Connection peer, or the explicitly configured proxy header.

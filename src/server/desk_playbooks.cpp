@@ -16,13 +16,14 @@ struct Running {
   ~Running() { flag = false; }
 };
 }
-void Desk::evaluate_playbooks(md::Timestamp driver_time) {
+void Desk::evaluate_playbooks(md::Timestamp driver_time, std::string_view only_account, std::string_view only_playbook) {
   if (!playbooks_ || playbook_running_) return;
   Running running(playbook_running_);
   bool evaluated = false;
   const auto cancel_reason = inputs_first() && options_.playbook_cancel_labels
       ? trading::Reason::PLAYBOOK_TIME_STOP : trading::Reason::USER_CANCEL;
   for (auto& account : accounts_) {
+    if (!only_account.empty() && account.id != only_account) continue;
     if (account.archived || !account.session || !account.failure.empty() || !playbooks_->enabled(account.id)) continue;
     evaluated = true;
     const auto view = trading_view(account.id);
@@ -179,7 +180,7 @@ void Desk::evaluate_playbooks(md::Timestamp driver_time) {
           [&](trading::OrderId id, trading::Reason reason) {
             if (!options_.replay) account.session->set_actor("system");
             account.session->cancel(id, market_time_, reason == trading::Reason::PLAYBOOK_TIME_STOP ? cancel_reason : reason);
-          });
+          }, only_playbook);
     } catch (const trading::TradingError& error) {
       fail_trading(account, std::string(to_string(error.code())) + ": " + error.what());
     } catch (const std::exception& error) {
@@ -193,6 +194,16 @@ void Desk::playbook_command(const TradingCommand& command, TradingReply& reply, 
   try {
     const auto change = json::parse(command.note);
     const auto account = command.account.empty() ? std::string(kMainAccount) : command.account;
+    if (change.at("action") == "signal") {
+      const auto id = change.at("id").get<std::string>();
+      const auto publication = playbooks_->publication(account, options_.replay);
+      if (!publication.at("definitions").contains(id) || publication.at("definitions").at(id).at("deleted") == true)
+        throw std::invalid_argument("Unknown playbook");
+      if (publication.at("modes").value(id, "off") == "off") throw std::invalid_argument("Playbook is off");
+      evaluate_playbooks(driver_time, account, id);
+      reply.playbook_result = playbooks_->publication(account, options_.replay).dump();
+      return;
+    }
     if (change.at("action") == "send") {
       evaluate_playbooks(driver_time);
       const auto order = playbooks_->take(account, change.at("staged").get<std::string>());

@@ -146,7 +146,9 @@ std::optional<ApiResponse> playbook_read(const ApiRequest& request, const Metric
 }
 bool playbook_write(const ApiRequest& request, MetricsSource& source, ApiCompletion complete) {
   const auto path = request.target.substr(0, request.target.find('?'));
-  if (path != "/api/playbooks" && !path.starts_with("/api/playbooks/")) return false;
+  const bool signal = path.starts_with("/api/signals/");
+  if (path != "/api/playbooks" && !path.starts_with("/api/playbooks/") && !signal) return false;
+  if (signal && !request.signal_verified) { complete(api_error(403, "INVALID_SIGNAL_SIGNATURE", "Signal secret or signature required")); return true; }
   try {
     const auto parameters = query(request);
     strict_keys(parameters, {"account", "version"});
@@ -154,7 +156,12 @@ bool playbook_write(const ApiRequest& request, MetricsSource& source, ApiComplet
     json command;
     const auto body = request.body.empty() ? json::object() : json::parse(request.body, nullptr, false);
     if (body.is_discarded()) throw std::invalid_argument("Request body must be JSON");
-    if (request.method == "POST" && path == "/api/playbooks") command = {{"action", "create"}, {"definition", body}};
+    if (signal) {
+      strict_keys(parameters, {"account"});
+      strict_keys(body, {"action", "nonce", "secret"});
+      if (request.method != "POST" || body.at("action") != "evaluate") throw std::invalid_argument("Signal action must be evaluate");
+      command = {{"action", "signal"}, {"id", path.substr(13)}};
+    } else if (request.method == "POST" && path == "/api/playbooks") command = {{"action", "create"}, {"definition", body}};
     else if (path.starts_with("/api/playbooks/staged/") && request.method == "POST") {
       const auto rest = path.substr(std::string("/api/playbooks/staged/").size());
       const auto slash = rest.find('/');
@@ -163,7 +170,12 @@ bool playbook_write(const ApiRequest& request, MetricsSource& source, ApiComplet
       command = {{"action", rest.substr(slash + 1)}, {"staged", rest.substr(0, slash)}};
     } else {
       const auto rest = path.substr(std::min(path.size(), std::string("/api/playbooks/").size()));
-      if (request.method == "PUT" && rest.ends_with("/mode")) {
+      if (request.method == "POST" && rest.ends_with("/evaluate")) {
+        // The bearer-authenticated sibling of /api/signals: trade scope, no signal secret.
+        strict_keys(parameters, {"account"});
+        strict_keys(body, {});
+        command = {{"action", "signal"}, {"id", rest.substr(0, rest.size() - 9)}};
+      } else if (request.method == "PUT" && rest.ends_with("/mode")) {
         strict_keys(body, {"mode"});
         command = {{"action", "mode"}, {"id", rest.substr(0, rest.size() - 5)}, {"mode", required(body, "mode", "mode")}};
       } else if (request.method == "PUT") {

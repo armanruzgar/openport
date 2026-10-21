@@ -64,6 +64,13 @@ class Notifications {
   Notifications& operator=(const Notifications&) = delete;
   void stop();
   void publish(const NotificationEvent& event);
+  using Subscriber = std::function<void(const nlohmann::json&)>;
+  /// Receives only `account`'s events from `source` ("live" or "replay"); JSON is built
+  /// only when such a subscriber exists. Callbacks must only enqueue bounded work; never
+  /// block on I/O. No history is replayed. Floor events arrive only on entering or
+  /// leaving the default warning band, not on every observation.
+  std::uint64_t subscribe(std::string account, std::string source, Subscriber subscriber);
+  void unsubscribe(std::uint64_t subscription);
   /// History primes observation without delivering recovered or fast-forwarded events.
   void observe(std::string_view account, const TradingView& view, bool history = false);
   void remove_account(const std::string& account, bool discard_pending = true);
@@ -111,6 +118,10 @@ class Notifications {
   std::size_t in_flight_ = 0;
   std::uint64_t dropped_ = 0, warned_ = 0;
   std::map<std::string, Time> limits_;
+  // Keyed by stream account and source, so a publication touches only its own listeners.
+  std::map<std::pair<std::string, std::string>, std::map<std::uint64_t, Subscriber>> subscribers_;
+  std::map<std::string, bool> stream_near_floor_;  // by publisher account, like Channel::near_floor
+  std::uint64_t subscription_ = 0, sequence_ = 0;
   std::atomic<bool> stopping_{false};
   std::thread thread_;
   std::mutex observation_mutex_;

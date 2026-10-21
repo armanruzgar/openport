@@ -1541,3 +1541,89 @@ TEST(Backtest, VolumeRuleRefusesOversizedScenarioEntries) {
         std::string::npos) << result.dump();
   }
 }
+
+TEST(Backtest, ParameterGridValidatesEveryVariantWithoutChangingCatalogue) {
+  test::RecordingFile storage;
+  const auto request = request_for({recorded_day(storage.directory, {2026, 9, 14})});
+  const auto original = request.playbooks;
+  const json grid{{"/structure/template/width", {5, 10}}, {"/management/take_profit_percent", {25, 50}}};
+  const auto variants = server::expand_backtest_grid(request, grid);
+  ASSERT_EQ(variants.size(), 4U);
+  EXPECT_EQ(request.playbooks, original);
+  // Validate final combinations, not partially patched ranges.
+  EXPECT_EQ(server::expand_backtest_grid(request, json{{"/structure/expiry/min", {2, 3}}, {"/structure/expiry/max", {4, 5}}}).size(), 4U);
+  for (const auto& [parameters, variant] : variants) {
+    const auto& definition = variant.playbooks.at("definitions").at("batch").at("versions").back();
+    EXPECT_EQ(definition.at("management").at("take_profit_percent"), parameters.at("/management/take_profit_percent"));
+    EXPECT_EQ(variant.days[0].file, request.days[0].file);
+    EXPECT_EQ(variant.days[0].seed, request.days[0].seed);
+  }
+  for (const auto& invalid : {json::object(), json{{"/id", {"a", "b"}}},
+      json{{"/sizing/units", {1, 1}}}, json{{"/sizing/units", {1, -1}}},
+      json{{"/conditions/999999999", {1, 2}}}, json{{"/management/missing", {1, 2}}},
+      json{{"/sizing/units", {1, 2, 3}}, {"/structure/template/width", {5, 10, 15}}}})
+    EXPECT_THROW((void)server::expand_backtest_grid(request, invalid), std::exception);
+}
+
+TEST(Backtest, SweepRanksRecordedVariantsAndRetainsTheirReports) {
+  test::RecordingFile storage;
+  auto request = request_for({recorded_day(storage.directory, {2026, 9, 14})});
+  request.workers = 1;
+  const std::atomic_bool cancel{false};
+  const json grid{{"/sizing/units", {1, 2}}};
+  const auto report = server::run_backtest_sweep(request, grid, storage.directory / "sweep", cancel);
+  ASSERT_EQ(report.at("status"), "completed") << report;
+  ASSERT_EQ(report.at("variants").size(), 2U);
+  ASSERT_EQ(report.at("ranking").size(), 2U);
+  EXPECT_EQ(report.at("ranking")[0].at("parameters").at("/sizing/units"), 2);
+  EXPECT_EQ(report.at("comparison").at("different_inputs"), false);
+  EXPECT_EQ(report.at("comparison").at("different_plans"), false);
+  for (const auto& variant : report.at("variants")) {
+    const auto root = storage.directory / "sweep" / variant.at("id").get<std::string>();
+    EXPECT_TRUE(std::filesystem::is_regular_file(root / "report.json"));
+    for (const auto& attempt : variant.at("report").at("attempts"))
+      EXPECT_TRUE(server::verify_run(root / attempt.at("journal").get<std::string>()).matched);
+  }
+  const std::atomic_bool cancelled{true};
+  const auto stopped = server::run_backtest_sweep(request, grid, storage.directory / "cancelled", cancelled);
+  EXPECT_EQ(stopped.at("status"), "cancelled");
+  EXPECT_TRUE(stopped.at("ranking").empty());
+}
+
+TEST(BacktestApi, SweepUsesSeparateRoutesAndPreservesNormalListing) {
+  test::RecordingFile storage;
+  const auto file = recorded_day(storage.directory, {2026, 9, 14});
+  server::BacktestHost::Options options;
+  options.directory = storage.directory / "backtests";
+  options.recordings = storage.directory;
+  server::BacktestHost host(options);
+  const json body{{"playbook", "batch"}, {"plan", "eod-50k"}, {"workers", 1},
+      {"days", {{{"file", file.filename().string()}}}}, {"parameter_grid", {{"/sizing/units", {1, 2}}}}};
+  const auto started = call(host, {"POST", "/api/backtests/sweeps", body.dump()}, false);
+  ASSERT_EQ(started.status, 202) << started.body;
+  const auto id = json::parse(started.body).at("id").get<std::string>();
+  json state;
+  ASSERT_TRUE(test::recording_eventually([&] {
+    const auto poll = call(host, {"GET", "/api/backtests/sweeps/" + id}, false);
+    if (poll.status != 200) return false;
+    state = json::parse(poll.body);
+    return state.at("status") != "running";
+  })) << state;
+  ASSERT_EQ(state.at("status"), "completed") << state;
+  EXPECT_EQ(state.at("kind"), "sweep");
+  EXPECT_EQ(state.at("report").at("ranking").size(), 2U);
+  EXPECT_TRUE(json::parse(call(host, {"GET", "/api/backtests"}, false).body).at("runs").empty());
+  EXPECT_EQ(json::parse(call(host, {"GET", "/api/backtests/sweeps"}, false).body).at("runs").size(), 1U);
+  test::capture_contract("sweeps", "GET", "/api/backtests/sweeps/" + id, {200, state.dump()});
+  // Saved sweeps purge like single runs, but only through the sweep route.
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/sweeps/" + id + "?purge=false"}, false).status, 400);
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/sweeps/" + id + "?purge=true&x=1"}, false).status, 400);
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/sweeps?purge=true"}, false).status, 400);
+  EXPECT_EQ(call(host, {"DELETE", "/api/backtests/" + id + "?purge=true"}, false).status, 404);
+  const auto purged = call(host, {"DELETE", "/api/backtests/sweeps/" + id + "?purge=true"}, false);
+  ASSERT_EQ(purged.status, 200) << purged.body;
+  EXPECT_EQ(json::parse(purged.body), (json{{"id", id}, {"deleted", true}}));
+  test::capture_contract("sweeps", "DELETE", "/api/backtests/sweeps/" + id, purged);
+  EXPECT_EQ(call(host, {"GET", "/api/backtests/sweeps/" + id}, false).status, 404);
+  EXPECT_TRUE(json::parse(call(host, {"GET", "/api/backtests/sweeps"}, false).body).at("runs").empty());
+}

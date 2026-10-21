@@ -165,6 +165,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/api.cpp
     server/replay_host.cpp
     server/sandboxes.cpp
+    server/signals.cpp
     server/web_server.cpp
   )
   add_library(openport::server ALIAS openport_server)

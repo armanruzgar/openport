@@ -131,7 +131,7 @@ export interface Status {
   circuit_breaker?: CircuitBreaker | null
 }
 
-export type NotificationEvent = "fill" | "order_rejected" | "floor" | "rule_trip" | "assignment" | "exercise" | "playbook_ready" | "feed_stalled" | "alert"
+export type NotificationEvent = "fill" | "order_state" | "order_rejected" | "floor" | "rule_trip" | "assignment" | "exercise" | "playbook_ready" | "feed_stalled" | "alert"
 export interface NotificationChannel {
   id: string
   type: "webhook" | "discord" | "telegram" | "ntfy"

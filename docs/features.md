@@ -499,3 +499,21 @@ flattening, exits, stock/strategy actions, and settings writes as well as ticket
 - [Remote access](remote-access.md) covers Tailscale and authenticated Caddy.
   [Demo deployment](../deploy/demo/README.md) supplies simulated data, bounded
   visitor accounts and container resource limits; it is not a hosted service.
+
+## Programmability
+
+The Python client covers the documented HTTP API, including playbooks, staged
+orders, notifications, sandbox creation, calendar events, templates and pass odds.
+A contract parity test guards new operations. MCP tools add backtests, playbooks,
+alerts, journals, what-if and order-change previews to the copilot. All writes
+remain paper trading and use the server’s token scopes. See [Python](../python/README.md).
+
+A separate versioned WebSocket channel emits paper fills, order state changes,
+rejections, alert/rule trips and staged playbook orders. Python strategies combine
+it with REST reconciliation, polling fallback and recorded-history hooks. Inbound
+signals evaluate named playbooks without overriding their mode, authenticated by a
+bearer token or by a webhook secret scoped to one playbook and account. Bounded
+parameter sweeps preserve variant reports and rank historical simulated results.
+Optional Arrow/Parquet exports preserve decimal money strings, and a tag-triggered
+OIDC workflow prepares Python package releases without stored publishing tokens.
+See [API programmability](api.md#paper-event-stream-v1).

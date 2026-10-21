@@ -1,6 +1,10 @@
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <deque>
+#include <functional>
+#include <map>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -66,6 +70,35 @@ struct WritePolicy {
 
 /// Browser sockets cannot set Authorization; use openport plus a hex token subprotocol.
 [[nodiscard]] std::optional<std::string> websocket_authorization(std::string_view bearer, std::string_view protocols);
+
+/// Webhook secrets for POST /api/signals/{playbook}?account=ID, one per playbook and
+/// account. Each authorises only evaluating that playbook on that account; bearer
+/// tokens are not accepted there. Only SHA-256 digests are kept, in an owner-only
+/// file when one is given. Nonces and rate budgets are per secret and in memory.
+class SignalSecrets {
+ public:
+  /// Throws when an existing file is unreadable or invalid. An empty path keeps memory only.
+  explicit SignalSecrets(std::filesystem::path file = {}, std::function<md::Timestamp()> clock = md::now);
+  /// 201 with the secret, shown only here. Issuing again rotates; the old secret stops working.
+  [[nodiscard]] ApiResponse issue(const std::string& playbook, const std::string& account);
+  [[nodiscard]] ApiResponse revoke(const std::string& playbook, const std::string& account);
+  /// Whether a secret exists and when it was issued; never the secret or digest.
+  [[nodiscard]] ApiResponse describe(const std::string& playbook, const std::string& account);
+  /// HMAC headers, or the static body secret over a secure transport; then the nonce and rate.
+  [[nodiscard]] std::optional<ApiResponse> check(const ApiRequest& request);
+ private:
+  using Digest = std::array<unsigned char, 32>;
+  using Key = std::pair<std::string, std::string>;  // playbook, account
+  struct Secret { Digest digest{}; std::string created_at; };
+  struct Replay { std::map<std::string, std::int64_t> nonces; std::deque<std::int64_t> accepted; };
+  void save(const std::map<Key, Secret>& secrets) const;
+  std::filesystem::path file_;
+  std::function<md::Timestamp()> clock_;
+  std::int64_t started_;  // whole seconds, rounded up
+  std::mutex mutex_;
+  std::map<Key, Secret> secrets_;
+  std::map<Digest, Replay> replay_;
+};
 
 struct StaticFile {
   int status = 200;

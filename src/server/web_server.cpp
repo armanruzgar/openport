@@ -14,6 +14,7 @@
 #include <charconv>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
+#include <openssl/hmac.h>
 #include <array>
 #include <sstream>
 #include <set>
@@ -318,13 +319,21 @@ std::string write_mode(const WritePolicy& policy) {
 std::optional<ApiResponse> check_api_write(const ApiRequest& request, const WritePolicy& policy, std::string* actor, ApiAccess* access, std::function<bool()>* authorization_valid) {
   if (access) *access = {};
   if (authorization_valid) *authorization_valid = {};
-  if (!request.target.starts_with("/api/") && request.target != "/ws") return {};
+  if (!request.target.starts_with("/api/") && request.target != "/ws" && !request.target.starts_with("/ws/events")) return {};
   const bool read = request.method == "GET";
   if (!read && request.method != "POST" && request.method != "PUT" && request.method != "PATCH" && request.method != "DELETE") return {};
   if (request.ambiguous_headers || (!read && !websocket_origin_allowed(
           request.origin ? std::optional<std::string_view>(*request.origin) : std::nullopt,
           request.host, policy.allowed_origins)))
     return api_error(403, "ORIGIN_REJECTED", "Origin or security headers are ambiguous or not allowed");
+  // Webhook signals authenticate with their playbook's own secret in the transport
+  // (SignalSecrets::check). A bearer token there would widen what a sender holds.
+  if (request.target.starts_with("/api/signals/")) {
+    if (!request.authorization.empty())
+      return api_error(403, "SIGNAL_BEARER_REJECTED", "Webhook signals use the playbook's signal secret; bearer clients use POST /api/playbooks/{id}/evaluate");
+    if (actor) *actor = "signal";
+    return {};
+  }
   const bool create_sandbox = request.method == "POST" && request.target.substr(0, request.target.find('?')) == "/api/sandboxes";
   if (create_sandbox && !policy.sandboxes) return api_error(404, "NOT_FOUND", "Sandboxes are not offered");
   std::vector<std::string> scopes;
@@ -384,7 +393,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       return api_error(403, "SCOPE_REQUIRED", "Event volatility may read only this sandbox's plan calendar");
     const bool market_read = read && (path == "/ws" || path == "/api/status" || path == "/api/accounts" ||
         path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" || path.starts_with("/api/underlyings/"));
-    const bool account_read = read && (path == "/api/account" || path == "/api/account/equity" ||
+    const bool account_read = read && (path == "/ws/events" || path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/trades" ||
         path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts");
@@ -398,7 +407,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool trade = path == "/orders" || path == "/orders/preview" || path == "/orders/cancel" ||
       path.starts_with("/orders/") || path == "/positions/close" || path == "/positions/close/preview" || path == "/positions/exercise" || path == "/stocks/close" || path == "/stocks/trade" || path == "/stocks/trade/preview" ||
       path == "/positions/abandon" || path == "/positions/instruction" ||
-      path.starts_with("/playbooks/staged/") || path == "/alerts" || path.starts_with("/alerts/") ||
+      path.starts_with("/playbooks/staged/") || (path.starts_with("/playbooks/") && path.ends_with("/evaluate")) || path == "/alerts" || path.starts_with("/alerts/") ||
       path == "/trades/group" || path == "/trades/ungroup" ||
       ((path.starts_with("/trades/") || path.starts_with("/days/")) && path.ends_with("/note"));
   const bool history_control = replay && path.starts_with("/history/") &&
@@ -411,6 +420,12 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       ((path == "/replay" || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
        (replay_settings && has("replay")) || (trade && (replay ? has("replay") : has("trade:*") || has("trade:" + account)))));
   if (!permitted) return api_error(403, "SCOPE_REQUIRED", "Token does not permit this operation");
+  if (replay && path.starts_with("/playbooks/") && path.ends_with("/evaluate"))
+    return api_error(403, "SIGNAL_LIVE_ONLY", "Playbook evaluation requests address live paper accounts");
+  // Reads are labelled admin for anonymous clients; secret management needs real admin.
+  if (path.starts_with("/playbooks/") && path.ends_with("/signal-secret") &&
+      (replay || !has("admin") || (request.authorization.empty() && !open_writes(policy))))
+    return api_error(403, "SCOPE_REQUIRED", "Signal secrets require admin scope");
   if (access) *access = {has("admin") && !request.authorization.empty(), sandbox};
   if (actor) *actor = name;
   const bool sandbox_account = !sandbox.empty() || (has("admin") && !request.authorization.empty() &&
@@ -532,10 +547,13 @@ class Hub {
 
 class WsSession : public Session, public std::enable_shared_from_this<WsSession> {
  public:
-  WsSession(tcp::socket&& socket, Hub& hub, std::unique_ptr<WebSocketSlots::Lease> slot, ApiAccess access, std::shared_ptr<Sandboxes> sandboxes, std::function<bool()> authorized)
-      : ws_(std::move(socket)), hub_(hub), slot_(std::move(slot)), access_(std::move(access)), sandboxes_(std::move(sandboxes)), authorized_(std::move(authorized)) {
+  WsSession(tcp::socket&& socket, Hub& hub, std::unique_ptr<WebSocketSlots::Lease> slot, ApiAccess access, std::shared_ptr<Sandboxes> sandboxes, std::function<bool()> authorized,
+            std::shared_ptr<Notifications> events = {}, std::string account = {}, std::string source = "live")
+      : ws_(std::move(socket)), hub_(hub), slot_(std::move(slot)), access_(std::move(access)), sandboxes_(std::move(sandboxes)), authorized_(std::move(authorized)),
+        events_(std::move(events)), account_(std::move(account)), source_(std::move(source)) {
     ws_.read_message_max(kWebSocketMessageMax);
   }
+  ~WsSession() override { if (events_ && subscription_) events_->unsubscribe(subscription_); }
 
   void accept(http::request<http::string_body> request) {
     ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
@@ -582,8 +600,46 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
   void on_accept(beast::error_code ec) {
     if (ec || stopped_) return;
     open_ = true;
-    hub_.add(weak_from_this());
+    if (events_) {
+      // The strand writes this after on_accept returns, with the subscription
+      // installed. Queue it first so concurrent publications cannot overtake it.
+      event({{"type", "event_stream"}, {"version", 1}, {"account", account_}, {"source", source_}});
+      subscription_ = events_->subscribe(account_, source_, [weak = weak_from_this()](const nlohmann::json& event) {
+        if (auto self = weak.lock()) self->event(event);
+      });
+    } else hub_.add(weak_from_this());
     read();
+  }
+
+  void event(const nlohmann::json& event) {
+    // Bound queued producer work as well as socket writes. Ticks may coalesce;
+    // losing one fill silently is not acceptable, so close an overflowing stream.
+    const std::lock_guard lock(event_mutex_);
+    if (event_overflow_) return;
+    if (event_queue_.size() >= 256) {
+      event_overflow_ = true;
+      (void)stop();
+      return;
+    }
+    const bool idle = event_queue_.empty();
+    event_queue_.push_back(std::make_shared<const std::string>(event.dump()));
+    if (idle) asio::post(ws_.get_executor(), [self = shared_from_this()] { self->write_event(); });
+  }
+
+  void write_event() {
+    if (!open_ || stopped_) return;
+    if ((authorized_ && !authorized_()) || (sandboxes_ && !access_.sandbox.empty() && !sandboxes_->active(access_.sandbox))) {
+      (void)stop(); return;
+    }
+    std::shared_ptr<const std::string> message;
+    { const std::lock_guard lock(event_mutex_); message = event_queue_.front(); }
+    ws_.text(true);
+    ws_.async_write(asio::buffer(*message), [self = shared_from_this(), message](beast::error_code ec, std::size_t) {
+      if (ec || self->stopped_) { self->open_ = false; return; }
+      bool more;
+      { const std::lock_guard lock(self->event_mutex_); self->event_queue_.pop_front(); more = !self->event_queue_.empty(); }
+      if (more) self->write_event();
+    });
   }
 
   void read() {
@@ -624,6 +680,12 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
   ApiAccess access_;
   std::shared_ptr<Sandboxes> sandboxes_;
   std::function<bool()> authorized_;
+  std::shared_ptr<Notifications> events_;
+  std::string account_, source_;
+  std::uint64_t subscription_ = 0;
+  std::mutex event_mutex_;
+  std::deque<std::shared_ptr<const std::string>> event_queue_;
+  bool event_overflow_ = false;
   bool stopped_ = false;
   bool open_ = false;
 };
@@ -644,6 +706,8 @@ struct Shared {
   std::chrono::steady_clock::duration read_timeout;
   WritePolicy write_policy;
   Hub hub;
+  std::shared_ptr<Notifications> events;
+  std::shared_ptr<SignalSecrets> signals = std::make_shared<SignalSecrets>();
   WebSocketSlots slots;
   Sessions sessions;
   std::vector<std::string> allowed_origins;
@@ -711,7 +775,9 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
 
     if (websocket::is_upgrade(request)) {
-      if (request.target() == "/ws") {
+      const std::string target(request.target());
+      const bool event_stream = target.substr(0, target.find('?')) == "/ws/events";
+      if (target == "/ws" || event_stream) {
         const auto origin = request.find(http::field::origin);
         const auto origin_value = origin == request.end()
                                       ? std::nullopt
@@ -722,7 +788,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
           return reject_upgrade(request, http::status::forbidden,
                                 "WebSocket Origin does not match Host");
         }
-        ApiRequest auth{"GET", "/ws"};
+        ApiRequest auth{"GET", target};
         const auto authorization = websocket_authorization(request[http::field::authorization], request[http::field::sec_websocket_protocol]);
         auth.authorization = authorization.value_or("");
         auth.ambiguous_headers = !authorization || request.count(http::field::authorization) > 1 ||
@@ -730,6 +796,19 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
         std::function<bool()> authorized;
         if (auto rejection = check_api_write(auth, shared_.write_policy, nullptr, &auth.access, &authorized))
           return reject_upgrade(request, http::status::forbidden, rejection->body);
+        std::string account, source = "live";
+        if (event_stream) {
+          const auto question = target.find('?');
+          const auto query = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(target).substr(question + 1));
+          if (!query || !query->contains("version") || query->at("version") != "1" ||
+              std::any_of(query->begin(), query->end(), [](const auto& item) { return item.first != "version" && item.first != "account" && item.first != "source"; }))
+            return reject_upgrade(request, http::status::bad_request, "Use version=1, account and source=live|replay");
+          if (query->contains("source")) source = query->at("source");
+          if ((source != "live" && source != "replay") || (!auth.access.sandbox.empty() && source != "live"))
+            return reject_upgrade(request, http::status::forbidden, "Event source unavailable");
+          account = *query_account(target, auth.access.sandbox);
+          if (!shared_.events) return reject_upgrade(request, http::status::service_unavailable, "Event channel unavailable");
+        }
         auto slot = shared_.slots.acquire();
         // Sessions free up as other clients disconnect: ask this one to retry.
         if (!slot)
@@ -738,7 +817,8 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
                                 " open sessions); retry later", kWebSocketRetrySeconds);
         stream_.expires_never();
         auto session =
-            std::make_shared<WsSession>(stream_.release_socket(), shared_.hub, std::move(slot), std::move(auth.access), shared_.write_policy.sandboxes, std::move(authorized));
+            std::make_shared<WsSession>(stream_.release_socket(), shared_.hub, std::move(slot), std::move(auth.access), shared_.write_policy.sandboxes, std::move(authorized),
+                event_stream ? shared_.events : nullptr, std::move(account), std::move(source));
         // During shutdown an upgrade must not escape the registry's close barrier.
         if (shared_.sessions.add(session)) session->accept(std::move(request));
       }
@@ -775,6 +855,21 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     respond(http::message_generator(std::move(response)));
   }
 
+  ApiResponse signal_secret(const ApiRequest& api, const std::string& playbook) {
+    const auto question = api.target.find('?');
+    const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(api.target).substr(question + 1));
+    const auto account = query_account(api.target);
+    if (!pairs || !account || std::any_of(pairs->begin(), pairs->end(), [](const auto& item) { return item.first != "account"; }))
+      return api_error(400, "INVALID_REQUEST", "Only account=ID is accepted");
+    if (shared_.write_policy.sandboxes && shared_.write_policy.sandboxes->active(*account))
+      return api_error(403, "SCOPE_REQUIRED", "Sandbox accounts do not take signal secrets");
+    if (api.method == "GET") return shared_.signals->describe(playbook, *account);
+    if (api.method == "DELETE" && api.body.empty()) return shared_.signals->revoke(playbook, *account);
+    if (api.method == "POST" && (api.body.empty() || api.body == "{}")) return shared_.signals->issue(playbook, *account);
+    return api_error(api.method == "GET" || api.method == "POST" || api.method == "DELETE" ? 400 : 405, "INVALID_REQUEST",
+        "Use POST (issue or rotate, empty body), GET or DELETE");
+  }
+
   void handle_api_request(const http::request<http::string_body>& request) {
     ApiRequest api{std::string(request.method_string()), std::string(request.target())};
     api.body = request.body();
@@ -784,6 +879,21 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (request.count(http::field::origin)) api.origin = std::string(request[http::field::origin]);
     api.ambiguous_headers = request.count(http::field::origin) > 1 || request.count(http::field::host) != 1 ||
                             request.count(http::field::authorization) > 1 || request.count(http::field::content_type) > 1;
+    if (api.target.starts_with("/api/signals/")) {
+      api.signal_timestamp = std::string(request["X-OpenPort-Timestamp"]);
+      api.signal_signature = std::string(request["X-OpenPort-Signature"]);
+      const auto forwarded = request.count("X-Forwarded-Proto") == 1 ? std::string(request["X-Forwarded-Proto"]) : std::string();
+      const bool https = beast::iequals(forwarded, "https");
+      beast::error_code peer_error;
+      const auto peer = stream_.socket().remote_endpoint(peer_error);
+      // openportd serves plain HTTP. With --client-ip-header the operator declared a
+      // trusted proxy, which must also set X-Forwarded-Proto; otherwise only a loopback
+      // peer that does not report a plain-HTTP original hop counts as secure.
+      api.signal_secure = request.count("X-Forwarded-Proto") <= 1 && (shared_.write_policy.client_ip_header.empty()
+          ? !peer_error && peer.address().is_loopback() && (forwarded.empty() || https) : https);
+      api.ambiguous_headers = api.ambiguous_headers || request.count("X-OpenPort-Signature") > 1 ||
+                              request.count("X-OpenPort-Timestamp") > 1 || request.count("X-Forwarded-Proto") > 1;
+    }
     if (shared_.write_policy.sandboxes) {
       const auto& header = shared_.write_policy.client_ip_header;
       beast::error_code peer_error;
@@ -794,6 +904,14 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
     if (auto rejection = check_api_write(api, shared_.write_policy, &api.actor, &api.access))
       return send_api(std::move(*rejection), request.version(), request.keep_alive());
+    if (api.target.starts_with("/api/signals/")) {
+      if (auto rejection = shared_.signals->check(api))
+        return send_api(std::move(*rejection), request.version(), request.keep_alive());
+      api.signal_verified = true;
+    }
+    if (const auto path = api.target.substr(0, api.target.find('?'));
+        path.starts_with("/api/playbooks/") && path.ends_with("/signal-secret"))
+      return send_api(signal_secret(api, path.substr(15, path.size() - 15 - 14)), request.version(), request.keep_alive());
     if (api.method == "POST" && api.target.substr(0, api.target.find('?')) == "/api/tokens/reload") {
       if (api.target != "/api/tokens/reload")
         return send_api(api_error(400, "INVALID_REQUEST", "Unknown query parameter"), request.version(), request.keep_alive());
@@ -1028,6 +1146,14 @@ void WebServer::stop() {
 
 void WebServer::broadcast(std::string message) {
   impl_->shared.hub.broadcast(std::make_shared<const std::string>(std::move(message)));
+}
+void WebServer::set_signal_secrets(std::shared_ptr<SignalSecrets> secrets) {
+  if (impl_->started) throw std::logic_error("Attach signal secrets before starting the server");
+  if (secrets) impl_->shared.signals = std::move(secrets);
+}
+void WebServer::set_event_stream(std::shared_ptr<Notifications> events) {
+  if (impl_->started) throw std::logic_error("Attach event stream before starting the server");
+  impl_->shared.events = std::move(events);
 }
 
 unsigned short WebServer::port() const noexcept {

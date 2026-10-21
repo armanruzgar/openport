@@ -63,14 +63,16 @@ Engine::Engine(md::Provider& provider, md::Subscription subscription, Options op
   for (const auto& symbol : subscription_.underlyings) status_.underlyings.try_emplace(symbol);
   status_.circuit_breaker = desk_.breaker();
   health_ = status_.underlyings;
-  if (options_.notifications) desk_.set_publication_sink([this](std::string_view account, const TradingView& view) {
+  if (options_.notifications || options_.event_stream) desk_.set_publication_sink([this](std::string_view account, const TradingView& view) {
     const auto id = notification_account(account);
     notification_accounts_.insert(id);
-    options_.notifications->observe(id, view, replay_ && replay_->fast_forwarding());
+    if (options_.notifications) options_.notifications->observe(id, view, replay_ && replay_->fast_forwarding());
+    if (options_.event_stream) options_.event_stream->observe(id, view, replay_ && replay_->fast_forwarding());
   });
-  if (options_.notifications) desk_.set_removal_sink([this](const std::string& account) {
+  if (options_.notifications || options_.event_stream) desk_.set_removal_sink([this](const std::string& account) {
     const auto id = notification_account(account);
-    options_.notifications->remove_account(id);
+    if (options_.notifications) options_.notifications->remove_account(id);
+    if (options_.event_stream) options_.event_stream->remove_account(id);
     notification_accounts_.erase(id);
   });
 }
@@ -161,8 +163,11 @@ void Engine::stop() {
   if (daily_recorder_) daily_recorder_->close();
   stopping_ = true;
   if (thread_.joinable()) thread_.join();
-  if (options_.notifications) {
-    for (const auto& account : notification_accounts_) options_.notifications->remove_account(account, false);
+  if (options_.notifications || options_.event_stream) {
+    for (const auto& account : notification_accounts_) {
+      if (options_.notifications) options_.notifications->remove_account(account, false);
+      if (options_.event_stream) options_.event_stream->remove_account(account, false);
+    }
     notification_accounts_.clear();
   }
   const std::lock_guard lock(mutex_);

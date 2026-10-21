@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import time
 import uuid
 from urllib.error import HTTPError
@@ -34,6 +36,12 @@ class ApiError(Exception):
         self.limit = error.get("limit")
         self.scope = error.get("scope")
         super().__init__(f"{self.code}: {error.get('message', f'HTTP {status}')}")
+
+
+def sign_signal(secret: str, timestamp: str | int, method: str, target: str, body: bytes) -> str:
+    """Hex HMAC-SHA256 for X-OpenPort-Signature: TIMESTAMP, METHOD, exact target and raw body, newline-joined."""
+    message = f"{timestamp}\n{method}\n{target}\n".encode() + body
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -69,7 +77,8 @@ class Client:
                       backoff=self.backoff, history=run_id)
 
     def _request(self, method: str, path: str, body: JSON | None = None, *,
-                 params: JSON | None = None, scoped: bool = False, control: bool = False, retry: bool = True):
+                 params: JSON | None = None, scoped: bool = False, control: bool = False, retry: bool = True,
+                 signal_secret: str | None = None, timestamp: int | None = None):
         query = {key: value for key, value in (params or {}).items() if value is not None}
         if scoped and self.account_id is not None:
             query["account"] = self.account_id
@@ -77,11 +86,18 @@ class Client:
         if query:
             url += "?" + urlencode(query)
         headers = {"Accept": "application/json"}
-        if self.token:
+        # Webhook signals carry only their own secret; the server refuses bearer tokens there.
+        if self.token and signal_secret is None:
             headers["Authorization"] = "Bearer " + self.token
         data = None if body is None else json.dumps(body, allow_nan=False).encode()
         if data is not None:
             headers["Content-Type"] = "application/json"
+        if signal_secret is not None:
+            parts = urlsplit(url)
+            stamp = str(int(time.time()) if timestamp is None else timestamp)
+            headers["X-OpenPort-Timestamp"] = stamp
+            headers["X-OpenPort-Signature"] = "sha256=" + sign_signal(
+                signal_secret, stamp, method, parts.path + ("?" + parts.query if parts.query else ""), data or b"")
         request = Request(url, data=data, method=method, headers=headers)
         retries = self.retries if retry else 0
         for attempt in range(retries + 1):
@@ -179,6 +195,9 @@ class Client:
     def orders(self, status: str = "all", client_order_id: str | None = None) -> Orders:
         """Orders, newest first; client_order_id finds the order(s) that used that ID, one per attempt."""
         return self._request("GET", "/orders", scoped=True, params={"status": status, "client_order_id": client_order_id})
+
+    def get_order(self, order_id: str) -> OrderResult:
+        return self._request("GET", "/orders/" + quote(str(order_id), safe=""), scoped=True)
 
     def fills(self) -> Fills:
         return self._request("GET", "/fills", scoped=True)
@@ -374,8 +393,8 @@ class Client:
     def close_stock(self, symbol: str, shares: int | None = None) -> Portfolio:
         return self._request("POST", "/stocks/close", {"symbol": symbol, **({"shares": shares} if shares is not None else {})}, scoped=True)
 
-    def list_backtests(self) -> JSON:
-        return self._request("GET", "/backtests", control=True)
+    def list_backtests(self, playbook: str | None = None) -> JSON:
+        return self._request("GET", "/backtests", params={"playbook": playbook}, control=True)
 
     def start_backtest(self, playbook: str | list[str], plan: str | JSON, **settings) -> JSON:
         """Pin one selector, or 2–8 distinct IDs for a joint account (ID order)."""
@@ -388,14 +407,131 @@ class Client:
     def compare_backtests(self, run_ids: list[str]) -> JSON:
         return self._request("GET", "/backtests/compare", params={"ids": ",".join(run_ids)}, control=True)
 
+    def start_sweep(self, playbook: str, plan: str | JSON, parameter_grid: JSON, **settings) -> JSON:
+        """2–8 variants over JSON-pointer playbook fields; inputs stay fixed across variants."""
+        return self._request("POST", "/backtests/sweeps", {"playbook": playbook, "plan": plan,
+                             "parameter_grid": parameter_grid, **settings}, control=True, retry=False)
+
+    def list_sweeps(self) -> JSON:
+        return self._request("GET", "/backtests/sweeps", control=True)
+
+    def get_sweep(self, run_id: str) -> JSON:
+        return self._request("GET", "/backtests/sweeps/" + quote(run_id, safe=""), control=True)
+
+    def cancel_sweep(self, run_id: str) -> JSON:
+        return self._request("DELETE", "/backtests/sweeps/" + quote(run_id, safe=""), control=True)
+
+    def purge_sweep(self, run_id: str) -> JSON:
+        """Permanently remove a finished sweep and its variant files."""
+        return self._request("DELETE", "/backtests/sweeps/" + quote(run_id, safe=""), params={"purge": "true"}, control=True)
+
+    def signal(self, playbook_id: str) -> JSON:
+        """Evaluate a live paper playbook now with this bearer token (trade scope). Never automatically retried."""
+        if self._prefix != "/api":
+            raise ValueError("Signals address live paper accounts; use replay controls for replay")
+        return self._request("POST", "/playbooks/" + quote(playbook_id, safe="") + "/evaluate", {}, scoped=True, retry=False)
+
+    def send_signal(self, playbook_id: str, secret: str, *, nonce: str | None = None,
+                    timestamp: int | None = None) -> JSON:
+        """Send a webhook signal signed with the playbook's signal secret, without the bearer token.
+
+        The secret authorises only this playbook on this client's account. Never automatically retried."""
+        if self._prefix != "/api":
+            raise ValueError("Signals address live paper accounts; use replay controls for replay")
+        return self._request("POST", "/signals/" + quote(playbook_id, safe=""),
+                             {"action": "evaluate", "nonce": str(uuid.uuid4()) if nonce is None else nonce},
+                             scoped=True, retry=False, signal_secret=secret, timestamp=timestamp)
+
+    def issue_signal_secret(self, playbook_id: str) -> JSON:
+        """Admin: create or rotate the webhook secret for this playbook and account. Returned only once."""
+        return self._request("POST", "/playbooks/" + quote(playbook_id, safe="") + "/signal-secret", {},
+                             scoped=True, control=True, retry=False)
+
+    def signal_secret(self, playbook_id: str) -> JSON:
+        """Admin: whether a webhook secret exists and when it was issued; never the secret."""
+        return self._request("GET", "/playbooks/" + quote(playbook_id, safe="") + "/signal-secret", scoped=True, control=True)
+
+    def revoke_signal_secret(self, playbook_id: str) -> JSON:
+        """Admin: revoke the webhook secret for this playbook and account."""
+        return self._request("DELETE", "/playbooks/" + quote(playbook_id, safe="") + "/signal-secret", scoped=True, control=True)
+
     def keep_backtest(self, run_id: str, keep: bool = True) -> JSON:
         return self._request("PUT", "/backtests/" + quote(run_id, safe=""), {"keep": keep}, control=True)
 
     def delete_backtest(self, run_id: str) -> JSON:
         return self._request("DELETE", "/backtests/" + quote(run_id, safe=""), params={"purge": "true"}, control=True)
 
-    def cancel_backtest(self, run_id: str) -> JSON:
-        return self._request("DELETE", "/backtests/" + quote(run_id, safe=""), control=True)
+    def cancel_backtest(self, run_id: str | None = None) -> JSON:
+        return self._request("DELETE", "/backtests" + ("/" + quote(run_id, safe="") if run_id else ""), control=True)
+
+    def playbooks(self) -> JSON:
+        """Definitions, account modes, staged orders and forward reports."""
+        return self._request("GET", "/playbooks", scoped=True)
+
+    def get_playbook(self, playbook_id: str, version: int | None = None) -> JSON:
+        return self._request("GET", "/playbooks/" + quote(playbook_id, safe=""),
+                             params={"version": version}, scoped=True)
+
+    def create_playbook(self, definition: JSON) -> JSON:
+        return self._request("POST", "/playbooks", definition, scoped=True, retry=False)
+
+    def version_playbook(self, definition: JSON) -> JSON:
+        """Save the next version; definition includes its ID and expected current version."""
+        return self._request("PUT", "/playbooks/" + quote(definition["id"], safe=""),
+                             definition, scoped=True, retry=False)
+
+    def archive_playbook(self, playbook_id: str, version: int) -> JSON:
+        return self._request("DELETE", "/playbooks/" + quote(playbook_id, safe=""),
+                             params={"version": version}, scoped=True, retry=False)
+
+    def playbook_mode(self, playbook_id: str, mode: str) -> JSON:
+        return self._request("PUT", "/playbooks/" + quote(playbook_id, safe="") + "/mode",
+                             {"mode": mode}, scoped=True, retry=False)
+
+    def send_staged_order(self, stage_id: str) -> JSON:
+        """Send the reviewed stage through the engine's current risk checks."""
+        return self._request("POST", "/playbooks/staged/" + quote(stage_id, safe="") + "/send",
+                             {}, scoped=True, retry=False)
+
+    def dismiss_staged_order(self, stage_id: str) -> JSON:
+        return self._request("POST", "/playbooks/staged/" + quote(stage_id, safe="") + "/dismiss",
+                             {}, scoped=True, retry=False)
+
+    def notifications(self) -> JSON:
+        """Nonsecret notification status is part of status, with no separate GET route."""
+        return self.status()["notifications"]
+
+    def test_notification(self, channel: str) -> JSON:
+        return self._request("POST", "/notifications/test", {"channel": channel}, control=True, retry=False)
+
+    def configure_notification(self, channel: str, **settings) -> JSON:
+        return self._request("PUT", "/notifications/channels/" + quote(channel, safe=""),
+                             settings, control=True)
+
+    def create_sandbox(self) -> JSON:
+        """Create an isolated demo account; the returned token is a secret."""
+        return self._request("POST", "/sandboxes", {}, control=True, retry=False)
+
+    def calendar_events(self, start: str | None = None, end: str | None = None) -> JSON:
+        return self._request("GET", "/calendar/events", params={"from": start, "to": end}, control=True)
+
+    def pass_odds(self, days: int = 20, samples: int = 1000, *,
+                  playbook: str | None = None, seed: str | None = None) -> JSON:
+        """Derived historical estimate, not a prediction; insufficient history is 422."""
+        return self._request("GET", "/account/pass-odds", scoped=True,
+                             params={"days": days, "samples": samples, "playbook": playbook, "seed": seed})
+
+    def strategy_template(self, symbol: str, expiry: str, template: JSON, *,
+                          min_strike: float | None = None, max_strike: float | None = None) -> JSON:
+        return self._request("GET", "/strategy-template", params={"symbol": symbol, "expiry": expiry,
+                             "template": json.dumps(template, allow_nan=False),
+                             "min_strike": min_strike, "max_strike": max_strike})
+
+    def replay_history(self) -> JSON:
+        return self._request("GET", "/replay/history", control=True)
+
+    def get_replay(self, run_id: str) -> JSON:
+        return self._request("GET", "/replay/history/" + quote(run_id, safe=""), control=True)
 
     def list_replays(self) -> ReplayListing:
         return self._request("GET", "/replay", control=True)

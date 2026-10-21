@@ -209,3 +209,50 @@ def test_replay_recordings_expose_imported_dates_symbols_and_sources(stub):
     listing["recordings"][0]["date"] = 20260922
     with pytest.raises(ContractMismatch, match="recordings.0.date"):
         contract.validate("GET", "/api/replay", 200, listing)
+
+
+def test_programmability_cpp_responses_match_contract(tmp_path):
+    import json
+    import os
+    import subprocess
+    from conftest import ROOT
+    binary = ROOT / "build/tests/openport_tests"
+    if not binary.exists():
+        pytest.skip("Build C++ tests for signed signal and sweep response contracts")
+    result = subprocess.run([str(binary), "--gtest_filter=PlaybookApi.SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode:BacktestApi.SweepUsesSeparateRoutesAndPreservesNormalListing"],
+                            env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {file.name for file in tmp_path.glob("*.jsonl")} == {"signals.jsonl", "sweeps.jsonl"}
+    contract = Contract("", None, SPEC)
+    for file in tmp_path.glob("*.jsonl"):
+        for line in file.read_text().splitlines():
+            contract.validate(**json.loads(line))
+
+
+def test_signal_and_sweep_request_schemas():
+    contract = Contract("", None, SPEC)
+    def validate(name, body):
+        jsonschema.Draft202012Validator({"$ref": f"urn:openport#/components/schemas/{name}"}, registry=contract.registry).validate(body)
+    validate("SignalRequest", {"action": "evaluate", "nonce": "test-1"})
+    # TradingView-style static body: the dedupe ID uses placeholders such as {{ticker}}-{{timenow}}.
+    validate("SignalRequest", {"action": "evaluate", "nonce": "SPY-2026-10-21T14:30:00Z", "secret": "opsig_" + "0" * 64})
+    for body in [{"action": "send", "nonce": "test-1"},
+                 {"action": "evaluate", "timestamp": 12345, "nonce": "test-1"},
+                 {"action": "evaluate", "nonce": "../unsafe"},
+                 {"action": "evaluate", "secret": "opsig_" + "0" * 64}]:
+        with pytest.raises(jsonschema.ValidationError): validate("SignalRequest", body)
+    validate("SignalSecretIssued", {"playbook": "morning", "account": "main", "secret": "opsig_" + "a" * 64,
+                                    "created_at": "2026-10-21T14:30:00.000000000Z", "rotated": False})
+    with pytest.raises(jsonschema.ValidationError):
+        validate("SignalSecretStatus", {"playbook": "morning", "account": "main", "configured": True,
+                                        "created_at": None, "secret": "opsig_" + "a" * 64})
+    body = {"playbook": "morning", "plan": "practice", "scenarios": 2, "seed": "1",
+            "parameter_grid": {"/structure/template/width": [5, 10]}}
+    validate("BacktestSweepRequest", body)
+    validate("BacktestSweepState", {"id": "000001", "kind": "sweep", "status": "running", "phase": "variants",
+             "completed": 2, "total": 4, "report": None,
+             "label": "Simulated trading on recorded or generated days. Not a prediction. Not investment advice."})
+    for bad in ({**body, "parameter_grid": {}}, {**body, "playbooks": ["morning", "afternoon"]},
+                {**body, "parameter_grid": {"/structure/template/width": [5, 5]}}):
+        with pytest.raises(jsonschema.ValidationError): validate("BacktestSweepRequest", bad)

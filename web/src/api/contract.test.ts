@@ -307,3 +307,8 @@ it("keeps financing, pin risk and scoped halts in the contract", () => {
   expect(schemas.WhatIfOrder!.properties!.then).toEqual(schemas.NewOrder!.properties!.then)
   expect(schemas.WhatIfOrder!.properties!.oco).toEqual(schemas.NewOrder!.properties!.oco)
 })
+
+it("notification event kinds match the published contract", () => {
+  const declared = /export type NotificationEvent = ([^\n]+)/.exec(marketTypes)![1]!
+  expect(normalize(declared)).toBe(wireType(spec.components.schemas.NotificationEvent!))
+})
