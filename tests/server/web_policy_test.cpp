@@ -9,6 +9,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 #include <fstream>
+#include <openssl/hmac.h>
 #include <nlohmann/json.hpp>
 #include <condition_variable>
 #include <future>
@@ -818,3 +819,96 @@ TEST(WebPolicy, BrowserSocketTokensUseHeadersWithoutAmbiguousCredentials) {
   }
 }
 }  // namespace
+
+TEST(WebServer, EventChannelIsVersionedFilteredAndDoesNotCoalesce) {
+  server::Notifications::Options options;
+  options.worker = false;
+  auto events = std::make_shared<server::Notifications>(server::NotificationConfig{}, nullptr, options);
+  server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
+  web.set_event_stream(events);
+  web.start();
+  asio::io_context io;
+  websocket::stream<tcp::socket> ws(io);
+  ws.next_layer().connect({asio::ip::make_address("127.0.0.1"), web.port()});
+  ws.handshake("localhost", "/ws/events?version=1&account=practice");
+  const auto read = [&] {
+    beast::flat_buffer buffer;
+    ws.read(buffer);
+    return nlohmann::json::parse(beast::buffers_to_string(buffer.data()));
+  };
+  EXPECT_EQ(read().at("type"), "event_stream");
+  events->publish({"fill", "main", 0, "Other account", {}});
+  events->publish({"fill", "replay/run/main", 0, "Other source", {}});
+  for (int i = 0; i < 20; ++i) events->publish({"fill", "demo/practice", 0, "Synthetic", {{"id", i}}});
+  web.broadcast("{\"type\":\"tick\"}");
+  for (int i = 0; i < 20; ++i) {
+    const auto event = read();
+    EXPECT_EQ(event.at("type"), "event");
+    EXPECT_EQ(event.at("details").at("id"), i);
+  }
+  ws.close(websocket::close_code::normal);
+  websocket::stream<tcp::socket> invalid(io);
+  invalid.next_layer().connect({asio::ip::make_address("127.0.0.1"), web.port()});
+  beast::error_code error;
+  websocket::response_type upgrade;
+  invalid.handshake(upgrade, "localhost", "/ws/events?version=2", error);
+  EXPECT_TRUE(error);
+  EXPECT_EQ(upgrade.result(), http::status::bad_request);
+  web.stop();
+}
+
+namespace {
+void sign_signal(server::ApiRequest& request, std::string secret = "signal-secret") {
+  request.authorization = "Bearer " + secret;
+  const auto message = request.method + "\n" + request.target + "\n" + request.body;
+  std::array<unsigned char, EVP_MAX_MD_SIZE> hash{};
+  unsigned int length = 0;
+  ASSERT_NE(HMAC(EVP_sha256(), secret.data(), static_cast<int>(secret.size()),
+      reinterpret_cast<const unsigned char*>(message.data()), message.size(), hash.data(), &length), nullptr);
+  request.signal_signature = "sha256=";
+  constexpr char hex[] = "0123456789abcdef";
+  for (unsigned int i = 0; i < length; ++i) { request.signal_signature += hex[hash[i] >> 4]; request.signal_signature += hex[hash[i] & 15]; }
+}
+}
+TEST(WebPolicy, SignalsRequireAccountScopeSignatureFreshnessNonceAndRateBudget) {
+  md::Timestamp now = 1000 * md::kNanosPerSecond;
+  server::SignalGuard guard([&] { return now; });
+  server::ApiRequest request{"POST", "/api/signals/morning?account=practice",
+      R"({"action":"evaluate","timestamp":1000,"nonce":"one"})"};
+  request.content_type = "application/json";
+  request.actor = "signal";
+  server::WritePolicy policy;
+  policy.require_token = true;
+  policy.tokens = {{"signal", {"read", "trade:practice"}, "signal-secret"}};
+  sign_signal(request);
+  EXPECT_FALSE(server::check_api_write(request, policy));
+  auto tampered = request;
+  tampered.target = "/api/signals/another?account=practice";
+  EXPECT_EQ(guard.check(tampered)->status, 403);
+  tampered = request; tampered.body += " "; EXPECT_EQ(guard.check(tampered)->status, 403);
+  tampered = request; tampered.target = "/api/signals/morning?account=main";
+  EXPECT_EQ(server::check_api_write(tampered, policy)->status, 403);
+  tampered = request;
+  tampered.body = R"({"action":"evaluate","timestamp":1001,"nonce":"future"})";
+  sign_signal(tampered); EXPECT_EQ(guard.check(tampered)->status, 409);
+  EXPECT_FALSE(guard.check(request));
+  request.actor = "renamed-token";  // Renaming the same secret must not reset nonce protection.
+  EXPECT_EQ(guard.check(request)->status, 409);
+  for (int i = 1; i < 60; ++i) {
+    request.body = nlohmann::json{{"action", "evaluate"}, {"timestamp", 1000}, {"nonce", std::to_string(i)}}.dump();
+    sign_signal(request); EXPECT_FALSE(guard.check(request));
+  }
+  request.body = R"({"action":"evaluate","timestamp":1000,"nonce":"over-limit"})";
+  sign_signal(request); EXPECT_EQ(guard.check(request)->status, 429);
+  now += 61 * md::kNanosPerSecond;
+  EXPECT_FALSE(guard.check(request));
+  now += 301 * md::kNanosPerSecond;
+  EXPECT_EQ(guard.check(request)->status, 409);
+  request.body = nlohmann::json{{"action", "evaluate"}, {"timestamp", 1400}, {"nonce", "future"}}.dump();
+  sign_signal(request); EXPECT_EQ(guard.check(request)->status, 409);
+  server::SignalGuard restarted([&] { return now; });
+  request.body = R"({"action":"evaluate","timestamp":1361,"nonce":"before-start"})";
+  sign_signal(request); EXPECT_EQ(restarted.check(request)->status, 409);
+  request.authorization.clear();
+  EXPECT_EQ(server::check_api_write(request, server::WritePolicy{})->status, 403);
+}

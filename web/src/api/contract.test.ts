@@ -283,3 +283,9 @@ it("describes joint requests and reports while retaining single schemas", () => 
   expect(schemas.BacktestComparison.properties.combined.properties.includes_joint.const).toBe(true)
   expect(schemas.BacktestResult.properties.rule_trips.items.properties.playbook.type).toBe("string")
 })
+
+
+it("notification event kinds match the published contract", () => {
+  const declared = /export type NotificationEvent = ([^\n]+)/.exec(marketTypes)![1]!
+  expect(normalize(declared)).toBe(wireType(spec.components.schemas.NotificationEvent!))
+})

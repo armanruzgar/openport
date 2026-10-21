@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -66,6 +67,20 @@ struct WritePolicy {
 
 /// Browser sockets cannot set Authorization; use openport plus a hex token subprotocol.
 [[nodiscard]] std::optional<std::string> websocket_authorization(std::string_view bearer, std::string_view protocols);
+
+/// Called after bearer/scope authentication. A token secret also signs the exact
+/// method, request target and body. Nonces are bounded and expire with timestamps.
+class SignalGuard {
+ public:
+  explicit SignalGuard(std::function<md::Timestamp()> clock = md::now);
+  [[nodiscard]] std::optional<ApiResponse> check(const ApiRequest& request);
+ private:
+  std::function<md::Timestamp()> clock_;
+  md::Timestamp started_;
+  std::mutex mutex_;
+  std::map<std::pair<std::string, std::string>, md::Timestamp> nonces_;
+  std::map<std::string, std::deque<md::Timestamp>> rates_;
+};
 
 struct StaticFile {
   int status = 200;

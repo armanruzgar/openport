@@ -168,8 +168,29 @@ def test_copilot_parity_tools_and_scoped_mutations(stub):
     ("playbook_mode", {"playbook_id": "morning", "mode": "auto"}),
     ("send_staged_order", {"stage_id": "1"}),
     ("start_backtest", {"playbook": "morning", "plan": "practice"}),
+    ("start_sweep", {"playbook": "morning", "plan": "practice", "parameter_grid": {"/sizing/units": [1, 2]}}),
+    ("evaluate_playbook", {"playbook_id": "morning", "account": "main"}),
 ])
 def test_new_mutating_tools_require_token(stub, name, arguments):
     response = call(create_server(Client(stub.url)), name, **arguments)
     assert response["error"]["code"] == "WRITE_TOKEN_REQUIRED"
     assert all(request[0] == "GET" for request in stub.requests)
+
+
+def test_mcp_sweep_uses_global_scoped_job_routes(stub):
+    server = create_server(Client(stub.url, "secret"))
+    grid = {"/sizing/units": [1, 2]}
+    response = call(server, "start_sweep", playbook="morning", plan="practice", parameter_grid=grid, settings={"scenarios": 2, "seed": "1"})
+    assert response["data"]["kind"] == "sweep"
+    assert stub.requests[-1][1] == "/api/backtests/sweeps"
+    assert stub.requests[-1][3]["parameter_grid"] == grid
+    response = call(server, "get_sweep", run_id="000001")
+    assert response["data"]["id"] == "000001"
+
+
+def test_batch_tools_do_not_borrow_live_quote_provenance(stub):
+    stub.provider["simulated"] = False
+    response = call(create_server(Client(stub.url, "secret")), "get_backtest", run_id="000001")
+    assert response["simulated"] is True
+    assert response["as_of"] is None
+    assert response["feed"] == {"provider": None, "delayed": None, "delay_seconds": None}

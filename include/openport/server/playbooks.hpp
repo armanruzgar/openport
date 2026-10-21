@@ -51,7 +51,7 @@ class Playbooks {
   void evaluate(const std::string& account, bool replay, md::Timestamp now,
       const std::map<std::string, std::shared_ptr<const analytics::UnderlyingMetrics>>& metrics,
       const TradingView& view, const std::function<PlaybookInputs(const std::string&, const Json&)>& inputs,
-      const Preview& preview, const Send& send, const Cancel& cancel);
+      const Preview& preview, const Send& send, const Cancel& cancel, std::string_view only = {});
   trading::OrderRequest take(const std::string& account, const std::string& staged);
   void remove_account(const std::string& account);
  private:

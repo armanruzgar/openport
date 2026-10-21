@@ -416,3 +416,101 @@ The account's `costs` reports amounts paid by kind, `total`, `resets_used`,
 and `fee_kind`. Attempts expose their starting charge and phase in `rules`.
 See [program costs](paper-trading.md#program-costs-and-reset-limits-f64) for precise
 identity, purchase, historical-journal and illustrative-pricing semantics.
+
+## Paper event stream (v1)
+
+`/ws/events?version=1&account=main&source=live` is an opt-in WebSocket sibling
+of `/ws`. The existing `/ws` tick channel is unchanged. `source=replay` selects
+the active replay's events; `run_id` identifies the replay. Live also includes
+the synthetic demo market. History does not emit recovered events. The first
+message is `{type:"event_stream", version:1, account, source}`, confirming the
+subscription is installed. Subsequent messages are:
+
+```json
+{"type":"event","version":1,"sequence":"17","event":"fill","account":"main","source":"live","run_id":null,"market_time":null,"simulated":true,"message":"Synthetic example","details":{"id":"1","order_id":"1","symbol":"example","side":"buy","quantity":1,"price":"1.25"}}
+```
+
+Kinds reuse the notification publisher: `fill`, `order_state`, `order_rejected`,
+`alert`, `rule_trip`, `playbook_ready`, `floor`, `assignment`, `exercise` (future
+kinds may be added). `details` carries fill/order/alert/stage IDs and kind-specific
+evidence. `market_time` is the engine's event timestamp, null when unknown;
+`simulated:true` describes paper execution, not the provenance of market prices.
+Read `status.provider` to distinguish recorded, generated and provider quotes.
+`sequence` is a process-local decimal-string counter shared across accounts;
+gaps can belong to another account. It is not a durable cursor.
+
+Authentication, named-token revocation, Host, Origin and sandbox restrictions
+match the existing WebSocket transport. Sandbox credentials may subscribe only
+to their own live account. Read access follows the HTTP read policy; use
+`--require-token` for private reads. A 256-message FIFO bounds each connection;
+a slow consumer is disconnected rather than silently losing a fill. There is no
+resume or exactly-once delivery guarantee. On startup and every disconnect,
+reconcile `/api/fills` and `/api/orders`. `openport.stream.events()` yields typed
+`Event` objects; `openport.bot.Runner` uses the stream to wake REST reconciliation
+and falls back to polling if streaming is unavailable. Outbound notification
+configuration is independent: the local channel works on demo/replay without
+enabling external notification delivery.
+
+## Signed inbound signals
+
+`POST /api/signals/{playbook}?account=ID` evaluates one existing live paper
+playbook using its normal conditions, sizing and risk checks. The body is exactly
+`{"action":"evaluate","timestamp":UNIX_SECONDS,"nonce":"UNIQUE_VALUE"}`.
+The configured bearer token's secret is also the per-token signing secret. Send
+`Authorization: Bearer SECRET` and `X-OpenPort-Signature: sha256=HEX`, where HEX
+is lowercase HMAC-SHA256 of:
+
+```text
+POST\n/api/signals/PLAYBOOK?account=ID\nRAW_JSON_BODY
+```
+
+The method, exact encoded request target (including query order), newlines and raw
+body bytes all participate. Sign after serialization, and do not reformat the
+body. `Client.signal()` performs this signing. Trade scope for the addressed
+account (or admin) is required; sandbox tokens, replay routes and unauthenticated
+loopback are refused. No secret is stored in a playbook definition or returned in
+API results. TLS termination is required when transporting credentials outside a
+trusted local connection, as for all bearer-authenticated API use.
+
+The wall-clock timestamp may be at most 300 seconds old and cannot be in the future.
+It must be on or after server startup (round up startup to the next whole second),
+so restarting cannot make a captured old request valid again. Nonces are 1–128
+letters, digits, hyphens or underscores and are consumed per token secret before
+evaluation, even if evaluation fails. Reuse returns 409 `SIGNAL_REPLAY`; invalid
+signatures return 403, old/future timestamps 409 `SIGNAL_EXPIRED`. The server
+allows 60 accepted signals per rolling minute per token and 4096 unexpired nonces
+in total; saturation returns 429 with Retry-After. Do not automatically retry an
+uncertain signal: inspect playbooks/orders before deciding on a new nonce.
+
+Mode is never changed: `off` refuses evaluation; `stage` leaves an order for manual
+review/send; `auto` can submit paper orders. A valid signal may still produce no
+order because a condition, cooldown, entry cap, session or risk check fails. The
+response is the account's playbook publication with stages and reasons.
+
+## Parameter sweeps
+
+`POST /api/backtests/sweeps` accepts the single-playbook backtest body plus
+`parameter_grid`, an object of JSON-pointer paths to distinct scalar values:
+
+```json
+{"playbook":"morning@2","plan":"eod-50k","scenarios":5,"seed":"81723","workers":2,"parameter_grid":{"/structure/template/width":[5,10],"/management/take_profit_percent":[25,50]}}
+```
+
+One to four fields produce two to eight Cartesian variants. Paths may address
+`structure`, `conditions`, `sizing`, `management`, `guardrails` or `window` children.
+Parent objects and array elements must exist; optional scalar object fields may
+be added. Identity and version cannot change. Every variant validates before the job starts.
+Variants run sequentially; each uses the same pinned inputs, seeds and plan and
+retains its exact changed definition, trades and journals. The catalogue is not
+modified. Six-digit variant IDs are local to their sweep, not ordinary backtest IDs.
+`GET /api/backtests/sweeps` lists sweeps separately from ordinary runs;
+`GET /api/backtests/sweeps/{id}` reads progress and reports; `DELETE` cancels an
+active sweep. Mutations require replay scope. The same one-job limit and retention
+policy cover ordinary runs and sweeps.
+
+Completed variants with available mean daily P&L are ranked descending using exact
+money comparisons; ties retain deterministic grid order. Cancelled/failed variants
+remain visible but are not ranked. `comparison` uses the existing backtest comparison
+calculation and flags input/plan mismatches. This is historical simulated performance,
+not a prediction; parameter searches can overfit. Client and MCP expose start, list,
+status/report and cancel operations. See [playbooks](playbooks.md).

@@ -8,7 +8,7 @@ import type { WriteMode } from "../api/trading-types"
 import { timestampET } from "../lib/freshness"
 
 const events: { id: NotificationEvent; label: string }[] = [
-  { id: "fill", label: "Fills" }, { id: "order_rejected", label: "Rejected orders" },
+  { id: "fill", label: "Fills" }, { id: "order_state", label: "Order changes" }, { id: "order_rejected", label: "Rejected orders" },
   { id: "floor", label: "Near the floor" }, { id: "rule_trip", label: "Rule trips" },
   { id: "assignment", label: "Assignments" }, { id: "exercise", label: "Exercises" },
   { id: "playbook_ready", label: "Playbooks ready" }, { id: "feed_stalled", label: "Stalled feed" },

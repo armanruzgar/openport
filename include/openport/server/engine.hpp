@@ -103,6 +103,8 @@ class Engine final : public MetricsSource {
  public:
   struct Options : Desk::Options {
     std::shared_ptr<Notifications> notifications;
+    /// Local event channel, independent of outbound delivery and simulated-feed opt-in.
+    std::shared_ptr<Notifications> event_stream;
     std::chrono::milliseconds analytics_interval{1000};
     std::size_t command_capacity = 256;
     /// Revision 4 demo accounts use the generated calendar unless a source is explicit.

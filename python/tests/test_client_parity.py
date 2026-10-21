@@ -10,11 +10,14 @@ ALIASES = {"/api/underlyings/{symbol}": "/api/underlyings/{symbol}/summary"}
 EXCLUSIONS = {
     ("GET", "/"): "Static terminal, not the JSON client",
     ("GET", "/{path}"): "Static assets, not the JSON client",
+    ("GET", "/ws/events"): "openport.stream.events owns typed WebSocket events",
     ("GET", "/ws"): "openport.stream owns WebSocket transport",
 }
 
 # Arguments are synthetic. Calls run through the public methods into _request.
 CALLS = [
+    ("signal", "{playbook}"), ("start_sweep", "test", "practice", {}), ("list_sweeps",),
+    ("get_sweep", "{id}"), ("cancel_sweep", "{id}"),
     ("status",), ("summary", "{symbol}"), ("chain", "{symbol}"), ("exposure", "{symbol}"),
     ("surface", "{symbol}"), ("volatility", "{symbol}"), ("candles", "{symbol}"), ("probability", "{symbol}"),
     ("account",), ("portfolio",), ("orders",), ("get_order", "{id}"), ("fills",), ("trades",), ("risk",),
@@ -44,8 +47,9 @@ CALLS = [
 def operations():
     for path, item in SPEC["paths"].items():
         while "$ref" in item:
+            reference = item["$ref"]
             item = SPEC
-            for part in SPEC["paths"][path]["$ref"].split("/")[1:]:
+            for part in reference.split("/")[1:]:
                 item = item[part.replace("~1", "/").replace("~0", "~")]
         for method, operation in item.items():
             if method in {"get", "post", "put", "patch", "delete"}:
@@ -62,6 +66,8 @@ def test_every_openapi_operation_has_an_exercised_client_method(monkeypatch):
     client = Client()
     for target in (client, client.for_replay(), client.for_history("{run_id}")):
         for name, *args in CALLS:
+            if name == "signal" and target._prefix != "/api":
+                continue
             getattr(target, name)(*args)
     documented = {(m, p) for m, p, _ in operations()}
     assert set(EXCLUSIONS) <= documented, "Remove stale exclusions"
@@ -84,3 +90,22 @@ def test_parity_methods_scope_encode_and_do_not_retry_staging(monkeypatch):
     assert calls[-1][2] == {"params": {"from": "2026-10-01", "to": "2026-10-31"}, "control": True}
     client.strategy_template("SPX", "expiry", {"kind": "vertical"})
     assert '"kind": "vertical"' in calls[-1][2]["params"]["template"]
+
+
+def test_signal_signs_the_exact_encoded_target_and_body(stub):
+    import hashlib
+    import hmac
+    import json
+    from openport import ApiError
+    import pytest
+    client = Client(stub.url, "secret", "practice")
+    # The HTTP stub does not evaluate playbooks; inspect its received signed request.
+    with pytest.raises(ApiError):
+        client.signal("morning", timestamp=1234, nonce="fixed-nonce")
+    method, target, headers, body = stub.requests[-1]
+    raw = json.dumps(body, allow_nan=False)
+    expected = hmac.new(b"secret", (method + "\n" + target + "\n" + raw).encode(), hashlib.sha256).hexdigest()
+    assert headers["X-Openport-Signature"] == "sha256=" + expected
+    assert target == "/api/signals/morning?account=practice"
+    with pytest.raises(ValueError, match="live"):
+        client.for_replay().signal("morning")

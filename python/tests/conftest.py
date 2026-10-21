@@ -76,6 +76,12 @@ class Stub:
             self.retry_after = retry[0] if retry else None
             return status, {"error": {"code": code, "message": "synthetic rejection", "actual": None, "limit": None, "scope": None}}
         path = urlsplit(target).path
+        if path == "/api/backtests/sweeps":
+            if method == "GET":
+                return 200, shaped("BacktestSweepListing", runs=[], active=None)
+            return 202, shaped("BacktestSweepState", id="000001", report=None)
+        if path == "/api/backtests/sweeps/000001":
+            return 200, shaped("BacktestSweepState", id="000001", report=None)
         if path == "/api/backtests":
             if method == "GET":
                 return 200, shaped("BacktestListing", runs=[], active=None)

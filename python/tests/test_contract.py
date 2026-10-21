@@ -179,3 +179,42 @@ def test_joint_backtest_request_contract():
                     {key: value for key, value in body.items() if key != "playbooks"}):
         with pytest.raises(jsonschema.ValidationError):
             validator.validate(invalid)
+
+
+def test_programmability_cpp_responses_match_contract(tmp_path):
+    import json
+    import os
+    import subprocess
+    from conftest import ROOT
+    binary = ROOT / "build/tests/openport_tests"
+    if not binary.exists():
+        pytest.skip("Build C++ tests for signed signal and sweep response contracts")
+    result = subprocess.run([str(binary), "--gtest_filter=PlaybookApi.SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode:BacktestApi.SweepUsesSeparateRoutesAndPreservesNormalListing"],
+                            env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
+                            capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {file.name for file in tmp_path.glob("*.jsonl")} == {"signals.jsonl", "sweeps.jsonl"}
+    contract = Contract("", None, SPEC)
+    for file in tmp_path.glob("*.jsonl"):
+        for line in file.read_text().splitlines():
+            contract.validate(**json.loads(line))
+
+
+def test_signal_and_sweep_request_schemas():
+    contract = Contract("", None, SPEC)
+    def validate(name, body):
+        jsonschema.Draft202012Validator({"$ref": f"urn:openport#/components/schemas/{name}"}, registry=contract.registry).validate(body)
+    validate("SignalRequest", {"action": "evaluate", "timestamp": 12345, "nonce": "test-1"})
+    for body in [{"action": "send", "timestamp": 12345, "nonce": "test-1"},
+                 {"action": "evaluate", "timestamp": True, "nonce": "test-1"},
+                 {"action": "evaluate", "timestamp": 12345, "nonce": "../unsafe"}]:
+        with pytest.raises(jsonschema.ValidationError): validate("SignalRequest", body)
+    body = {"playbook": "morning", "plan": "practice", "scenarios": 2, "seed": "1",
+            "parameter_grid": {"/structure/template/width": [5, 10]}}
+    validate("BacktestSweepRequest", body)
+    validate("BacktestSweepState", {"id": "000001", "kind": "sweep", "status": "running", "phase": "variants",
+             "completed": 2, "total": 4, "report": None,
+             "label": "Simulated trading on recorded or generated days. Not a prediction. Not investment advice."})
+    for bad in ({**body, "parameter_grid": {}}, {**body, "playbooks": ["morning", "afternoon"]},
+                {**body, "parameter_grid": {"/structure/template/width": [5, 5]}}):
+        with pytest.raises(jsonschema.ValidationError): validate("BacktestSweepRequest", bad)

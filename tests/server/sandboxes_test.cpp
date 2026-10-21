@@ -314,6 +314,9 @@ TEST_F(Sandboxes, TradeScopeAllowsOwnOrdersPreviewsExitsAndNotes) {
   }
   EXPECT_FALSE(server::check_api_write(request("GET", "/api/underlyings/SPX/chain", token(own)), policy));
   EXPECT_FALSE(server::check_api_write(request("GET", "/ws", token(own)), policy));
+  EXPECT_FALSE(server::check_api_write(request("GET", "/ws/events?version=1", token(own)), policy));
+  const auto denied = server::check_api_write(request("GET", "/ws/events?version=1&account=main", token(own)), policy);
+  ASSERT_TRUE(denied); EXPECT_EQ(denied->status, 403);
 }
 TEST_F(Sandboxes, ListingsStatusTicksAndGuessedIdsRespectVisibility) {
   const auto own = create(), other = create();

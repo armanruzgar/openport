@@ -165,7 +165,7 @@ class Desk {
   void apply_command(PendingCommand& pending, md::Timestamp market_time, md::Timestamp driver_time, bool input_recorded);
   [[nodiscard]] std::string opening_source() const;
   void sample_equity(PaperAccount& account);
-  void evaluate_playbooks(md::Timestamp driver_time);
+  void evaluate_playbooks(md::Timestamp driver_time, std::string_view only_account = {}, std::string_view only_playbook = {});
   void playbook_command(const TradingCommand& command, TradingReply& reply, md::Timestamp driver_time);
   std::shared_ptr<Playbooks> playbooks_;
   bool playbook_running_ = false;

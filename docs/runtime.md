@@ -1310,7 +1310,7 @@ channels with the default filters and distance:
 | `OPENPORT_NOTIFY_TELEGRAM_TOKEN`, `OPENPORT_NOTIFY_TELEGRAM_CHAT_ID` | `telegram` |
 | `OPENPORT_NOTIFY_NTFY_URL` | `ntfy` |
 
-All nine events are enabled by default: `fill`, `order_rejected`, `floor`,
+All ten events are enabled by default: `fill`, `order_state`, `order_rejected`, `floor`,
 `rule_trip`, `assignment`, `exercise`, `playbook_ready`, `feed_stalled` and `alert`
 (each firing of an [account alert](paper-trading.md#account-alerts)). `rule_trip`
 reports a kill switch trip, the personal daily loss limit, and a plan daily loss

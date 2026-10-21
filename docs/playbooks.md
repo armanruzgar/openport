@@ -742,3 +742,23 @@ Scheduled closes share one planner: flat time acts first on same-transaction tie
 and a pending close from an earlier trigger keeps its label without duplication.
 At rollover, `OVERNIGHT_HOLD` precedes `HOLD_RESTRICTED`. See
 [combined rule semantics](paper-trading.md#news-blackouts-and-holding-restrictions-f17-f59).
+
+## Signals and parameter sweeps
+
+Signed inbound signals can request a fresh evaluation of a named live paper
+playbook. They cannot alter its definition, turn it on, bypass its conditions or
+promote a manually staged order to automatic execution. `stage` keeps manual
+review; `auto` uses the ordinary submission path. Use `Client.signal(id)` with a
+configured `trade:ACCOUNT` token. Nonces, signed timestamps and rate limits apply;
+see the [signal contract](api.md#signed-inbound-signals).
+
+For historical parameter studies, `Client.start_sweep(id, plan, parameter_grid,
+**settings)` submits two to eight variants over scalar JSON-pointer fields, such
+as `/structure/template/target/value` (delta when target.mode is delta),
+`/structure/template/width` or `/management/take_profit_percent`. Inputs, seeds and
+plan are identical across variants; modified definitions live only in the reports.
+`get_sweep(id)` includes per-variant reports, a comparison and a ranking by mean
+daily P&L. Incomplete variants are excluded from ranking. Sweeps share the batch
+job/retention budget, have separate listing routes, and need replay scope. These
+are in-sample simulated results; selecting the best parameters does not establish
+future performance.

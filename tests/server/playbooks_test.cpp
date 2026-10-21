@@ -1487,3 +1487,33 @@ TEST(Playbooks, AdherenceCountsASameSecondLossOnlyIfItClosedBeforeTheEntry) {
   }
 }
 }  // namespace
+
+TEST(PlaybookApi, SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode) {
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  server::Desk::Options options;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(time, 10), time, time);
+  DeskSource source(desk);
+  ASSERT_EQ(api(source, "POST", "/api/playbooks", breadth_setup()).status, 200);
+  server::ApiRequest signal{"POST", "/api/signals/morning", R"({"action":"evaluate","timestamp":1,"nonce":"test"})"};
+  server::ApiResponse response;
+  const auto evaluate = [&] { server::handle_api_async(signal, source, [&](server::ApiResponse reply) { response = std::move(reply); }); };
+  evaluate(); EXPECT_EQ(response.status, 403);
+  signal.signal_verified = true;  // Transport authentication is tested separately.
+  signal.actor = "signal-test";
+  evaluate(); EXPECT_EQ(response.status, 400); EXPECT_NE(response.body.find("off"), std::string::npos);
+  ASSERT_EQ(api(source, "PUT", "/api/playbooks/morning/mode", {{"mode", "stage"}}).status, 200);
+  evaluate(); ASSERT_EQ(response.status, 200) << response.body;
+  const auto publication = json::parse(response.body);
+  EXPECT_EQ(publication.at("modes").at("morning"), "stage");
+  EXPECT_EQ(publication.at("staged").size(), 1U);
+  EXPECT_TRUE(desk.trading_view()->snapshot->recent_orders.empty());
+  ASSERT_EQ(api(source, "PUT", "/api/playbooks/morning/mode", {{"mode", "auto"}}).status, 200);
+  const auto orders = desk.trading_view()->snapshot->recent_orders.size();
+  ASSERT_GT(orders, 0U);
+  evaluate(); ASSERT_EQ(response.status, 200) << response.body;
+  EXPECT_EQ(desk.trading_view()->snapshot->recent_orders.size(), orders);
+  EXPECT_EQ(json::parse(response.body).at("modes").at("morning"), "auto");
+  test::capture_contract("signals", "POST", "/api/signals/morning", response);
+}

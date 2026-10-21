@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import time
 import uuid
 from urllib.error import HTTPError
@@ -69,7 +71,8 @@ class Client:
                       backoff=self.backoff, history=run_id)
 
     def _request(self, method: str, path: str, body: JSON | None = None, *,
-                 params: JSON | None = None, scoped: bool = False, control: bool = False, retry: bool = True):
+                 params: JSON | None = None, scoped: bool = False, control: bool = False, retry: bool = True,
+                 sign: bool = False):
         query = {key: value for key, value in (params or {}).items() if value is not None}
         if scoped and self.account_id is not None:
             query["account"] = self.account_id
@@ -82,6 +85,13 @@ class Client:
         data = None if body is None else json.dumps(body, allow_nan=False).encode()
         if data is not None:
             headers["Content-Type"] = "application/json"
+        if sign:
+            if not self.token:
+                raise ValueError("Signed signals require a configured token")
+            target = urlsplit(url)
+            signed = method + "\n" + target.path + ("?" + target.query if target.query else "") + "\n"
+            headers["X-OpenPort-Signature"] = "sha256=" + hmac.new(
+                self.token.encode(), signed.encode() + (data or b""), hashlib.sha256).hexdigest()
         request = Request(url, data=data, method=method, headers=headers)
         retries = self.retries if retry else 0
         for attempt in range(retries + 1):
@@ -353,6 +363,28 @@ class Client:
 
     def compare_backtests(self, run_ids: list[str]) -> JSON:
         return self._request("GET", "/backtests/compare", params={"ids": ",".join(run_ids)}, control=True)
+
+    def start_sweep(self, playbook: str, plan: str | JSON, parameter_grid: JSON, **settings) -> JSON:
+        """2–8 variants over JSON-pointer playbook fields; inputs stay fixed across variants."""
+        return self._request("POST", "/backtests/sweeps", {"playbook": playbook, "plan": plan,
+                             "parameter_grid": parameter_grid, **settings}, control=True, retry=False)
+
+    def list_sweeps(self) -> JSON:
+        return self._request("GET", "/backtests/sweeps", control=True)
+
+    def get_sweep(self, run_id: str) -> JSON:
+        return self._request("GET", "/backtests/sweeps/" + quote(run_id, safe=""), control=True)
+
+    def cancel_sweep(self, run_id: str) -> JSON:
+        return self._request("DELETE", "/backtests/sweeps/" + quote(run_id, safe=""), control=True)
+
+    def signal(self, playbook_id: str, *, timestamp: int | None = None, nonce: str | None = None) -> JSON:
+        """Sign a live paper evaluation using this token. Never automatically retry a signal."""
+        if self._prefix != "/api":
+            raise ValueError("Signals address live paper accounts; use replay controls for replay")
+        return self._request("POST", "/signals/" + quote(playbook_id, safe=""),
+                             {"action": "evaluate", "timestamp": int(time.time()) if timestamp is None else timestamp,
+                              "nonce": str(uuid.uuid4()) if nonce is None else nonce}, scoped=True, retry=False, sign=True)
 
     def keep_backtest(self, run_id: str, keep: bool = True) -> JSON:
         return self._request("PUT", "/backtests/" + quote(run_id, safe=""), {"keep": keep}, control=True)

@@ -632,7 +632,7 @@ trading::OrderRequest Playbooks::take(const std::string& account, const std::str
 void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp now,
     const std::map<std::string, std::shared_ptr<const analytics::UnderlyingMetrics>>& metrics,
     const TradingView& view, const std::function<PlaybookInputs(const std::string&, const Json&)>& inputs,
-    const Preview& preview, const Send& send, const Cancel& cancel) {
+    const Preview& preview, const Send& send, const Cancel& cancel, std::string_view only) {
   const TradingView* current = &view;
   std::shared_ptr<const TradingView> updated;
   // An automatic order publishes the account mid-evaluation, caching this
@@ -641,13 +641,24 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
     std::uint64_t& revision;
     ~Revise() { ++revision; }
   } revise{revision_};
-  staged_[account] = json::array();
-  reasons_[account] = json::object();
+  if (only.empty()) {
+    staged_[account] = json::array();
+    reasons_[account] = json::object();
+  } else {
+    auto& stages = staged_[account];
+    if (!stages.is_array()) stages = json::array();
+    for (auto iterator = stages.begin(); iterator != stages.end();) {
+      if (iterator->at("playbook") == only) iterator = stages.erase(iterator);
+      else ++iterator;
+    }
+    if (!reasons_[account].is_object()) reasons_[account] = json::object();
+  }
   const auto modes = catalogue_.at("modes").value(account, json::object());
   const auto history = lives(*current);
   const auto round_trips = trips(*current, history);
   for (const auto& working : current->snapshot->open_orders) {
     const auto* definition = order_definition(catalogue_, working);
+    if (definition && !only.empty() && definition->at("id") != only) continue;
     if (!definition || working.parent || modes.value(definition->at("id").get<std::string>(), "off") != "auto") continue;
     const auto& management = definition->at("management");
     if (now >= playbook_deadline(*definition, working.accepted_at))
@@ -662,6 +673,7 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
   }
   for (const auto& trip : round_trips) {
     const auto* definition = order_definition(catalogue_, *trip.order);
+    if (definition && !only.empty() && definition->at("id") != only) continue;
     if (!definition || trip.closed || trip.legs.empty() || modes.value(definition->at("id").get<std::string>(), "off") != "auto") continue;
     const auto& management = definition->at("management");
     std::string exit;
@@ -702,6 +714,7 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
   // contract, including joint backtests. Never substitute hash or pointer order.
   // Each successful send above/below updates current before the next definition.
   for (const auto& [id, record] : catalogue_.at("definitions").items()) {
+    if (!only.empty() && id != only) continue;
     const auto mode = modes.value(id, "off");
     if (record.at("deleted") == true || mode == "off") continue;
     const auto& definition = record.at("versions").back();

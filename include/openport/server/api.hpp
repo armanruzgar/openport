@@ -24,6 +24,8 @@ struct ApiRequest {
   std::optional<std::string> origin;
   std::string host;
   std::string authorization;
+  std::string signal_signature;
+  bool signal_verified = false;  ///< Set only after transport HMAC and nonce checks.
   std::string actor = "unknown";  ///< Set by transport authentication, never request JSON.
   ApiAccess access;
   std::string client_ip;  ///< Connection peer, or the explicitly configured proxy header.

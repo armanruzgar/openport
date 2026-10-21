@@ -57,6 +57,9 @@ class WebServer {
   /// Sends `message` to every connected WebSocket client. Thread-safe.
   void broadcast(std::string message);
 
+  /// Attach the local event publisher before start; /ws/events is opt-in and account-scoped.
+  void set_event_stream(std::shared_ptr<Notifications> events);
+
   /// The bound port (useful when constructed with port 0).
   [[nodiscard]] unsigned short port() const noexcept;
 

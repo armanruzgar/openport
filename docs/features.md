@@ -425,3 +425,12 @@ orders, notifications, sandbox creation, calendar events, templates and pass odd
 A contract parity test guards new operations. MCP tools add backtests, playbooks,
 alerts, journals, what-if and order-change previews to the copilot. All writes
 remain paper trading and use the server’s token scopes. See [Python](../python/README.md).
+
+A separate versioned WebSocket channel emits paper fills, order state changes,
+rejections, alert/rule trips and staged playbook orders. Python strategies combine
+it with REST reconciliation, polling fallback and recorded-history hooks. Signed
+inbound signals evaluate named playbooks without overriding their mode. Bounded
+parameter sweeps preserve variant reports and rank historical simulated results.
+Optional Arrow/Parquet exports preserve decimal money strings, and a tag-triggered
+OIDC workflow prepares Python package releases without stored publishing tokens.
+See [API programmability](api.md#paper-event-stream-v1).

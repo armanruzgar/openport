@@ -446,29 +446,62 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         """Nonsecret delivery status; no destinations or credentials."""
         return result(client, client.notifications)
 
+    def batch(response):
+        # Batch inputs have their own per-day provenance. The live daemon's
+        # latest quote is not the market time or feed of a historical report.
+        response["as_of"] = None
+        response["feed"] = {"provider": None, "delayed": None, "delay_seconds": None}
+        response["simulated"] = True
+        return response
+
     @server.tool()
     def list_backtests(playbook: str | None = None) -> dict:
         """Saved simulated batch runs, optionally filtered by playbook ID/version."""
-        return result(client, lambda: client.list_backtests(playbook))
+        return batch(result(client, lambda: client.list_backtests(playbook)))
 
     @server.tool()
     def get_backtest(run_id: str) -> dict:
         """Progress and saved report for a simulated batch."""
-        return result(client, lambda: client.get_backtest(run_id))
+        return batch(result(client, lambda: client.get_backtest(run_id)))
 
     @server.tool()
     def compare_backtests(run_ids: list[str]) -> dict:
         """Compare 2–8 saved runs; mismatched input/plan warnings remain visible."""
-        return result(client, lambda: client.compare_backtests(run_ids))
+        return batch(result(client, lambda: client.compare_backtests(run_ids)))
 
     @server.tool()
     def start_backtest(playbook: str | list[str], plan: str | dict, settings: dict | None = None) -> dict:
         """Start a simulated batch; requires replay scope. settings supplies days/scenarios, seed and workers."""
-        return write("main", False, lambda target: target.start_backtest(playbook, plan, **(settings or {})))
+        return batch(write("main", False, lambda target: target.start_backtest(playbook, plan, **(settings or {}))))
 
     @server.tool()
     def cancel_backtest(run_id: str) -> dict:
         """Cancel a running batch; requires replay scope."""
-        return write("main", False, lambda target: target.cancel_backtest(run_id))
+        return batch(write("main", False, lambda target: target.cancel_backtest(run_id)))
+
+    @server.tool()
+    def start_sweep(playbook: str, plan: str | dict, parameter_grid: dict, settings: dict | None = None) -> dict:
+        """Start 2–8 simulated variants over JSON-pointer playbook fields; replay scope required."""
+        return batch(write("main", False, lambda target: target.start_sweep(playbook, plan, parameter_grid, **(settings or {}))))
+
+    @server.tool()
+    def list_sweeps() -> dict:
+        """Saved simulated parameter sweeps."""
+        return batch(result(client, client.list_sweeps))
+
+    @server.tool()
+    def get_sweep(run_id: str) -> dict:
+        """Sweep progress, exact variant definitions and historical ranking; not a prediction."""
+        return batch(result(client, lambda: client.get_sweep(run_id)))
+
+    @server.tool()
+    def cancel_sweep(run_id: str) -> dict:
+        """Cancel an active parameter sweep; replay scope required."""
+        return batch(write("main", False, lambda target: target.cancel_sweep(run_id)))
+
+    @server.tool()
+    def evaluate_playbook(playbook_id: str, account: str) -> dict:
+        """Sign a live paper evaluation. Respects off/stage/auto; auto may trade. Never retries."""
+        return write(account, False, lambda target: target.signal(playbook_id))
 
     return server

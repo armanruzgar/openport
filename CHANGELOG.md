@@ -2,6 +2,14 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 
 ## Unreleased
 
+- Versioned account WebSocket events with bounded delivery and typed Python iteration.
+- `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
+- Signed inbound playbook signals with account scopes, timestamp/nonce replay protection
+  and rate limits; saved manual/automatic modes remain authoritative.
+- Bounded backtest parameter sweeps with exact variant reports and historical ranking.
+- Optional Arrow/Parquet exports preserving money text, with an offline example notebook.
+- Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC).
+
 - Python client coverage for every documented HTTP operation, with a contract parity guard.
 - MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
   market views and order changes, retaining account scopes and preview guidance.
