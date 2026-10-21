@@ -217,6 +217,48 @@ TEST(ThetaData, ASnapshotIsStampedWithItsDataNotTheWallClock) {
   EXPECT_EQ(sink.all<md::SnapshotComplete>()[0].ts, later.ts);
 }
 
+TEST(ThetaData, MissingMarketTimesRemainUnknownIncludingEmptySnapshots) {
+  for (const bool empty : {true, false}) {
+    providers::ThetaDataProvider provider;
+    Collector sink;
+    auto rows = providers::parse_theta_rows(kQuotes);
+    for (auto& row : rows) row.ts = 0;
+    provider.publish_chain("SPX", empty ? std::vector<providers::ThetaRow>{} : rows, {}, {}, {}, sink);
+    const auto marks = sink.all<md::SnapshotComplete>();
+    ASSERT_EQ(marks.size(), 1u);
+    EXPECT_EQ(marks[0].ts, 0);
+    for (const auto& quote : sink.all<md::OptionQuote>()) EXPECT_EQ(quote.ts, 0);
+  }
+}
+
+TEST(ThetaData, FirstOrderRouteConvertsDocumentedUnitsAndPreservesUnknownTheta) {
+  providers::ThetaDataProvider provider;
+  test::HttpStub http;
+  http.respond = [](std::string_view url) -> net::HttpResponse {
+    if (url.find("/snapshot/quote?") != std::string_view::npos) return {200, std::string(kQuotes)};
+    if (url.find("/snapshot/greeks/first_order?") != std::string_view::npos)
+      return {200, R"({"symbol":"SPXW","expiration":"2036-10-06","strike":7405,"right":"put",
+        "timestamp":"2026-09-22T15:33:42.125","implied_vol":0.2,"delta":-0.3,
+        "vega":120,"rho":-35,"theta":-100})"};
+    return {200, {}};
+  };
+  Collector sink;
+  provider.poll_once(http, "SPX", {}, sink);
+  const auto values = sink.all<md::VendorGreeks>();
+  ASSERT_EQ(values.size(), 1u);
+  EXPECT_EQ(values[0].iv, .2);
+  EXPECT_EQ(values[0].delta, -.3);
+  EXPECT_EQ(values[0].vega, 1.2);
+  EXPECT_EQ(values[0].rho, -.35);
+  EXPECT_TRUE(std::isnan(values[0].theta));
+  const auto missing = providers::parse_theta_rows(R"({"symbol":"SPXW","expiration":"2036-10-06",
+    "strike":7405,"right":"put","implied_vol":null,"vega":null,"rho":null})");
+  ASSERT_EQ(missing.size(), 1u);
+  EXPECT_TRUE(std::isnan(missing[0].implied_vol));
+  EXPECT_TRUE(std::isnan(missing[0].vega));
+  EXPECT_TRUE(std::isnan(missing[0].rho));
+}
+
 TEST(ThetaData, AdjustedRootsAreMarkedNonstandard) {
   providers::ThetaDataProvider provider;
   auto row = providers::parse_theta_rows(kQuotes)[0];

@@ -158,6 +158,32 @@ Databento parent subscriptions stream the entire option chain upstream. Both
 CLIs reject nonzero `--expiries` or `--window` with that provider; those filters
 cannot reduce upstream traffic.
 
+## Provider certification
+
+`openport-probe --certify PROVIDER SYMBOL...` writes redacted JSON and Markdown
+conformance reports to a new `--report-dir` directory (default `provider-report`).
+Polling defaults to one cycle, streaming to 60 seconds. `--seconds N` observes a
+duration; add `--snapshot` to use it as a polling-cycle deadline. Streaming
+readiness uses `--quotes N` per underlying (default 100). A real SnapshotComplete
+also establishes polling readiness when index entitlement remains `Stale`.
+Counters observe the publication path before coalescing, including stop callbacks.
+Unknown timestamps, missing fields and scale heuristics are reported separately
+from failures. Raw diagnostics and configuration never enter the report.
+See [certification commands and outcomes](providers.md#live-certification-reports).
+These reports collect evidence for review; no live credential validation is
+claimed by the implementation or its offline tests.
+
+## ThetaData snapshots
+
+ThetaData requests first-order Greeks for IV, delta, vega and rho, with an IV-only
+fallback if the first-order route fails. Vega/rho are divided by 100; theta stays
+NaN because its time basis is not specified. Missing fields stay NaN. These
+mappings are not yet validated live; [sources](providers.md#vendor-units-and-source-references).
+Quote, Greek and OI rows without a market timestamp remain stamped zero (unknown).
+A snapshot without any known current or preceding data time also stays zero;
+there is no `md::now()` fallback. An empty later snapshot can retire quotes at the
+last known snapshot time. Operational status messages still use the wall clock.
+
 ## Broker market data
 
 Both broker adapters are data only. Neither reads accounts nor sends orders.
@@ -208,11 +234,16 @@ stock quotes; the sizes in its option-chain examples read as contracts, the unit
 publishes, so option sizes are taken as contracts. `--option option_size_unit=hundreds`
 multiplies them by 100, and `unknown` withholds them, which stops paper fills that need
 displayed size. No sizes are invented for missing fields.
-IV, vega, theta and rho scaling are unconfirmed and remain NaN; delta and gamma are
-mapped as price derivatives. The unzoned Greek update time stays unknown. Quote
-clocks are milliseconds; conflicting seconds-shaped examples are rejected when
-they would give a priced side an unknown clock. This adapter does not yet emit session volume; cumulative volume is not
-represented as trades.
+Tradier's ORATS `mid_iv` is mapped as decimal IV, vega per volatility percentage
+point, theta per day and rho per rate percentage point, with delta/gamma as price
+derivatives. These mappings are not yet validated live; see the
+[unit references](providers.md#vendor-units-and-source-references). Missing fields
+stay NaN. The unzoned Greek update time stays unknown. Quote clocks are
+milliseconds; seconds-shaped examples are rejected when they would leave a priced
+side with an unknown clock. Chain `volume` emits cumulative contracts with the
+option's `trade_date`, independently of bid/ask clocks. Missing clocks or invalid,
+negative or fractional counts withhold volume; a reported zero is retained.
+This mapping is not yet validated live and never manufactures option trades.
 
 tastytrade requires a funded production account and OAuth credentials created in
 the broker's own application. `sandbox=true` is rejected because the sandbox has
@@ -228,10 +259,10 @@ Eight consecutive failed connection attempts stop the feed;
 a minute of connected service resets that count. Retry waits grow to 60 seconds.
 Shutdown interrupts waits and I/O; system DNS remains the exception described above.
 
-DXLink requests Quote, Greeks, Summary, Trade and Profile. Underlying/index streamer
+DXLink requests Quote, Greeks, Summary and Trade. It no longer requests the unused Profile event. Underlying/index streamer
 symbols come from instrument responses, and option streamer symbols come from
 nested chains. Strike filtering waits for an actual underlying price; it does not
-invent spot. A subscription is an event type plus symbol: four per option, three
+invent spot. A subscription is an event type plus symbol: four per option, two
 per underlying. The adapter refuses more than 25,000, sends at most 10,000 changes
 per minute and opens at most five sessions in one process. Other programs using the
 same credentials also count toward the broker's five-session limit. Large initial
@@ -241,13 +272,21 @@ DXLink event times follow dxFeed's event model, where a Quote's `bidTime` and
 `askTime` are milliseconds since the epoch, so they become market times.
 `--option dxlink_time_unit=unknown` leaves market times at zero instead (health then
 reports `Stale` and paper fills wait), for a feed whose units turn out otherwise; the
-adapter has not yet run against a live account. IV, vega, theta and rho remain NaN because their scaling is
-unconfirmed; delta and gamma are mapped. Summary supplies open interest with an
-unknown timestamp. Trade is a last-trade snapshot, not a distinct execution tape;
-it supplies underlying last prices but emits no option trades. Underlying events
-are not requested because entitlement to that DXLink event type is unverified;
-Quote and Trade supply the underlying instead. Profile is requested but currently
-has no corresponding normalised event. Streaming emits no `SnapshotComplete`.
+adapter has not yet run against a live account. Greeks supplies decimal IV,
+vega/rho per percentage point and theta per day, with delta/gamma as price
+derivatives. These mappings are not yet validated live. Summary OI retains a
+supplied `eventTime` (vendor event creation time, not the OI effective date);
+absent/zero/unconfirmed times stay zero. No local receipt clock replaces it.
+Trade is a last-trade snapshot, not a distinct execution tape: it supplies
+underlying last prices and option `dayVolume`, but emits no option trades.
+Volume requires a finite nonnegative whole count and a known timestamp; a supplied
+`dayId` must agree with that timestamp's trading date. Summary's standard schema
+only has `prevDayVolume`, which is not used; a negotiated `dayVolume` extension is
+accepted with `eventTime`. Identical totals are suppressed within a trading date
+and republished after a date change. These volume mappings are not yet validated
+live. Underlying events are not requested because entitlement to that DXLink
+event type is unverified; Quote and Trade supply the underlying instead.
+Streaming emits no `SnapshotComplete`.
 
 Both adapters are tested with generated fixtures shaped like broker documentation,
 not live accounts. Empty response shapes, index symbols, entitlement and the noted
@@ -268,7 +307,11 @@ supplies it; the current saved quote, IV and OI samples have none. Databento sum
 received trade sizes per contract, resetting at the trading-date roll (including
 the evening session). Its total covers trades received since connection; it does
 not backfill earlier trades, repair reconnect gaps or apply trade corrections.
-With `trades=off`, volume is unknown. Tradier and tastytrade do not yet emit volume.
+With `trades=off`, volume is unknown. Tradier maps chain `volume` using
+`trade_date`, only when that falls on the trading date of the row's
+`bid_date`/`ask_date` (its daily reset is not filed under the prior day); tastytrade maps DXLink Trade `dayVolume` using `time`, and accepts
+Summary `dayVolume` extensions using `eventTime`. Both are cumulative session
+counts, not inferred trades, and are not yet validated live.
 
 The chain shows volume, `(ask - bid) / ((ask + bid) / 2)` and a liquidity cue per
 side. Hover volume for volume/OI; zero or unknown OI leaves the ratio unknown.

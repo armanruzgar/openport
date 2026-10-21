@@ -5,6 +5,14 @@ What OpenPort does today. The [README](../README.md) has the short version;
 All orders and accounts are simulated. On the default 15-minute delayed feed,
 a pass is practice, not proof: a real-time chart shows what happened next.
 
+Provider adapters map session volume and documented vendor Greeks from Tradier,
+tastytrade and ThetaData where supplied; ambiguous units and timestamps remain
+unknown. These mappings are sample/mock tested, not yet validated live.
+[Provider units](providers.md#vendor-units-and-source-references).
+`openport-probe --certify` collects a duration or snapshot cycle into redacted
+JSON/Markdown reports with event counts, contract coverage, clock checks, Greek
+scale hints and errors. [Certification](providers.md#live-certification-reports).
+
 ## Market analytics
 
 - **Chain**: bid, mid and ask with their implied volatilities, delta, gamma, vega,

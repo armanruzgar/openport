@@ -35,6 +35,8 @@ if(OPENPORT_BUILD_PROVIDERS)
     net/http_test.cpp
     providers/cboe_test.cpp
     providers/runtime_test.cpp
+    providers/certification_test.cpp
+    ${PROJECT_SOURCE_DIR}/apps/probe/certification.cpp
     providers/cli_test.cpp
     providers/massive_test.cpp
     providers/thetadata_test.cpp

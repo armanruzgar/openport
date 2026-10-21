@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 #include <sys/wait.h>
 
 #include <cstdio>
@@ -171,6 +172,37 @@ TEST(Cli, ProbeRejectsBadValuesUnknownFlagsAndDatabentoFilters) {
   rejects("openport-probe", "cboe SPY --window", "missing value");
   rejects("openport-probe", "missing SPY", "unknown provider");
   rejects("openport-probe", "databento SPX --expiries 1", "whole chain upstream");
+}
+
+TEST(Cli, CertificationWritesRedactedReportsFromReplayAndRejectsUnsafeCombinations) {
+  using namespace openport;
+  test::RecordingFile source;
+  const auto time = md::parse_datetime("2026-09-22T14:30:00Z", md::Zone::Utc).value();
+  test::record_events(source.path, {md::ContractDefinition{0, *md::parse_osi("SPXW991218C05000000")},
+      md::OptionQuote{0, time, 100, 101, 1, 1}, md::SnapshotComplete{"SPX", time},
+      md::ProviderStatus{time, md::FeedState::Live, "token=never-share account=secret-account", "SPX"}});
+  const auto directory = source.directory / "certificate";
+  const auto command = isolated_home() + "\"" + OPENPORT_APPS_DIR +
+      "/openport-probe\" --certify replay SPX --option file='" + source.path.string() +
+      "' --option speed=max --snapshot --seconds 1 --report-dir '" + directory.string() + "' 2>&1";
+  FILE* pipe = popen(command.c_str(), "r");
+  ASSERT_NE(pipe, nullptr);
+  std::string output;
+  char buffer[512];
+  while (fgets(buffer, sizeof buffer, pipe)) output += buffer;
+  const auto status = pclose(pipe);
+  ASSERT_TRUE(WIFEXITED(status)) << output;
+  EXPECT_EQ(WEXITSTATUS(status), 0) << output;
+  EXPECT_EQ(output.find("never-share"), std::string::npos);
+  EXPECT_EQ(output.find("secret-account"), std::string::npos);
+  std::ifstream report_file(directory / "conformance.json");
+  const auto report = nlohmann::json::parse(report_file);
+  EXPECT_EQ(report["event_counts"]["OptionQuote"], 1);
+  EXPECT_EQ(report["mode"], "one_snapshot_cycle");
+  EXPECT_TRUE(std::filesystem::exists(directory / "conformance.md"));
+  rejects("openport-probe", "--certify cboe SPX --record leak.oprec", "diagnostic redacted");
+  rejects("openport-probe", "--certify cboe SPX --report-dir ''", "diagnostic redacted");
+  rejects("openport-probe", "--certify cboe SPX --seconds 0", "diagnostic redacted");
 }
 
 TEST(Cli, BrokerNamesHelpSandboxAndCredentialFlagsAreValidatedOffline) {

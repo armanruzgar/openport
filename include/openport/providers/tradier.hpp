@@ -15,6 +15,8 @@ struct TradierOption {
   double bid = 0, ask = 0;
   double bid_size = 0, ask_size = 0;  // vendor units, not normalised until explicitly confirmed
   double open_interest = -1;
+  double volume = -1;
+  md::Timestamp volume_ts = 0;
   std::optional<md::VendorGreeks> greeks;
 };
 

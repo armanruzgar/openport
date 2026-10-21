@@ -30,6 +30,7 @@
 #include "openport/providers/factory.hpp"
 #include "openport/providers/options.hpp"
 #include "state.hpp"
+#include "certification.hpp"
 
 namespace {
 
@@ -51,6 +52,7 @@ int usage() {
       stderr,
       "usage: openport-probe <provider> <underlying>... [--expiries N] [--window F] "
       "[--seconds S] [--quotes N] [--analyze] [--compare-mfiv] [--comparison-dir DIR] [--record FILE] [--option KEY=VALUE]...\n"
+      "certify: openport-probe --certify <provider> <underlying>... [--seconds S] [--snapshot] [--report-dir DIR]\n"
       "replay: --option file=PATH [--option speed=1|10|60|max] [--option loop=on|off]\n"
       "streaming: definitions and N quotes per underlying (default 100), else timeout failure\n"
       "polling: one complete snapshot per underlying\n"
@@ -176,7 +178,12 @@ struct VolComparison {
 
 int run(int argc, char** argv) {
   if (argc < 3) return usage();
-  md::ProviderConfig config{argv[1], env_key_for(argv[1]), {}};
+  const bool certify = std::string_view(argv[1]) == "--certify";
+  const int provider_arg = certify ? 2 : 1;
+  if (argc <= provider_arg + 1) return usage();
+  md::ProviderConfig config{argv[provider_arg], env_key_for(argv[provider_arg]), {}};
+  bool duration = false, snapshot = false;
+  std::filesystem::path report_dir = "provider-report";
   md::Subscription subscription;
   std::filesystem::path record_file;
   int seconds = 60;
@@ -184,9 +191,14 @@ int run(int argc, char** argv) {
   bool compare_mfiv = false;
   std::filesystem::path comparison_dir;
   int minimum_quotes = 100;
-  for (int i = 2; i < argc; ++i) {
+  for (int i = provider_arg + 1; i < argc; ++i) {
     const std::string arg = argv[i];
-    if (arg == "--analyze") {
+    if (arg == "--snapshot" && certify) {
+      snapshot = true;
+    } else if (arg == "--report-dir" && certify && i + 1 < argc) {
+      report_dir = argv[++i];
+      if (report_dir.empty()) throw std::invalid_argument("--report-dir requires a nonempty path");
+    } else if (arg == "--analyze") {
       analyze = true;
     } else if (arg == "--compare-mfiv") {
       compare_mfiv = true;
@@ -201,6 +213,7 @@ int run(int argc, char** argv) {
       minimum_quotes = providers::parse_integer(argv[++i], arg, 1);
     } else if (arg == "--seconds" && i + 1 < argc) {
       seconds = providers::parse_integer(argv[++i], arg, 1);
+      duration = true;
     } else if (arg == "--record" && i + 1 < argc) {
       record_file = argv[++i];
       if (record_file.empty()) throw std::invalid_argument("--record requires a nonempty path");
@@ -224,6 +237,14 @@ int run(int argc, char** argv) {
   if (!comparison_dir.empty() && !compare_mfiv)
     throw std::invalid_argument("--comparison-dir requires --compare-mfiv");
   providers::validate_subscription(config.name, subscription);
+  if (certify) {
+    if (analyze || compare_mfiv || !record_file.empty())
+      throw std::invalid_argument("certification cannot be combined with analysis or raw recording");
+    const int result = probe::certify(config, subscription, seconds, duration, snapshot,
+                                      static_cast<std::size_t>(minimum_quotes), report_dir);
+    std::printf("certification report written: conformance.json and conformance.md (exit %d)\n", result);
+    return result;
+  }
   auto provider = providers::make_provider(config);
 
   const md::Capabilities caps = provider->capabilities();
@@ -409,7 +430,9 @@ int main(int argc, char** argv) {
   try {
     return run(argc, argv);
   } catch (const std::exception& error) {
-    std::fprintf(stderr, "openport-probe: %s\n", error.what());
+    if (argc > 1 && std::string_view(argv[1]) == "--certify")
+      std::fprintf(stderr, "openport-probe: certification configuration or report output failed; check flags and use a new writable report directory (diagnostic redacted)\n");
+    else std::fprintf(stderr, "openport-probe: %s\n", error.what());
     return 2;
   } catch (...) {
     std::fprintf(stderr, "openport-probe: unknown startup failure\n");

@@ -193,7 +193,7 @@ std::set<DxlinkSubscription> TastytradeMapper::subscriptions() const {
   std::set<DxlinkSubscription> result;
   for (const auto& [symbol, underlying] : underlyings_) {
     (void)underlying;
-    for (const auto* type : {"Quote", "Trade", "Profile"}) result.insert({type, symbol});
+    for (const auto* type : {"Quote", "Trade"}) result.insert({type, symbol});
   }
   for (const auto& [symbol, instrument] : instruments_) {
     (void)instrument;
@@ -246,14 +246,29 @@ void TastytradeMapper::event(const Json& event) {
                              "tastytrade: quotes received; DXLink timestamp units unconfirmed", name});
     }
   } else if (type == "Greeks") {
-    sink_.publish(md::VendorGreeks{id, timestamp("time"), missing, number(field(event, "delta")),
-                                   number(field(event, "gamma")), missing, missing, missing});
+    // dxFeed defines vega/rho per percentage point and theta per day.
+    // Volatility is the Black-Scholes decimal. See docs/providers.md for sources.
+    const double iv = number(field(event, "volatility"));
+    sink_.publish(md::VendorGreeks{id, timestamp("time"), iv > 0 ? iv : missing,
+                                   number(field(event, "delta")), number(field(event, "gamma")),
+                                   number(field(event, "vega")), number(field(event, "theta")),
+                                   number(field(event, "rho"))});
   } else if (type == "Summary") {
     const double oi = number(field(event, "openInterest"));
-    if (oi >= 0) sink_.publish(md::OpenInterest{id, 0, oi});
+    // eventTime is the vendor's event creation time, not the OI effective date.
+    if (oi >= 0) sink_.publish(md::OpenInterest{id, timestamp("eventTime"), oi});
   }
-  // Trade is a last-trade snapshot, not a tape of distinct executions. Use it for
-  // underlying prices only. There is no cumulative-volume event in md::Event.
+  if (type == "Trade" || type == "Summary") {
+    // Trade is a last-trade snapshot, not a tape of distinct executions.
+    // Summary's standard schema has no dayVolume; accept it only when supplied
+    // by a negotiated extension. Never substitute prevDayVolume or trade size.
+    const double volume = number(field(event, "dayVolume"));
+    const auto ts = timestamp(type == "Trade" ? "time" : "eventTime");
+    const double day = number(field(event, "dayId"));
+    if (ts > 0 && volume >= 0 && volume == std::floor(volume) &&
+        (!std::isfinite(day) || day == static_cast<double>(md::days_since_epoch(md::trading_date(ts)))))
+      definitions_.volume(id, ts, volume, sink_);
+  }
 }
 
 TastytradeProvider::TastytradeProvider(Options options) : options_(std::move(options)) {

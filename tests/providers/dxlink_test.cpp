@@ -49,6 +49,21 @@ TEST(Dxlink, SendsRecordedHandshakeInOrderAndRestoresSubscriptionsOnReconnect) {
   EXPECT_EQ(transport.frames.back()["add"], added);
 }
 
+TEST(Dxlink, RequestsSummaryEventTimeAndTradeVolumeWithoutUnusedProfile) {
+  const auto fields = providers::DxlinkProtocol::event_fields();
+  EXPECT_FALSE(fields.contains("Profile"));
+  FakeTransport transport;
+  providers::DxlinkProtocol protocol(transport);
+  protocol.begin("token", {}, 0);
+  handshake(protocol);
+  const auto events = protocol.on_message(R"({"type":"FEED_DATA","channel":3,"data":[
+    "Summary",["Summary",".SPY230731C393",42,1790263800000],
+    "Trade",["Trade",".SPY230731C393",5,321,1,1790263800000,20720]]})", 0);
+  ASSERT_EQ(events.size(), 2u);
+  EXPECT_EQ(events[0]["eventTime"], 1790263800000LL);
+  EXPECT_EQ(events[1]["dayVolume"], 321);
+}
+
 TEST(Dxlink, RecordedCompactExchangeDecodesMultipleRowsAndSpecialValues) {
   FakeTransport transport;
   providers::DxlinkProtocol protocol(transport);

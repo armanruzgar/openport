@@ -138,8 +138,11 @@ recording and hosting a public demo.
 | Replay | `replay` | A recording played back as the feed | none |
 
 Every provider but Cboe, Demo and Replay is tested against sample responses and has
-not yet been run live with a key; an [issue](https://github.com/38st/openport/issues)
-saying how it went is welcome. The broker adapters read market data only.
+not yet been run live with a key. Run `openport-probe --certify PROVIDER SYMBOL`
+and attach its redacted JSON/Markdown reports to a
+[provider report issue](https://github.com/38st/openport/issues/new?template=provider-report.yml).
+[Certification commands and limits](docs/providers.md#live-certification-reports).
+The broker adapters read market data only.
 [Configuration](docs/configuration.md) has each provider's details and every flag.
 
 ## Documentation
