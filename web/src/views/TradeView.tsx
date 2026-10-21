@@ -7,7 +7,7 @@ import { SmileView } from "./SmileView"
 const tabs: { view: View; label: string; hint: string }[] = [
   { view: "chain", label: "Chain", hint: "Quotes, Greeks and the order ticket" },
   { view: "smile", label: "Volatility", hint: "Smile, SVI/SSVI fits and term structure" },
-  { view: "exposure", label: "Exposure", hint: "Dealer gamma and vanna exposure" },
+  { view: "exposure", label: "Exposure", hint: "Dealer delta, gamma, vanna, charm and vomma exposure" },
 ]
 
 /** The trading terminal: the chain with its ticket, plus market analytics beside it. */

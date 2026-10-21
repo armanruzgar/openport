@@ -51,7 +51,7 @@ describe("checked API core types", () => {
       expect(source).toMatch(/export type CreateAccountRequest = [^\n]+& MarginModel/)
     }
   })
-  it.each(["ProgramCosts", "SizeScaling", "SizeScale", "SizeScalingStatus", "AttemptSummary", "ScalingStep", "ScalingStatus", "PayoutRules", "PayoutStatus", "PayoutBestDay", "Candle", "OptionQuote", "ChainRow", "Fill", "OrdersResponse", "EquitySample", "NotificationChannel", "NotificationStatus", "Alert", "AlertsResponse", "AlertResponse", "AlertDeleted",
+  it.each(["ExposureLevels", "ExposureMetricLevels", "ExposureSummary", "ExposureExpiry", "ExposureMatrix", "ProgramCosts", "SizeScaling", "SizeScale", "SizeScalingStatus", "AttemptSummary", "ScalingStep", "ScalingStatus", "PayoutRules", "PayoutStatus", "PayoutBestDay", "Candle", "OptionQuote", "ChainRow", "Fill", "OrdersResponse", "EquitySample", "NotificationChannel", "NotificationStatus", "Alert", "AlertsResponse", "AlertResponse", "AlertDeleted",
     "Guardrails", "GuardrailState", "AccountDamage", "JournalSize", "EquityHistory", "VerificationCost", "SettlementSource", "SettlementRecord", "SettlementsResponse", "StockPreview", "MarginLeg", "MarginPart", "MarginScan", "MarginUnderlying", "FillFees", "FeeSchedule", "PriceRange", "PriceOdds", "ProbabilityHorizon", "Probability",
     "ProfileLevel", "ProfileHorizon", "Walk", "WalkStep", "Limits", "TokenStatus", "RunJournal", "RunInput", "VerificationRun", "RunVerification", "ForwardTestWindow", "ForwardTest", "PlaybookReport"])("%s matches OpenAPI fields, types and nullability", (name) => {
     const body = new RegExp(`export interface ${name} \\{([^}]+)\\}`).exec(source)?.[1]

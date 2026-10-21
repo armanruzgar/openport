@@ -179,18 +179,41 @@ export interface Expiry {
   atm_iv: Num
   gex: Num
   vex: Num
+  dex?: Num
+  cex?: Num
+  vomex?: Num
   strikes: number
   style?: "european" | "american" | null
   coverage?: Coverage | null
 }
 
+export type ExposureConvention = "open_interest" | "short_all" | "long_calls_short_puts" | "customer_flow"
+export type ExposureSlice = "all" | "0dte" | "ex_0dte"
+export interface ExposureLevels {
+  flip: Num
+  positive_wall: Num
+  negative_wall: Num
+}
+export interface ExposureMetricLevels {
+  gex: ExposureLevels
+  vex: ExposureLevels
+  dex: ExposureLevels
+  cex: ExposureLevels
+  vomex: ExposureLevels
+}
 export interface ExposureSummary {
   gex: Num
   vex: Num
+  dex?: Num
+  cex?: Num
+  vomex?: Num
   gamma_flip: Num
   call_wall: Num
   put_wall: Num
   oi_coverage?: Num
+  available?: boolean
+  unavailable_reason?: string | null
+  levels?: ExposureMetricLevels
 }
 
 export interface Summary {
@@ -241,6 +264,9 @@ export interface ChainRow {
   iv: Num
   gex: Num
   vex: Num
+  dex?: Num
+  cex?: Num
+  vomex?: Num
   call: OptionQuote | null
   put: OptionQuote | null
 }
@@ -255,6 +281,16 @@ export interface Chain {
   strikes: ChainRow[]
 }
 
+export interface ExposureExpiry {
+  id: string
+  expiry: string
+  days: Num
+  gex: Num[]
+  vex: Num[]
+  dex?: Num[]
+  cex?: Num[]
+  vomex?: Num[]
+}
 export interface ExposureMatrix {
   symbol: string
   spot: Num
@@ -262,8 +298,14 @@ export interface ExposureMatrix {
   as_of: string | null
   version: number
   strikes: number[]
-  expiries: { id: string; expiry: string; days: Num; gex: Num[]; vex: Num[] }[]
+  expiries: ExposureExpiry[]
+  convention?: ExposureConvention
+  slice?: ExposureSlice
   total_gex: Num[]
+  total_vex?: Num[]
+  total_dex?: Num[]
+  total_cex?: Num[]
+  total_vomex?: Num[]
   exposure: ExposureSummary
 }
 
