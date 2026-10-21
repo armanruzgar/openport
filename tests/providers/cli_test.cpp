@@ -305,6 +305,30 @@ TEST(Cli, PrintUrlReadsExistingSettingsWithoutStartingOrCreatingAnything) {
   EXPECT_FALSE(std::filesystem::exists(file.directory / "named" / "write-token"));
 }
 
+TEST(Cli, PrintUrlNamesAHostNameAddressAsGiven) {
+  const auto result = run_daemon("--print-url --address localhost --write-token fixture");
+  EXPECT_EQ(result.status, 0) << result.output;
+  EXPECT_EQ(result.output, "http://localhost:8080/#token=fixture\n");
+  EXPECT_EQ(openport::startup::terminal_url("openport.internal", 9090, ""), "http://openport.internal:9090/");
+  EXPECT_EQ(openport::startup::terminal_url("0.0.0.0", 8080, "t"), "http://localhost:8080/#token=t");
+}
+
+// A service's stdout may land in a log other users read, such as journald.
+TEST(Cli, NoTokenLinkKeepsTheTokenOutOfTheStartupNotice) {
+  const std::filesystem::path file = "/var/lib/openport/write-token";
+  const auto linked = openport::startup::token_file_notice(file, "127.0.0.1", 8080, "secret-token", true);
+  EXPECT_EQ(linked, "write token: kept in /var/lib/openport/write-token; to trade, open this once in a browser tab:\n"
+                    "  http://127.0.0.1:8080/#token=secret-token\n");
+  const auto unlinked = openport::startup::token_file_notice(file, "127.0.0.1", 8080, "secret-token", false);
+  EXPECT_EQ(unlinked.find("secret-token"), std::string::npos) << unlinked;
+  EXPECT_NE(unlinked.find("openportd --print-url --write-token-file /var/lib/openport/write-token "
+                          "--address 127.0.0.1 --port 8080"), std::string::npos) << unlinked;
+  // The flag parses; --print-url, run by a user who can read the token, still prints it.
+  const auto result = run_daemon("--no-token-link --print-url --write-token fixture");
+  EXPECT_EQ(result.status, 0) << result.output;
+  EXPECT_EQ(result.output, "http://127.0.0.1:8080/#token=fixture\n");
+}
+
 TEST(Cli, BrowserReceivesOneLiteralUrlAndFailureLeavesItPrintable) {
   openport::test::RecordingFile file;
 #ifdef __APPLE__

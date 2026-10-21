@@ -38,7 +38,7 @@ class PackageTest(unittest.TestCase):
             self.assertEqual(run("rpm", "-qp", "--qf", "%{VERSION}", RPM), version)
             self.assertEqual(run(str(root / "usr/bin/openportd"), "--version"), "openportd " + version)
             unit = (root / "usr/lib/systemd/system/openport.service").read_text()
-            for setting in ["DynamicUser=yes", "StateDirectoryMode=0700", "--address 127.0.0.1", "--write-token-file"]:
+            for setting in ["DynamicUser=yes", "StateDirectoryMode=0700", "--address 127.0.0.1", "--no-token-link", "--write-token-file"]:
                 self.assertIn(setting, unit)
 
     def test_install_does_not_start_service_or_remove_data(self):

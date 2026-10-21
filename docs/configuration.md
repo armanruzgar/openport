@@ -45,8 +45,9 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--rate R` | The rate assumed when no index curve is available |
 | `--address`, `--port`, `--web-root`, `--allowed-origin`, `--allowed-host`, `--write-token`, `--write-token-file` | The web server and who may write (see [Security](#security)) |
 | `--token-file FILE` | Named tokens: one `NAME SCOPES SECRET` per line, with comma-separated scopes and `#` comments |
-| `--open` | Open the terminal after startup; opt-in even on a TTY. Creates a token file beside the journal when no token is configured |
-| `--print-url [--open]` | Read existing token settings, print the local terminal link and exit; optionally open it. Reuse the service's address, port and token-file flags |
+| `--open` | Open the terminal after startup; opt-in even on a TTY. Creates a token file beside the journal when no token is configured. The token link is the browser launcher's argument, which `ps` shows other local users while it runs; on a shared machine use `--print-url` and paste the link |
+| `--print-url [--open]` | Read existing token settings, print the local terminal link and exit; optionally open it. Reuse the service's address, port and token-file flags. A host name address such as `localhost` is used as given |
+| `--no-token-link` | At startup, print the `--print-url` command for a token file instead of its token link, for services whose stdout goes to a shared log such as journald. The systemd unit uses it |
 | `--crash-log PATH` | Local fatal signal log; defaults to `crash.log` beside the paper journal. No network reporting |
 | `--notify-config FILE` | Owner-only JSON file for notification channels, filters and the `include_simulated` demo/replay opt-in (default false); alternatively `OPENPORT_NOTIFY_JSON` or channel environment variables ([setup](runtime.md#external-notifications)) |
 | `--sandboxes N` | Offer up to N visitor accounts; 0 (default) disables them. Requires `--provider demo` and paper trading |

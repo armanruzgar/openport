@@ -75,6 +75,7 @@ struct Settings {
   unsigned short port = 8080;
   bool open = false;
   bool print_url = false;
+  bool token_link = true;
   std::filesystem::path crash_log;
   std::filesystem::path web_root;
   std::filesystem::path scenario_dir;
@@ -136,7 +137,7 @@ int usage(const char* error = nullptr) {
       "                 [--no-paper] [--write-token TOKEN] [--write-token-file PATH] [--candle-dir DIR] [--no-history]\n"
       "                 [--dividends FILE|massive] [--event-calendar FILE] [--events FILE] [--no-cboe-holidays]\n"
       "                 [--series-dir DIR] [--no-series]\n"
-      "                 [--open] [--crash-log PATH]\n"
+      "                 [--open] [--no-token-link] [--crash-log PATH]\n"
       "       openportd --print-url [--open] [--write-token-file PATH] [--address ADDR] [--port N]\n"
       "       openportd --backfill-series FILE... [--force] [--series-dir DIR]\n"
       "       openportd --verify-run JOURNAL\n"
@@ -162,8 +163,11 @@ int usage(const char* error = nullptr) {
       "write token: --write-token overrides OPENPORT_WRITE_TOKEN; required for remote writes\n"
       "write token file: without either, the token kept in PATH, created at random if missing,\n"
       "                  with a link that saves it in a browser tab printed at startup\n"
+      "                  --no-token-link prints the --print-url command instead, for services\n"
+      "                  whose stdout goes to a shared log such as journald\n"
       "open: launch the terminal in the default browser after startup (opt-in); creates a\n"
-      "      write-token beside the journal unless a token is already configured\n"
+      "      write-token beside the journal unless a token is already configured; the link\n"
+      "      is the launcher's argument, which ps shows other local users while it runs\n"
       "print-url: print the link from existing token settings and exit; add --open to open it\n"
       "crash log: local fatal signal record, default crash.log beside the paper journal\n"
       "dividends: SYMBOL,YYYY-MM-DD,AMOUNT lines (ex-date, dollars a share); on each ex-date\n"
@@ -396,6 +400,7 @@ int run(int argc, char** argv) {
     if (arg == "--version") { std::printf("openportd %s\n", OPENPORT_VERSION); return 0; }
     if (arg == "--open") { settings.open = true; continue; }
     if (arg == "--print-url") { settings.print_url = true; continue; }
+    if (arg == "--no-token-link") { settings.token_link = false; continue; }
     if (arg == "--require-token") { settings.require_token = true; continue; }
     if (arg == "--no-paper") { settings.paper_enabled = false; continue; }
     if (arg == "--no-series") { settings.series = false; continue; }
@@ -790,12 +795,9 @@ int run(int argc, char** argv) {
   std::printf("OpenPort on http://%s:%u  (provider %s: %s)\n", settings.address.c_str(), web.port(),
               settings.provider.name.c_str(), symbols.c_str());
   std::printf("web terminal: %s\n", settings.web_root.string().c_str());
-  if (token_from_file) {
-    std::printf("write token: kept in %s; to trade, open this once in a browser tab:\n"
-                "  %s\n",
-                settings.write_token_file.string().c_str(),
-                startup::terminal_url(settings.address, web.port(), settings.write_token).c_str());
-  }
+  if (token_from_file)
+    std::fputs(startup::token_file_notice(settings.write_token_file, settings.address, web.port(),
+                                          settings.write_token, settings.token_link).c_str(), stdout);
   std::fflush(stdout);
   if (settings.open && !startup::open_browser(startup::terminal_url(settings.address, web.port(), settings.write_token)))
     std::fprintf(stderr, "openportd: cannot open browser; use --print-url to get the terminal link\n");

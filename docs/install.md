@@ -35,7 +35,10 @@ or service discovery: the helper uses those flags and `OPENPORT_WRITE_TOKEN`,
 with `--write-token` taking precedence. It never creates a missing token or starts
 another feed. A failed browser launch leaves the link available for manual use.
 Linux browser launching uses `xdg-open` from `xdg-utils`; on a headless server,
-print the link and open it on your desktop instead.
+print the link and open it on your desktop instead. `--open` hands the token link
+to `open` or `xdg-open` as an argument, so other local users can see it in `ps`
+while the launcher runs; some `xdg-open` backends run as long as the browser, and
+openportd warns on Linux. On a shared machine, run `--print-url` and paste the link.
 With only named tokens configured, `--open` opens the terminal without choosing a
 token or creating an administrator credential; enter the appropriate token in
 the terminal. `--print-url` requires a legacy token setting in that case.
@@ -104,7 +107,10 @@ enterprise distributions. Use Docker or build from source when dependencies do
 not match. ARM package names use `arm64` (RPM metadata uses `aarch64`).
 
 The systemd unit listens on loopback, uses a private dynamic user and keeps state
-under `/var/lib/openport`; logs are in `journalctl -u openport`. Packages never
+under `/var/lib/openport`; logs are in `journalctl -u openport`. The unit passes
+`--no-token-link`, so the journal, which `adm` and `systemd-journal` members can
+read, shows the `--print-url` command rather than the token; get the link with the
+`sudo openportd --print-url` command above. Packages never
 start services or delete data in install/uninstall scripts. Stop before upgrades
 or removal. Use `systemctl edit openport` for startup overrides, keeping the token
 and data paths; then reload and restart. Copy the printed link to your desktop

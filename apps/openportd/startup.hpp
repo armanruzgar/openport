@@ -22,8 +22,11 @@ extern char** environ;
 namespace openport::startup {
 
 inline std::string terminal_url(const std::string& address, unsigned short port, std::string_view token) {
-  const auto ip = boost::asio::ip::make_address(address);
-  const auto host = ip.is_unspecified() ? "localhost" : ip.is_v6() ? "[" + ip.to_string() + "]" : ip.to_string();
+  // A host name such as localhost is not an IP literal; the link names it as given.
+  boost::system::error_code error;
+  const auto ip = boost::asio::ip::make_address(address, error);
+  const auto host = error ? address : ip.is_unspecified() ? "localhost"
+      : ip.is_v6() ? "[" + ip.to_string() + "]" : ip.to_string();
   std::string url = "http://" + host + ":" + std::to_string(port) + "/";
   if (!token.empty()) {
     url += "#token=";
@@ -37,13 +40,32 @@ inline std::string terminal_url(const std::string& address, unsigned short port,
   return url;
 }
 
+/// What startup prints about a write token kept in a file. With `with_link` false
+/// the token stays out of stdout, which a service manager may keep in a shared log.
+inline std::string token_file_notice(const std::filesystem::path& file, const std::string& address,
+                                     unsigned short port, std::string_view token, bool with_link) {
+  if (!with_link)
+    return "write token: kept in " + file.string() + "; for its link, run as a user who can read it:\n"
+           "  openportd --print-url --write-token-file " + file.string() + " --address " + address +
+           " --port " + std::to_string(port) + "\n";
+  return "write token: kept in " + file.string() + "; to trade, open this once in a browser tab:\n  " +
+         terminal_url(address, port, token) + "\n";
+}
+
 inline bool open_browser(const std::string& url) {
 #ifdef __APPLE__
   const char* command = "open";
 #else
   const char* command = "xdg-open";
 #endif
-  // Pass one literal argument, never a token-bearing shell command.
+  // Pass one literal argument, never a token-bearing shell command. The argument
+  // is still visible in ps while the launcher runs: open exits once the browser
+  // has it, but some xdg-open backends stay as long as the browser does.
+#ifndef __APPLE__
+  if (url.find("#token=") != std::string::npos)
+    std::fprintf(stderr, "openportd: xdg-open's command line shows the token link to other local users "
+                         "while it runs; on a shared machine, use --print-url instead of --open\n");
+#endif
   char* args[] = {const_cast<char*>(command), const_cast<char*>(url.c_str()), nullptr};
   posix_spawn_file_actions_t actions;
   if (posix_spawn_file_actions_init(&actions) != 0) return false;

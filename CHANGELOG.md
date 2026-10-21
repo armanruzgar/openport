@@ -5,6 +5,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Open the terminal without hunting for a token.** `openportd --open` launches
   the browser after startup; `--print-url [--open]` reads existing token settings
   and exits. Homebrew caveats and installation examples use the helper.
+  `--no-token-link` prints the `--print-url` command instead of the token link at
+  startup; the systemd unit uses it so the token stays out of journald. `--open`
+  documents, and on Linux warns, that the launcher's arguments are visible in `ps`.
+  `--print-url --address localhost` names the host as given instead of failing.
 - **Install on more platforms.** Release automation packages Linux amd64/arm64
   `.deb` and `.rpm` assets with a private systemd service. Intel Macs build the
   release tag through Homebrew; Windows Docker Desktop/WSL2 paths are documented.
