@@ -2,16 +2,49 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 
 ## Unreleased
 
-- Providers: add `openport-probe --certify` with redacted JSON/Markdown reports
+### Providers and historical import
+
+- Add `openport-probe --certify` with redacted JSON/Markdown reports
   for timed observations or a snapshot cycle, including event/contract coverage,
   clock checks, Greek scale hints and errors. Add a provider report issue template;
   demo/replay reports are explicitly labelled and do not claim live validation.
-
-- Providers: preserve unknown ThetaData snapshot times; remove unused DXLink
+- Preserve unknown ThetaData snapshot times; remove unused DXLink
   Profile subscriptions and retain supplied Summary event times for open interest.
-- Providers: map Tradier chain and DXLink session volume without inventing trades
+- Map Tradier chain and DXLink session volume without inventing trades
   or timestamps. Map documented ORATS/DXLink Greeks and ThetaData vega/rho scales;
   ThetaData theta remains unknown. Sample/mock tested, not yet validated live.
+- **Import historical options from Massive (Polygon).** Historical contract discovery,
+  paginated quotes and trades preserve vendor timestamps. Tested with generated
+  saved-response fixtures; paid historical access has not been validated live.
+  Quote and trade pages grow up to Massive's 50,000-row maximum within the buffer cap.
+- **Import date ranges and resume.** All importers accept inclusive `--import-days`
+  ranges and repeated dates, skip calendar closures, report progress and skip only
+  matching complete recordings.
+
+### Recording and replay
+
+- **Record across trading dates.** `--record-dir` rolls at calendar boundaries and
+  publishes only complete files, with optional oldest-first age/size retention that
+  protects active files. Replay lists trading dates, symbols and sources across providers.
+  Retention runs off the feed thread at rollover, reports files it cannot remove
+  instead of stopping recording, and counts stale staging folders toward the size cap.
+- **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
+  duration and cover multiple pauses/resumes before the pacing loop observes them.
+
+### Journal and practice
+
+- Journal: add entry-context edge reports, persisted mistake/setup picks and
+  with/without cost comparisons; transparent trade coach flags and an opt-in,
+  user-configured HTTP AI review hook.
+- Replay: start a fresh paused account from a reviewed entry with the original
+  source/seed/date/plan, and mark authored scenario events on review/equity charts.
+- Practice: grade declared objectives from journal states, retain scores and
+  personal bests, and offer spaced fresh-seed practice with completion streaks.
+- Scenarios: import/export packs and fixed challenges, including challenge inputs
+  and recomputed drill results in replay verification receipts. Morning crush,
+  Afternoon waterfall and Range bleed have objectives in a separate built-in
+  objectives file, so their sources and earlier runs' hashes are unchanged.
+
 ### Terminal
 
 - Add keyboard help, symbol jump, chain contract navigation, buy/sell prefills,
@@ -25,6 +58,95 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   on the current volume-free candle API; its math is tested with sample volumes.
 - Add chain, chart, positions and orders pop-outs, an optional wide-screen
   positions/orders split, and phone calls/puts selection with bottom-sheet tickets.
+
+### Volatility
+
+- **Surface history:** persist per-expiry SVI parameters at scheduled intraday slots
+  and the close; compare the same expiry against the prior close, week and month.
+- **Event volatility:** derive an event variance premium from adjacent straddling
+  expiries using supplied labels and earnings/news calendars, including BMO/AMC.
+  Missing brackets and confounded solves remain explicit.
+- **Vol scanner:** batch API and sortable terminal view for every subscribed symbol,
+  with history coverage, feed timestamps, simulation labels and symbol navigation.
+- **Python/MCP:** read stored volatility/surface history and the batch scanner,
+  and select the account calendar for event estimates.
+- **Volatility history:** ranks, percentiles and population z-scores for signed skew
+  and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
+  Live comparison measurements remain pending.
+- **Volatility fixes:** surface history keeps one close per session on disk, loads
+  13 months and keeps 400 days in memory; range lists return at most 400 snapshots
+  with a `truncated` flag, and Python defaults to comparisons. Scanner rows are cached
+  per publication. Event estimates count one event per date and session, and an
+  event at a settlement instant now solves after that expiry.
+
+### Exposure
+
+- Add OI-weighted delta, daily charm and vomma exposure, per-strike and
+  expiry totals, signed walls and sticky-strike spot flips alongside GEX/VEX.
+- Expose positioning conventions and snapshot-date 0DTE/ex-0DTE slices
+  through the API, terminal, Python client/frames and MCP. Preserve the default
+  long-call/short-put convention; report customer flow as unavailable without
+  aggressor-side data. Document formulas, units, coverage and search limits.
+- Charm's carry and yield rates now use the floored exposure horizon, so a
+  small forward/spot gap near expiry no longer dominates 0DTE CEX. Flip searches
+  bisect only the brackets nearest spot and reprice one metric; a convention or
+  slice request copies only the selected expiries.
+- API: the default exposure convention is named `long_calls_short_puts` in
+  responses, the terminal, Python client and MCP. `open_interest` is still accepted
+  as a deprecated input for the same convention.
+- API: without a finite positive spot, exposure totals (`gex`, `vex` and the other
+  metrics) and per-strike and per-expiry cells are null instead of 0, with
+  `exposure.available=false` and a reason.
+
+### Risk
+
+- Cited historical stress scenarios and 1-day historical VaR/expected shortfall, with an observed ATM-IV-change variant when available.
+- Gamma, theta, reachable grid-loss and gross short-vega caps, with tag and playbook scopes and evaluation rollover discipline.
+- Account alerts for utilisation, grid loss, gamma and modelled floor-touch odds through existing notification channels.
+- Terminal: persist contemporaneous portfolio Greeks beside equity; chart risk intraday and across days without reconstructing old values.
+- API: read-only historical risk and scenario endpoints, with Python and MCP methods.
+- Beta-aware spot × volatility × time scenario explorer, with optional term scaling; existing rule grids retain their defaults.
+- Historical VaR/ES at 99% needs 100 observations (95% still needs 20); below that `var99`/`es99` are null and `tail99_reason` says why.
+- A tagged order that reduces an untagged book over its scope cap is no longer refused; the scope is valued over the same positions with and without the order.
+- Scenario grids for grid-loss caps and alerts are remembered by their exact inputs, so order checks stop repricing every open order's grid.
+
+### Trading, financing and halts
+
+- Opt-in seeded expiry pin risk models contrary exercise near the strike and warns before expiry; existing plans remain unchanged.
+- Practice cash transfers, rollover credit/debit interest and stock-borrow fees are journaled and visible in Dashboard. Financing counts in equity and daily loss without adjusting its opening base.
+- Single-name scenario/replay halts pause one underlying; the replay API and Dashboard support halt drills with recorded, verifiable commands.
+- What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
+- Financing rates and pin risk are program rules: changing them drops the preset's `plan_id`, and financing overrides on evaluation, verification and funded plans are refused with `PLAN_LOCKED`.
+- What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
+- Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
+
+### API, Python and automation
+
+- Versioned account WebSocket events with bounded delivery and typed Python iteration.
+  The stream dispatches only to the addressed account's subscribers and sends `floor`
+  only on entering or leaving the warning band.
+- Outbound notification channels keep their previous default events; `order_state`
+  is opt-in.
+- `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
+- Inbound playbook signals: webhook senders use a per-playbook, per-account secret
+  (issued, rotated and revoked by an admin, stored only as SHA-256) as an HMAC
+  signature with a ±300 s timestamp window, or in the body over HTTPS for senders
+  such as TradingView that cannot set headers; bearer clients use
+  `POST /api/playbooks/{id}/evaluate`. Nonces and rate limits are per secret, and
+  saved manual/automatic modes remain authoritative.
+- `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as for single runs.
+- Bounded backtest parameter sweeps with exact variant reports and historical ranking.
+- Optional Arrow/Parquet exports preserving money text, with an offline example notebook.
+- Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC),
+  as the `openport-client` distribution (import name `openport`; the PyPI name
+  `openport` is an unrelated project). Only tags on `main` publish, and the publish
+  action is pinned to a commit SHA.
+- Python client coverage for every documented HTTP operation, with a contract parity guard.
+- MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
+  market views and order changes, retaining account scopes and preview guidance.
+
+### Install, access and support
+
 - **Open the terminal without hunting for a token.** `openportd --open` launches
   the browser after startup; `--print-url [--open]` reads existing token settings
   and exits. Homebrew caveats and installation examples use the helper.
@@ -49,103 +171,6 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   provider/feed and recent error categories into a reviewable bug report. Local
   fatal signal logs contain no memory dump; there is no telemetry. `/api/status`
   adds optional build metadata for clients.
-- **Import historical options from Massive (Polygon).** Historical contract discovery,
-  paginated quotes and trades preserve vendor timestamps. Tested with generated
-  saved-response fixtures; paid historical access has not been validated live.
-  Quote and trade pages grow up to Massive's 50,000-row maximum within the buffer cap.
-- **Import date ranges and resume.** All importers accept inclusive `--import-days`
-  ranges and repeated dates, skip calendar closures, report progress and skip only
-  matching complete recordings.
-- **Record across trading dates.** `--record-dir` rolls at calendar boundaries and
-  publishes only complete files, with optional oldest-first age/size retention that
-  protects active files. Replay lists trading dates, symbols and sources across providers.
-  Retention runs off the feed thread at rollover, reports files it cannot remove
-  instead of stopping recording, and counts stale staging folders toward the size cap.
-- **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
-  duration and cover multiple pauses/resumes before the pacing loop observes them.
-- **Surface history:** persist per-expiry SVI parameters at scheduled intraday slots
-  and the close; compare the same expiry against the prior close, week and month.
-- **Event volatility:** derive an event variance premium from adjacent straddling
-  expiries using supplied labels and earnings/news calendars, including BMO/AMC.
-  Missing brackets and confounded solves remain explicit.
-- **Vol scanner:** batch API and sortable terminal view for every subscribed symbol,
-  with history coverage, feed timestamps, simulation labels and symbol navigation.
-- **Python/MCP:** read stored volatility/surface history and the batch scanner,
-  and select the account calendar for event estimates.
-- **Volatility history:** ranks, percentiles and population z-scores for signed skew
-  and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
-  Live comparison measurements remain pending.
-- **Volatility fixes:** surface history keeps one close per session on disk, loads
-  13 months and keeps 400 days in memory; range lists return at most 400 snapshots
-  with a `truncated` flag, and Python defaults to comparisons. Scanner rows are cached
-  per publication. Event estimates count one event per date and session, and an
-  event at a settlement instant now solves after that expiry.
-- Risk: cited historical stress scenarios and 1-day historical VaR/expected shortfall, with an observed ATM-IV-change variant when available.
-- Risk: gamma, theta, reachable grid-loss and gross short-vega caps, with tag and playbook scopes and evaluation rollover discipline.
-- Risk: account alerts for utilisation, grid loss, gamma and modelled floor-touch odds through existing notification channels.
-- Terminal: persist contemporaneous portfolio Greeks beside equity; chart risk intraday and across days without reconstructing old values.
-- API: read-only historical risk and scenario endpoints, with Python and MCP methods.
-- Risk: beta-aware spot × volatility × time scenario explorer, with optional term scaling; existing rule grids retain their defaults.
-- Risk: historical VaR/ES at 99% needs 100 observations (95% still needs 20); below that `var99`/`es99` are null and `tail99_reason` says why.
-- Risk: a tagged order that reduces an untagged book over its scope cap is no longer refused; the scope is valued over the same positions with and without the order.
-- Risk: scenario grids for grid-loss caps and alerts are remembered by their exact inputs, so order checks stop repricing every open order's grid.
-- Opt-in seeded expiry pin risk models contrary exercise near the strike and warns before expiry; existing plans remain unchanged.
-- Practice cash transfers, rollover credit/debit interest and stock-borrow fees are journaled and visible in Dashboard. Financing counts in equity and daily loss without adjusting its opening base.
-- Single-name scenario/replay halts pause one underlying; the replay API and Dashboard support halt drills with recorded, verifiable commands.
-- What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
-- Financing rates and pin risk are program rules: changing them drops the preset's `plan_id`, and financing overrides on evaluation, verification and funded plans are refused with `PLAN_LOCKED`.
-- What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
-- Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
-- Versioned account WebSocket events with bounded delivery and typed Python iteration.
-  The stream dispatches only to the addressed account's subscribers and sends `floor`
-  only on entering or leaving the warning band.
-- Outbound notification channels keep their previous default events; `order_state`
-  is opt-in.
-- `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
-- Inbound playbook signals: webhook senders use a per-playbook, per-account secret
-  (issued, rotated and revoked by an admin, stored only as SHA-256) as an HMAC
-  signature with a ±300 s timestamp window, or in the body over HTTPS for senders
-  such as TradingView that cannot set headers; bearer clients use
-  `POST /api/playbooks/{id}/evaluate`. Nonces and rate limits are per secret, and
-  saved manual/automatic modes remain authoritative.
-- `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as for single runs.
-- Bounded backtest parameter sweeps with exact variant reports and historical ranking.
-- Optional Arrow/Parquet exports preserving money text, with an offline example notebook.
-- Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC),
-  as the `openport-client` distribution (import name `openport`; the PyPI name
-  `openport` is an unrelated project). Only tags on `main` publish, and the publish
-  action is pinned to a commit SHA.
-
-- Python client coverage for every documented HTTP operation, with a contract parity guard.
-- MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
-  market views and order changes, retaining account scopes and preview guidance.
-- Journal: add entry-context edge reports, persisted mistake/setup picks and
-  with/without cost comparisons; transparent trade coach flags and an opt-in,
-  user-configured HTTP AI review hook.
-- Replay: start a fresh paused account from a reviewed entry with the original
-  source/seed/date/plan, and mark authored scenario events on review/equity charts.
-- Practice: grade declared objectives from journal states, retain scores and
-  personal bests, and offer spaced fresh-seed practice with completion streaks.
-- Scenarios: import/export packs and fixed challenges, including challenge inputs
-  and recomputed drill results in replay verification receipts. Morning crush,
-  Afternoon waterfall and Range bleed have objectives in a separate built-in
-  objectives file, so their sources and earlier runs' hashes are unchanged.
-- Analytics: add OI-weighted delta, daily charm and vomma exposure, per-strike and
-  expiry totals, signed walls and sticky-strike spot flips alongside GEX/VEX.
-- Analytics: expose positioning conventions and snapshot-date 0DTE/ex-0DTE slices
-  through the API, terminal, Python client/frames and MCP. Preserve the default
-  long-call/short-put convention; report customer flow as unavailable without
-  aggressor-side data. Document formulas, units, coverage and search limits.
-- Analytics: charm's carry and yield rates now use the floored exposure horizon, so a
-  small forward/spot gap near expiry no longer dominates 0DTE CEX. Flip searches
-  bisect only the brackets nearest spot and reprice one metric; a convention or
-  slice request copies only the selected expiries.
-- API: the default exposure convention is named `long_calls_short_puts` in
-  responses, the terminal, Python client and MCP. `open_interest` is still accepted
-  as a deprecated input for the same convention.
-- API: without a finite positive spot, exposure totals (`gex`, `vex` and the other
-  metrics) and per-strike and per-expiry cells are null instead of 0, with
-  `exposure.available=false` and a reason.
 
 ## 0.4.0 (2026-10-06)
 
