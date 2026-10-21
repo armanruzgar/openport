@@ -19,6 +19,9 @@
 #ifdef OPENPORT_WITH_DATABENTO
 #include "openport/providers/databento.hpp"
 #endif
+#ifdef OPENPORT_WITH_IBKR
+#include "openport/providers/ibkr.hpp"
+#endif
 
 namespace openport::providers {
 namespace {
@@ -69,6 +72,9 @@ std::vector<std::string_view> provider_names() {
       "tastytrade",
       "schwab",
       "alpaca",
+#ifdef OPENPORT_WITH_IBKR
+      "ibkr",
+#endif
       "replay",
       "demo",
   };
@@ -94,6 +100,9 @@ void validate_subscription(std::string_view provider, const md::Subscription& su
     for (const auto& symbol : subscription.underlyings)
       if (md::is_index_underlying(symbol))
         throw std::invalid_argument("alpaca: no index options such as " + symbol + "; use an equity or ETF such as SPY");
+  if (provider == "ibkr" && (subscription.max_expiries == 0 || subscription.strike_window == 0))
+    throw std::invalid_argument("ibkr: --expiries and --window are required; every contract holds one of the "
+                                "account's market-data lines");
   if (provider == "databento" &&
       (subscription.max_expiries != 0 || subscription.strike_window != 0))
     throw std::invalid_argument(
@@ -206,6 +215,18 @@ std::unique_ptr<md::Provider> make_provider(const md::ProviderConfig& config) {
       throw std::invalid_argument("databento: trades must be on or off");
     options.trades = trades == "on";
     return std::make_unique<DatabentoProvider>(std::move(options));
+  }
+#endif
+#ifdef OPENPORT_WITH_IBKR
+  if (config.name == "ibkr") {
+    validate_keys(config, {"base_url", "max_lines", "requests_per_second", "poll_seconds"});
+    IbkrProvider::Options options;
+    options.base_url = option_or(config, "base_url", options.base_url);
+    options.max_lines = parse_integer(option_or(config, "max_lines", "100"), "ibkr max_lines", 2, 10000);
+    options.requests_per_second =
+        parse_integer(option_or(config, "requests_per_second", "5"), "ibkr requests_per_second", 1, 10);
+    options.poll_seconds = seconds_option(config, "poll_seconds", options.poll_seconds);
+    return std::make_unique<IbkrProvider>(std::move(options));
   }
 #endif
   if (config.name == "massive") {
