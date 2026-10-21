@@ -176,17 +176,20 @@ class Client:
     def trades(self, status: str = "all", attempt: str = "current") -> Trades:
         return self._request("GET", "/trades", scoped=True, params={"status": status, "attempt": attempt})
 
-    def risk(self) -> Risk:
-        return self._request("GET", "/risk", scoped=True)
+    def risk(self, dynamics: str | None = None) -> Risk:
+        """Limits, Greeks and the spot x vol grid; dynamics ("sticky_moneyness" or "sticky_delta")
+        recomputes the grid moving each smile along its SSVI surface instead of sticky strike."""
+        return self._request("GET", "/risk", scoped=True, params={"dynamics": dynamics})
 
     def risk_profile(self, underlying: str | None = None, benchmark: str | None = None,
                      days: list[float | str] | None = None, iv: float | None = None,
                      range: float | None = None, steps: int | None = None,
-                     betas: dict[str, float] | None = None) -> RiskProfile:
+                     betas: dict[str, float] | None = None, dynamics: str | None = None) -> RiskProfile:
         """The held book's P&L curves over dates, against one underlying or beta-weighted to SPY or SPX."""
         return self._request("GET", "/risk/profile", scoped=True, params={
             "underlying": underlying, "benchmark": benchmark, "days": _list(days), "iv": iv, "range": range,
-            "steps": steps, "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
+            "steps": steps, "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None,
+            "dynamics": dynamics})
 
     def equity(self, start: str | None = None, end: str | None = None, *,
                limit: int | None = None, cursor: str | None = None) -> EquityHistory:

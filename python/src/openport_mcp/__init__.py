@@ -235,11 +235,13 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
 
     @server.tool()
     def risk_profile(account: str | None = None, underlying: str | None = None, benchmark: str | None = None,
-                     days: list[float | str] | None = None, iv: float | None = None, replay: bool = False) -> dict:
+                     days: list[float | str] | None = None, iv: float | None = None,
+                     dynamics: str | None = None, replay: bool = False) -> dict:
         """The held book's P&L curves over dates (days, or "expiry") and an IV offset, against one underlying
-        or beta-weighted to SPY or SPX, with the levels where each date reaches the floors."""
+        or beta-weighted to SPY or SPX, with the levels where each date reaches the floors. dynamics is
+        sticky_strike (default), sticky_moneyness or sticky_delta, the last two along the SSVI surface."""
         target = selected(account, replay)
-        return result(target, lambda: target.risk_profile(underlying, benchmark, days, iv))
+        return result(target, lambda: target.risk_profile(underlying, benchmark, days, iv, dynamics=dynamics))
 
     def order_body(order):
         body = _body(asdict(order))

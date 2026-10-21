@@ -4249,6 +4249,29 @@ TEST_F(PaperEngine, RiskProfileCurvesTheHeldBookOverDatesAndBetaWeightsIt) {
                           "?betas=QQQ", "?betas=QQQ:x", "?other=1", "?underlying=spx"})
     EXPECT_EQ(server::handle_api({"GET", std::string("/api/risk/profile") + bad}, *engine).status, 400) << bad;
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/profile?account=nobody"}, *engine).status, 404);
+  // Smile dynamics: sticky strike is the default and is named; the others move each
+  // smile on its underlying's SSVI surface or, without one, say they could not.
+  const auto sticky = read(*engine, "/api/risk/profile?underlying=SPX&days=0&range=10&steps=5");
+  EXPECT_EQ(sticky["dynamics"], "sticky_strike");
+  EXPECT_EQ(sticky["surface_fallback"], json::array());
+  for (const auto* dynamics : {"sticky_moneyness", "sticky_delta"}) {
+    const auto moved = read(*engine, std::string("/api/risk/profile?underlying=SPX&days=0&range=10&steps=5&dynamics=") + dynamics);
+    EXPECT_EQ(moved["dynamics"], dynamics);
+    EXPECT_NE(moved["model"].get<std::string>().find("SSVI"), std::string::npos);
+    EXPECT_EQ(moved["curves"][0]["pnl"][2], 0);
+    if (moved["surface_fallback"] == json::array({"SPX"})) EXPECT_EQ(moved["curves"][0]["pnl"], sticky["curves"][0]["pnl"]);
+    else EXPECT_EQ(moved["surface_fallback"], json::array());
+    const auto risk = read(*engine, std::string("/api/risk?dynamics=") + dynamics);
+    EXPECT_EQ(risk["scenarios"]["dynamics"], dynamics);
+    EXPECT_EQ(risk["scenarios"]["surface_fallback"], moved["surface_fallback"]);
+    EXPECT_EQ(risk["scenarios"]["spot_percent"], read(*engine, "/api/risk")["scenarios"]["spot_percent"]);
+  }
+  const auto risk = read(*engine, "/api/risk");
+  EXPECT_EQ(risk["scenarios"]["dynamics"], "sticky_strike");
+  EXPECT_EQ(read(*engine, "/api/risk?dynamics=sticky_strike")["scenarios"], risk["scenarios"]);
+  for (const auto* bad : {"/api/risk/profile?dynamics=sticky", "/api/risk?dynamics=", "/api/risk?dynamics=STICKY_DELTA",
+                          "/api/portfolio?dynamics=sticky_delta"})
+    EXPECT_EQ(server::handle_api({"GET", bad}, *engine).status, 400) << bad;
   // Probability cones and price odds for any underlying.
   const auto odds = read(*engine, "/api/underlyings/SPX/probability?days=0,7&prices=4900,5100");
   EXPECT_EQ(odds["symbol"], "SPX");

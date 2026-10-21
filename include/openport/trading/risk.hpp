@@ -1,8 +1,56 @@
 #pragma once
 
+#include <cstdint>
+#include <optional>
+#include <string_view>
+
+#include "openport/analytics/ssvi.hpp"
 #include "openport/trading/ledger.hpp"
 
 namespace openport::trading {
+
+/// How a contract's implied volatility moves when its underlying moves in a
+/// scenario. Rules and margin always use sticky strike; the others are analysis
+/// choices for the scenario grid and risk profile reads.
+enum class SmileDynamics : std::uint8_t {
+  StickyStrike,     ///< each strike keeps its smile IV (the default)
+  StickyMoneyness,  ///< the smile moves with the forward: IV is a function of ln(K/F)
+  StickyDelta,      ///< the smile is fixed in forward-delta space; vol shocks apply there
+};
+[[nodiscard]] std::string_view to_string(SmileDynamics dynamics) noexcept;
+/// sticky_strike, sticky_moneyness or sticky_delta.
+[[nodiscard]] std::optional<SmileDynamics> parse_smile_dynamics(std::string_view text) noexcept;
+
+/// An underlying's fitted SSVI surface: shared (rho, eta, gamma) and ATM total
+/// variance knots, interpolated in time as docs/svi.md requires.
+struct SmileSurface {
+  analytics::SsviParameters parameters;
+  std::vector<std::pair<double, double>> thetas;  ///< (years, theta), years ascending, theta nondecreasing
+  /// Piecewise linear through (0, 0) and the knots; beyond the last knot theta
+  /// grows in proportion to time (constant ATM IV), keeping it nondecreasing.
+  [[nodiscard]] double theta(double years) const;
+  /// SSVI IV at log-moneyness k for `years`; NaN without a usable surface.
+  [[nodiscard]] double iv(double k, double years) const;
+};
+/// Surfaces by underlying.
+using SmileSurfaces = std::map<std::string, SmileSurface, std::less<>>;
+struct SmileModel {
+  SmileDynamics dynamics = SmileDynamics::StickyStrike;
+  const SmileSurfaces* surfaces = nullptr;  ///< not owned; null or missing means sticky strike
+};
+
+/// The volatility a scenario prices one contract at. Sticky strike is
+/// smile_iv + shift. Otherwise the surface moves the contract's own smile IV:
+///   sticky moneyness: smile_iv + s(ln(K/F'), T') - s(ln(K/F), T) + shift
+///   sticky delta:     smile_iv + s(k*, T') - s(ln(K/F), T) + shift, where k* is the
+///                     point of the (anchored) smile with the shocked forward delta,
+///                     d1(k*, sigma_b(k*)) = d1(ln(K/F'), sigma_b(k*) + shift)
+/// with s the surface's IV. The difference keeps the market's own IV at zero move
+/// (any fit residual is carried along). With no shift the two coincide at fixed
+/// T; they differ under vol shocks. nullopt when the surface gives no IV.
+[[nodiscard]] std::optional<double> scenario_vol(const SmileModel& model, const SmileSurface* surface,
+    double smile_iv, double strike, double forward, double years, double shocked_forward,
+    double shocked_years, double shift);
 
 struct ExposureRange {
   double delta_low = 0;
@@ -57,11 +105,16 @@ struct ScenarioCell {
 struct ScenarioGrid {
   std::vector<ScenarioCell> cells;  ///< Spot-major, vol-minor.
   bool complete = true;
+  /// Held underlyings priced sticky strike for want of a surface, under other dynamics.
+  std::vector<std::string> surface_fallback;
 };
 void validate_scenarios(const ScenarioConfig& config);
+/// `smile` chooses how IVs move with spot (see scenario_vol); the default sticky
+/// strike is what the account's rules use.
 [[nodiscard]] ScenarioGrid scenario_grid(const Ledger& ledger,
     const Valuations& valuations, const ScenarioConfig& config,
-    Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices = {});
+    Timestamp now, Timestamp max_age, const std::map<std::string, double>& stock_prices = {},
+    const SmileModel& smile = {});
 
 struct BreachLevel {
   double points = 0;
@@ -114,6 +167,7 @@ struct ProfileConfig {
   /// For each curve, the variance of the reference's log price to the date its levels'
   /// touch probabilities are measured to; empty or nullopt leaves them out.
   std::vector<std::optional<double>> variances;
+  SmileModel smile;  ///< sticky strike unless chosen; see scenario_vol
 };
 struct ProfileCurve {
   double days = 0;
@@ -132,12 +186,14 @@ struct RiskProfile {
   std::optional<Money> soft_room;
   std::vector<ProfileCurve> curves;
   bool complete = true;
+  std::vector<std::string> surface_fallback;  ///< as in ScenarioGrid
 };
 void validate_profile(const ProfileConfig& config);
 /// Prices each contract with Black-76 at the curve's date: remaining life
 /// T' = T - days (zero once it has expired, leaving intrinsic value), the forward's
 /// carry over spot shrinking in proportion, F' = (1 + beta x)(S + (F - S) T'/T),
-/// D' = D^(T'/T) and sigma' = max(vol_floor, smile IV + vol_points / 100). Shares
+/// D' = D^(T'/T) and sigma' = max(vol_floor, smile IV + vol_points / 100), or
+/// under other config.smile dynamics the surface-moved IV of scenario_vol. Shares
 /// move by beta x. Today's curve with no volatility change is the scenario grid's
 /// zero-volatility column, and its levels are breach_risk's. `reference_spot` turns
 /// percent levels into price points.

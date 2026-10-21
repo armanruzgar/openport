@@ -1045,12 +1045,18 @@ export interface KillState {
   /** Actual latch changes; retaining the same latch on account reset adds no reset entry. */
   history?: KillChange[]
 }
+/** How each contract's IV moves with spot in a scenario; rules always use sticky_strike. */
+export type SmileDynamics = "sticky_strike" | "sticky_moneyness" | "sticky_delta"
 export interface Scenarios {
   spot_percent: number[]
   vol_points: number[]
   pnl: Num[][]
   clamped: boolean[][]
   complete: boolean
+  /** Absent on older servers, which use sticky strike. */
+  dynamics?: SmileDynamics
+  /** Held underlyings priced sticky strike for want of a fitted surface. */
+  surface_fallback?: string[]
 }
 export interface Risk {
   time?: string
@@ -1201,8 +1207,10 @@ export interface RiskProfile {
   weighted_delta: number | null
   complete: boolean
   model: string
+  dynamics?: SmileDynamics
+  surface_fallback?: string[]
 }
-export interface RiskProfileQuery { underlying?: string; benchmark?: "SPY" | "SPX"; days?: (number | "expiry")[]; iv?: number; range?: number; steps?: number; betas?: Record<string, number> }
+export interface RiskProfileQuery { underlying?: string; benchmark?: "SPY" | "SPX"; days?: (number | "expiry")[]; iv?: number; range?: number; steps?: number; betas?: Record<string, number>; dynamics?: SmileDynamics }
 /** A block of contracts at one price, as a fill would trade it. */
 export interface PreviewFill { symbol: string; side: Side; quantity: number; price: Money }
 /** What submitting the order now would execute (a private dry run), and its full size block by block. */

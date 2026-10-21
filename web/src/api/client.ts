@@ -125,6 +125,7 @@ export function riskProfilePath(query: RiskProfileQuery): string {
   if (query.steps != null) params.set("steps", String(query.steps))
   const betas = Object.entries(query.betas ?? {}).map(([symbol, beta]) => `${symbol}:${beta}`)
   if (betas.length) params.set("betas", betas.join(","))
+  if (query.dynamics && query.dynamics !== "sticky_strike") params.set("dynamics", query.dynamics)
   return `/api/risk/profile${params.size ? `?${params}` : ""}`
 }
 /** Trading routes act on the active account; the main one needs no parameter. */
@@ -188,6 +189,9 @@ export const api = {
   settlements: (signal?: AbortSignal) => get<SettlementsResponse>(scoped("/api/settlements"), signal),
   fills: (signal?: AbortSignal) => get<FillsResponse>(scoped("/api/fills"), signal),
   risk: (signal?: AbortSignal) => get<Risk>(scoped("/api/risk"), signal),
+  /** The risk read with its spot x vol grid recomputed under other smile dynamics. */
+  riskScenarios: (dynamics: import("./trading-types").SmileDynamics, signal?: AbortSignal) =>
+    get<Risk>(scoped(`/api/risk?dynamics=${dynamics}`), signal),
   riskProfile: (query: RiskProfileQuery, signal?: AbortSignal) => get<RiskProfile>(scoped(riskProfilePath(query)), signal),
   order: (id: string, signal?: AbortSignal) => get<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), signal),
   submitOrder: (order: NewOrder, mode: WriteMode) => accountWrite<SubmitOrderResponse>(scoped("/api/orders"), "POST", mode, order),

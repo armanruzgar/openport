@@ -14,6 +14,14 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   the same butterfly and calendar checks. The surface API fits them only when
   asked (`sabr_beta`), so nothing changes for analytics or other readers.
 
+### Risk
+
+- **See skew move with spot.** The spot × volatility grid and the risk profile can
+  reprice with sticky-moneyness or sticky-delta smiles along each underlying's
+  fitted SSVI surface (`dynamics=`), beside the default sticky strike. Underlyings
+  without a surface stay sticky strike and are named. Rules, margin and breach
+  estimates are unchanged.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

@@ -452,6 +452,17 @@ def test_surface_requests_sabr_only_when_asked(stub):
     assert parse_qs(urlsplit(stub.requests[-1][1]).query)["sabr_beta"] == ["fit"]
 
 
+def test_risk_reads_pass_smile_dynamics_only_when_chosen(stub):
+    client = Client(stub.url, "secret", "practice")
+    client.risk()
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"account": ["practice"]}
+    client.risk("sticky_delta")
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"dynamics": ["sticky_delta"], "account": ["practice"]}
+    client.risk_profile("SPX", dynamics="sticky_moneyness")
+    query = parse_qs(urlsplit(stub.requests[-1][1]).query)
+    assert query["dynamics"] == ["sticky_moneyness"] and query["underlying"] == ["SPX"]
+
+
 def test_reload_tokens_uses_live_admin_route_even_from_replay(stub):
     result = Client(stub.url, "admin-secret", "practice").for_replay().reload_tokens()
     assert result == {"names": ["operator"], "count": 1, "loaded_at": TIME}

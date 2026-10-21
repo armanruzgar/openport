@@ -12,7 +12,7 @@ import { FlattenDialog } from "../components/OrderActions"
 import { OrderResult, OrderTicket } from "../components/OrderTicket"
 import { LiquidityWarning } from "../components/LiquidityWarning"
 import { PersonalRules } from "../components/PersonalRules"
-import { ScenarioGrid } from "../components/ScenarioGrid"
+import { ScenarioGrid, ScenarioPanel } from "../components/ScenarioGrid"
 import { Sidebar } from "../components/Sidebar"
 import { formatRoute, navigableViews, parseRoute, primaryViews } from "../lib/route"
 import { account, chain, fill, order, portfolio, quote, risk, selection, status, summary, trading } from "../test/trading-fixtures"
@@ -263,6 +263,13 @@ describe("paper trading fixtures", () => {
     expect(html).toContain("Scenario valuation incomplete")
     expect(html).toContain("Loss")
     expect(html).toContain("Gain")
+  })
+  it("offers smile dynamics over the account's sticky-strike grid", () => {
+    const html = render(<ScenarioPanel scenarios={{ ...risk.scenarios, dynamics: "sticky_strike", surface_fallback: [] }} />)
+    expect(html).toContain('aria-label="Smile dynamics"')
+    for (const text of [">Sticky strike</option>", ">Sticky moneyness</option>", ">Sticky delta</option>", "as the account&#x27;s rules value it"])
+      expect(html).toContain(text)
+    expect(html).toContain('title="0% spot, 0 vol points: 0 · unchanged spot and vol"')
   })
   it("renders a revision-based limits editor and a clear latched kill state", () => {
     const html = render(<LimitsEditor initial={risk} trading={trading} onClose={() => {}} />)

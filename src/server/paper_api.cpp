@@ -3,6 +3,7 @@
 #include "openport/server/sandboxes.hpp"
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
+#include "metric_cache.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1235,8 +1236,11 @@ json kill_json(const TradingSnapshot& s) {
   return {{"latched", s.risk.kill_latched}, {"reason", nullable(s.risk.kill_reason)},
           {"reset_blocked", decision_json(s.kill_reset)}, {"history", std::move(history)}};
 }
-json risk_json(const TradingView& view) {
+/// `grid` replaces the snapshot's sticky-strike grid with one recomputed under `dynamics`.
+json risk_json(const TradingView& view, const ScenarioGrid* grid = nullptr,
+               SmileDynamics dynamics = SmileDynamics::StickyStrike) {
   const auto& s = *view.snapshot;
+  const auto& scenarios = grid ? *grid : s.scenarios;
   json underlyings = json::object();
   for (const auto& [symbol, bucket] : s.risk.underlyings) underlyings[symbol] = bucket_json(bucket);
   json pnl = json::array(), clamped = json::array();
@@ -1244,8 +1248,8 @@ json risk_json(const TradingView& view) {
   for ([[maybe_unused]] double spot : view.config.scenarios.spot_percent) {
     json row = json::array(), clamps = json::array();
     for ([[maybe_unused]] double vol : view.config.scenarios.vol_points) {
-      const auto& cell = s.scenarios.cells.at(index++);
-      row.push_back(s.scenarios.complete ? number(cell.pnl) : json(nullptr));
+      const auto& cell = scenarios.cells.at(index++);
+      row.push_back(scenarios.complete ? number(cell.pnl) : json(nullptr));
       clamps.push_back(cell.clamped);
     }
     pnl.push_back(std::move(row)); clamped.push_back(std::move(clamps));
@@ -1265,7 +1269,35 @@ json risk_json(const TradingView& view) {
           {"complete", s.risk.complete}, {"daily_loss", s.risk.daily_loss.str()},
           {"kill", kill_json(s)}, {"aggregate", bucket_json(s.risk.aggregate)}, {"underlyings", underlyings},
           {"scenarios", {{"spot_percent", view.config.scenarios.spot_percent}, {"vol_points", view.config.scenarios.vol_points},
-                         {"pnl", pnl}, {"clamped", clamped}, {"complete", s.scenarios.complete}}}};
+                         {"pnl", pnl}, {"clamped", clamped}, {"complete", scenarios.complete},
+                         {"dynamics", to_string(dynamics)}, {"surface_fallback", scenarios.surface_fallback}}}};
+}
+
+/// SSVI surfaces for the underlyings a smile-dynamics read moves, from each one's
+/// cached surface fit; the first such read for a snapshot fits it on this worker.
+/// An underlying without analytics or a successful fit is left out (sticky strike).
+SmileSurfaces smile_surfaces(const MetricsSource& source, const std::set<std::string>& underlyings) {
+  SmileSurfaces result;
+  for (const auto& symbol : underlyings) {
+    const auto metrics = source.metrics(symbol);
+    if (!metrics) continue;
+    const auto cache = surface_cache(metrics);
+    analytics::SsviFit fit;
+    {
+      const std::lock_guard lock(cache->mutex);
+      if (!cache->ssvi) cache->ssvi = analytics::fit_ssvi(metrics->slices);
+      fit = *cache->ssvi;
+    }
+    if (fit.status != analytics::SviStatus::Ok) continue;
+    SmileSurface surface{fit.parameters, {}};
+    for (std::size_t i = 0; i < fit.expiries.size() && i < metrics->slices.size(); ++i)
+      if (std::isfinite(fit.expiries[i].theta) && metrics->slices[i].years > 0)
+        surface.thetas.emplace_back(metrics->slices[i].years, fit.expiries[i].theta);
+    // Repaired thetas are nondecreasing in T, so sorting by T keeps them so.
+    std::sort(surface.thetas.begin(), surface.thetas.end());
+    if (!surface.thetas.empty()) result.emplace(symbol, std::move(surface));
+  }
+  return result;
 }
 
 int reason_status(Reason reason) {
@@ -2577,6 +2609,7 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
   double vol_points = 0, range = 10;
   int steps = 41;
   std::map<std::string, double> given;
+  SmileDynamics dynamics = SmileDynamics::StickyStrike;
   bool valid = true;
   for (const auto& [key, value] : query) {
     if (key == "account" && valid_account(value)) account = value;
@@ -2586,6 +2619,10 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
       days_text.clear();
       for (const auto item : split_list(value)) days_text.emplace_back(item);
       valid &= days_text.size() <= kMaxProfileCurves;
+    } else if (key == "dynamics") {
+      const auto parsed = parse_smile_dynamics(value);
+      valid &= parsed.has_value();
+      if (parsed) dynamics = *parsed;
     } else if (key == "iv") valid &= query_decimal(value, vol_points) && std::abs(vol_points) <= 100;
     else if (key == "range") valid &= query_decimal(value, range) && range > 0 && range <= 99;
     else if (key == "steps") {
@@ -2687,6 +2724,10 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
                      {"dollar_delta", dollar_delta ? number(*dollar_delta) : json(nullptr)},
                      {"weighted_dollar_delta", dollar_delta && !beta.source.empty() ? number(*dollar_delta * beta.beta) : json(nullptr)}});
   }
+  // Other dynamics move each smile along its underlying's fitted SSVI surface.
+  SmileSurfaces surfaces;
+  if (dynamics != SmileDynamics::StickyStrike) surfaces = smile_surfaces(source, held);
+  config.smile = {dynamics, &surfaces};
   const auto profile = snapshot_profile(s, view->config, view->valuations, config, spot, underlying);
   json prices = json::array();
   for (const double percent : config.percent) prices.push_back(spot > 0 ? number(spot * (1 + percent / 100)) : json(nullptr));
@@ -2708,8 +2749,14 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
       {"weighted_dollar_delta", weighted_complete ? number(weighted) : json(nullptr)},
       {"weighted_delta", weighted_complete && spot > 0 ? number(weighted / spot) : json(nullptr)},
       {"complete", profile.complete},
-      {"model", "Black-76 on each contract's smile IV plus the offset, sticky strike; remaining life and carry shrink by the days; "
-                "each underlying moves its beta times the reference's percent move"}}.dump()};
+      {"dynamics", to_string(dynamics)}, {"surface_fallback", profile.surface_fallback},
+      {"model", dynamics == SmileDynamics::StickyStrike
+          ? "Black-76 on each contract's smile IV plus the offset, sticky strike; remaining life and carry shrink by the days; "
+            "each underlying moves its beta times the reference's percent move"
+          : std::string("Black-76 on each contract's smile IV moved along its underlying's fitted SSVI surface (") +
+            (dynamics == SmileDynamics::StickyDelta ? "sticky delta" : "sticky moneyness") +
+            ") plus the offset; remaining life and carry shrink by the days; "
+            "each underlying moves its beta times the reference's percent move"}}.dump()};
 }
 }  // namespace
 
@@ -2739,6 +2786,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   Timestamp cursor_time = 0;
   std::uint64_t cursor_ordinal = 0;
   bool valid_query = pairs.has_value(), archived = false;
+  SmileDynamics dynamics = SmileDynamics::StickyStrike;
   for (const auto& [key, value] : pairs.value_or(std::map<std::string, std::string>{})) {
     if ((key == "limit" || key == "cursor") && path == "/api/account/equity") {
       const auto positive = [](std::string_view text, auto& number) {
@@ -2760,6 +2808,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       else if (key == "from") since = parsed; else until = parsed;
     } else if (key == "archived" && path == "/api/accounts" && (value == "true" || value == "false")) archived = value == "true";
     else if (key == "account" && path != "/api/accounts" && valid_account(value)) account = value;
+    else if (key == "dynamics" && path == "/api/risk" && parse_smile_dynamics(value)) dynamics = *parse_smile_dynamics(value);
     else if (key == "status" && path == "/api/orders" && (value == "open" || value == "all")) status = value;
     else if (key == "client_order_id" && path == "/api/orders" && valid_client_order_id(value)) client_order_id = value;
     else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "open" || value == "closed" || value == "all")) status = value;
@@ -2823,7 +2872,14 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"settlements", records}}.dump()};
   }
   if (path == "/api/portfolio") return ApiResponse{200, portfolio_json(*view).dump()};
-  if (path == "/api/risk") return ApiResponse{200, risk_json(*view).dump()};
+  if (path == "/api/risk") {
+    if (dynamics == SmileDynamics::StickyStrike) return ApiResponse{200, risk_json(*view).dump()};
+    std::set<std::string> held;
+    for (const auto& p : s.positions) held.insert(p.position.contract.underlying);
+    const auto surfaces = smile_surfaces(source, held);
+    const auto grid = snapshot_scenarios(s, view->config, view->valuations, {dynamics, &surfaces});
+    return ApiResponse{200, risk_json(*view, &grid, dynamics).dump()};
+  }
   if (path == "/api/account") return ApiResponse{200, account_json(*view).dump()};
   if (path == "/api/trades") return ApiResponse{200, trades_json(*view, status, attempt == "current").dump()};
   if (path == "/api/alerts") {

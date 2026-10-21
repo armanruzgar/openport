@@ -655,6 +655,20 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "Recompute the configured spot x vol grid with this smile dynamics (default sticky_strike, the snapshot's own grid); see docs/paper-trading.md#smile-dynamics.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          }
         }
       ],
       "get": {
@@ -754,6 +768,20 @@
           "description": "Comma-separated SYMBOL:BETA overrides, each beta within 10 of zero.",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "How each contract's IV moves with the reference: sticky_strike (default, as rules use), or sticky_moneyness / sticky_delta along the underlying's fitted SSVI surface; an underlying without a surface stays sticky strike and is listed in surface_fallback.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
           }
         }
       ],
@@ -2829,6 +2857,20 @@
           "description": "Comma-separated SYMBOL:BETA overrides, each beta within 10 of zero.",
           "schema": {
             "type": "string"
+          }
+        },
+        {
+          "name": "dynamics",
+          "in": "query",
+          "required": false,
+          "description": "How each contract's IV moves with the reference: sticky_strike (default, as rules use), or sticky_moneyness / sticky_delta along the underlying's fitted SSVI surface; an underlying without a surface stays sticky strike and is listed in surface_fallback.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
           }
         }
       ],
@@ -14803,6 +14845,21 @@
           },
           "complete": {
             "type": "boolean"
+          },
+          "dynamics": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          },
+          "surface_fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Held underlyings priced sticky strike because no SSVI surface was available."
           }
         },
         "required": [
@@ -16213,6 +16270,21 @@
           },
           "model": {
             "type": "string"
+          },
+          "dynamics": {
+            "type": "string",
+            "enum": [
+              "sticky_strike",
+              "sticky_moneyness",
+              "sticky_delta"
+            ]
+          },
+          "surface_fallback": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Held underlyings priced sticky strike because no SSVI surface was available."
           }
         },
         "required": [

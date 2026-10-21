@@ -266,6 +266,9 @@ a pass is practice, not proof: a real-time chart shows what happened next.
   and modelled touch probabilities. Risk profiles plot P&L today, on later dates
   and at first expiry with an IV offset, for one underlying or the book beta-weighted
   to SPY/SPX. Each date marks floor crossings and estimated touch odds.
+- The grid and profiles can also move each smile along its fitted SSVI surface
+  (sticky moneyness or sticky delta) to show how skew changes P&L on big moves;
+  rules and margin stay sticky strike. [Smile dynamics](paper-trading.md#smile-dynamics).
 - Volatility probability cones estimate finishing beyond or touching chosen prices
   by chosen dates. These are labelled model estimates, not predictions.
   [Profiles and probabilities](paper-trading.md#risk-profile-and-probabilities).

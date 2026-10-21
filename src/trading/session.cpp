@@ -5045,6 +5045,19 @@ RiskProfile snapshot_profile(const TradingSnapshot& snapshot, const SessionConfi
   }
   return result;
 }
+ScenarioGrid snapshot_scenarios(const TradingSnapshot& snapshot, const SessionConfig& config,
+    const Valuations& valuations, const SmileModel& smile) {
+  std::map<std::string, Position> positions;
+  std::map<std::string, StockPosition> stocks;
+  std::map<std::string, double> prices;
+  for (const auto& marked : snapshot.positions) positions.emplace(marked.position.contract.osi_symbol(), marked.position);
+  for (const auto& marked : snapshot.stocks) {
+    stocks.emplace(marked.position.symbol, marked.position);
+    if (marked.fresh && marked.mark) prices[marked.position.symbol] = marked.mark->dollars();
+  }
+  return scenario_grid(Ledger::restore({}, std::move(positions), std::move(stocks)), valuations, config.scenarios,
+      snapshot.time, config.limits.max_valuation_age, prices, smile);
+}
 BreachRisk TradingSession::breach(const std::map<std::string, double>& close_variances) const {
   return breach_of(impl_->state, close_variances);
 }

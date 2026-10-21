@@ -7,6 +7,7 @@ import { parseNumbers } from "../lib/probability"
 import { curveLabel, levelText, parseBetas, profileChart } from "../lib/profile"
 import { ProbabilityTable } from "./ProbabilityPanel"
 import { ProfileResult } from "./RiskProfilePanel"
+import { DynamicsNote } from "./ScenarioGrid"
 
 const curve = (days: number, pnl: number[], extra: Partial<ProfileCurve> = {}): ProfileCurve => ({
   days, label: null, time: "2026-09-22T14:00:00Z", pnl, clamped: false,
@@ -65,6 +66,9 @@ describe("risk profile", () => {
     expect(riskProfilePath({ benchmark: "SPX", days: [0, 1, "expiry"], iv: 2, range: 5, betas: { QQQ: 1.2 } }))
       .toBe("/api/risk/profile?benchmark=SPX&days=0%2C1%2Cexpiry&iv=2&range=5&betas=QQQ%3A1.2")
     expect(riskProfilePath({ underlying: "SPX", benchmark: "SPY", iv: 0 })).toBe("/api/risk/profile?underlying=SPX")
+    // Sticky strike is the server's default, so only other dynamics are sent.
+    expect(riskProfilePath({ underlying: "SPX", dynamics: "sticky_strike" })).toBe("/api/risk/profile?underlying=SPX")
+    expect(riskProfilePath({ underlying: "SPX", dynamics: "sticky_delta" })).toBe("/api/risk/profile?underlying=SPX&dynamics=sticky_delta")
   })
 })
 
@@ -92,3 +96,17 @@ describe("probability cones", () => {
     expect(parseNumbers("1,2,3", 2, 0, 366)).toBeNull()
   })
 })
+
+describe("smile dynamics", () => {
+  it("names the dynamics and any underlying left sticky strike", () => {
+    expect(renderToStaticMarkup(<ProfileResult profile={profile} />)).not.toContain("SSVI surface")
+    const moved = renderToStaticMarkup(<ProfileResult profile={{ ...profile, dynamics: "sticky_moneyness", surface_fallback: ["QQQ"] }} />)
+    expect(moved).toContain("Sticky moneyness: each smile moves with the forward along its fitted SSVI surface")
+    expect(moved).toContain("No surface for QQQ: sticky strike there.")
+    const delta = renderToStaticMarkup(<DynamicsNote dynamics="sticky_delta" fallback={[]} />)
+    expect(delta).toContain("vol changes apply in delta space")
+    expect(delta).not.toContain("No surface")
+    expect(renderToStaticMarkup(<DynamicsNote />)).toContain("as the account&#x27;s rules value it")
+  })
+})
+

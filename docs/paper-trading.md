@@ -2853,7 +2853,7 @@ P&L = sum(q * M * (Black76(F', K, T, sigma', D) - Black76(F, K, T, IV, D)))
 ```
 
 Black-76 consumes the scaled forward; scaling spot together expresses the sticky
-strike carry assumption. Default floor is 0.0001. Each cell flags any floor clamp.
+strike carry assumption ([other smile dynamics](#smile-dynamics) are an analysis read). Default floor is 0.0001. Each cell flags any floor clamp.
 Zero spot/vol shock is **exactly zero**, bypassing subtraction and floor artifacts.
 P&L is analytical double dollars, not booked cash. Invalid grids throw; axes are
 bounded to 101 values each, spot > -100% and <= +1000%, absolute vol shock <= 1000
@@ -2875,6 +2875,7 @@ running replay at `/api/replay/risk/profile` and for saved replay runs at
 | --- | --- |
 | `days` | Up to eight comma-separated curve dates, in calendar days after the account's market time (0 to 366, fractions allowed), or `expiry` for the first unexpired held expiry in scope; default `0,1` |
 | `iv` | Vol points added to every contract's smile IV, -100 to 100; default 0 |
+| `dynamics` | `sticky_strike` (default), `sticky_moneyness` or `sticky_delta`: how IVs move with spot ([smile dynamics](#smile-dynamics)) |
 | `range`, `steps` | The moves run evenly from -`range`% to +`range`% (at most 99) in an odd number of `steps` (3 to 201); default 10 and 41 |
 | `betas` | `SYMBOL:BETA` overrides, comma-separated, each within 10 of zero |
 
@@ -2934,6 +2935,78 @@ touch = 2 N(-|ln(K / S)| / sqrt(v))        (driftless reflection estimate)
 
 These are the market's risk-neutral odds under one volatility, not a forecast: skew
 and drift are left out, and touch odds overstate a level reached only on paper.
+
+## Smile dynamics
+
+The scenario grid and the risk profile hold each strike's IV fixed as spot moves
+(sticky strike); this is what the account's rules, margin scans and breach
+estimates use, and it never changes. For analysis, `GET /api/risk?dynamics=` and
+`GET /api/risk/profile?dynamics=` (and their replay mirrors) also accept
+`sticky_moneyness` and `sticky_delta`, which move each smile with the forward
+along the underlying's fitted SSVI surface ([SVI and SSVI](svi.md)). The grid read
+recomputes the account's configured spot × vol grid; the published snapshot's grid
+stays sticky strike. The terminal's Positions page has a Smile selector beside the
+grid and the profile.
+
+```text
+k  = ln(K / F),  k' = ln(K / F'),  s(k, T) = SSVI IV (theta interpolated in T)
+sticky strike:    sigma' = smile_IV + shift
+sticky moneyness: sigma' = smile_IV + s(k', T') - s(k, T) + shift
+sticky delta:     sigma' = b(k*) + shift, where b(x) = smile_IV + s(x, T') - s(k, T)
+                  and d1(k*, b(k*), T') = d1(k', b(k*) + shift, T')
+d1(x, v, T) = (-x + v^2 T / 2) / (v sqrt(T));  shift = vol_points / 100 (grid) or iv / 100 (profile)
+```
+
+The difference of fitted IVs moves the contract's own market IV, so a fit
+residual is carried along unchanged and an unmoved book is exactly the sticky
+strike book. T' is the contract's remaining life on the curve's date (T on the
+grid and today's curve), so later profile curves also roll down the surface
+without a move. Theta is linear in T through zero and the fitted knots and grows
+in proportion to T beyond the last, as the SSVI construction requires. Sticky delta
+keeps the smile fixed in forward-delta space (Black d1 at each point's own vol);
+with no vol shift that is the same as sticky moneyness at a fixed tenor, so the two
+differ only under a vol shock, which sticky delta applies in delta space. The
+sticky-delta root is bracketed outward from k' and bisected; a shock that leaves no
+positive vol is floored as usual. An underlying without a successful SSVI fit stays
+sticky strike and is listed in `surface_fallback` (in `scenarios` for the grid, at
+the top level of the profile), and `dynamics` echoes the choice. The surface is the
+same cached fit the surface API serves; the first such read for a snapshot fits
+it on that API worker, never in the engine.
+
+**How it changes skew P&L on big moves.** On a negative skew (puts richer than
+calls) the smile slides down the strike axis with spot under sticky moneyness:
+after a selloff a fixed strike sits higher on the moved smile and its IV falls;
+after a rally it rises. Long downside protection therefore gains less in a
+selloff than sticky strike shows, and short upside calls lose more in a rally.
+Sticky strike, conversely, assumes a fixed strike keeps its IV however far spot
+travels. Neither is a forecast. Index skews have often behaved closer to sticky
+strike, or with IV rising in selloffs beyond it, so these choices bracket model
+risk rather than predict it. An illustration on a synthetic 30-day SPX book (SSVI
+ρ=−0.7, η=1.1, γ=0.4, ATM ~18%; F=5000; P&L in dollars per contract):
+
+With no vol shock (sticky delta then equals sticky moneyness):
+
+| Position | Move | Sticky strike | Sticky moneyness / delta |
+| --- | ---: | ---: | ---: |
+| Long 4750 put (IV 22.2%) | −10% | +24,468 | +22,174 (IV 14.8%) |
+| Long 4750 put | +10% | −3,569 | −3,111 (IV 28.3%) |
+| Long 5000 call (IV 18.5%) | +10% | +39,693 | +40,935 (IV 25.2%) |
+| Short 5250 call (IV 15.1%) | +10% | −25,153 | −27,953 (IV 21.9%) |
+
+With +5 vol points, sticky delta applies the shock where the moved contract sits
+in delta space, so it parts from sticky moneyness:
+
+| Position | Move | Sticky strike | Sticky moneyness | Sticky delta |
+| --- | ---: | ---: | ---: | ---: |
+| Long 4750 put | −10% | +26,432 | +23,618 | +23,888 |
+| Long 4750 put | +10% | −3,222 | −2,380 | −2,604 |
+| Short 5250 call | +10% | −27,143 | −30,402 | −30,099 |
+
+Tests in
+`tests/trading/dynamics_test.cpp` cover the interpolation, both definitions
+(including the delta-matching equation), flat surfaces, exact sticky-strike
+reproduction of the snapshot grid, the direction of these effects for a long call,
+roll-down on later curves and the fallback reporting.
 
 ## Expiry and explicit settlement
 

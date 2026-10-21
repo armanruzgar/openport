@@ -3,12 +3,13 @@ import { useState } from "react"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
 import { sameAccountPlaceholder } from "../api/trading"
-import type { RiskProfile, RiskProfileQuery } from "../api/trading-types"
+import type { RiskProfile, RiskProfileQuery, SmileDynamics } from "../api/trading-types"
 import { LineChart } from "../charts/LineChart"
 import { fixed, money } from "../lib/format"
 import { betaSources, curveLabel, levelText, parseBetas, profileChart } from "../lib/profile"
 import { formatMoney } from "../lib/trading"
 import { TradingError } from "./TradingControls"
+import { DynamicsNote, DynamicsSelect } from "./ScenarioGrid"
 
 const dateChoices: { value: number | "expiry"; label: string }[] = [
   { value: 0, label: "Today" }, { value: 1, label: "T+1" }, { value: 7, label: "T+7" }, { value: "expiry", label: "Expiry" },
@@ -64,6 +65,7 @@ export function ProfileResult({ profile }: { profile: RiskProfile }) {
     <p className="text-[11px] text-muted">Equity {formatMoney(profile.equity)}{profile.room != null ? ` · ${formatMoney(profile.room)} to the plan floor` : ""}
       {profile.soft_room != null ? ` · ${formatMoney(profile.soft_room)} to the soft floor` : ""}. Dashed lines mark the loss that reaches each floor.
       {" "}{profile.model}. Touch odds run to today's close for today and to each later date otherwise.{profile.curves.some((c) => c.clamped) ? " * volatility clamped." : ""}</p>
+    {profile.dynamics && profile.dynamics !== "sticky_strike" && <DynamicsNote dynamics={profile.dynamics} fallback={profile.surface_fallback} />}
   </div>
 }
 
@@ -76,11 +78,13 @@ export function RiskProfilePanel({ underlyings }: { underlyings: string[] }) {
   const [iv, setIv] = useState(0)
   const [range, setRange] = useState(10)
   const [betaText, setBetaText] = useState("")
+  const [dynamics, setDynamics] = useState<SmileDynamics>("sticky_strike")
   const betas = parseBetas(betaText)
   const underlying = underlyings.includes(scope) ? scope : ""
   const query: RiskProfileQuery = {
     ...(underlying ? { underlying } : { benchmark, betas: betas ?? {} }),
     days: dateChoices.map((c) => c.value).filter((v) => dates.includes(v)), iv, range,
+    ...(dynamics === "sticky_strike" ? {} : { dynamics }),
   }
   const profile = useQuery({
     queryKey: ["trading", accountScope, "risk-profile", trading?.account_version, query],
@@ -113,6 +117,7 @@ export function RiskProfilePanel({ underlyings }: { underlyings: string[] }) {
         <select aria-label="Profile range" className="trade-input" value={range} onChange={(e) => setRange(Number(e.target.value))}>
           {[3, 5, 10, 20, 40].map((r) => <option key={r} value={r}>±{r}%</option>)}
         </select></label>
+      <DynamicsSelect value={dynamics} onChange={setDynamics} />
       {!underlying && <label className="flex flex-col gap-1 text-muted">Betas (optional)
         <input aria-label="Beta overrides" className={`trade-input w-40 ${betas ? "" : "border-danger"}`} placeholder="QQQ:1.2, IWM:1.1" value={betaText}
           onChange={(e) => setBetaText(e.target.value)} /></label>}
