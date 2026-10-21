@@ -17,7 +17,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as for single runs.
 - Bounded backtest parameter sweeps with exact variant reports and historical ranking.
 - Optional Arrow/Parquet exports preserving money text, with an offline example notebook.
-- Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC).
+- Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC),
+  as the `openport-client` distribution (import name `openport`; the PyPI name
+  `openport` is an unrelated project). Only tags on `main` publish, and the publish
+  action is pinned to a commit SHA.
 
 - Python client coverage for every documented HTTP operation, with a contract parity guard.
 - MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,

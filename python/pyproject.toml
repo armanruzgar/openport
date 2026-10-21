@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openport"
+name = "openport-client"
 version = "0.1.0"
 readme = "README.md"
 description = "Client for the openport options analytics and paper simulator API"

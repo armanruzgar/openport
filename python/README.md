@@ -6,8 +6,8 @@ Scenario and demo prices are generated, and are labelled simulated. Account mone
 is decimal text; use `decimal.Decimal` for calculations.
 
 The client supports Python 3.10+ and has no runtime dependencies. The intended
-release command is `pip install openport`; install this unreleased client from a
-checkout with `python -m pip install ./python`. Optional extras are `./python[pandas]`
+release command is `pip install openport-client` (the import name stays `openport`);
+install this unreleased client from a checkout with `python -m pip install ./python`. Optional extras are `./python[pandas]`
 for frames, `./python[ws]` for WebSockets, and `./python[mcp]` for the MCP server
 (`mcp>=2.2,<3`). A source checkout also works with `PYTHONPATH=python/src`.
 
@@ -279,17 +279,22 @@ The MCP `evaluate_playbook` tool uses the bearer route and never handles secrets
 
 ## Python releases
 
-The intended release installation is `pip install openport` (or `pip install 'openport[ws,mcp,arrow]'`).
-The [PyPI name is already registered](https://pypi.org/pypi/openport/json); confirm
-project ownership before tagging. Until this engine client is verified there,
-install the checkout as above. The
-`python-release.yml` workflow builds and checks an sdist and wheel, then uses
-[PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/)
-with OIDC, without a stored API token. It triggers on `python-vVERSION` tags and
-requires an exact match to `python/pyproject.toml`. Build/test and publish use
-separate jobs; only the publish job can request an identity token.
+The intended release installation is `pip install openport-client` (or
+`pip install 'openport-client[ws,mcp,arrow]'`); code still imports `openport`.
+The PyPI name `openport` belongs to an unrelated project, so the distribution is
+named `openport-client`. Until a release is verified on PyPI, install the checkout
+as above. The `python-release.yml` workflow builds and checks an sdist and wheel,
+then uses [PyPI trusted publishing](https://docs.pypi.org/trusted-publishers/using-a-publisher/)
+with OIDC, without a stored API token. It triggers on `python-vVERSION` tags,
+requires an exact match to `python/pyproject.toml`, and refuses a tag whose commit
+is not on `main` (`git merge-base --is-ancestor`). Build/test and publish use
+separate jobs; only the publish job can request an identity token, and the publish
+action is pinned to a full commit SHA (v1.14.3).
 
-Before the first release, the package owner must confirm access to the existing
-`openport` project and register a trusted publisher for repository `38st/openport`,
-workflow `python-release.yml` and environment `pypi` on PyPI, and configure that GitHub
-environment. No package has been published as part of this change.
+The workflow file cannot enforce GitHub's environment protection. Before the first
+release, a repository admin must configure the `pypi` environment under
+Settings > Environments with a deployment tag rule that allows only `python-v*`
+tags and at least one required reviewer. The package owner must also register
+`openport-client` on PyPI with a trusted publisher for repository `38st/openport`,
+workflow `python-release.yml` and environment `pypi`. No package has been
+published and no GitHub settings were changed as part of this change.
