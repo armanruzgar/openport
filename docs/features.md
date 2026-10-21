@@ -32,6 +32,11 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 
 ## Trading terminal
 
+- Status → **Copy diagnostics** produces a report of version, build, server
+  platform, provider, feed and error categories, with a prefilled GitHub issue
+  link. No raw errors, secrets or telemetry. Fatal signals leave a minimal local
+  crash log where possible. [Details](configuration.md#diagnostics).
+
 - **Brief** brings together prior-session and observed overnight levels, implied
   moves, volatility changes, positioning and supplied events, alongside floor
   room, loss allowance, guardrails and positions. It uses market time in replay
@@ -417,3 +422,17 @@ A confirmation names the new destination (for example, **Send to live account
 Practice**); cancelling sends nothing. Closing and reopening the action also
 selects the current destination. This applies to order changes, cancellations,
 flattening, exits, stock/strategy actions, and settings writes as well as tickets.
+
+## Installation and operation
+
+- `openportd --open` opens the saved token link after startup; `--print-url [--open]`
+  recovers it later without starting another daemon or feed. Browser launching
+  stays opt-in. [Installation](install.md).
+- Homebrew uses an Apple Silicon archive or builds from source on Intel. Release
+  automation produces Linux amd64/arm64 deb/rpm packages with a private systemd
+  service. Windows uses Docker Desktop or WSL2.
+- [Upgrade and backup](upgrade-and-backup.md) covers the full data directory,
+  version compatibility, restore, rollback and torn-journal repair.
+- [Remote access](remote-access.md) covers Tailscale and authenticated Caddy.
+  [Demo deployment](../deploy/demo/README.md) supplies simulated data, bounded
+  visitor accounts and container resource limits; it is not a hosted service.

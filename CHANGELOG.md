@@ -1,5 +1,28 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
+## Unreleased
+
+- **Open the terminal without hunting for a token.** `openportd --open` launches
+  the browser after startup; `--print-url [--open]` reads existing token settings
+  and exits. Homebrew caveats and installation examples use the helper.
+- **Install on more platforms.** Release automation packages Linux amd64/arm64
+  `.deb` and `.rpm` assets with a private systemd service. Intel Macs build the
+  release tag through Homebrew; Windows Docker Desktop/WSL2 paths are documented.
+- **Keep data through upgrades.** New backup, restore, rollback and journal-repair
+  guidance covers native, Homebrew, Docker and systemd storage. Remote/phone
+  recipes use Tailscale or Caddy with cookie authentication.
+- **Start and find help more easily.** The site adds Homebrew installation tabs,
+  first-ten-minutes links and Discussions. Bug forms accept sanitized diagnostics;
+  Discussions templates cover questions and ideas.
+- **Prepare a hosted demo.** `deploy/demo` runs simulated prices and bounded
+  sandboxes behind authenticated HTTPS, with container resource limits. The site
+  keeps its browser-demo button hidden until a real URL is configured. Nothing
+  is hosted or published by this change.
+- **Share diagnostics deliberately.** Status copies version/build/platform,
+  provider/feed and recent error categories into a reviewable bug report. Local
+  fatal signal logs contain no memory dump; there is no telemetry. `/api/status`
+  adds optional build metadata for clients.
+
 ## 0.4.0 (2026-10-06)
 
 ### Evaluation plans

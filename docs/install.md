@@ -1,27 +1,44 @@
 # Installation
 
 OpenPort is one `openportd` process that serves the web terminal on port 8080.
-Install it with Homebrew on Apple Silicon, with Docker anywhere, from a release
+Install it with Homebrew on macOS, with Docker, from a release
 archive or from source. [Configuration](configuration.md) lists the providers and
 every flag.
 
 ## Homebrew
 
-On an Apple Silicon Mac, with Homebrew:
+On a Mac, with Homebrew:
 
 ```bash
 brew tap 38st/openport https://github.com/38st/openport
 brew install openport
 brew services start openport
+openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"
 ```
 
-Open the `http://localhost:8080/#token=…` link in
-`$(brew --prefix)/var/log/openport.log`. If it has not appeared yet, append the
-contents of `$(brew --prefix)/var/openport/write-token` to
-`http://localhost:8080/#token=`. The service keeps accounts and chart history under
+The last command reads the existing token and opens its link. If startup has not
+created the file yet, wait a few seconds and retry. Omit `--open` to print it only.
+The service keeps accounts and chart history under
 `$(brew --prefix)/var/openport`; logs are in `var/log/openport.log` and
-`var/log/openport.error.log`. The formula installs the self-contained macOS archive.
-For Intel Macs and Linux, use Docker or the source build.
+`var/log/openport.error.log`. Apple Silicon installs the self-contained archive;
+Intel Macs build the release tag with Homebrew's CMake, Node, Boost, OpenSSL and
+zstd dependencies. This takes longer and needs network access to fetch build
+dependencies. No Intel bottle is claimed.
+
+For a foreground session, run `openportd --open`. Browser launching is opt-in;
+services, SSH and headless runs never open a browser by default. `--open` creates
+a private `write-token` beside the journal unless a token is already configured.
+Later, `openportd --print-url --open` reopens that link and exits. Supply the same
+`--provider demo`, `--paper-journal`, `--write-token-file`, `--address` and `--port`
+settings when they differ from defaults. There is no separate daemon config file
+or service discovery: the helper uses those flags and `OPENPORT_WRITE_TOKEN`,
+with `--write-token` taking precedence. It never creates a missing token or starts
+another feed. A failed browser launch leaves the link available for manual use.
+Linux browser launching uses `xdg-open` from `xdg-utils`; on a headless server,
+print the link and open it on your desktop instead.
+With only named tokens configured, `--open` opens the terminal without choosing a
+token or creating an administrator credential; enter the appropriate token in
+the terminal. `--print-url` requires a legacy token setting in that case.
 
 ## Docker
 
@@ -51,15 +68,62 @@ Or use [docker-compose.yml](../docker-compose.yml) from this checkout:
 
 ```bash
 docker compose up -d
-docker compose logs openport
+docker compose exec openport openportd --print-url --write-token-file /var/lib/openport/write-token
 ```
 
-Open the token link in the logs. Compose uses the published image, the same named
+Open the printed token link on the host; browser launching inside a container is
+not supported. Compose uses the published image, the same named
 `openport` volume and port 8080 on loopback only. It restarts unless stopped and
 checks `/api/status` for health. Provider credentials and a provider command are
 commented in the file. To update, run `docker compose pull && docker compose up -d`.
 `docker compose down` keeps the volume; adding `--volumes` deletes its data.
 Stop an existing Docker or Homebrew instance before using the same port or accounts.
+Read [upgrade and backup](upgrade-and-backup.md) before updating; `OPENPORT_IMAGE`
+can pin a release/digest and `OPENPORT_VOLUME` can select a restored volume.
+
+## Linux packages
+
+The release workflow builds `.deb` and `.rpm` packages for amd64 and arm64,
+alongside the archives, with `SHA256SUMS`. Use assets from a release that includes
+them; this change does not publish packages for existing releases. Verify the
+checksum, then install the file for your machine:
+
+```sh
+sudo apt install ./openport-VERSION-linux-amd64.deb
+# Or, on a compatible RPM distribution:
+sudo dnf install ./openport-VERSION-linux-amd64.rpm
+sudo systemctl daemon-reload
+sudo systemctl enable --now openport
+sudo openportd --print-url --write-token-file /var/lib/openport/write-token
+```
+
+These binaries are built on Ubuntu 24.04 and require glibc 2.39+, libstdc++ 13+,
+OpenSSL 3, zlib, zstd and CA certificates. The deb targets Ubuntu 24.04 or compatible
+systems with `libssl3t64`; an rpm is not a promise of compatibility with older
+enterprise distributions. Use Docker or build from source when dependencies do
+not match. ARM package names use `arm64` (RPM metadata uses `aarch64`).
+
+The systemd unit listens on loopback, uses a private dynamic user and keeps state
+under `/var/lib/openport`; logs are in `journalctl -u openport`. Packages never
+start services or delete data in install/uninstall scripts. Stop before upgrades
+or removal. Use `systemctl edit openport` for startup overrides, keeping the token
+and data paths; then reload and restart. Copy the printed link to your desktop
+browser rather than launching a browser as root.
+
+## Windows
+
+Use Docker Desktop with its WSL2/Linux-container backend. Run the Docker command
+above in PowerShell and open `http://localhost:8080` with the printed token link.
+Keep the named volume for persistence; do not replace it with an arbitrary Windows
+bind mount. The browser stays on Windows, so use `--print-url` through `docker exec`
+instead of `--open` inside the container.
+
+Alternatively, install Ubuntu 24.04 in WSL2, then use the Linux package or source
+instructions there. WSL localhost forwarding lets the Windows browser reach the
+loopback listener. Keep native journals in WSL's Linux filesystem, not `/mnt/c`.
+Use a foreground daemon when WSL systemd is disabled. No native Windows binary is
+provided. See [Microsoft's WSL installation guide](https://learn.microsoft.com/windows/wsl/install)
+and [Docker's WSL2 setup](https://docs.docker.com/desktop/features/wsl/).
 
 ## Release archives and source
 
@@ -71,9 +135,9 @@ Node 22+; everything else is fetched and pinned by checksum):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build -j3
 (cd web && npm ci && npm run build)
-./build/apps/openportd --symbols SPX,SPY,QQQ,IWM,DIA --web-root web/dist
+./build/apps/openportd --open --symbols SPX,SPY,QQQ,IWM,DIA --web-root web/dist
 ```
 
 To install it, `cmake --install build --component openport --prefix ~/.local` puts
@@ -91,6 +155,11 @@ Full chains are large: see [recording](runtime.md#recording-and-replay) before
 recording all day.
 
 ## Public demo and sandbox accounts
+
+For a deployment configuration, use [deploy/demo](../deploy/demo/README.md).
+It adds resource limits and an authenticating HTTPS proxy. For personal remote
+or phone access, follow [Tailscale or Caddy](remote-access.md); public unauthenticated
+personal instances are not supported by [SECURITY.md](../SECURITY.md).
 
 Run `openportd --provider demo --address 0.0.0.0 --write-token-file PATH` with
 `--allowed-host terminal.example.com` for your public name, or set

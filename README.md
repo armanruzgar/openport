@@ -87,16 +87,17 @@ On delayed data, a pass is practice, not proof of real-time performance.
 
 ## Quick start
 
-On an Apple Silicon Mac, with Homebrew:
+On a Mac, with Homebrew (Intel builds from source):
 
 ```bash
 brew tap 38st/openport https://github.com/38st/openport
 brew install openport
 brew services start openport
+openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"
 ```
 
-Then open the `http://localhost:8080/#token=…` link in
-`$(brew --prefix)/var/log/openport.log`.
+The last command opens the terminal with its saved token. For a foreground
+session, use `openportd --open`.
 
 Anywhere with Docker (Cboe delayed SPX, SPY, QQQ, IWM and DIA, no key needed):
 
@@ -113,9 +114,9 @@ Node 22+):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build -j3
 (cd web && npm ci && npm run build)
-./build/apps/openportd --symbols SPX,SPY,QQQ,IWM,DIA --web-root web/dist
+./build/apps/openportd --open --symbols SPX,SPY,QQQ,IWM,DIA --web-root web/dist
 ```
 
 New to it? [Your first ten minutes](docs/first-ten-minutes.md) starts a simulated day,
@@ -147,6 +148,8 @@ saying how it went is welcome. The broker adapters read market data only.
 - [Your first ten minutes](docs/first-ten-minutes.md): a simulated day, one evaluation, one trade
 - [Features](docs/features.md): everything the terminal and simulator do
 - [Installation](docs/install.md): Homebrew, Docker, Compose, source and public demos
+- [Upgrade and backup](docs/upgrade-and-backup.md): restore, roll back and repair journals
+- [Remote and phone access](docs/remote-access.md): Tailscale and an authenticated HTTPS proxy
 - [Configuration](docs/configuration.md): providers, flags, update checks and security
 - [Paper trading](docs/paper-trading.md): orders, fills, rules, the journal and reason codes
 - [Playbooks](docs/playbooks.md): setups, staged orders, pass odds and batch backtests
@@ -159,6 +162,8 @@ saying how it went is welcome. The broker adapters read market data only.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull requests, and
 [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+Ask setup questions, share practice workflows and discuss ideas in
+[GitHub Discussions](https://github.com/38st/openport/discussions).
 
 ## License
 
