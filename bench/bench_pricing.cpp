@@ -1,11 +1,13 @@
 #include <benchmark/benchmark.h>
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <vector>
 
 #include "../tests/support/synthetic_chain.hpp"
 #include "openport/analytics/chain_analytics.hpp"
+#include "openport/analytics/chain_book.hpp"
 #include "openport/pricing/binomial.hpp"
 #include "openport/pricing/black.hpp"
 #include "openport/pricing/implied_vol.hpp"
@@ -24,6 +26,72 @@ void BM_AnalyzeSyntheticChain(benchmark::State& state) {
   state.SetItemsProcessed(state.iterations() * 82);
 }
 BENCHMARK(BM_AnalyzeSyntheticChain)->Unit(benchmark::kMicrosecond);
+
+/// A synthetic SPX-sized chain (simulated quotes, not market data): 30 expiries from
+/// 0DTE to about seven months, 500 strikes each, 30k options with skewed OI.
+const openport::analytics::UnderlyingMetrics& large_chain_metrics() {
+  namespace analytics = openport::analytics;
+  namespace md = openport::md;
+  static const analytics::UnderlyingMetrics metrics = [] {
+    constexpr double spot = 5000.0, rate = 0.045;
+    analytics::ChainBook book;
+    const md::Date today{2026, 9, 22};
+    const auto as_of = md::new_york_to_utc(today, 14, 0);
+    book.apply(md::UnderlyingQuote{"SPX", as_of, spot - 0.5, spot + 0.5, spot});
+    std::mt19937_64 rng(7);
+    std::uniform_real_distribution<double> interest(0.0, 5000.0);
+    md::InstrumentId id = 0;
+    for (int expiry = 0; expiry < 30; ++expiry) {
+      md::OptionContract c;
+      c.root = "SPXW";
+      c.underlying = "SPX";
+      c.expiry = md::date_from_days(md::days_since_epoch(today) + expiry + expiry * expiry / 5);
+      c.style = openport::pricing::ExerciseStyle::European;
+      c.settlement = md::Settlement::PM;
+      const double years = md::years_between(as_of, c.expiry_time());
+      const double discount = std::exp(-rate * years);
+      const double forward = spot / discount;
+      for (int i = 0; i < 500; ++i) {
+        c.strike = 3750.0 + 5.0 * i;
+        const double k = std::log(c.strike / forward);
+        const double vol = std::max(0.08, 0.16 - 0.3 * k + 1.2 * k * k);
+        for (const OptionType type : {OptionType::Call, OptionType::Put}) {
+          c.type = type;
+          book.apply(md::ContractDefinition{id, c});
+          const double fair =
+              openport::pricing::black_price(type, forward, c.strike, years, vol, discount);
+          book.apply(md::OptionQuote{id, as_of, std::max(0.0, fair - 0.05), fair + 0.05, 10, 10});
+          book.apply(md::OpenInterest{id, as_of, std::round(interest(rng))});
+          ++id;
+        }
+      }
+    }
+    return analytics::analyze(book.underlyings().at("SPX"), book, as_of);
+  }();
+  return metrics;
+}
+
+// Exposure for a non-default API request: convention change on every expiry.
+void BM_ExposureViewLargeChain(benchmark::State& state) {
+  const auto& metrics = large_chain_metrics();
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(openport::analytics::exposure_view(
+        metrics, openport::analytics::ExposureConvention::ShortAll));
+  }
+  state.SetItemsProcessed(state.iterations() * metrics.coverage.options);
+}
+BENCHMARK(BM_ExposureViewLargeChain)->Unit(benchmark::kMillisecond);
+
+// A 0DTE request on the same chain only needs the same-day expiry.
+void BM_ExposureViewLargeChainZeroDte(benchmark::State& state) {
+  const auto& metrics = large_chain_metrics();
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(openport::analytics::exposure_view(
+        metrics, openport::analytics::ExposureConvention::ShortAll,
+        openport::analytics::ExposureSlice::ZeroDte));
+  }
+}
+BENCHMARK(BM_ExposureViewLargeChainZeroDte)->Unit(benchmark::kMillisecond);
 
 struct Quote {
   OptionType type;

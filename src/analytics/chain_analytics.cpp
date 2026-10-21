@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cmath>
 #include <map>
+#include <optional>
+#include <string_view>
 
 #include "openport/pricing/black.hpp"
 #include "openport/pricing/implied_vol.hpp"
@@ -126,7 +128,9 @@ double atm_vol(const std::vector<StrikeMetrics>& strikes, double forward) {
   return below ? below->iv : (above ? above->iv : kNaN);
 }
 
-/// One strike's signed positions, with common smile IV and fitted carry.
+/// One strike's signed positions, with common smile IV and fitted carry. Rates are
+/// over the floored time `years`, and the spot-independent constants are cached for
+/// the flip search's spot grid.
 struct ExposureTerm {
   double strike;
   double vol;
@@ -137,32 +141,71 @@ struct ExposureTerm {
   double yield;
   double calls;
   double puts;
+  double sd;
+  double root_years;
+  double log_ratio;  ///< log(carry / strike); d1 adds log(spot)
+  double scale;      ///< discount * carry
+  double weight;
+
+  ExposureTerm(double strike, double vol, double years, double discount, double carry,
+               double calls, double puts)
+      : strike(strike), vol(vol), years(years), discount(discount), carry(carry),
+        // Using true time here would turn a small forward/spot gap near expiry into a
+        // huge carry rate against the floored charm horizon.
+        carry_rate(std::log(carry) / years), yield(-std::log(discount * carry) / years),
+        calls(calls), puts(puts), sd(vol * std::sqrt(years)), root_years(std::sqrt(years)),
+        log_ratio(std::log(carry / strike)), scale(discount * carry), weight(calls + puts) {}
 };
 
-ExposureValues exposure_at(const ExposureTerm& t, double spot) {
-  const double sd = t.vol * std::sqrt(t.years);
-  const double d1 = std::log(spot * t.carry / t.strike) / sd + .5 * sd;
-  const double d2 = d1 - sd;
-  const double density = pricing::norm_pdf(d1);
-  const double scale = t.discount * t.carry;
-  const double weight = t.calls + t.puts;
-  // Use the put CDF directly to retain small deltas in the tails.
-  const double delta = scale * (t.calls * pricing::norm_cdf(d1) -
-                                t.puts * pricing::norm_cdf(-d1));
-  const double charm = (t.yield * delta - weight * scale * density *
-      (2 * t.carry_rate * t.years - d2 * sd) / (2 * t.years * sd)) / 365.0;
-  return {weight * scale * density / sd * spot * .01,
-          -weight * scale * density * d2 / t.vol / 100 * spot,
-          delta * spot,
-          charm * spot,
-          weight * t.discount * spot * t.carry * density * std::sqrt(t.years) *
-              d1 * d2 / t.vol / 10000};
+struct ExposurePoint {
+  double d1;
+  double d2;
+  double density;
+};
+
+ExposurePoint exposure_point(const ExposureTerm& t, double log_spot) {
+  const double d1 = (log_spot + t.log_ratio) / t.sd + .5 * t.sd;
+  return {d1, d1 - t.sd, pricing::norm_pdf(d1)};
 }
 
-double total_at(const std::vector<ExposureTerm>& terms, double spot,
-                double ExposureValues::* field) {
+double exposure_delta(const ExposureTerm& t, const ExposurePoint& p) {
+  // Use the put CDF directly to retain small deltas in the tails.
+  return t.scale * (t.calls * pricing::norm_cdf(p.d1) - t.puts * pricing::norm_cdf(-p.d1));
+}
+
+/// One metric, in kExposureFields order, without evaluating the others.
+double exposure_metric(const ExposureTerm& t, double spot, double log_spot, std::size_t metric) {
+  const ExposurePoint p = exposure_point(t, log_spot);
+  const double gamma = t.weight * t.scale * p.density;
+  switch (metric) {
+    case 0: return gamma / t.sd * spot * .01;
+    case 1: return -gamma * p.d2 / t.vol / 100 * spot;
+    case 2: return exposure_delta(t, p) * spot;
+    case 3:
+      return (t.yield * exposure_delta(t, p) -
+              gamma * (2 * t.carry_rate * t.years - p.d2 * t.sd) / (2 * t.years * t.sd)) /
+             365.0 * spot;
+    default: return gamma * t.root_years * p.d1 * p.d2 / t.vol / 10000 * spot;
+  }
+}
+
+ExposureValues exposure_at(const ExposureTerm& t, double spot, double log_spot) {
+  const ExposurePoint p = exposure_point(t, log_spot);
+  const double gamma = t.weight * t.scale * p.density;
+  const double delta = exposure_delta(t, p);
+  const double charm = (t.yield * delta - gamma * (2 * t.carry_rate * t.years - p.d2 * t.sd) /
+                                              (2 * t.years * t.sd)) / 365.0;
+  return {gamma / t.sd * spot * .01,
+          -gamma * p.d2 / t.vol / 100 * spot,
+          delta * spot,
+          charm * spot,
+          gamma * t.root_years * p.d1 * p.d2 / t.vol / 10000 * spot};
+}
+
+double total_at(const std::vector<ExposureTerm>& terms, double spot, std::size_t metric) {
+  const double log_spot = std::log(spot);
   double total = 0;
-  for (const auto& term : terms) total += exposure_at(term, spot).*field;
+  for (const auto& term : terms) total += exposure_metric(term, spot, log_spot, metric);
   return total;
 }
 
@@ -199,13 +242,10 @@ void compute_exposure(UnderlyingMetrics& out) {
           slice.years > 0 && slice.forward.forward > 0 && slice.forward.discount > 0 &&
           std::isfinite(slice.forward.forward) && std::isfinite(slice.forward.discount) &&
           (calls != 0 || puts != 0)) {
-        const double carry = slice.forward.forward / out.spot;
-        const double carry_rate = std::log(carry) / slice.years;
-        const double yield = -std::log(slice.forward.discount * carry) / slice.years;
         const ExposureTerm term{row.strike, row.iv,
             std::max(slice.years, settings.min_days / 365.0), slice.forward.discount,
-            carry, carry_rate, yield, calls, puts};
-        static_cast<ExposureValues&>(row) = exposure_at(term, out.spot);
+            slice.forward.forward / out.spot, calls, puts};
+        static_cast<ExposureValues&>(row) = exposure_at(term, out.spot, std::log(out.spot));
         terms.push_back(term);
       }
       for (const auto field : kExposureFields) {
@@ -232,8 +272,9 @@ void compute_exposure(UnderlyingMetrics& out) {
       const double spot = out.spot * (1 + x);
       ExposureValues totals;
       if (spot > 0) {
+        const double log_spot = std::log(spot);
         for (const auto& term : terms) {
-          const auto values = exposure_at(term, spot);
+          const auto values = exposure_at(term, spot, log_spot);
           for (const auto field : kExposureFields) totals.*field += values.*field;
         }
       } else {
@@ -261,7 +302,10 @@ void compute_exposure(UnderlyingMetrics& out) {
     }
     // Neither underflowed tails nor an identically zero profile prove a flip.
     const double threshold = (largest.*field) * 1e-10;
-    double best_distance = std::numeric_limits<double>::infinity();
+    struct Bracket {
+      double lo, flo, hi, distance;
+    };
+    std::vector<Bracket> brackets;
     std::size_t previous = grid.size();
     for (std::size_t i = 0; i < grid.size(); ++i) {
       const auto& [spot, values] = grid[i];
@@ -274,14 +318,23 @@ void compute_exposure(UnderlyingMetrics& out) {
       const auto prior = previous;
       previous = i;
       if (prior == grid.size()) continue;
-      double lo = grid[prior].first;
-      double flo = grid[prior].second.*field;
-      double hi = spot;
+      const double lo = grid[prior].first;
+      const double flo = grid[prior].second.*field;
       if (std::signbit(flo) == std::signbit(value)) continue;
+      const double distance = lo <= out.spot && out.spot <= spot
+          ? 0 : std::min(std::abs(lo - out.spot), std::abs(spot - out.spot));
+      brackets.push_back({lo, flo, spot, distance});
+    }
+    // Reprice only the brackets that can still hold the crossing nearest spot.
+    std::sort(brackets.begin(), brackets.end(),
+              [](const auto& a, const auto& b) { return a.distance < b.distance; });
+    double best_distance = std::numeric_limits<double>::infinity();
+    for (auto [lo, flo, hi, distance] : brackets) {
+      if (distance >= best_distance) break;
       bool finite = true;
       for (int iteration = 0; iteration < 60 && hi - lo > out.spot * 1e-10; ++iteration) {
         const double mid = .5 * (lo + hi);
-        const double v = total_at(terms, mid, field);
+        const double v = total_at(terms, mid, metric);
         if (!std::isfinite(v)) {
           finite = false;
           break;
@@ -577,12 +630,11 @@ UnderlyingMetrics analyze(const UnderlyingBook& book, const ChainBook& chain, md
 
 const char* to_string(ExposureConvention convention) {
   switch (convention) {
-    case ExposureConvention::OpenInterest: return "open_interest";
-    case ExposureConvention::ShortAll: return "short_all";
     case ExposureConvention::LongCallsShortPuts: return "long_calls_short_puts";
+    case ExposureConvention::ShortAll: return "short_all";
     case ExposureConvention::CustomerFlow: return "customer_flow";
   }
-  return "open_interest";
+  return "long_calls_short_puts";
 }
 
 const char* to_string(ExposureSlice slice) {
@@ -594,17 +646,38 @@ const char* to_string(ExposureSlice slice) {
   return "all";
 }
 
-UnderlyingMetrics exposure_view(UnderlyingMetrics metrics, ExposureConvention convention,
+std::optional<ExposureConvention> parse_exposure_convention(std::string_view name) {
+  if (name == "long_calls_short_puts" || name == "open_interest")
+    return ExposureConvention::LongCallsShortPuts;
+  if (name == "short_all") return ExposureConvention::ShortAll;
+  if (name == "customer_flow") return ExposureConvention::CustomerFlow;
+  return std::nullopt;
+}
+
+UnderlyingMetrics exposure_view(const UnderlyingMetrics& metrics, ExposureConvention convention,
                                 ExposureSlice slice) {
-  metrics.exposure_convention = convention;
-  metrics.exposure_slice = slice;
+  // Copy only the selected expiries; the rest of a large chain is never touched.
+  UnderlyingMetrics out;
+  out.symbol = metrics.symbol;
+  out.spot = metrics.spot;
+  out.spot_source = metrics.spot_source;
+  out.american_approximation = metrics.american_approximation;
+  out.coverage = metrics.coverage;
+  out.as_of = metrics.as_of;
+  out.version = metrics.version;
+  out.exposure_settings = metrics.exposure_settings;
+  out.exposure_convention = convention;
+  out.exposure_slice = slice;
+  out.options_priced = metrics.options_priced;
+  out.compute_ms = metrics.compute_ms;
   const auto date = md::new_york_time(metrics.as_of).date;
-  std::erase_if(metrics.slices, [&](const auto& expiry) {
-    return slice == ExposureSlice::ZeroDte ? expiry.expiry != date :
-           slice == ExposureSlice::ExZeroDte && expiry.expiry == date;
-  });
-  compute_exposure(metrics);
-  return metrics;
+  for (const auto& expiry : metrics.slices) {
+    const bool today = expiry.expiry == date;
+    if (slice == ExposureSlice::All || (slice == ExposureSlice::ZeroDte) == today)
+      out.slices.push_back(expiry);
+  }
+  compute_exposure(out);
+  return out;
 }
 
 }  // namespace openport::analytics

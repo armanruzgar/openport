@@ -195,6 +195,11 @@ TEST(ChainAnalytics, ExposureConventionsKeepDefaultAndMissingFlowHonest) {
   SyntheticChain chain;
   const auto m = analytics::analyze(chain.book.underlyings().at("SPX"), chain.book, chain.as_of);
   const auto alias = analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts);
+  EXPECT_EQ(analytics::parse_exposure_convention("open_interest"),
+            analytics::ExposureConvention::LongCallsShortPuts);  // deprecated spelling
+  EXPECT_EQ(analytics::parse_exposure_convention("long_calls_short_puts"), m.exposure_convention);
+  EXPECT_FALSE(analytics::parse_exposure_convention("dealer_long"));
+  EXPECT_STREQ(analytics::to_string(m.exposure_convention), "long_calls_short_puts");
   const auto short_all = analytics::exposure_view(m, analytics::ExposureConvention::ShortAll);
   for (const auto field : analytics::kExposureFields)
     EXPECT_DOUBLE_EQ(m.exposure.*field, alias.exposure.*field);
@@ -254,6 +259,35 @@ TEST(ChainAnalytics, NewExposureMetricsUseTheFloorWhileDeltaQuotesUseTrueTime) {
   EXPECT_NE(row.call.delta, floored.delta);
 }
 
+TEST(ChainAnalytics, ZeroDteCharmStaysBoundedWithASmallForwardGap) {
+  // Thirty minutes to the close, a 1-point forward/spot gap annualizes to a carry of
+  // ~3.5 over true time, which used to swamp charm against the half-day floor. Over
+  // the floored horizon it is a ~15% rate, a modest shift for out-of-the-money OI.
+  const auto as_of = md::new_york_to_utc({2026, 10, 22}, 15, 30);
+  auto charm = [&](double forward) {
+    ChainBook book;
+    book.apply(md::UnderlyingQuote{"SPX", as_of, 5000, 5000, 5000});
+    md::InstrumentId id = 0;
+    for (double strike = 4950; strike <= 5050; strike += 5) {
+      add_option(book, id++, {2026, 10, 22}, OptionType::Call, strike, as_of, forward, .15,
+                 strike >= 5010 ? 1000 : 0);
+      add_option(book, id++, {2026, 10, 22}, OptionType::Put, strike, as_of, forward, .15,
+                 strike <= 4990 ? 1500 : 0);
+    }
+    analytics::AnalyticsOptions options;
+    options.fallback_rate = 0;
+    const auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
+    EXPECT_NEAR(m.slices[0].forward.forward, forward, 1e-3);
+    EXPECT_LT(m.slices[0].years, 1.0 / (365 * 24));
+    return m.exposure.cex;
+  };
+  const double flat = charm(5000);
+  const double gapped = charm(5001);
+  ASSERT_TRUE(std::isfinite(flat) && std::isfinite(gapped));
+  ASSERT_NE(flat, 0);
+  EXPECT_LT(std::abs(gapped - flat), .25 * std::abs(flat)) << flat << " " << gapped;
+}
+
 TEST(ChainAnalytics, ZeroDtePartitionsEveryMetricUsingSnapshotNewYorkDate) {
   ChainBook book;
   // UTC is already the next day; tomorrow's expiry must remain ex-0DTE.
@@ -267,13 +301,13 @@ TEST(ChainAnalytics, ZeroDtePartitionsEveryMetricUsingSnapshotNewYorkDate) {
   options.fallback_rate = 0;
   options.exposure_min_days = 1;
   auto m = analytics::analyze(book.underlyings().at("SPX"), book, as_of, options);
-  EXPECT_TRUE(analytics::exposure_view(m, analytics::ExposureConvention::OpenInterest,
+  EXPECT_TRUE(analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts,
                                      analytics::ExposureSlice::ZeroDte).slices.empty());
   const auto later = md::new_york_to_utc({2026, 10, 22}, 15, 59);
   m = analytics::analyze(book.underlyings().at("SPX"), book, later, options);
-  const auto today = analytics::exposure_view(m, analytics::ExposureConvention::OpenInterest,
+  const auto today = analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts,
                                              analytics::ExposureSlice::ZeroDte);
-  const auto ex = analytics::exposure_view(m, analytics::ExposureConvention::OpenInterest,
+  const auto ex = analytics::exposure_view(m, analytics::ExposureConvention::LongCallsShortPuts,
                                           analytics::ExposureSlice::ExZeroDte);
   ASSERT_EQ(today.slices.size(), 1u);
   ASSERT_EQ(ex.slices.size(), 1u);
@@ -284,7 +318,7 @@ TEST(ChainAnalytics, ZeroDtePartitionsEveryMetricUsingSnapshotNewYorkDate) {
   // Once settlement has passed, the same-day slice is absent, not a stale 0DTE position.
   const auto settled = analytics::analyze(book.underlyings().at("SPX"), book,
       md::new_york_to_utc({2026, 10, 22}, 16, 1), options);
-  EXPECT_TRUE(analytics::exposure_view(settled, analytics::ExposureConvention::OpenInterest,
+  EXPECT_TRUE(analytics::exposure_view(settled, analytics::ExposureConvention::LongCallsShortPuts,
                                      analytics::ExposureSlice::ZeroDte).slices.empty());
 }
 

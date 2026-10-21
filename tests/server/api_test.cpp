@@ -212,9 +212,11 @@ TEST(Api, ChainReturnsBothSidesOfEveryStrike) {
 TEST(Api, ExposureModesAndAllMetricsHaveAlignedTotalsAndLevels) {
   StubSource source;
   const auto original = get(source, "/api/underlyings/SPX/exposure?window=0");
-  const auto alias = get(source, "/api/underlyings/SPX/exposure?window=0&convention=long_calls_short_puts");
-  EXPECT_EQ(original["exposure"], alias["exposure"]);
-  EXPECT_EQ(original["convention"], "open_interest");
+  const auto named = get(source, "/api/underlyings/SPX/exposure?window=0&convention=long_calls_short_puts");
+  const auto deprecated = get(source, "/api/underlyings/SPX/exposure?window=0&convention=open_interest");
+  EXPECT_EQ(original, named);
+  EXPECT_EQ(original, deprecated);
+  EXPECT_EQ(original["convention"], "long_calls_short_puts");
   EXPECT_EQ(original["slice"], "all");
   for (const auto name : analytics::kExposureNames) {
     const auto total = std::string("total_") + name;

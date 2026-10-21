@@ -824,14 +824,14 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
     return ok(chain_json(*metrics, *slice, window));
   }
   if (view == "exposure") {
-    auto convention = analytics::ExposureConvention::OpenInterest;
+    auto convention = analytics::ExposureConvention::LongCallsShortPuts;
     auto slice = analytics::ExposureSlice::All;
     if (const auto it = query.find("convention"); it != query.end()) {
-      if (it->second == "short_all") convention = analytics::ExposureConvention::ShortAll;
-      else if (it->second == "long_calls_short_puts") convention = analytics::ExposureConvention::LongCallsShortPuts;
-      else if (it->second == "customer_flow") convention = analytics::ExposureConvention::CustomerFlow;
-      else if (it->second != "open_interest")
-        return error(400, "convention must be open_interest, short_all, long_calls_short_puts or customer_flow");
+      const auto named = analytics::parse_exposure_convention(it->second);
+      if (!named)
+        return error(400, "convention must be long_calls_short_puts, short_all or customer_flow "
+                          "(open_interest is a deprecated spelling of long_calls_short_puts)");
+      convention = *named;
     }
     if (const auto it = query.find("slice"); it != query.end()) {
       if (it->second == "0dte") slice = analytics::ExposureSlice::ZeroDte;
@@ -839,7 +839,7 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
       else if (it->second != "all") return error(400, "slice must be all, 0dte or ex_0dte");
     }
     const double width = query.contains("window") ? window : 0.08;
-    if (convention == analytics::ExposureConvention::OpenInterest && slice == analytics::ExposureSlice::All)
+    if (convention == analytics::ExposureConvention::LongCallsShortPuts && slice == analytics::ExposureSlice::All)
       return ok(exposure_json(*metrics, expiries, width));
     return ok(exposure_json(analytics::exposure_view(*metrics, convention, slice), expiries, width));
   }

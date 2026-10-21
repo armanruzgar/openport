@@ -52,9 +52,10 @@
 
 ## Dealer exposure
 
-The default `convention=open_interest` preserves the existing signs: dealers long
-calls (+1), short puts (−1). `long_calls_short_puts` is an explicit alias of that
-same convention. `short_all` assigns −1 to both sides. These are assumptions about
+The default `convention=long_calls_short_puts` assigns dealers long calls (+1) and
+short puts (−1). `open_interest` is accepted as a deprecated spelling of the same
+convention, and responses always name it `long_calls_short_puts`. `short_all`
+assigns −1 to both sides. These are assumptions about
 positions, not a deduction from customers holding options.
 
 `customer_flow` would require signed customer trade/volume direction (dealer weight
@@ -74,7 +75,8 @@ zero with zero/unknown coverage, not evidence that actual dealer exposure is zer
 With spot `S`, fitted forward `F`, discount `D`, smile volatility `σ`, actual years
 `T`, and exposure years `τ = max(T, exposure_min_days / 365)` (default half a day):
 
-- `a = F/S`, `b = log(a)/T`, `q = −log(Da)/T` are fitted carry and yield.
+- `a = F/S`, `b = log(a)/τ`, `q = −log(Da)/τ` are fitted carry and yield over the
+  exposure horizon.
 - `d1 = log(F/K)/(σ√τ) + σ√τ/2`, `d2 = d1 − σ√τ`.
 - Spot delta is `Δcall = Da N(d1)` and `Δput = −Da N(−d1)`.
 - Spot gamma is `Γ = Da φ(d1)/(S σ√τ)`.
@@ -89,7 +91,11 @@ change in **spot delta as calendar time passes**, holding spot, IV and fitted
 continuous carry/rates fixed. Its sign is the negative of differentiation with
 respect to remaining time. It is not a one-day finite roll through settlement or
 an American exercise forecast. The floor regularizes the local sensitivity at
-`τ`; `F`, `D` and carry/rates remain anchored to the actual snapshot. Displayed
+`τ`; `F` and `D` remain anchored to the actual snapshot, and `b` and `q` spread
+their log-carry over the same `τ`. Dividing by the true `T` instead would turn a
+1-point forward/spot gap 30 minutes before the close into a carry of about 350%
+a year and let it dominate 0DTE charm; over the half-day floor it is about 15%.
+Displayed
 option Greeks elsewhere continue to use the true remaining time.
 
 | API metric | Sum over option sides | Units |
@@ -120,7 +126,8 @@ For each metric, `exposure.levels` reports `positive_wall` (largest positive str
 sum), `negative_wall` (most negative), and `flip`. Flip searches re-evaluate the
 same selected positions at hypothetical spots, keeping strike IV, time, forward
 per spot and fitted rates fixed. The nearest sign change within the configured
-search range (default ±10% of spot, 81 grid points, then bisection) is returned.
+search range (default ±10% of spot, 81 grid points) is returned: brackets are
+bisected nearest spot first, and only until no remaining bracket can be closer.
 An absent sign, zero profile, or underflowed tail gives null; a coarse grid can
 miss two roots between adjacent samples. Long calls / short puts give nonnegative
 DEX, so a delta flip or negative delta wall is normally absent. Gamma's legacy

@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -58,10 +60,13 @@ inline constexpr std::array kExposureFields = {
     &ExposureValues::gex, &ExposureValues::vex, &ExposureValues::dex,
     &ExposureValues::cex, &ExposureValues::vomex};
 
-enum class ExposureConvention { OpenInterest, ShortAll, LongCallsShortPuts, CustomerFlow };
+/// LongCallsShortPuts is the default; "open_interest" is its deprecated spelling.
+enum class ExposureConvention { LongCallsShortPuts, ShortAll, CustomerFlow };
 enum class ExposureSlice { All, ZeroDte, ExZeroDte };
 [[nodiscard]] const char* to_string(ExposureConvention convention);
 [[nodiscard]] const char* to_string(ExposureSlice slice);
+/// Accepts the deprecated "open_interest" as LongCallsShortPuts; nullopt if unknown.
+[[nodiscard]] std::optional<ExposureConvention> parse_exposure_convention(std::string_view name);
 
 struct ExposureSettings {
   double min_days = 0.5;
@@ -140,7 +145,7 @@ struct UnderlyingMetrics {
   std::vector<SliceMetrics> slices;
   ExposureSummary exposure;
   ExposureSettings exposure_settings;  ///< snapshot's floor and flip search, reused by API views
-  ExposureConvention exposure_convention = ExposureConvention::OpenInterest;
+  ExposureConvention exposure_convention = ExposureConvention::LongCallsShortPuts;
   ExposureSlice exposure_slice = ExposureSlice::All;
   int options_priced = 0;
   double compute_ms = 0.0;
@@ -149,7 +154,8 @@ struct UnderlyingMetrics {
 /// Selects expiries and recomputes exposure from an immutable priced snapshot.
 /// Does not refit IVs, change market time, or alter the source snapshot.
 [[nodiscard]] UnderlyingMetrics exposure_view(
-    UnderlyingMetrics metrics, ExposureConvention convention = ExposureConvention::OpenInterest,
+    const UnderlyingMetrics& metrics,
+    ExposureConvention convention = ExposureConvention::LongCallsShortPuts,
     ExposureSlice slice = ExposureSlice::All);
 
 /// Continuously compounded zero rates, linear in T with flat end extrapolation.
