@@ -6,6 +6,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -15,6 +16,7 @@
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <array>
+#include <atomic>
 #include <sstream>
 #include <set>
 #include <future>
@@ -289,7 +291,8 @@ std::optional<std::string> websocket_authorization(std::string_view bearer, std:
     unsigned int byte = 0;
     const auto* begin = protocols.data() + offset;
     const auto [end, error] = std::from_chars(begin, begin + 2, byte, 16);
-    if (error != std::errc{} || end != begin + 2 || byte <= 32 || byte >= 127) return {};
+    // A legacy token may hold spaces or UTF-8, as its Bearer header can; not control bytes.
+    if (error != std::errc{} || end != begin + 2 || byte < 32 || byte == 127) return {};
     secret += static_cast<char>(byte);
   }
   return "Bearer " + secret;
@@ -564,14 +567,16 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
   void send(std::shared_ptr<const std::string> message) {
     asio::post(ws_.get_executor(), [self = shared_from_this(), message = std::move(message)] {
       if (!self->open_) return;
+      const bool replay = message->find("\"replay_tick\"") != std::string::npos;
       if (self->sandboxes_ && !self->access_.sandbox.empty()) {
         if (!self->sandboxes_->active(self->access_.sandbox)) { (void)self->stop(); return; }
-        if (message->find("\"replay_tick\"") != std::string::npos) return;
+        if (replay) return;
       }
       const bool idle = self->queue_.empty();
+      const std::string_view stream = replay ? "replay_tick" : "tick";
       if (self->sandboxes_)
-        self->queue_.push(std::make_shared<const std::string>(sandbox_tick(*message, self->access_)));
-      else self->queue_.push(std::move(message));
+        self->queue_.push(std::make_shared<const std::string>(sandbox_tick(*message, self->access_)), stream);
+      else self->queue_.push(std::move(message), stream);
       if (idle) self->write_next();
     });
   }
@@ -646,11 +651,15 @@ struct Shared {
   Sessions sessions;
   std::vector<std::string> allowed_origins;
   std::vector<std::string> allowed_hosts;
+  /// Open HTTP connections, idle ones included; each holds a descriptor until read_timeout.
+  std::atomic<std::size_t> http_sessions{0};
+  std::size_t http_session_max = kHttpSessionMax;
 };
 
 class HttpSession : public Session, public std::enable_shared_from_this<HttpSession> {
  public:
-  HttpSession(tcp::socket&& socket, Shared& shared) : stream_(std::move(socket)), shared_(shared) {}
+  HttpSession(tcp::socket&& socket, Shared& shared) : stream_(std::move(socket)), shared_(shared) { ++shared_.http_sessions; }
+  ~HttpSession() override { --shared_.http_sessions; }
 
   void run() {
     if (!shared_.sessions.add(shared_from_this())) return;
@@ -930,6 +939,7 @@ class Listener : public std::enable_shared_from_this<Listener> {
     asio::post(acceptor_.get_executor(), [self = shared_from_this(), done] {
       beast::error_code ignored;
       self->acceptor_.close(ignored);
+      self->retry_.cancel();
       done->set_value();
     });
     return future;
@@ -938,12 +948,26 @@ class Listener : public std::enable_shared_from_this<Listener> {
  private:
   void on_accept(beast::error_code ec, tcp::socket socket) {
     if (!acceptor_.is_open()) return;
-    if (!ec) std::make_shared<HttpSession>(std::move(socket), shared_)->run();
+    if (ec) {
+      // Out of descriptors (or another accept failure) the listening socket stays
+      // readable; retrying at once would spin. Wait for connections to close.
+      retry_.expires_after(std::chrono::milliseconds(100));
+      retry_.async_wait([self = shared_from_this()](beast::error_code) { if (self->acceptor_.is_open()) self->accept(); });
+      return;
+    }
+    // Beyond the cap a connection is closed at once rather than held idle.
+    if (shared_.http_sessions.load() >= shared_.http_session_max) {
+      beast::error_code ignored;
+      socket.close(ignored);
+    } else {
+      std::make_shared<HttpSession>(std::move(socket), shared_)->run();
+    }
     accept();
   }
 
   asio::io_context& io_;
   tcp::acceptor acceptor_;
+  asio::steady_timer retry_{acceptor_.get_executor()};
   Shared& shared_;
   unsigned short port_ = 0;
 };
@@ -1027,6 +1051,8 @@ void WebServer::stop() {
 void WebServer::broadcast(std::string message) {
   impl_->shared.hub.broadcast(std::make_shared<const std::string>(std::move(message)));
 }
+
+void WebServer::set_http_session_limit(std::size_t limit) { impl_->shared.http_session_max = limit; }
 
 unsigned short WebServer::port() const noexcept {
   return impl_->listener ? impl_->listener->port() : impl_->requested_port;

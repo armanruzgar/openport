@@ -57,6 +57,9 @@ class WebServer {
   /// Sends `message` to every connected WebSocket client. Thread-safe.
   void broadcast(std::string message);
 
+  /// Caps open HTTP connections (kHttpSessionMax by default); set before start.
+  void set_http_session_limit(std::size_t limit);
+
   /// The bound port (useful when constructed with port 0).
   [[nodiscard]] unsigned short port() const noexcept;
 
