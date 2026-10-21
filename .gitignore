@@ -8,6 +8,8 @@ compile_commands.json
 /.venv/
 __pycache__/
 *.pyc
+*.egg-info/
+/python/build/
 .pytest_cache/
 
 # Web
