@@ -590,7 +590,7 @@ assignment and dividends between them, and its state lists its `sessions`. All a
 historical reconstructions. Status keeps `provider.simulated`; the terminal shows
 the scenario and seed with the simulated label. Generated recordings are cached by
 scenario, date and seed, with four completed entries retained. Generation uses
-fixed version 1, at output revision 8 (see [scenarios](scenarios.md)); unsupported
+fixed version 1, at output revision 9 (see [scenarios](scenarios.md)); unsupported
 versions are rejected. Optional [stress fields](scenarios.md#events) author abnormal
 books, quote stalls, market-wide halt windows, previous-close references and wider
 strike ranges. `stress-rehearsal` is a built-in drill. At revision 5, regular event times and window
@@ -869,7 +869,9 @@ in `--scenario-dir` remain available on Replay. `--option speed=N` accepts 1, 2,
 Without `--symbols`, the feed subscribes to SPX, SPY, QQQ, XSP, NDX, RUT and VIX. Other symbols and
 nonzero `--expiries` or `--window` are rejected.
 
-Revision 8 is the default: ETF underlying prices hold at the 16:00 stock close
+Revision 9 is the default: every strike of an ETF monthly carries monthly open
+interest, also when the monthly is a daily or weekly expiry that date. Revision 8
+holds ETF underlying prices at the 16:00 stock close
 (13:00 early) while options trade to 16:15 (13:15 early). Revision 7 adds two-sided
 liquid wings; `--option revision=7` keeps those quotes with the historical post-close
 ETF price movement. Revision 6 adds deterministic opening activity to session volume

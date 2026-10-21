@@ -208,6 +208,11 @@ std::vector<Listing> listings(const Scenario& script, md::Date date, int revisio
         it->second.monthly = it->second.monthly || s.monthly;
       }
     }
+    // Revision 9: a date's daily or weekly that is also a listed monthly is that
+    // monthly, at every strike; before, only its wider earlier strikes were.
+    if (revision >= 9)
+      for (auto& own : series)
+        if (const auto it = earlier.find({own.root, own.expiry}); it != earlier.end()) own.monthly = own.monthly || it->second.monthly;
     for (const auto& [key, s] : earlier) series.push_back(s);
   }
   std::vector<Listing> out;

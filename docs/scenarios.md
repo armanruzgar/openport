@@ -174,13 +174,18 @@ European pricing model or a promise about real markets. More distant tails can
 still have no bid, and the quoted range contracts as expiry approaches. Authored
 `book` stress events still override these quotes, including crossed, one-sided
 and zero-size books. Revisions 1–6 regenerate their original events and sizes;
-new demo feeds, scenario replays and backtests use revision 8.
+new demo feeds, scenario replays and backtests use revision 9.
 
 Revision 8 holds generated ETF underlying prices (SPY and QQQ) at their 16:00 ET
 stock close (13:00 on early-close days), while options continue trading to 16:15
 (13:15 early). Subsequent ETF quotes repeat that closing price, and option pricing,
 exercise and share delivery use it. Revisions 1–7 retain their original events,
 including the post-close ETF price movement; saved runs verify at their saved revision.
+
+Revision 9 gives every strike of an ETF monthly (SPY, QQQ, XSP) the monthly open
+interest, also on dates when that expiry is one of the date's dailies or weeklies.
+Revisions 2–8 gave the monthly level only to its wider strikes listed on earlier
+dates, so open interest jumped near the edge of the daily strike window.
 
 ## Several sessions
 

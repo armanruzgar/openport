@@ -196,7 +196,7 @@ day's regular close, Cboe supplies its positive finite `data.close` as the under
 price, including revisions, so delivered shares use that close rather than
 after-hours trades; without a valid close it keeps the current quote
 ([Cboe clocks](runtime.md#product-sessions-and-cboe-clocks)).
-Generated scenarios at revision 8 likewise hold ETF prices at the 16:00 stock close
+Generated scenarios from revision 8 likewise hold ETF prices at the 16:00 stock close
 (13:00 early) while options trade to 16:15 (13:15 early), so exercise and delivery
 use that close. Saved revisions 1–7 preserve their historical price movement.
 They count in equity, daily loss and the rules, at their dollar
