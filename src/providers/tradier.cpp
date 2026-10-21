@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "broker_json.hpp"
+#include "openport/md/time.hpp"
 
 namespace openport::providers {
 namespace {
@@ -81,7 +82,12 @@ std::vector<TradierOption> parse_tradier_chain(std::string_view json) {
     option.open_interest = number(field(item, "open_interest"), -1);
     option.volume = number(field(item, "volume"), -1);
     option.volume_ts = milliseconds(field(item, "trade_date"));
-    if (option.volume != std::floor(option.volume)) option.volume = -1;
+    // volume is the quote session's cumulative count, reset before its first trade
+    // while trade_date still names the last trading date. Withhold it unless the
+    // trade clock falls on the quote clock's trading date.
+    if (option.volume != std::floor(option.volume) || option.ts <= 0 || option.volume_ts <= 0 ||
+        md::trading_date(option.volume_ts) != md::trading_date(option.ts))
+      option.volume = -1;
     const auto& greeks = field(item, "greeks");
     if (greeks.is_object()) {
       // ORATS: decimal IV, vega/rho per percentage point, theta per day.

@@ -308,7 +308,8 @@ received trade sizes per contract, resetting at the trading-date roll (including
 the evening session). Its total covers trades received since connection; it does
 not backfill earlier trades, repair reconnect gaps or apply trade corrections.
 With `trades=off`, volume is unknown. Tradier maps chain `volume` using
-`trade_date`; tastytrade maps DXLink Trade `dayVolume` using `time`, and accepts
+`trade_date`, only when that falls on the trading date of the row's
+`bid_date`/`ask_date` (its daily reset is not filed under the prior day); tastytrade maps DXLink Trade `dayVolume` using `time`, and accepts
 Summary `dayVolume` extensions using `eventTime`. Both are cumulative session
 counts, not inferred trades, and are not yet validated live.
 

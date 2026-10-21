@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 #include <cmath>
+#include <tuple>
+#include <vector>
 #include <nlohmann/json.hpp>
 
 #include "openport/providers/factory.hpp"
@@ -125,6 +127,30 @@ TEST(Tradier, VolumeNeedsAValidCountAndItsOwnTradeClock) {
       } else EXPECT_TRUE(values.empty());
       EXPECT_TRUE(sink.all<md::OptionTrade>().empty());
     }
+  }
+}
+
+TEST(Tradier, VolumeFromAnEarlierTradingDateIsWithheld) {
+  // Before today's first trade the daily count resets while trade_date still
+  // names yesterday's last print: that zero is not yesterday's volume.
+  for (const auto& [volume, trade, bid, ask, published] :
+       std::vector<std::tuple<double, long long, long long, long long, bool>>{
+           {0, 1790263800000LL - 86'400'000, 1790263800000LL, 1790263801000LL, false},
+           {0, 1790263800000LL, 1790263800000LL, 1790263801000LL, true},
+           {321, 1790263800000LL - 86'400'000, 1790263800000LL - 86'400'000, 1790263801000LL - 86'400'000, true},
+           {321, 1790263800000LL, 0, 0, false}}) {
+    auto doc = Json::parse(kChain);
+    auto& option = doc["options"]["option"];
+    option["volume"] = volume;
+    option["trade_date"] = trade;
+    option["bid_date"] = bid;
+    option["ask_date"] = ask;
+    if (!bid) option["bid"] = 0, option["ask"] = 0;
+    const auto parsed = providers::parse_tradier_chain(doc.dump()).front();
+    if (published) {
+      EXPECT_EQ(parsed.volume, volume);
+      EXPECT_EQ(parsed.volume_ts, trade * 1'000'000);
+    } else EXPECT_LT(parsed.volume, 0);
   }
 }
 
