@@ -232,7 +232,10 @@ export function timeRuleNotices(e: Evaluation, r: AccountRules, time?: string): 
   if (e.status !== "active") return []
   const minute = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3))
   const timestamp = Date.parse(time ?? "")
-  const remaining = r.flat_time && Number.isFinite(timestamp) ? minute(r.flat_time) - minute(planClock.format(timestamp)) : null
+  // Like flatNow, no countdown on a weekend; holidays are unknown here.
+  const weekday = newYorkDate(time ?? "")?.weekday
+  const remaining = r.flat_time && Number.isFinite(timestamp) && weekday != null && weekday !== 0 && weekday !== 6
+    ? minute(r.flat_time) - minute(planClock.format(timestamp)) : null
   const activeNews = uniqueWindows((e.active_events ?? []).filter((w) => w.kind === "news"))
   const activeNewsKeys = new Set(activeNews.map(eventWindowKey))
   const nextEvent = e.next_event && !(e.next_event.kind === "news" && e.next_event.active && activeNewsKeys.has(eventWindowKey(e.next_event)))
