@@ -2651,12 +2651,14 @@ json historical_risk_json(const TradingView& view, const MetricsSource& source) 
     const auto num = [](const std::optional<double>& x) -> json { return x ? number(*x) : json(nullptr); };
     return json{{"complete", value.complete}, {"observations", value.observations},
       {"var95", num(value.var95)}, {"es95", num(value.es95)}, {"var99", num(value.var99)}, {"es99", num(value.es99)},
+      {"tail99_reason", value.var99 ? json(nullptr)
+          : json(value.tail99_reason.value_or("Needs fresh valuations and at least 100 aligned daily moves"))},
       {"first", value.first ? json(md::format_date(*value.first)) : json(nullptr)},
       {"last", value.last ? json(md::format_date(*value.last)) : json(nullptr)}};
   };
   return {{"account_version", std::to_string(s.account_version)}, {"time", md::format_timestamp(s.time)},
     {"stress", stress}, {"sticky_strike", tail(risk.sticky_strike)}, {"atm_vol_change", tail(risk.atm_vol_change)},
-    {"model", "Derived 1-day historical simulation, up to 252 completed closes per factor; at least 20 paired returns. Black-76 sticky strike with one calendar day of decay; ATM variant adds observed 30d ATM IV changes uniformly by tenor. Empirical inverse-CDF VaR and fractional upper-tail ES in dollars, floored at zero. No liquidity, path or settlement simulation. Stress margin is the held-book requirement after the instantaneous shock, excluding working orders."}};
+    {"model", "Derived 1-day historical simulation, up to 252 completed closes per factor; at least 20 paired returns for 95% and 100 for 99%. Black-76 sticky strike with one calendar day of decay; ATM variant adds observed 30d ATM IV changes uniformly by tenor. Empirical inverse-CDF VaR and fractional upper-tail ES in dollars, floored at zero. No liquidity, path or settlement simulation. Stress margin is the held-book requirement after the instantaneous shock, excluding working orders."}};
 }
 
 /// GET /api/risk/profile: the held book's value across moves of one underlying, or

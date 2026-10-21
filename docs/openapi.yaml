@@ -24989,6 +24989,17 @@
           "es99": {
             "$ref": "#/components/schemas/Num"
           },
+          "tail99_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why var99 and es99 are null: they need at least 100 observations (95% needs 20)."
+          },
           "first": {
             "anyOf": [
               {
@@ -25017,6 +25028,7 @@
           "es95",
           "var99",
           "es99",
+          "tail99_reason",
           "first",
           "last"
         ]

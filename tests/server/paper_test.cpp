@@ -5267,6 +5267,7 @@ TEST_F(PaperEngine, HistoricalRiskLabelsItsInputsAndReportsInsufficientHistory) 
   }
   EXPECT_FALSE(response["sticky_strike"]["complete"]);
   EXPECT_TRUE(response["sticky_strike"]["var99"].is_null());
+  EXPECT_TRUE(response["sticky_strike"]["tail99_reason"].is_string());
   EXPECT_TRUE(response["atm_vol_change"]["es95"].is_null());
 }
 TEST_F(PaperEngine, ExtendedCapsRoundTripThroughTheLimitsEndpoint) {

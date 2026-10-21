@@ -117,7 +117,13 @@ ShockResult stress_book(const Ledger& ledger, const Valuations& valuations,
 TailRisk loss_quantiles(std::vector<double> losses) {
   TailRisk result;
   result.observations = losses.size();
-  if (losses.size() < 20 || std::any_of(losses.begin(), losses.end(), [](double x) { return !std::isfinite(x); })) return result;
+  if (std::any_of(losses.begin(), losses.end(), [](double x) { return !std::isfinite(x); })) {
+    result.tail99_reason = "A non-finite historical loss";
+    return result;
+  }
+  if (losses.size() < 100)
+    result.tail99_reason = "Needs at least 100 observations; " + std::to_string(losses.size()) + " available";
+  if (losses.size() < 20) return result;
   std::sort(losses.begin(), losses.end());
   const auto tail = [&](double confidence) {
     const double n = static_cast<double>(losses.size());
@@ -131,8 +137,11 @@ TailRisk loss_quantiles(std::vector<double> losses) {
     return std::pair(std::max(0.0, losses[index]), std::max(0.0, sum / mass));
   };
   const auto [v95, e95] = tail(0.95);
-  const auto [v99, e99] = tail(0.99);
-  result.var95 = v95; result.es95 = e95; result.var99 = v99; result.es99 = e99; result.complete = true;
+  result.var95 = v95; result.es95 = e95; result.complete = true;
+  if (losses.size() >= 100) {
+    const auto [v99, e99] = tail(0.99);
+    result.var99 = v99; result.es99 = e99;
+  }
   return result;
 }
 HistoricalRisk historical_risk(const Ledger& ledger, const Valuations& valuations,

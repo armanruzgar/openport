@@ -240,8 +240,8 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 
 - Historical stress panel with four cited index shocks, tenor volatility proxies,
   held-book P&L, floor breaches and margin after each shock.
-- One-day historical-simulation VaR and expected shortfall at 95%/99%, from up to
-  252 stored closes, plus an ATM-vol-change variant when history is available.
+- One-day historical-simulation VaR and expected shortfall at 95%/99% (20 and 100
+  observations required), from up to 252 stored closes, plus an ATM-vol-change variant when history is available.
 - Persisted portfolio Greeks and limit utilisation alongside equity, with intraday
   and across-day charts; missing historical valuations remain gaps.
 - Optional gamma, theta, grid-loss and gross short-vega caps, including trade-tag

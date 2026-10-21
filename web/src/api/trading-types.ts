@@ -1388,6 +1388,8 @@ export interface TailRisk {
   es95: Num
   var99: Num
   es99: Num
+  /** Why var99 and es99 are null: they need 100 observations, 95% needs 20. */
+  tail99_reason: string | null
   first: string | null
   last: string | null
 }

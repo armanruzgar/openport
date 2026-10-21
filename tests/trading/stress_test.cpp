@@ -46,11 +46,20 @@ TEST(HistoricalRisk, EmpiricalQuantilesAndFractionalTailMean) {
   ASSERT_TRUE(risk.complete);
   EXPECT_EQ(risk.var95, 95); EXPECT_NEAR(*risk.es95, 98, 1e-10);
   EXPECT_EQ(risk.var99, 99); EXPECT_NEAR(*risk.es99, 100, 1e-10);
+  EXPECT_FALSE(risk.tail99_reason);
+  losses.resize(99);
+  const auto thin = loss_quantiles(losses);
+  ASSERT_TRUE(thin.complete);  // 95% stands; the 1% tail is under one observation
+  EXPECT_TRUE(thin.var95); EXPECT_FALSE(thin.var99); EXPECT_FALSE(thin.es99);
+  EXPECT_EQ(thin.tail99_reason, "Needs at least 100 observations; 99 available");
   losses.resize(21);
   const auto small = loss_quantiles(losses);
   EXPECT_EQ(small.var95, 20); EXPECT_NEAR(*small.es95, (21 + 0.05 * 20) / 1.05, 1e-10);
+  EXPECT_FALSE(small.var99); EXPECT_FALSE(small.es99);
   EXPECT_FALSE(loss_quantiles({1, 2, 3}).complete);
-  EXPECT_EQ(loss_quantiles(std::vector<double>(20, -5)).var99, 0);
+  EXPECT_TRUE(loss_quantiles({1, 2, 3}).tail99_reason);
+  EXPECT_EQ(loss_quantiles(std::vector<double>(20, -5)).var95, 0);
+  EXPECT_EQ(loss_quantiles(std::vector<double>(100, -5)).var99, 0);
 }
 TEST(HistoricalRisk, AlignsBothEndpointsExcludesTodayAndCapsAt252Closes) {
   const auto now = md::new_york_to_utc({2026, 9, 22}, 10, 0);
@@ -91,7 +100,8 @@ TEST(HistoricalRisk, VolVariantRepricesOptionsWithObservedAtmChanges) {
   }
   const auto risk = historical_risk(ledger, values, history, f.time, md::kNanosPerMinute, {});
   ASSERT_TRUE(risk.atm_vol_change.complete);
-  EXPECT_GT(*risk.atm_vol_change.es99, *risk.sticky_strike.es99);
+  EXPECT_GT(*risk.atm_vol_change.es95, *risk.sticky_strike.es95);
+  EXPECT_FALSE(risk.atm_vol_change.es99);  // too few moves for a 1% tail
 }
 }
 }

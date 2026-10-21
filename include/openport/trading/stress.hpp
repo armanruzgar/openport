@@ -37,12 +37,15 @@ struct TailRisk {
   bool complete = false;
   std::optional<double> var95, es95, var99, es99;
   std::optional<md::Date> first, last;
+  std::optional<std::string> tail99_reason;  ///< Why var99/es99 are null, when they are.
 };
 /// Empirical inverse-CDF VaR and fractional upper-tail mean ES, losses floored at zero.
+/// The 95% figures need 20 observations and the 99% ones 100: with fewer, the 1%
+/// tail is less than one observation and both 99% figures would be the worst loss.
 [[nodiscard]] TailRisk loss_quantiles(std::vector<double> losses);
 struct HistoricalRisk { TailRisk sticky_strike, atm_vol_change; };
 /// At most 252 closes per held factor, matching both endpoints of each return.
-/// Requires 20 paired daily returns. No resampling, forward filling or beta proxies.
+/// Requires 20 paired daily returns (100 for the 99% figures). No resampling, forward filling or beta proxies.
 [[nodiscard]] HistoricalRisk historical_risk(const Ledger& ledger, const Valuations& valuations,
     const std::map<std::string, std::vector<HistoricalClose>>& history, Timestamp now,
     Timestamp max_age, const std::map<std::string, double>& stock_prices);

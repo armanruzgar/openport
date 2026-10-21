@@ -9,10 +9,10 @@ const amount = (value: number | null) => value == null ? "—" : formatMoney(Str
 function Tail({ label, risk }: { label: string; risk: TailRisk }) {
   return <section className="space-y-2">
     <h4 className="text-xs font-medium">{label} · {risk.observations} paired daily moves</h4>
-    {risk.complete ? <dl className="grid grid-cols-2 gap-2 text-xs tabular">
+    {risk.complete ? <><dl className="grid grid-cols-2 gap-2 text-xs tabular">
       {([["VaR 95%", risk.var95], ["ES 95%", risk.es95], ["VaR 99%", risk.var99], ["ES 99%", risk.es99]] as const).map(([label, value]) =>
         <div key={label}><dt className="text-muted">{label}</dt><dd>{amount(value)}</dd></div>)}
-    </dl> : <p className="text-xs text-muted">Unavailable: needs fresh valuations and at least 20 aligned daily moves{label.includes("ATM") ? " with observed ATM IV changes" : ""}.</p>}
+    </dl>{risk.tail99_reason && <p className="text-xs text-muted">99% unavailable: {risk.tail99_reason}.</p>}</> : <p className="text-xs text-muted">Unavailable: needs fresh valuations and at least 20 aligned daily moves{label.includes("ATM") ? " with observed ATM IV changes" : ""}.</p>}
     {risk.first && <p className="text-xs text-muted">{risk.first} – {risk.last}</p>}
   </section>
 }
@@ -21,7 +21,7 @@ export function StressResultPanel({ data }: { data: HistoricalRisk }) {
     <section className="space-y-3 rounded-md border border-border p-3">
       <h3 className="text-xs font-medium">Historical simulation · 1-day VaR and expected shortfall</h3>
       <div className="grid gap-3 sm:grid-cols-2"><Tail label="Sticky strike" risk={data.sticky_strike} /><Tail label="ATM vol change" risk={data.atm_vol_change} /></div>
-      <p className="text-xs text-muted">Derived from up to 252 stored closes; no distribution fit. The 99% tail can contain only a few observations. Loss estimates are not guarantees or loss limits.</p>
+      <p className="text-xs text-muted">Derived from up to 252 stored closes; no distribution fit. The 95% figures need 20 aligned moves and the 99% figures 100. Loss estimates are not guarantees or loss limits.</p>
     </section>
     <section className="space-y-3 rounded-md border border-border p-3">
       <h3 className="text-xs font-medium">Historical stress</h3>
