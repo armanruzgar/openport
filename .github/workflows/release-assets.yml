@@ -52,6 +52,9 @@ jobs:
           tar -C "$RUNNER_TEMP/stage" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
           echo "ARCHIVE=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"
           echo "STAGE=$stage" >> "$GITHUB_ENV"
+      # Upload the archive first, so a packaging failure still leaves it on the release.
+      - name: Attach the archive to the release
+        run: gh release upload "$TAG" "$ARCHIVE" --clobber --repo "$GITHUB_REPOSITORY"
       - name: Package deb and rpm with a systemd unit
         run: |
           sudo apt-get update
@@ -61,16 +64,19 @@ jobs:
             -DOPENPORT_PACKAGE_ARCH="${{ matrix.arch }}"
           cpack --config "$RUNNER_TEMP/packages/CPackConfig.cmake" -B "$RUNNER_TEMP/packages"
           python3 tools/package_test.py "$RUNNER_TEMP/packages" --arch "${{ matrix.arch }}"
-      - name: Attach it to the release
-        run: gh release upload "$TAG" "$ARCHIVE" "$RUNNER_TEMP/packages/"*.deb "$RUNNER_TEMP/packages/"*.rpm --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Attach the packages to the release
+        run: gh release upload "$TAG" "$RUNNER_TEMP/packages/"*.deb "$RUNNER_TEMP/packages/"*.rpm --clobber --repo "$GITHUB_REPOSITORY"
 
   checksums:
     name: SHA256SUMS
     needs: linux
+    # Still sum the archives that were attached when a packaging step failed.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - name: Rewrite SHA256SUMS over archives and packages
         run: |
+          shopt -s nullglob
           mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --pattern '*.deb' --pattern '*.rpm'
           sha256sum -- *.tar.gz *.deb *.rpm > SHA256SUMS
