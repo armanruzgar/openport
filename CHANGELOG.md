@@ -12,11 +12,15 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Compare SABR with SVI.** The Volatility view can overlay per-expiry SABR fits
   (Hagan lognormal, β fixed at 1 or ½, or fitted) with their parameters, RMSE and
   the same butterfly and calendar checks. The surface API fits them only when
-  asked (`sabr_beta`), so nothing changes for analytics or other readers.
+  asked (`sabr_beta`, 0 to 1 in steps of 0.1, or `fit`; at most 60 expiries), so
+  nothing changes for analytics or other readers.
 - **Compare a Heston calibration (research, API only).**
   `GET /api/underlyings/{symbol}/heston` fits one Heston parameter set to the
   leading expiries and reports it beside each expiry's SVI and SSVI RMSE. Its
-  parameters are weakly identified on real smiles; nothing else uses it.
+  parameters are weakly identified on real smiles; nothing else uses it. Heston
+  and SABR fits run on a background worker, one per snapshot at a time, so they
+  never stall other API reads; a request for a snapshot already fitting gets 503
+  with `Retry-After`.
 
 ### Risk
 

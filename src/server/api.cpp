@@ -474,6 +474,40 @@ json sabr_json(const analytics::SabrFit& fit) {
           {"butterfly_ok", fit.butterfly.ok}, {"min_k", sig(fit.min_k, 15)}, {"max_k", sig(fit.max_k, 15)}};
 }
 
+/// SABR fits cost tens of ms per expiry; the API fits at most this many at once.
+constexpr int kMaxSabrExpiries = 60;
+
+std::string sabr_key(std::optional<double> beta) { return beta ? json(*beta).dump() : "fit"; }
+
+/// SABR overlays for the leading `count` expiries: cached ones under the lock, the
+/// rest fitted outside it (tens of ms each) and stored if still missing.
+std::vector<analytics::SabrFit> sabr_fits(const UnderlyingMetrics& m, SurfaceFits& cache,
+                                          std::optional<double> beta, std::size_t count) {
+  const auto key = sabr_key(beta);
+  std::vector<analytics::SabrFit> fits;
+  {
+    const std::lock_guard lock(cache.mutex);
+    const auto& cached = cache.sabr[key];
+    fits.assign(cached.begin(), cached.begin() + static_cast<std::ptrdiff_t>(std::min(count, cached.size())));
+  }
+  while (fits.size() < count) fits.push_back(analytics::fit_sabr(m.slices[fits.size()], beta));
+  const std::lock_guard lock(cache.mutex);
+  auto& cached = cache.sabr[key];
+  while (cached.size() < fits.size()) cached.push_back(fits[cached.size()]);
+  return fits;
+}
+
+bool sabr_cached(SurfaceFits& cache, std::optional<double> beta, std::size_t count) {
+  const std::lock_guard lock(cache.mutex);
+  const auto found = cache.sabr.find(sabr_key(beta));
+  return found != cache.sabr.end() && found->second.size() >= count;
+}
+
+bool heston_cached(SurfaceFits& cache, std::size_t count) {
+  const std::lock_guard lock(cache.mutex);
+  return cache.heston.contains(count);
+}
+
 json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
                   std::size_t max_expiries, double window, std::optional<std::optional<double>> sabr_beta) {
   const auto& m = *metrics;
@@ -482,7 +516,6 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
   std::vector<analytics::SviFit> fits;
   analytics::SsviFit ssvi;
   std::vector<analytics::SabrFit> sabr;
-  const std::string sabr_key = !sabr_beta ? "" : *sabr_beta ? json(**sabr_beta).dump() : "fit";
   {
     const std::lock_guard lock(cache->mutex);
     // Only newly requested expiries are fitted; display windows never change fits.
@@ -491,13 +524,9 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
     if (!cache->ssvi) cache->ssvi = analytics::fit_ssvi(m.slices);
     ssvi = *cache->ssvi;
     fits.assign(cache->fits.begin(), cache->fits.begin() + static_cast<std::ptrdiff_t>(count));
-    // SABR is an opt-in overlay: nothing is fitted unless a request asks for it.
-    if (sabr_beta) {
-      auto& cached = cache->sabr[sabr_key];
-      while (cached.size() < count) cached.push_back(analytics::fit_sabr(m.slices[cached.size()], *sabr_beta));
-      sabr.assign(cached.begin(), cached.begin() + static_cast<std::ptrdiff_t>(count));
-    }
   }
+  // SABR is an opt-in overlay: nothing is fitted unless a request asks for it.
+  if (sabr_beta) sabr = sabr_fits(m, *cache, *sabr_beta, count);
   json expiries = json::array();
   for (std::size_t i = 0; i < count; ++i) {
     const SliceMetrics& slice = m.slices[i];
@@ -578,11 +607,17 @@ json heston_json(const std::shared_ptr<const UnderlyingMetrics>& metrics, std::s
   analytics::HestonFit fit;
   std::vector<analytics::SviFit> fits;
   analytics::SsviFit ssvi;
+  std::optional<analytics::HestonFit> cached;
   {
     const std::lock_guard lock(cache->mutex);
-    const auto found = cache->heston.find(count);
-    fit = found != cache->heston.end() ? found->second
-        : cache->heston.emplace(count, analytics::fit_heston(std::span(m.slices).first(count))).first->second;
+    if (const auto found = cache->heston.find(count); found != cache->heston.end()) cached = found->second;
+  }
+  // Seconds of work: never under the lock the surface and volatility reads share.
+  // Fits are deterministic, so whichever concurrent fit is stored first is the same.
+  fit = cached ? *cached : analytics::fit_heston(std::span(m.slices).first(count));
+  {
+    const std::lock_guard lock(cache->mutex);
+    if (!cached) cache->heston.emplace(count, fit);
     while (cache->fits.size() < count) cache->fits.push_back(analytics::fit_svi(m.slices[cache->fits.size()]));
     if (!cache->ssvi) cache->ssvi = analytics::fit_ssvi(m.slices);
     fits.assign(cache->fits.begin(), cache->fits.begin() + static_cast<std::ptrdiff_t>(count));
@@ -826,7 +861,10 @@ ApiResponse candles_response(const MetricsSource& source, const std::string& sym
 
 bool query_decimal(const std::string& text, double& value) { return decimal_number(text, value); }
 
-ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
+namespace {
+/// The GET routes. With `deferred`, a read whose Heston or SABR fit is not cached
+/// fills it and returns nullopt; without, every read is answered here.
+std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSource& source, DeferredRead* deferred) {
   if (request.method != "GET") return error(405, "only GET is supported");
   if (auto rejection = sandbox_visibility(request, source)) return *rejection;
   if (auto response = playbook_read(request, source)) return *response;
@@ -850,7 +888,7 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   if (path == "/api/status") {
     auto status = status_json(source);
     if (source.sandboxes()) status["sandboxes"] = {{"enabled", true}, {"idle_seconds", source.sandboxes()->idle().count()}};
-    return {200, sandbox_tick(status.dump(), request.access)};
+    return ApiResponse{200, sandbox_tick(status.dump(), request.access)};
   }
 
   constexpr std::string_view prefix = "/api/underlyings/";
@@ -888,20 +926,49 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   }
   if (view == "exposure")
     return ok(exposure_json(*metrics, expiries, query.contains("window") ? window : 0.08));
-  if (view == "heston")
-    return ok(heston_json(metrics, query.contains("expiries") ? static_cast<std::size_t>(expiries) : 8));
+  if (view == "heston") {
+    const auto count = std::min<std::size_t>(query.contains("expiries") ? static_cast<std::size_t>(expiries) : 8,
+                                             metrics->slices.size());
+    if (deferred && !heston_cached(*surface_cache(metrics), count)) {
+      *deferred = {surface_cache(metrics), [metrics, count] { return ok(heston_json(metrics, count)); }};
+      return std::nullopt;
+    }
+    return ok(heston_json(metrics, count));
+  }
   if (view == "surface") {
-    // sabr_beta=B (0 to 1) adds SABR fits with that fixed beta; sabr_beta=fit calibrates it.
+    // sabr_beta=B (0 to 1 in steps of 0.1) adds SABR fits with that fixed beta;
+    // sabr_beta=fit calibrates it. The grid bounds the overlays cached per snapshot.
     std::optional<std::optional<double>> sabr_beta;
     if (const auto it = query.find("sabr_beta"); it != query.end()) {
       double beta = 0;
       if (it->second == "fit") sabr_beta.emplace(std::nullopt);
-      else if (decimal_number(it->second, beta) && beta >= 0 && beta <= 1) sabr_beta.emplace(beta);
-      else return error(400, "sabr_beta must be a number in [0, 1] or fit");
+      else if (decimal_number(it->second, beta) && beta >= 0 && beta <= 1 &&
+               std::abs(beta * 10 - std::round(beta * 10)) < 1e-9) sabr_beta.emplace(std::round(beta * 10) / 10);
+      else return error(400, "sabr_beta must be 0, 0.1, ..., 1 or fit");
+      if (expiries > kMaxSabrExpiries)
+        return error(400, "expiries must be at most " + std::to_string(kMaxSabrExpiries) + " with sabr_beta");
     }
-    return ok(surface_json(metrics, expiries, query.contains("window") ? window : 0.2, sabr_beta));
+    const double shown = query.contains("window") ? window : 0.2;
+    const auto count = std::min<std::size_t>(expiries, metrics->slices.size());
+    if (deferred && sabr_beta && !sabr_cached(*surface_cache(metrics), *sabr_beta, count)) {
+      *deferred = {surface_cache(metrics), [metrics, count, shown, sabr_beta] {
+        return ok(surface_json(metrics, count, shown, sabr_beta));
+      }};
+      return std::nullopt;
+    }
+    return ok(surface_json(metrics, count, shown, sabr_beta));
   }
   return error(404, "unknown view " + std::string(view));
+}
+}  // namespace
+
+ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
+  return *read_api(request, source, nullptr);
+}
+
+std::optional<ApiResponse> handle_api_or_defer(const ApiRequest& request, const MetricsSource& source,
+                                               DeferredRead& deferred) {
+  return read_api(request, source, &deferred);
 }
 
 std::string tick_message(const MetricsSource& source, const ApiAccess& access) {

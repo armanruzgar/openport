@@ -238,23 +238,25 @@ IV(k)=\frac{\alpha}{(FK)^{(1-\beta)/2}\left[1+\frac{(1-\beta)^2}{24}k^2+\frac{(1
 \frac{\rho\beta\nu\alpha}{4(FK)^{(1-\beta)/2}}+\frac{2-3\rho^2}{24}\nu^2\right)T\right],
 \]
 
-with z=(ν/α)(FK)^((1−β)/2) log(F/K) and x(z)=log((√(1−2ρz+z²)+z−ρ)/(1−ρ)). For
+with z=(ν/α)(FK)^((1−β)/2) log(F/K) and x(z)=log((√(1−2ρz+z²)+z−ρ)/(1−ρ)), evaluated for z<0 as the equal
+log((1+ρ)/(√(1−2ρz+z²)−z+ρ)), which avoids cancellation at large |z|. For
 |z|<1e-6 the ratio z/x(z) is its series 1−ρz/2+(2−3ρ²)z²/12. A non-positive or
 non-finite result is no IV. The expansion is asymptotic, not an exact price, and
 is well known to imply a negative density at low strikes for long tenors and
 large ν, so it is fitted and drawn only for comparison.
 
 **It is not on the analytics path.** The engine never fits SABR. The surface API
-fits it only when a request includes `sabr_beta`, on that API worker, and caches
-the fits beside SVI's for the same immutable snapshot, by beta choice and expiry
-prefix. Nothing else reads them: Greeks, exposure, volatility metrics, rules and
+fits it only when a request includes `sabr_beta`, and caches the fits beside
+SVI's for the same immutable snapshot, by beta choice and expiry prefix. Missing
+fits run on the background fit worker outside the cache lock, exactly as for
+Heston below (one per snapshot, 503 `FIT_BUSY` with Retry-After otherwise). Nothing else reads them: Greeks, exposure, volatility metrics, rules and
 scenarios use the market smile, SVI and SSVI as before.
 
 ### Calibration
 
 Each expiry is fitted alone, on exactly SVI's eligible OTM points and normalised
 quote weights, minimising the same weighted total-variance squared residuals.
-β is fixed by the request (`sabr_beta=0..1`; the terminal offers 1 and ½), the
+β is fixed by the request (`sabr_beta=0, 0.1, …, 1`; the terminal offers 1 and ½), the
 usual practice because β and ρ are nearly collinear on one smile; `sabr_beta=fit`
 also calibrates β∈[0,1]. α is searched as the scale-free a=αF^(β−1), with which
 every factor of F cancels and the smile depends on k alone; the response reports
@@ -287,7 +289,9 @@ adds `sabr` to each expiry, `{alpha,beta,rho,nu,beta_calibrated,rmse_vol_points,
 with full-precision parameters, or null on failure; `sabr_status`, `sabr_reason`
 and `sabr_fit_ms` keep failure information; each point adds decimal `sabr_iv`; the
 top level adds `sabr_beta` and `sabr_calendar_violations`. Without `sabr_beta`
-none of these keys appear and the response is unchanged. An invalid value is 400.
+none of these keys appear and the response is unchanged. An invalid value, a β
+off the 0.1 grid (which bounds the overlays cached per snapshot to twelve) or more
+than 60 `expiries` with `sabr_beta` is 400.
 
 The Volatility view's SABR control is off by default (No SABR / SABR β=1 / β=½ /
 β fit). When on, it draws a dotted curve per fitted expiry over its quoted range
@@ -319,7 +323,12 @@ parameter set, dv=κ(θ−v)dt+ξ√v dZ with spot-variance correlation ρ and i
 variance v0, to the leading expiries, for comparison with SVI and SSVI. It is a
 research tool only: there is no terminal view, and nothing in analytics, rules,
 scenarios or the smile display uses it. The first request for a snapshot and
-expiry count fits it on that API worker and caches it beside the other fits.
+expiry count queues the fit on a single background fit worker, never an HTTP I/O
+thread, and answers when it finishes; the fit runs outside the cache lock that
+surface, volatility and risk reads share, and is then cached beside the other fits.
+While one deferred fit for a snapshot is queued or running, another request for
+that snapshot that needs a fit gets 503 `FIT_BUSY` with `Retry-After: 2`, as does
+any such request when four fits are already queued. Cached answers return at once.
 
 **Pricing.** Undiscounted calls on the forward use Lewis's (2001) single integral
 C=F−√(FK)/π ∫₀^∞ Re[e^{iux}φ(u−i/2)]/(u²+¼) du with x=log(F/K), and the

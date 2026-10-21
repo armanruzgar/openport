@@ -242,7 +242,7 @@
           "name": "sabr_beta",
           "in": "query",
           "required": false,
-          "description": "Add per-expiry SABR fits (Hagan lognormal) with this fixed beta in [0, 1], or fit to calibrate beta too. Omitted, no SABR is fitted or returned.",
+          "description": "Add per-expiry SABR fits (Hagan lognormal) with this fixed beta, 0 to 1 in steps of 0.1, or fit to calibrate beta too; at most 60 expiries. Omitted, no SABR is fitted or returned. Uncached fits run on a background fit worker.",
           "schema": {
             "anyOf": [
               {
@@ -275,6 +275,23 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "FIT_BUSY: a Heston or SABR fit for this snapshot is already queued or running, or the fit queue is full. Retry-After gives the seconds to wait.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -303,7 +320,7 @@
       ],
       "get": {
         "summary": "GET /api/underlyings/{symbol}/heston",
-        "description": "Research only: a Heston (1993) calibration over the leading expiries for comparison with SVI and SSVI. Nothing in analytics, rules or scenarios uses it. Fitted on the first request for a snapshot and cached.",
+        "description": "Research only: a Heston (1993) calibration over the leading expiries for comparison with SVI and SSVI. Nothing in analytics, rules or scenarios uses it. Fitted on the first request for a snapshot on a background fit worker, then cached.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -318,6 +335,23 @@
           },
           "default": {
             "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "FIT_BUSY: a Heston or SABR fit for this snapshot is already queued or running, or the fit queue is full. Retry-After gives the seconds to wait.",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
         }
       }
@@ -12476,7 +12510,14 @@
         "properties": {
           "buying_power_after": {
             "description": "Exact buying power immediately after automatic share delivery on a plan enforcing buying power. Negative values trigger a delivery shortfall alert: openings consuming unavailable buying power are refused until resolved; closes that free buying power remain allowed. Null for older journal records, other fills or plans without buying-power checks.",
-            "anyOf": [{"$ref": "#/components/schemas/Money"}, {"type": "null"}]
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "type": "string"

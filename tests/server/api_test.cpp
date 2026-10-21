@@ -10,6 +10,8 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <thread>
+#include <optional>
 
 #include "openport/analytics/chain_analytics.hpp"
 #include "openport/analytics/svi.hpp"
@@ -250,13 +252,18 @@ TEST(Api, SurfaceAddsSabrOnlyWhenRequested) {
     EXPECT_EQ(surface["expiries"][0]["svi"], plain["expiries"][0]["svi"]);
     EXPECT_EQ(surface["ssvi"], plain["ssvi"]);
   }
-  for (const auto* bad : {"1.5", "-0.1", "nan", "yes", ""})
-    EXPECT_TRUE(get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + bad, 400).contains("error"));
+  // Betas lie on a 0.1 grid, which bounds the overlays cached per snapshot.
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/surface?sabr_beta=0.50")["sabr_beta"], 0.5);
+  for (const auto* bad : {"1.5", "-0.1", "nan", "yes", "", "0.25", "0.55", "0.123"})
+    EXPECT_TRUE(get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + bad, 400).contains("error")) << bad;
+  get(source, "/api/underlyings/SPX/surface?sabr_beta=1&expiries=61", 400);
+  get(source, "/api/underlyings/SPX/surface?expiries=61", 200);
   test::capture_contract("analytics", "GET", "/api/underlyings/SPX/surface?sabr_beta=0.5",
                          server::handle_api({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.5"}, source));
 }
 
-TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
+/// Three SVI-shaped expiries, enough for a Heston fit.
+analytics::UnderlyingMetrics heston_metrics() {
   analytics::UnderlyingMetrics m;
   m.symbol = "SPX"; m.spot = 5000; m.version = 1;
   m.as_of = md::new_york_to_utc({2026, 9, 23}, 16, 0);
@@ -279,7 +286,11 @@ TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
     }
     m.slices.push_back(slice);
   }
-  StubSource source(m);
+  return m;
+}
+
+TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
+  StubSource source(heston_metrics());
   const json heston = get(source, "/api/underlyings/SPX/heston");
   ASSERT_EQ(heston["status"], "ok") << heston["reason"];
   for (const auto* key : {"v0", "kappa", "theta", "xi", "rho"}) EXPECT_GT(std::abs(heston["parameters"][key].get<double>()), 0) << key;
@@ -306,6 +317,53 @@ TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
   get(source, "/api/underlyings/SPX/heston?expiries=0", 400);
   test::capture_contract("analytics", "GET", "/api/underlyings/SPX/heston",
                          server::handle_api({"GET", "/api/underlyings/SPX/heston"}, source));
+}
+
+TEST(Api, SlowFitsRunOnTheFitWorkerOnePerSnapshot) {
+  StubSource source(heston_metrics());
+  const auto caller = std::this_thread::get_id();
+  std::promise<std::pair<server::ApiResponse, std::thread::id>> first;
+  std::atomic<bool> first_done = false;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source, [&](server::ApiResponse response) {
+    first_done = true;
+    first.set_value({std::move(response), std::this_thread::get_id()});
+  });
+  // The flag clears only after the first completes, so until then the snapshot is busy.
+  const bool finished = first_done;
+  std::optional<server::ApiResponse> second;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source,
+                           [&](server::ApiResponse response) { second = std::move(response); });
+  ASSERT_TRUE(second) << "a busy or cached read completes on the calling thread";
+  if (!finished) {
+    EXPECT_EQ(second->status, 503);
+    EXPECT_EQ(second->retry_after, 2);
+    EXPECT_EQ(json::parse(second->body)["error"]["code"], "FIT_BUSY");
+  }
+  auto [response, thread] = first.get_future().get();
+  EXPECT_NE(thread, caller);
+  ASSERT_EQ(response.status, 200);
+  EXPECT_EQ(json::parse(response.body)["status"], "ok");
+  // Cached now: answered at once, on this thread, identically to the sync route.
+  std::optional<server::ApiResponse> cached;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source,
+                           [&](server::ApiResponse r) { cached = std::move(r); });
+  ASSERT_TRUE(cached);
+  EXPECT_EQ(cached->body, response.body);
+  EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/SPX/heston"}, source).body, response.body);
+
+  // A SABR overlay is deferred the same way; the plain surface is not.
+  StubSource chain;
+  std::promise<std::thread::id> sabr_thread;
+  std::string sabr_body;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.7"}, chain, [&](server::ApiResponse r) {
+    sabr_body = r.body;
+    sabr_thread.set_value(std::this_thread::get_id());
+  });
+  EXPECT_NE(sabr_thread.get_future().get(), caller);
+  EXPECT_EQ(json::parse(sabr_body)["sabr_beta"], 0.7);
+  bool plain_now = false;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/surface"}, chain, [&](server::ApiResponse) { plain_now = true; });
+  EXPECT_TRUE(plain_now);
 }
 
 TEST(Api, ErrorsAreJson) {

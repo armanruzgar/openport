@@ -6,6 +6,8 @@ compile_commands.json
 
 # Python
 /.venv/
+/.venv-py/
+*.egg-info/
 __pycache__/
 *.pyc
 .pytest_cache/

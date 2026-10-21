@@ -2943,7 +2943,13 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (auto rejection = sandbox_visibility(request, source)) { complete(std::move(*rejection)); return; }
-  if (request.method == "GET") { complete(handle_api(request, source)); return; }
+  if (request.method == "GET") {
+    // A Heston or SABR fit takes up to seconds: it runs on the fit worker, never here.
+    DeferredRead deferred;
+    if (auto response = handle_api_or_defer(request, source, deferred)) complete(std::move(*response));
+    else run_deferred(std::move(deferred), std::move(complete));
+    return;
+  }
   if (request.target.starts_with("/api/notifications/")) {
     if (!source.notifications()) { complete(api_error(503, "NOTIFICATIONS_UNAVAILABLE", "Notifications are unavailable on this source")); return; }
     try {
