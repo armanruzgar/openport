@@ -266,7 +266,8 @@ zero; OpenPort keeps it unknown. All these volume mappings still need live valid
 `--fallback-provider`. It is itself an `md::Provider`: each child publishes into its
 own sink, definitions are remapped by OSI symbol into one id space, and per-underlying
 routes decide which child's events pass. `ProviderStatus::feed` names the feed in
-charge; it is not recorded. A new adapter needs nothing extra to serve as either
+charge; it is not recorded. The wrapper reports trade venues when either feed
+does, so a recording's header admits the venued prints of whichever is serving. A new adapter needs nothing extra to serve as either
 feed, but its health matters: `Error` and `Stopped` count as failing; a `Live` or
 `Delayed` status, or a `SnapshotComplete` whose market time advanced, as fresh, so
 `Stale` with advancing snapshots keeps the primary. Tests drive two hand-made feeds and an injected clock

@@ -23,6 +23,7 @@ class ManualFeed final : public md::Provider {
   ManualFeed(std::string name, md::Capabilities capabilities) : name_(std::move(name)), capabilities_(capabilities) {}
   [[nodiscard]] std::string_view name() const noexcept override { return name_; }
   [[nodiscard]] md::Capabilities capabilities() const noexcept override { return capabilities_; }
+  [[nodiscard]] bool trade_venues() const noexcept override { return venues; }
   void start(const md::Subscription& requested, md::EventSink& out) override {
     ++starts;
     if (refuse) throw std::runtime_error("refused");
@@ -35,6 +36,7 @@ class ManualFeed final : public md::Provider {
   md::Subscription subscription;
   int starts = 0, stops = 0;
   bool refuse = false;
+  bool venues = false;
 
  private:
   std::string name_;
@@ -343,6 +345,31 @@ TEST_F(Failover, AProviderWideErrorAppliesToEveryUnderlying) {
   at(30);
   EXPECT_TRUE(provider->on_backup("SPX"));
   EXPECT_TRUE(provider->on_backup("SPY"));
+}
+
+// A recording header is chosen from the wrapper, so it must admit either feed's venues.
+TEST(FailoverVenues, EitherFeedsTradeVenuesReachTheRecordingHeaderAndTheTrade) {
+  for (const bool primary_venues : {false, true}) {
+    auto first = std::make_unique<ManualFeed>("tradier", snapshots(2s));
+    auto second = std::make_unique<ManualFeed>("databento", snapshots(0s));
+    first->venues = primary_venues;
+    second->venues = !primary_venues;
+    auto* primary = first.get();
+    providers::FailoverProvider provider(std::move(first), std::move(second), {30s, [] { return kStart; }, false});
+    EXPECT_TRUE(provider.trade_venues()) << primary_venues;
+    test::BrokerSink sink;
+    provider.start({{"SPX"}}, sink);
+    primary->send(md::ContractDefinition{9, kA});
+    primary->send(md::OptionTrade{9, kStart, 2, 1, 4});
+    ASSERT_EQ(sink.all<md::OptionTrade>().size(), 1u);
+    EXPECT_EQ(sink.all<md::OptionTrade>()[0].id, 0u);
+    EXPECT_EQ(sink.all<md::OptionTrade>()[0].venue, 4);
+    provider.stop();
+  }
+  providers::FailoverProvider plain(std::make_unique<ManualFeed>("tradier", snapshots(2s)),
+                                    std::make_unique<ManualFeed>("cboe", snapshots(15s, 900s)),
+                                    {30s, [] { return kStart; }, false});
+  EXPECT_FALSE(plain.trade_venues());
 }
 
 TEST(FailoverStreaming, AStreamThatProvesItselfWithQuotesIsCreditedLikeTheEngineWould) {

@@ -50,6 +50,10 @@ class FailoverProvider final : public md::Provider {
   /// "primary+backup", so recordings and status name both sources.
   [[nodiscard]] std::string_view name() const noexcept override { return name_; }
   [[nodiscard]] md::Capabilities capabilities() const noexcept override;
+  /// Either feed's venued trades can pass, so recordings need the v5 header if one has them.
+  [[nodiscard]] bool trade_venues() const noexcept override {
+    return primary_->trade_venues() || backup_->trade_venues();
+  }
   void start(const md::Subscription& subscription, md::EventSink& sink) override;
   void stop() override;
 
