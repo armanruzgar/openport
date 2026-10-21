@@ -21,6 +21,13 @@ double greek(const Json& value) {
   return n <= -999 ? missing : n;
 }
 
+/// Schwab's published schema names an option's prices bidPrice and askPrice, while
+/// some clients read bid and ask: the documented name wins when both are present.
+const Json& documented(const Json& item, std::string_view name, std::string_view alias) {
+  const auto& value = field(item, name);
+  return value.is_null() ? field(item, alias) : value;
+}
+
 std::chrono::seconds retry_after(const net::HttpResponse& response) {
   const auto value = response.header("Retry-After");
   int seconds = 0;
@@ -57,8 +64,8 @@ void add_options(const Json& map, std::string_view underlying, bool call, std::v
         SchwabOption option;
         option.contract = *contract;
         option.ts = milliseconds(field(item, "quoteTimeInLong"));
-        option.bid = std::max(0.0, number(field(item, "bid"), 0));
-        option.ask = std::max(0.0, number(field(item, "ask"), 0));
+        option.bid = std::max(0.0, number(documented(item, "bidPrice", "bid"), 0));
+        option.ask = std::max(0.0, number(documented(item, "askPrice", "ask"), 0));
         option.bid_size = std::max(0.0, number(field(item, "bidSize"), 0));
         option.ask_size = std::max(0.0, number(field(item, "askSize"), 0));
         if ((option.bid > 0 || option.ask > 0) && option.ts == 0)

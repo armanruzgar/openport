@@ -284,11 +284,13 @@ millisecond clocks; a priced side without one is rejected rather than stamped
 with the receipt time. Sizes are contracts. Open interest and `totalVolume` are
 mapped. Delta and gamma are mapped as price derivatives, Schwab's `-999` means
 unavailable, and IV (a percentage in the examples), vega, theta and rho stay NaN
-because their scaling is not documented. Schwab's published schema names the
-flags `isNonStandard` and `isMini`, while some client libraries read `nonStandard`
-and `mini`; either spelling, or a multiplier other than 100, marks a contract
-nonstandard. The default interval is the cycle's requests × 60 / 120 seconds, at
-least 5; HTTP 429 backs off exponentially and honours `Retry-After`.
+because their scaling is not documented. Option prices are read from the published
+schema's `bidPrice` and `askPrice`, or `bid` and `ask` when those are absent.
+Schwab's published schema names the flags `isNonStandard` and `isMini`, while some
+client libraries read `nonStandard` and `mini`; either spelling, or a multiplier
+other than 100, marks a contract nonstandard. The default interval is the cycle's
+requests × 60 / 120 seconds, at least 5; HTTP 429 backs off exponentially and
+honours `Retry-After`.
 
 ### Alpaca
 

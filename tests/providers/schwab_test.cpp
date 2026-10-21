@@ -113,6 +113,26 @@ TEST(Schwab, RejectsInconsistentOrUntimedContractsAndFailedChains) {
   EXPECT_EQ(empty.underlying.ts, 0);
 }
 
+TEST(Schwab, ReadsTheDocumentedQuoteFieldNames) {
+  auto json = Json::parse(kChain);
+  auto& call = json["callExpDateMap"]["2026-10-05:11"]["7410.0"][0];
+  call.erase("bid");
+  call.erase("ask");
+  call["bidPrice"] = 30.9;
+  call["askPrice"] = 31.4;
+  auto parsed = providers::parse_schwab_chain(json.dump(), "SPX").options[0];
+  EXPECT_DOUBLE_EQ(parsed.bid, 30.9);
+  EXPECT_DOUBLE_EQ(parsed.ask, 31.4);
+  EXPECT_DOUBLE_EQ(parsed.bid_size, 12);
+  EXPECT_EQ(parsed.ts, kNow);
+  // With both spellings, the documented one wins.
+  call["bid"] = 1;
+  call["ask"] = 2;
+  parsed = providers::parse_schwab_chain(json.dump(), "SPX").options[0];
+  EXPECT_DOUBLE_EQ(parsed.bid, 30.9);
+  EXPECT_DOUBLE_EQ(parsed.ask, 31.4);
+}
+
 TEST(Schwab, ExpirationChainListsDates) {
   const auto dates = providers::parse_schwab_expirations(kExpirations);
   EXPECT_EQ(dates.size(), 3u);
