@@ -226,6 +226,35 @@ TEST(Api, SurfaceHasLogMoneynessPoints) {
   EXPECT_TRUE(points[0]["k"].is_number());
 }
 
+TEST(Api, SurfaceAddsSabrOnlyWhenRequested) {
+  StubSource source;
+  const json plain = get(source, "/api/underlyings/SPX/surface");
+  EXPECT_FALSE(plain.contains("sabr_beta"));
+  EXPECT_FALSE(plain["expiries"][0].contains("sabr"));
+  EXPECT_FALSE(plain["expiries"][0]["points"][0].contains("sabr_iv"));
+  for (const auto* beta : {"1", "0.5", "fit"}) {
+    const json surface = get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + beta);
+    const json& expiry = surface["expiries"][0];
+    ASSERT_EQ(expiry["sabr_status"], "ok") << expiry["sabr_reason"];
+    const json& fit = expiry["sabr"];
+    EXPECT_GT(fit["alpha"].get<double>(), 0);
+    EXPECT_EQ(fit["beta_calibrated"], std::string_view(beta) == "fit");
+    if (std::string_view(beta) != "fit") EXPECT_DOUBLE_EQ(fit["beta"].get<double>(), std::stod(beta));
+    EXPECT_LT(fit["rmse_vol_points"].get<double>(), 1);
+    EXPECT_TRUE(fit["butterfly_ok"].is_boolean());
+    EXPECT_TRUE(expiry["points"][0]["sabr_iv"].is_number());
+    EXPECT_EQ(surface["sabr_beta"], std::string_view(beta) == "fit" ? json("fit") : json(std::stod(beta)));
+    EXPECT_TRUE(surface["sabr_calendar_violations"].is_array());
+    // The SVI and SSVI fields are unchanged by the overlay.
+    EXPECT_EQ(surface["expiries"][0]["svi"], plain["expiries"][0]["svi"]);
+    EXPECT_EQ(surface["ssvi"], plain["ssvi"]);
+  }
+  for (const auto* bad : {"1.5", "-0.1", "nan", "yes", ""})
+    EXPECT_TRUE(get(source, std::string("/api/underlyings/SPX/surface?sabr_beta=") + bad, 400).contains("error"));
+  test::capture_contract("analytics", "GET", "/api/underlyings/SPX/surface?sabr_beta=0.5",
+                         server::handle_api({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.5"}, source));
+}
+
 TEST(Api, ErrorsAreJson) {
   StubSource source;
   EXPECT_TRUE(get(source, "/api/underlyings/QQQ/summary", 404).contains("error"));

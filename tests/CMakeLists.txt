@@ -10,6 +10,7 @@ add_executable(openport_tests
   analytics/chain_analytics_test.cpp
   analytics/svi_test.cpp
   analytics/ssvi_test.cpp
+  analytics/sabr_test.cpp
   analytics/volatility_test.cpp
   analytics/realized_test.cpp
   analytics/volatility_history_test.cpp

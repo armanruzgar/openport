@@ -225,6 +225,93 @@ build timings (ms):
 No time is added to the engine analytics pass. The first surface response pays
 calibration cost on its API worker; repeated responses still pay serialization cost.
 
+## SABR: an optional per-expiry overlay
+
+SABR (Hagan, Kumar, Lesniewski and Woodward 2002) models the forward with a
+stochastic volatility, dF=αF^β dW, dα=να dZ, dW·dZ=ρ dt. OpenPort evaluates
+the paper's lognormal (Black) implied-volatility expansion, Eq. (2.17a), at
+k=log(K/F):
+
+\[
+IV(k)=\frac{\alpha}{(FK)^{(1-\beta)/2}\left[1+\frac{(1-\beta)^2}{24}k^2+\frac{(1-\beta)^4}{1920}k^4\right]}
+\cdot\frac{z}{x(z)}\cdot\left[1+\left(\frac{(1-\beta)^2\alpha^2}{24(FK)^{1-\beta}}+
+\frac{\rho\beta\nu\alpha}{4(FK)^{(1-\beta)/2}}+\frac{2-3\rho^2}{24}\nu^2\right)T\right],
+\]
+
+with z=(ν/α)(FK)^((1−β)/2) log(F/K) and x(z)=log((√(1−2ρz+z²)+z−ρ)/(1−ρ)). For
+|z|<1e-6 the ratio z/x(z) is its series 1−ρz/2+(2−3ρ²)z²/12. A non-positive or
+non-finite result is no IV. The expansion is asymptotic, not an exact price, and
+is well known to imply a negative density at low strikes for long tenors and
+large ν, so it is fitted and drawn only for comparison.
+
+**It is not on the analytics path.** The engine never fits SABR. The surface API
+fits it only when a request includes `sabr_beta`, on that API worker, and caches
+the fits beside SVI's for the same immutable snapshot, by beta choice and expiry
+prefix. Nothing else reads them: Greeks, exposure, volatility metrics, rules and
+scenarios use the market smile, SVI and SSVI as before.
+
+### Calibration
+
+Each expiry is fitted alone, on exactly SVI's eligible OTM points and normalised
+quote weights, minimising the same weighted total-variance squared residuals.
+β is fixed by the request (`sabr_beta=0..1`; the terminal offers 1 and ½), the
+usual practice because β and ρ are nearly collinear on one smile; `sabr_beta=fit`
+also calibrates β∈[0,1]. α is searched as the scale-free a=αF^(β−1), with which
+every factor of F cancels and the smile depends on k alone; the response reports
+α itself. Bounds: a∈[1e-4,10], |ρ|≤1−1e-7, ν∈[1e-4,50]. Seeds: a at the ATM IV
+(interpolated linearly in k as for SSVI, else the nearest quote), ρ∈{−.75,−.4,0,.4},
+ν∈{.3,1,3,8} and, when fitting β, β∈{.25,.75}. The best four seeds are refined by
+bounded Nelder–Mead in (log a, ρ, log ν[, β]), at most 1,000 iterations each. A
+refinement converges when every simplex coordinate width is below 1e-8, or below
+1e-5 with the loss spread within 1e-13 relative (a flat direction, such as ρ once ν
+reaches its floor). At least five distinct points are needed. As with SVI this is a
+deterministic local search with no global-optimum claim; failures return null
+parameters with a reason.
+
+### Arbitrage checks
+
+The same two finite-grid diagnostics as SVI, never a certificate:
+
+- **Butterfly**: Gatheral's g(k) on 2,001 points over the calibration range, with
+  w=IV²T and its k derivatives by central differences (h=1e-4). A negative g, a
+  non-positive w or an undefined value fails. A test confirms that a flagged
+  point also fails call-price convexity.
+- **Calendar**: consecutive successful SABR expiries, compared exactly as SVI's
+  calendar check (same grid, tolerance and reporting), as `sabr_calendar_violations`.
+
+### API and display
+
+`/api/underlyings/{symbol}/surface?sabr_beta=1` (or a number in [0,1], or `fit`)
+adds `sabr` to each expiry, `{alpha,beta,rho,nu,beta_calibrated,rmse_vol_points,`
+`points,status,reason,fit_ms,butterfly_min_g,butterfly_k,butterfly_ok,min_k,max_k}`
+with full-precision parameters, or null on failure; `sabr_status`, `sabr_reason`
+and `sabr_fit_ms` keep failure information; each point adds decimal `sabr_iv`; the
+top level adds `sabr_beta` and `sabr_calendar_violations`. Without `sabr_beta`
+none of these keys appear and the response is unchanged. An invalid value is 400.
+
+The Volatility view's SABR control is off by default (No SABR / SABR β=1 / β=½ /
+β fit). When on, it draws a dotted curve per fitted expiry over its quoted range
+only, beside whichever market/SVI/SSVI curves are shown, and a table of α, β, ρ,
+ν, RMSE and the butterfly and calendar flags.
+
+### Validation and timing
+
+Tests cover the ATM limit against Hagan's Eq. (2.18), continuity through the
+series branch, scale invariance in F, the β=1, ν=0 Black limit, exact recovery
+with fixed β=1 and ½ (positive and negative ρ), small noise with fixed and fitted
+β, determinism and input order, flat smiles, invalid and degenerate inputs, a
+known negative-density case cross-checked against call-price convexity, calendar
+crossings, API fields, opt-in behaviour and invalid parameters, and the browser's
+port of the formula against server values.
+
+On the SVI workload above (`openport_measure_svi`, 2026-10-21, a busy shared
+machine: the SSVI row measured 77 ms in the same run against 40 ms in the table,
+so treat these as upper bounds): one 250-point SABR fit with β=1 took 18 ms
+median, with β fitted 107 ms; 60 fits plus the calendar check 1.7 s; the full
+cold API with `sabr_beta=1` over 60 expiries 1.3 s against 0.95 s without. The
+workload's smiles are SVI-shaped, so these time the overlay, not its accuracy.
+The terminal requests six expiries by default.
+
 ## References
 
 - Gatheral (2004), *A parsimonious arbitrage-free implied volatility parameterization
@@ -238,3 +325,5 @@ calibration cost on its API worker; repeated responses still pay serialization c
   [*Arbitrage-free SVI volatility surfaces*](https://arxiv.org/abs/1204.0646),
   Quantitative Finance 14(1), 59–71. Density diagnostic: Lemma 2.2; Axel Vogt example:
   a=−0.0410, b=0.1331, ρ=0.3060, m=0.3586, σ=0.4153.
+- Hagan, Kumar, Lesniewski & Woodward (2002), *Managing smile risk*, Wilmott
+  Magazine, September, 84–108: Eqs. (2.17a) and (2.18).

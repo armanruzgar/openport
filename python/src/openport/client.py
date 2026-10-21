@@ -140,8 +140,10 @@ class Client:
     def exposure(self, symbol: str, expiries: int = 8, window: float = 0.08) -> Exposure:
         return self._market(symbol, "exposure", expiries=expiries, window=window)
 
-    def surface(self, symbol: str, expiries: int = 12, window: float = 0.2) -> Surface:
-        return self._market(symbol, "surface", expiries=expiries, window=window)
+    def surface(self, symbol: str, expiries: int = 12, window: float = 0.2,
+                sabr_beta: float | str | None = None) -> Surface:
+        """SVI and SSVI fits; sabr_beta (0 to 1, or "fit") adds the optional SABR overlay."""
+        return self._market(symbol, "surface", expiries=expiries, window=window, sabr_beta=sabr_beta)
 
     def volatility(self, symbol: str) -> Volatility:
         return self._market(symbol, "volatility")

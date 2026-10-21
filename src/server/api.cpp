@@ -463,13 +463,26 @@ json svi_json(const analytics::SviFit& fit) {
           {"butterfly_k", sig(fit.butterfly.k)}, {"butterfly_ok", fit.butterfly.ok}};
 }
 
+json sabr_json(const analytics::SabrFit& fit) {
+  if (fit.status != analytics::SviStatus::Ok) return nullptr;
+  const auto& p = fit.parameters;
+  return {{"alpha", p.alpha}, {"beta", p.beta}, {"rho", p.rho}, {"nu", p.nu},
+          {"beta_calibrated", fit.beta_calibrated},
+          {"rmse_vol_points", sig(fit.rmse_vol_points)}, {"points", fit.points},
+          {"status", analytics::to_string(fit.status)}, {"reason", nullptr}, {"fit_ms", fit.fit_ms},
+          {"butterfly_min_g", sig(fit.butterfly.min_g)}, {"butterfly_k", sig(fit.butterfly.k)},
+          {"butterfly_ok", fit.butterfly.ok}, {"min_k", sig(fit.min_k, 15)}, {"max_k", sig(fit.max_k, 15)}};
+}
+
 json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
-                  std::size_t max_expiries, double window) {
+                  std::size_t max_expiries, double window, std::optional<std::optional<double>> sabr_beta) {
   const auto& m = *metrics;
   const auto count = std::min(max_expiries, m.slices.size());
   const auto cache = surface_cache(metrics);
   std::vector<analytics::SviFit> fits;
   analytics::SsviFit ssvi;
+  std::vector<analytics::SabrFit> sabr;
+  const std::string sabr_key = !sabr_beta ? "" : *sabr_beta ? json(**sabr_beta).dump() : "fit";
   {
     const std::lock_guard lock(cache->mutex);
     // Only newly requested expiries are fitted; display windows never change fits.
@@ -478,6 +491,12 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
     if (!cache->ssvi) cache->ssvi = analytics::fit_ssvi(m.slices);
     ssvi = *cache->ssvi;
     fits.assign(cache->fits.begin(), cache->fits.begin() + static_cast<std::ptrdiff_t>(count));
+    // SABR is an opt-in overlay: nothing is fitted unless a request asks for it.
+    if (sabr_beta) {
+      auto& cached = cache->sabr[sabr_key];
+      while (cached.size() < count) cached.push_back(analytics::fit_sabr(m.slices[cached.size()], *sabr_beta));
+      sabr.assign(cached.begin(), cached.begin() + static_cast<std::ptrdiff_t>(count));
+    }
   }
   json expiries = json::array();
   for (std::size_t i = 0; i < count; ++i) {
@@ -498,6 +517,9 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
                         {"svi_iv", fit.status == analytics::SviStatus::Ok
                             ? sig(analytics::svi_iv(fit.parameters, k, slice.years)) : json(nullptr)},
                         {"ssvi_iv", sig(analytics::ssvi_iv(ssvi.parameters, k, surface_fit.theta, slice.years))}});
+      if (sabr_beta)
+        points.back()["sabr_iv"] = sabr[i].status == analytics::SviStatus::Ok
+            ? sig(analytics::sabr_iv(sabr[i].parameters, sabr[i].forward, k, slice.years)) : json(nullptr);
     }
     expiries.push_back({{"id", expiry_id(slice)}, {"expiry", md::format_date(slice.expiry)},
                         {"days", sig(slice.years * 365.0, 4)},
@@ -512,6 +534,13 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
                         {"svi_points", fit.points}, {"svi_fit_ms", fit.fit_ms},
                         {"svi_years", sig(slice.years, 15)},
                         {"svi_min_k", sig(fit.min_k, 15)}, {"svi_max_k", sig(fit.max_k, 15)}});
+    if (sabr_beta) {
+      auto& expiry = expiries.back();
+      expiry["sabr"] = sabr_json(sabr[i]);
+      expiry["sabr_status"] = analytics::to_string(sabr[i].status);
+      expiry["sabr_reason"] = sabr[i].reason.empty() ? json(nullptr) : json(sabr[i].reason);
+      expiry["sabr_fit_ms"] = sabr[i].fit_ms;
+    }
   }
   json violations = json::array();
   for (const auto& pair : analytics::svi_calendar(fits))
@@ -519,7 +548,7 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
                           {"later", expiry_id(m.slices[pair.later])}, {"k", sig(pair.k)},
                           {"vol_points", sig(pair.vol_points)},
                           {"tolerance_vol_points", sig(pair.tolerance_vol_points)}});
-  return {{"symbol", m.symbol}, {"spot", price(m.spot)},
+  json response = {{"symbol", m.symbol}, {"spot", price(m.spot)},
           {"spot_source", spot_source_json(m)}, {"as_of", md::format_timestamp(m.as_of)},
           {"version", m.version}, {"expiries", expiries}, {"calendar_violations", violations},
           {"ssvi", {{"rho", sig(ssvi.parameters.rho, 17)}, {"eta", sig(ssvi.parameters.eta, 17)},
@@ -527,6 +556,17 @@ json surface_json(const std::shared_ptr<const UnderlyingMetrics>& metrics,
                     {"status", analytics::to_string(ssvi.status)},
                     {"reason", ssvi.reason.empty() ? json(nullptr) : json(ssvi.reason)},
                     {"monotone_adjusted", ssvi.monotone_adjusted}, {"fit_ms", ssvi.fit_ms}}}};
+  if (sabr_beta) {
+    json sabr_violations = json::array();
+    for (const auto& pair : analytics::sabr_calendar(sabr))
+      sabr_violations.push_back({{"earlier", expiry_id(m.slices[pair.earlier])},
+                                 {"later", expiry_id(m.slices[pair.later])}, {"k", sig(pair.k)},
+                                 {"vol_points", sig(pair.vol_points)},
+                                 {"tolerance_vol_points", sig(pair.tolerance_vol_points)}});
+    response["sabr_beta"] = *sabr_beta ? json(**sabr_beta) : json("fit");
+    response["sabr_calendar_violations"] = std::move(sabr_violations);
+  }
+  return response;
 }
 
 json reason_json(const std::string& reason) {
@@ -805,8 +845,17 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
   }
   if (view == "exposure")
     return ok(exposure_json(*metrics, expiries, query.contains("window") ? window : 0.08));
-  if (view == "surface")
-    return ok(surface_json(metrics, expiries, query.contains("window") ? window : 0.2));
+  if (view == "surface") {
+    // sabr_beta=B (0 to 1) adds SABR fits with that fixed beta; sabr_beta=fit calibrates it.
+    std::optional<std::optional<double>> sabr_beta;
+    if (const auto it = query.find("sabr_beta"); it != query.end()) {
+      double beta = 0;
+      if (it->second == "fit") sabr_beta.emplace(std::nullopt);
+      else if (decimal_number(it->second, beta) && beta >= 0 && beta <= 1) sabr_beta.emplace(beta);
+      else return error(400, "sabr_beta must be a number in [0, 1] or fit");
+    }
+    return ok(surface_json(metrics, expiries, query.contains("window") ? window : 0.2, sabr_beta));
+  }
   return error(404, "unknown view " + std::string(view));
 }
 

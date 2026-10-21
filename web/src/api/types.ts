@@ -296,6 +296,25 @@ export interface SsviFit {
   fit_ms: number
 }
 
+/** Hagan lognormal SABR for one expiry; alpha is in forward units^(1 - beta). */
+export interface SabrFit {
+  alpha: number
+  beta: number
+  rho: number
+  nu: number
+  beta_calibrated: boolean
+  rmse_vol_points: number
+  points: number
+  status: "ok"
+  reason: string | null
+  fit_ms: number
+  butterfly_min_g: Num
+  butterfly_k: Num
+  butterfly_ok: boolean
+  min_k: Num
+  max_k: Num
+}
+
 export interface SurfaceExpiry {
   id: string
   expiry: string
@@ -316,6 +335,11 @@ export interface SurfaceExpiry {
   svi_years?: Num
   svi_min_k?: Num
   svi_max_k?: Num
+  /** Present only when the request asked for SABR (sabr_beta). */
+  sabr?: SabrFit | null
+  sabr_status?: "ok" | "too_few_points" | "failed"
+  sabr_reason?: string | null
+  sabr_fit_ms?: number
 }
 
 export interface SmilePoint {
@@ -326,6 +350,7 @@ export interface SmilePoint {
   ask_iv: Num
   svi_iv?: Num
   ssvi_iv?: Num
+  sabr_iv?: Num
 }
 
 export interface Surface {
@@ -337,6 +362,8 @@ export interface Surface {
   expiries: SurfaceExpiry[]
   ssvi?: SsviFit
   calendar_violations?: { earlier: string; later: string; k: number; vol_points?: number; tolerance_vol_points?: number }[]
+  sabr_beta?: number | "fit"
+  sabr_calendar_violations?: { earlier: string; later: string; k: number; vol_points?: number; tolerance_vol_points?: number }[]
 }
 
 /** The replay running beside the live feed: its recording, speed and clock. */

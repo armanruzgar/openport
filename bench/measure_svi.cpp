@@ -10,6 +10,7 @@
 
 #include "openport/analytics/svi.hpp"
 #include "openport/analytics/ssvi.hpp"
+#include "openport/analytics/sabr.hpp"
 #ifdef OPENPORT_SVI_API_BENCH
 #include "openport/server/api.hpp"
 #endif
@@ -94,6 +95,22 @@ int main(int argc, char** argv) {
     const auto violations = analytics::svi_calendar(fits);
     return violations.empty();
   });
+  // The SVI-shaped fixture is not a SABR smile: these time the optional overlay only.
+  measure("sabr_single_fit_250_points_beta_1", [&] {
+    return analytics::fit_sabr(m.slices[20], 1.0).status == analytics::SviStatus::Ok;
+  });
+  measure("sabr_single_fit_250_points_beta_fit", [&] {
+    return analytics::fit_sabr(m.slices[20], std::nullopt).status == analytics::SviStatus::Ok;
+  });
+  measure("sabr_60x250_fits_and_calendar_beta_1", [&] {
+    std::vector<analytics::SabrFit> fits;
+    for (const auto& s : m.slices) {
+      fits.push_back(analytics::fit_sabr(s, 1.0));
+      if (fits.back().status != analytics::SviStatus::Ok) return false;
+    }
+    static_cast<void>(analytics::sabr_calendar(fits));
+    return true;
+  });
 #ifdef OPENPORT_SVI_API_BENCH
   const server::ApiRequest request{"GET", "/api/underlyings/SPX/surface?expiries=60&window=0"};
   measure("api_60_expiries_cold", [&] {
@@ -101,5 +118,10 @@ int main(int argc, char** argv) {
     return server::handle_api(request, source).status == 200;
   });
   measure("api_60_expiries_cached", [&] { return server::handle_api(request, source).status == 200; });
+  const server::ApiRequest sabr{"GET", "/api/underlyings/SPX/surface?expiries=60&window=0&sabr_beta=1"};
+  measure("api_60_expiries_sabr_cold", [&] {
+    source.m = std::make_shared<const analytics::UnderlyingMetrics>(m);
+    return server::handle_api(sabr, source).status == 200;
+  });
 #endif
 }

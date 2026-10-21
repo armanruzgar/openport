@@ -442,6 +442,16 @@ def test_sandbox_token_omits_account_by_default(stub):
     assert stub.requests[-1][1] == "/api/orders/cancel"
 
 
+def test_surface_requests_sabr_only_when_asked(stub):
+    client = Client(stub.url, "secret")
+    client.surface("SPX")
+    assert "sabr_beta" not in parse_qs(urlsplit(stub.requests[-1][1]).query)
+    client.surface("SPX", 6, 0.1, sabr_beta=0.5)
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"expiries": ["6"], "window": ["0.1"], "sabr_beta": ["0.5"]}
+    client.surface("SPX", sabr_beta="fit")
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query)["sabr_beta"] == ["fit"]
+
+
 def test_reload_tokens_uses_live_admin_route_even_from_replay(stub):
     result = Client(stub.url, "admin-secret", "practice").for_replay().reload_tokens()
     assert result == {"names": ["operator"], "count": 1, "loaded_at": TIME}

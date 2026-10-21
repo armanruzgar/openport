@@ -17,7 +17,9 @@ a pass is practice, not proof: a real-time chart shows what happened next.
 - **Smile and term structure**: out-of-the-money smiles with SVI fits and arbitrage
   checks, ATM term structure on a square-root-of-time axis, and each expiry's
   forward, rate and source. Forwards come from put-call parity; equity-option IV
-  accounts for American exercise.
+  accounts for American exercise. An optional SABR overlay (fixed or fitted β)
+  adds per-expiry Hagan fits with the same arbitrage checks, fitted only on
+  request. [SVI, SSVI and SABR](svi.md).
 - **Volatility metrics**: model-free IV, delta risk reversals and butterflies,
   realized volatility and cones, variance risk premium and implied session moves
   with optional event labels. Local minute and close history adds IV rank and

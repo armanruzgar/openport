@@ -9,6 +9,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   instead of the 31-step Leisen-Reimer tree. The tree stays the default: measured
   against a converged tree it was more accurate, and no slower. Expiries with cash
   dividends always use the tree; each expiry reports its `eep_model`.
+- **Compare SABR with SVI.** The Volatility view can overlay per-expiry SABR fits
+  (Hagan lognormal, β fixed at 1 or ½, or fitted) with their parameters, RMSE and
+  the same butterfly and calendar checks. The surface API fits them only when
+  asked (`sabr_beta`), so nothing changes for analytics or other readers.
 
 ## 0.4.0 (2026-10-06)
 

@@ -8,6 +8,7 @@ import { VolatilityHistory } from "../components/VolatilityHistory"
 import { ProbabilityPanel } from "../components/ProbabilityPanel"
 import { volatilityTerm, volPoints } from "../lib/volatility"
 import { SviTable } from "../components/SviTable"
+import { SabrTable } from "../components/SabrTable"
 import { Empty, Panel, Segmented } from "../components/ui"
 import { days, expiryLabel, fixed, isNum, pct, price, vol } from "../lib/format"
 import { smileSeries, type SmileMode } from "../lib/svi"
@@ -23,10 +24,13 @@ export function SmileView({ symbol }: { symbol: string }) {
   const [window, setWindow] = useState(0.1)
   const [mode, setMode] = useState<SmileMode>("all")
   const [axis, setAxis] = useState<"strike" | "moneyness">("strike")
+  // The SABR overlay is fitted on request only; "off" asks the server for none.
+  const [sabr, setSabr] = useState<"off" | 1 | 0.5 | "fit">("off")
+  const sabrBeta = sabr === "off" ? undefined : sabr
 
   const surface = useQuery({
-    queryKey: ["surface", symbol, expiries, window, version],
-    queryFn: ({ signal }) => api.surface(symbol, expiries, window, signal),
+    queryKey: ["surface", symbol, expiries, window, version, ...(sabrBeta == null ? [] : [sabrBeta])],
+    queryFn: ({ signal }) => api.surface(symbol, expiries, window, signal, sabrBeta),
     placeholderData: (previous) => matchingPayload(previous, symbol),
   })
   const summary = useQuery({
@@ -52,8 +56,8 @@ export function SmileView({ symbol }: { symbol: string }) {
   const summaryData = matchingPayload(summary.data, symbol)
 
   const shown = useMemo(() => (surfaceData?.expiries ?? []).filter((e) => (e.days ?? 0) > 1 / 24), [surfaceData])
-  const smiles = useMemo(() => smileSeries(shown, axis, mode, { spot: surfaceData?.spot ?? null, window }, surfaceData?.ssvi),
-    [shown, axis, mode, surfaceData?.spot, surfaceData?.ssvi, window])
+  const smiles = useMemo(() => smileSeries(shown, axis, mode, { spot: surfaceData?.spot ?? null, window }, surfaceData?.ssvi, sabrBeta != null),
+    [shown, axis, mode, surfaceData?.spot, surfaceData?.ssvi, window, sabrBeta])
 
   const term = useMemo<Series[]>(() => {
     if (volatilityData) return volatilityTerm(volatilityData)
@@ -81,6 +85,9 @@ export function SmileView({ symbol }: { symbol: string }) {
             <Segmented label="Smile display" value={mode}
               options={[{ value: "market", label: "Market" }, { value: "svi", label: "SVI" }, { value: "ssvi", label: "SSVI" }, { value: "all", label: "All" }]}
               onChange={setMode} />
+            <Segmented label="SABR overlay" value={sabr}
+              options={[{ value: "off", label: "No SABR" }, { value: 1, label: "SABR β=1" }, { value: 0.5, label: "β=½" }, { value: "fit", label: "β fit" }]}
+              onChange={setSabr} />
             <Segmented label="Expiries" value={expiries} options={[3, 6, 10].map((n) => ({ value: n, label: `${n} exp` }))} onChange={setExpiries} />
             <Segmented label="Window" value={window} options={[0.05, 0.1, 0.2].map((w) => ({ value: w, label: `±${w * 100}%` }))} onChange={setWindow} />
             <Segmented
@@ -106,7 +113,7 @@ export function SmileView({ symbol }: { symbol: string }) {
               xLabel={axis === "strike" ? "strike" : "log-moneyness"}
             />
             <p className="mt-2 text-[11px] text-muted">
-              Dots: OTM market IV. Solid: SVI. Dashed: SSVI. The nearest expiry's market bid-ask range is shaded.
+              Dots: OTM market IV. Solid: SVI. Dashed: SSVI.{sabrBeta != null && " Dotted: SABR, over each fit's quoted range."} The nearest expiry's market bid-ask range is shaded.
               Fits use all eligible quotes; SVI arbitrage checks cover a finite grid.
             </p>
           </>
@@ -114,6 +121,7 @@ export function SmileView({ symbol }: { symbol: string }) {
           <Empty>{surfaceData ? "No usable points or fits for this selection." : "Loading smiles…"}</Empty>
         )}
         <SviTable ssvi={surfaceData?.ssvi} expiries={shown} violations={surfaceData?.calendar_violations ?? []} />
+        {sabrBeta != null && <SabrTable expiries={shown} beta={surfaceData?.sabr_beta} violations={surfaceData?.sabr_calendar_violations ?? []} />}
       </Panel>
 
       <div className="flex flex-col gap-3">

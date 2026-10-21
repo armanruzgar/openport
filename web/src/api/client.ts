@@ -249,8 +249,9 @@ export const api = {
     get<Chain>(`${underlying(symbol)}/chain?expiry=${encodeURIComponent(expiry)}&window=${window}`, signal),
   exposure: (symbol: string, expiries: number, window: number, signal?: AbortSignal) =>
     get<ExposureMatrix>(`${underlying(symbol)}/exposure?expiries=${expiries}&window=${window}`, signal),
-  surface: (symbol: string, expiries: number, window: number, signal?: AbortSignal) =>
-    get<Surface>(`${underlying(symbol)}/surface?expiries=${expiries}&window=${window}`, signal),
+  /** sabrBeta adds the optional SABR overlay: a fixed beta in [0, 1], or "fit". */
+  surface: (symbol: string, expiries: number, window: number, signal?: AbortSignal, sabrBeta?: number | "fit") =>
+    get<Surface>(`${underlying(symbol)}/surface?expiries=${expiries}&window=${window}${sabrBeta == null ? "" : `&sabr_beta=${sabrBeta}`}`, signal),
   replay: (signal?: AbortSignal) => get<ReplayListing>("/api/replay", signal),
   startReplay: (source: ReplaySource, speed: number, mode: WriteMode, options: ReplayStart = {}) =>
     write<{ replay: ReplayState }>("/api/replay", "POST", mode, { ...source, speed, ...options }),

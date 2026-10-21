@@ -237,6 +237,25 @@
             "minimum": 0,
             "maximum": 1
           }
+        },
+        {
+          "name": "sabr_beta",
+          "in": "query",
+          "required": false,
+          "description": "Add per-expiry SABR fits (Hagan lognormal) with this fixed beta in [0, 1], or fit to calibrate beta too. Omitted, no SABR is fitted or returned.",
+          "schema": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "const": "fit",
+                "type": "string"
+              }
+            ]
+          }
         }
       ],
       "get": {
@@ -6689,6 +6708,81 @@
           "fit_ms"
         ]
       },
+      "SabrFit": {
+        "type": "object",
+        "properties": {
+          "alpha": {
+            "type": "number"
+          },
+          "beta": {
+            "type": "number"
+          },
+          "rho": {
+            "type": "number"
+          },
+          "nu": {
+            "type": "number"
+          },
+          "beta_calibrated": {
+            "type": "boolean"
+          },
+          "rmse_vol_points": {
+            "type": "number"
+          },
+          "points": {
+            "type": "number"
+          },
+          "status": {
+            "const": "ok",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fit_ms": {
+            "type": "number"
+          },
+          "butterfly_min_g": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "butterfly_k": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "butterfly_ok": {
+            "type": "boolean"
+          },
+          "min_k": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "max_k": {
+            "$ref": "#/components/schemas/Num"
+          }
+        },
+        "required": [
+          "alpha",
+          "beta",
+          "rho",
+          "nu",
+          "beta_calibrated",
+          "rmse_vol_points",
+          "points",
+          "status",
+          "reason",
+          "fit_ms",
+          "butterfly_min_g",
+          "butterfly_k",
+          "butterfly_ok",
+          "min_k",
+          "max_k"
+        ]
+      },
       "SurfaceExpiry": {
         "type": "object",
         "properties": {
@@ -6785,6 +6879,46 @@
           },
           "svi_max_k": {
             "$ref": "#/components/schemas/Num"
+          },
+          "sabr": {
+            "description": "Present only when sabr_beta is requested; null when the fit failed.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SabrFit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sabr_status": {
+            "anyOf": [
+              {
+                "const": "ok",
+                "type": "string"
+              },
+              {
+                "const": "too_few_points",
+                "type": "string"
+              },
+              {
+                "const": "failed",
+                "type": "string"
+              }
+            ]
+          },
+          "sabr_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sabr_fit_ms": {
+            "type": "number"
           }
         },
         "required": [
@@ -6818,6 +6952,9 @@
             "$ref": "#/components/schemas/Num"
           },
           "ssvi_iv": {
+            "$ref": "#/components/schemas/Num"
+          },
+          "sabr_iv": {
             "$ref": "#/components/schemas/Num"
           }
         },
@@ -6864,6 +7001,46 @@
             "$ref": "#/components/schemas/SsviFit"
           },
           "calendar_violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "earlier": {
+                  "type": "string"
+                },
+                "later": {
+                  "type": "string"
+                },
+                "k": {
+                  "type": "number"
+                },
+                "vol_points": {
+                  "type": "number"
+                },
+                "tolerance_vol_points": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "earlier",
+                "later",
+                "k"
+              ]
+            }
+          },
+          "sabr_beta": {
+            "description": "The requested SABR beta (a number) or fit; present only with sabr_beta.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "const": "fit",
+                "type": "string"
+              }
+            ]
+          },
+          "sabr_calendar_violations": {
             "type": "array",
             "items": {
               "type": "object",
