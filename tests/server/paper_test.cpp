@@ -4373,6 +4373,9 @@ TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
   EXPECT_EQ(best["side"], "sell");
   EXPECT_EQ(best["quantity"], 1);
   EXPECT_EQ(best["order"]["symbol"], market.symbol());
+  EXPECT_EQ(best["expiry"], "2026-10-22PM");
+  EXPECT_EQ(best["strike"], 5000);
+  EXPECT_EQ(best["type"], "call");
   EXPECT_EQ(best["order"]["limit_price"], "4.00");
   EXPECT_NEAR(best["premium"].get<double>(), -400, 1e-9);
   EXPECT_NEAR(best["spread_cost"].get<double>(), 10, 1e-6);

@@ -3044,6 +3044,7 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
   struct Choice {
     std::string name, kind, instrument, underlying, reason;
     bool beta = false;
+    std::string expiry = {};
     HedgeUnit unit;
     const analytics::OptionMetrics* option = nullptr;
     double price = 0, mid = 0, instrument_beta = 1;
@@ -3051,7 +3052,7 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
   std::vector<Choice> choices;
   const auto option_choice = [&](const std::string& underlying, pricing::OptionType type, bool beta) {
     Choice choice{std::string(beta ? "Beta hedge: " : "") + underlying + " ATM " + (type == pricing::OptionType::Call ? "call" : "put"),
-                  "option", "", underlying, "", beta, {}, nullptr};
+                  "option", "", underlying, "", beta, {}, {}, nullptr};
     const auto metrics = source.metrics(underlying);
     const auto* option = metrics ? atm_option(*metrics, type) : nullptr;
     if (!option) { choice.reason = "No tradable two-sided at-the-money quote"; choices.push_back(choice); return; }
@@ -3061,6 +3062,12 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
     const auto& valuation = valuations.at(symbol);
     choice.instrument = symbol;
     choice.option = option;
+    // The expiry ID the chain lists the contract under, for the ticket.
+    for (const auto& slice : metrics->slices)
+      for (const auto& row : slice.strikes)
+        if (&row.call == option || &row.put == option)
+          choice.expiry = md::format_date(slice.expiry) + (option->contract.settlement == md::Settlement::AM ? "AM" : "PM") +
+                          (slice.root.empty() ? "" : "-" + slice.root);
     choice.mid = option->mid;
     const auto unit_grid = scenario_grid(Ledger::restore({}, {{symbol, Position{option->contract, 1, {}, {}, {}}}}), valuations, grid_config,
         std::max(s.time, metrics->as_of), max_age, prices);
@@ -3071,7 +3078,7 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
     choices.push_back(choice);
   };
   const auto share_choice = [&](const std::string& underlying, bool beta) {
-    Choice choice{std::string(beta ? "Beta hedge: " : "") + underlying + " shares", "shares", underlying, underlying, "", beta, {}, nullptr};
+    Choice choice{std::string(beta ? "Beta hedge: " : "") + underlying + " shares", "shares", underlying, underlying, "", beta, {}, {}, nullptr};
     const auto metrics = source.metrics(underlying);
     double price = prices.contains(underlying) ? prices.at(underlying) : metrics && metrics->spot > 0 ? metrics->spot : 0.0;
     if (md::is_index_underlying(underlying)) choice.reason = underlying + " is an index: it has no shares to trade";
@@ -3106,7 +3113,9 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
   std::vector<Ranked> ranked;
   for (auto& choice : choices) {
     json body{{"name", choice.name}, {"kind", choice.kind}, {"underlying", choice.underlying}, {"instrument", nullable(choice.instrument)},
-              {"beta_hedge", choice.beta}};
+              {"beta_hedge", choice.beta}, {"expiry", nullable(choice.expiry)},
+              {"strike", choice.option ? json(choice.option->contract.strike) : json(nullptr)},
+              {"type", choice.option ? json(choice.option->contract.type == pricing::OptionType::Call ? "call" : "put") : json(nullptr)}};
     if (!choice.reason.empty()) {
       body.update(json{{"feasible", false}, {"reason", choice.reason}, {"side", nullptr}, {"quantity", nullptr}, {"price", nullptr},
                        {"premium", nullptr}, {"spread_cost", nullptr}, {"residual", nullptr}, {"order", nullptr}, {"stock_trade", nullptr},

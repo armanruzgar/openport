@@ -731,6 +731,9 @@ class Hedge(TypedDict):
     underlying: str
     instrument: str | None
     beta_hedge: bool
+    expiry: str | None
+    strike: float | None
+    type: Literal["call", "put"] | None
     feasible: bool
     reason: str | None
     side: Literal["buy", "sell"] | None

@@ -29819,6 +29819,41 @@
           "beta_hedge": {
             "type": "boolean"
           },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An option hedge's expiry ID, as the chain lists it."
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "call",
+                  "put"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "feasible": {
             "type": "boolean"
           },
@@ -29951,6 +29986,9 @@
           "underlying",
           "instrument",
           "beta_hedge",
+          "expiry",
+          "strike",
+          "type",
           "feasible",
           "reason",
           "side",
