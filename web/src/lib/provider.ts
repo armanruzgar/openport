@@ -1,4 +1,4 @@
-import type { FeedState, ProviderInfo } from "../api/types"
+import type { FeedState, ProviderInfo, UnderlyingSnapshot } from "../api/types"
 import { isNum } from "./format"
 
 export function providerLabel(provider: ProviderInfo, state?: FeedState | null): string {
@@ -11,4 +11,17 @@ export function providerLabel(provider: ProviderInfo, state?: FeedState | null):
     return "timing unconfirmed"
   }
   return provider.realtime ? "real-time" : delayed
+}
+
+/** "fallback · cboe" while an underlying's backup feed supplies it, else null. */
+export function fallbackLabel(provider: ProviderInfo | null | undefined, underlying: UnderlyingSnapshot | null | undefined): string | null {
+  if (!provider?.fallback || !underlying?.fallback) return null
+  return `fallback · ${underlying.feed ?? provider.fallback.backup}`
+}
+
+/** Why the backup supplies an underlying, for a tooltip. */
+export function fallbackTitle(provider: ProviderInfo): string {
+  const f = provider.fallback
+  if (!f) return ""
+  return `${f.primary} has been stale, in error or silent for ${f.after_seconds} s, so ${f.backup} supplies this underlying until ${f.primary} recovers; its data is reported as delayed`
 }

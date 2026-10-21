@@ -16,6 +16,14 @@ export interface ProviderInfo {
   trades: boolean
   open_interest: boolean
   vendor_greeks: boolean
+  /** The backup feed behind --fallback-provider; null without one, absent on older servers. */
+  fallback?: FallbackInfo | null
+}
+
+export interface FallbackInfo {
+  primary: string
+  backup: string
+  after_seconds: number
 }
 
 export interface EngineMetrics {
@@ -47,6 +55,10 @@ export interface UnderlyingSnapshot {
   last_success?: string | null
   last_error?: string | null
   last_error_time?: string | null
+  /** The feed supplying it when a fallback is configured; null otherwise. */
+  feed?: string | null
+  /** True while the backup feed supplies it. */
+  fallback?: boolean
 }
 
 export interface UnderlyingStatus extends UnderlyingSnapshot {

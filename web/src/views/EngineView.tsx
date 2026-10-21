@@ -33,6 +33,7 @@ export function EngineView() {
       <Panel title="Provider">
         <Row label="Name">{provider.name}</Row>
         <Row label="Data">{providerLabel(provider, feed.state)}</Row>
+        {provider.fallback && <Row label="Fallback">{provider.fallback.backup} after {provider.fallback.after_seconds} s</Row>}
         {provider.poll_interval_seconds != null && <Row label="Poll interval">{fixed(provider.poll_interval_seconds, 0)} s</Row>}
         <div className="flex flex-wrap gap-1.5 pt-2">
           <Capability on label="quotes" />
@@ -109,6 +110,7 @@ export function EngineView() {
               <tr>
                 <th scope="col" className="px-2 py-1 font-normal">Symbol</th>
                 <th scope="col" className="px-2 py-1 font-normal">State</th>
+                {provider.fallback && <th scope="col" className="px-2 py-1 font-normal">Feed</th>}
                 <th scope="col" className="px-2 py-1 font-normal">Message</th>
                 <th scope="col" className="px-2 py-1 font-normal">Last success</th>
                 <th scope="col" className="px-2 py-1 font-normal">Last error</th>
@@ -119,6 +121,7 @@ export function EngineView() {
                 <tr key={u.symbol} className="border-t border-border/40 align-top">
                   <th scope="row" className="px-2 py-2 font-normal tabular">{u.symbol}</th>
                   <td className="px-2 py-2">{u.state ? <FeedBadge state={u.state} message={u.message} /> : "—"}</td>
+                  {provider.fallback && <td className={`px-2 py-2 ${u.fallback ? "text-warn" : ""}`}>{u.feed ?? "—"}{u.fallback ? " (fallback)" : ""}</td>}
                   <td className="min-w-40 px-2 py-2 text-muted break-words">{u.message ?? "—"}</td>
                   <td className="min-w-44 px-2 py-2 tabular">{u.last_success ? <AsOf asOf={u.last_success} showBadge={false} now={provider.simulated ? marketNow(live) : undefined} /> : "—"}</td>
                   <td className="min-w-44 px-2 py-2 break-words">
