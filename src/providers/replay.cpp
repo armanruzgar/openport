@@ -1,6 +1,7 @@
 #include "openport/providers/replay.hpp"
 
 #include <algorithm>
+#include <utility>
 #include <condition_variable>
 #include <limits>
 #include <mutex>
@@ -153,9 +154,11 @@ bool ReplayProvider::pace(ReplayClock::TimePoint& deadline, int basis) {
     // A later control must interrupt the wait we are about to start.
     interrupted_ = false;
     if (seeking_.load()) return true;
-    if (deadline < ReplayClock::TimePoint::max() - paused_duration_) deadline += paused_duration_;
+    // Controls accumulate complete pauses even if this loop never observed them.
+    // Consume them exactly once before rescaling the remaining gap for speed.
+    const auto paused = std::exchange(paused_duration_, ReplayClock::TimePoint::duration{});
+    if (deadline < ReplayClock::TimePoint::max() - paused) deadline += paused;
     else deadline = ReplayClock::TimePoint::max();
-    paused_duration_ = {};
     if (paused_.load()) {
       lock.unlock();
       if (!synchronize()) return false;
