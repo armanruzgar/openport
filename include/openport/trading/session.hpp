@@ -551,10 +551,10 @@ class TradingSession {
   /// 32 bytes without commas, lowercased and each kept once. Invalid text
   /// throws INVALID_NOTE; an unknown trade returns UNKNOWN_TRADE. An empty note
   /// without tags clears it. Allowed whatever the account's state or session.
-  CommandResult annotate(std::uint64_t trade, std::string note, std::vector<std::string> tags, Timestamp time);
+  CommandResult annotate(std::uint64_t trade, std::string note, std::vector<std::string> tags, Timestamp time, std::vector<std::string> mistakes = {});
   /// The same for a share round trip, named by the stock fill that opened it; its
   /// note is kept under "s" and that fill's ID.
-  CommandResult annotate_shares(std::uint64_t first_fill, std::string note, std::vector<std::string> tags, Timestamp time);
+  CommandResult annotate_shares(std::uint64_t first_fill, std::string note, std::vector<std::string> tags, Timestamp time, std::vector<std::string> mistakes = {});
   /// Joins the trades of the listed open round trips, by their trades-view IDs, into
   /// one whole trade named by the oldest (`together`), or takes each listed round
   /// trip out of its trade into one of its own: legs entered one by one become one

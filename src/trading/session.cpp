@@ -6187,8 +6187,10 @@ md::Date TradingSession::trading_date(Timestamp time) const { return plan_tradin
 namespace {
 /// Records (or, empty, clears) a trade's note and tags under `key`.
 void store_annotation(State& s, const std::string& key, Annotation annotation, Events& events) {
-  event(events, "trade_annotated", Json{{"trade", key}, {"note", annotation.note}, {"tags", annotation.tags}});
-  if (annotation.note.empty() && annotation.tags.empty()) {
+  Json payload{{"trade", key}, {"note", annotation.note}, {"tags", annotation.tags}};
+  if (!annotation.mistakes.empty()) payload["mistakes"] = annotation.mistakes;
+  event(events, "trade_annotated", payload);
+  if (annotation.note.empty() && annotation.tags.empty() && annotation.mistakes.empty()) {
     s.annotations.erase(key);
   } else {
     annotation.time = s.time;
@@ -6196,8 +6198,14 @@ void store_annotation(State& s, const std::string& key, Annotation annotation, E
   }
 }
 }  // namespace
-CommandResult TradingSession::annotate(std::uint64_t trade, std::string note, std::vector<std::string> tags, Timestamp time) {
+CommandResult TradingSession::annotate(std::uint64_t trade, std::string note, std::vector<std::string> tags, Timestamp time, std::vector<std::string> mistakes) {
   auto annotation = clean_annotation(std::move(note), tags);
+  for (const auto& mistake : mistakes) {
+    static const std::vector<std::string> picks{"chased", "oversized", "moved stop", "revenge", "broke plan", "early exit", "A+ setup"};
+    if (std::find(picks.begin(), picks.end(), mistake) == picks.end())
+      throw TradingError(Reason::INVALID_NOTE, "Unknown mistake pick: " + mistake);
+    if (std::find(annotation.mistakes.begin(), annotation.mistakes.end(), mistake) == annotation.mistakes.end()) annotation.mistakes.push_back(mistake);
+  }
   return impl_->transact(time, "annotate", [&](State& s, Events& events) {
     const auto trades = lifecycles(s.fills, s.closures, s.contracts);
     if (std::none_of(trades.begin(), trades.end(), [&](const Lifecycle& t) { return t.first_fill == trade; }))
@@ -6264,8 +6272,14 @@ CommandResult TradingSession::annotate_day(md::Date day, std::string plan, std::
     return CommandResult{};
   });
 }
-CommandResult TradingSession::annotate_shares(std::uint64_t first_fill, std::string note, std::vector<std::string> tags, Timestamp time) {
+CommandResult TradingSession::annotate_shares(std::uint64_t first_fill, std::string note, std::vector<std::string> tags, Timestamp time, std::vector<std::string> mistakes) {
   auto annotation = clean_annotation(std::move(note), tags);
+  for (const auto& mistake : mistakes) {
+    static const std::vector<std::string> picks{"chased", "oversized", "moved stop", "revenge", "broke plan", "early exit", "A+ setup"};
+    if (std::find(picks.begin(), picks.end(), mistake) == picks.end())
+      throw TradingError(Reason::INVALID_NOTE, "Unknown mistake pick: " + mistake);
+    if (std::find(annotation.mistakes.begin(), annotation.mistakes.end(), mistake) == annotation.mistakes.end()) annotation.mistakes.push_back(mistake);
+  }
   return impl_->transact(time, "annotate", [&](State& s, Events& events) {
     const auto trips = share_lifecycles(s.stock_fills, s.dividends);
     if (std::none_of(trips.begin(), trips.end(), [&](const ShareLifecycle& t) { return t.fills.front() == first_fill; }))

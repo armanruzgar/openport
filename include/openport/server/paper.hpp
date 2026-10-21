@@ -239,6 +239,7 @@ struct TradingCommand {
   std::string review;
   std::string note;               ///< Annotate: the note; empty with no tags clears it.
   std::vector<std::string> tags;  ///< Annotate: the trade's tags.
+  std::vector<std::string> mistakes;  ///< Annotate: fixed review picks.
   /// Group and Ungroup: the round trips, by trade ID, whose trades join or which leave theirs.
   std::vector<std::uint64_t> trades = {};
   /// Exercise: contracts of `symbol`; CloseStock: shares of `symbol` to close, 0 for all.

@@ -320,6 +320,7 @@ struct Annotation {
   std::string note;
   std::vector<std::string> tags;
   Timestamp time = 0;  ///< When it last changed.
+  std::vector<std::string> mistakes = {};  ///< Fixed review picks, separate from free-text tags.
 };
 struct DayNote {
   std::string plan;

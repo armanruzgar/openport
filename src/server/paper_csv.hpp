@@ -34,8 +34,8 @@ inline std::vector<std::string> paper_csv_columns(bool fills) {
       ? std::vector<std::string>{"id", "attempt", "order_id", "actor", "symbol", "underlying", "side", "quantity", "price", "fee", "quote_time", "time"}
       : std::vector<std::string>{"kind", "id", "attempt", "symbol", "underlying", "expiry", "settlement", "strike", "type", "direction",
           "status", "opened", "closed", "trading_day", "duration_seconds", "quantity", "max_quantity", "opened_contracts", "closed_contracts",
-          "average_open", "average_close", "cost", "gross", "fees", "net", "return", "mark", "unrealised", "closure", "fills", "note", "tags",
-          "shares", "max_shares", "opened_shares", "closed_shares", "dividends", "opened_by", "option", "closed_by", "closing_option", "strategy_id", "system_reason"};
+          "average_open", "average_close", "cost", "gross", "fees", "net", "return", "mark", "unrealised", "closure", "fills", "note", "tags", "mistakes",
+          "shares", "max_shares", "opened_shares", "closed_shares", "dividends", "opened_by", "option", "closed_by", "closing_option", "strategy_id", "entry_order", "system_reason"};
   columns.insert(columns.end(), base.begin(), base.end());
   for (const auto& prefix : fills ? std::vector<std::string>{"context"} : std::vector<std::string>{"entry_context", "exit_context"})
     for (const auto* field : {"spot", "spot_source", "iv", "delta", "years", "equity", "floor_room", "buying_power"})

@@ -42,6 +42,7 @@ inline void to_json(nlohmann::json& j, const TradingCommand& c) {
   if (c.program_costs) j["program_costs"] = true;
   if (c.program_cost_overrides != 0) j["program_cost_overrides"] = c.program_cost_overrides;
   if (!c.trades.empty()) j["trades"] = c.trades;
+  if (!c.mistakes.empty()) j["mistakes"] = c.mistakes;
   if (c.close_pricing.limit) { j["close_limit"] = true; j["limit_ticks"] = c.close_pricing.limit_ticks; }
   if (!c.order_ids.empty()) j["order_ids"] = c.order_ids;
 }
@@ -74,6 +75,7 @@ inline void from_json(const nlohmann::json& j, TradingCommand& c) {
   j.at("review").get_to(c.review);
   j.at("note").get_to(c.note);
   j.at("tags").get_to(c.tags);
+  trading::added_field(j, "mistakes", c.mistakes);
   j.at("quantity").get_to(c.quantity);
   if (j.contains("stock_price")) {
     const auto& p = j.at("stock_price");

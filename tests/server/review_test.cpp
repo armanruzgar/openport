@@ -97,7 +97,7 @@ TEST(TradeReviewApi, CsvQuotesNotesAndKeepsColumnsAndExactMoneyWithEmptyHistory)
   ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
   ASSERT_TRUE(s.submit(f.market("close", 1, trading::Side::Sell), f.time).decision.ok());
   const std::string note = "Wait, then \"go\"\nReview the exit.";
-  ASSERT_TRUE(s.annotate(1, note, {"setup", "patient"}, f.time).decision.ok());
+  ASSERT_TRUE(s.annotate(1, note, {"setup", "patient"}, f.time, {"chased", "early exit"}).decision.ok());
   source.publish(s);
   const auto result = server::handle_api({"GET", "/api/trades.csv?account=main&from=2026-09-22&to=2026-09-22"}, source);
   ASSERT_EQ(result.status, 200) << result.body;
@@ -106,6 +106,7 @@ TEST(TradeReviewApi, CsvQuotesNotesAndKeepsColumnsAndExactMoneyWithEmptyHistory)
   ASSERT_EQ(rows.size(), 2U); EXPECT_EQ(rows.front(), header);
   const auto row = csv_record(header, rows[1]);
   EXPECT_EQ(row["note"], note); EXPECT_EQ(row["tags"], "setup;patient");
+  EXPECT_EQ(row["mistakes"], "chased;early exit"); EXPECT_EQ(row["entry_order"], "1");
   EXPECT_EQ(row["fees"], "1.300002"); EXPECT_EQ(row["net"], "-21.300002");
   EXPECT_EQ(row["new_york_date"], "2026-09-22"); EXPECT_EQ(row["prices"], "simulated");
   EXPECT_EQ(row["entry_context.equity"], "100000.00");
@@ -168,10 +169,10 @@ TEST(TradeReviewApi, CsvDateUsesNewYorkCalendarDateIncludingDst) {
       "quote.age_seconds", "fees.commission", "fees.clearing", "fees.regulatory", "fees.index"};
   EXPECT_EQ(server::paper_csv_columns(true), fill_columns);
   const auto trade_columns = server::paper_csv_columns(false);
-  ASSERT_EQ(trade_columns.size(), 108U);
-  EXPECT_EQ(trade_columns[105], "settlement_value");
-  EXPECT_EQ(trade_columns[106], "settlement_source");
-  EXPECT_EQ(trade_columns[107], "time_stop_orders");
+  ASSERT_EQ(trade_columns.size(), 110U);
+  EXPECT_EQ(trade_columns[107], "settlement_value");
+  EXPECT_EQ(trade_columns[108], "settlement_source");
+  EXPECT_EQ(trade_columns[109], "time_stop_orders");
 }
 TEST(TradeReviewApi, ExportsNameTheirRunAttemptAndClosingTradingDay) {
   test::ScriptedMarket f;

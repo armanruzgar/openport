@@ -1842,8 +1842,8 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
           result = session.group_trades(c.trades, c.kind == TradingCommand::Kind::Group, market_time_);
           break;
         case TradingCommand::Kind::Annotate:
-          result = c.shares ? session.annotate_shares(c.trade, c.note, c.tags, market_time_)
-                            : session.annotate(c.trade, c.note, c.tags, market_time_);
+          result = c.shares ? session.annotate_shares(c.trade, c.note, c.tags, market_time_, c.mistakes)
+                            : session.annotate(c.trade, c.note, c.tags, market_time_, c.mistakes);
           break;
         case TradingCommand::Kind::Exercise: {
           const auto contract = session.contracts().find(c.symbol);
