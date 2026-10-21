@@ -3117,7 +3117,7 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
     const auto effective = string_field(pack, "effective_from");
     const auto date = csv_date(effective);
     if (!date) fail("effective_from", "effective_from must be a YYYY-MM-DD date");
-    else if (*date > md::trading_date(source.wall_time())) warnings.push_back("This pack takes effect on " + effective + ", after today");
+    else if (*date > md::new_york_time(source.wall_time()).date) warnings.push_back("This pack takes effect on " + effective + ", after today");
     const auto url = string_field(pack, "source");
     if ((!url.starts_with("https://") && !url.starts_with("http://")) || url.size() > 2000 ||
         std::any_of(url.begin(), url.end(), [](unsigned char c) { return c <= ' ' || c == 127; }))
