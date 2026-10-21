@@ -1,0 +1,2 @@
+[console_scripts]
+openport-mcp = openport_mcp.__main__:main

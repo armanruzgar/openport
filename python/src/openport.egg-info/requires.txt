@@ -1,0 +1,9 @@
+
+[mcp]
+mcp<3,>=2.2
+
+[pandas]
+pandas>=2
+
+[ws]
+websockets>=14

@@ -483,3 +483,22 @@ def test_joint_backtests_use_global_routes_and_array_selectors(stub):
         client.start_backtest(["beta@2", "alpha"], "eod-50k", scenarios=2, seed="1")
         assert stub.requests[-1][0:2] == ("POST", "/api/backtests")
         assert stub.requests[-1][3] == {"playbooks": ["beta@2", "alpha"], "plan": "eod-50k", "scenarios": 2, "seed": "1"}
+
+
+def test_journal_practice_calls_preserve_explicit_targets_and_uint64_seeds(stub):
+    client = Client(stub.url, "secret").for_history("run-1")
+    client.replay_from_trade("run-1", "7")
+    assert stub.requests[-1][1] == "/api/replay"
+    assert stub.requests[-1][3] == {"replay_from": "run-1", "trade": "7"}
+    assert client.scenario_packs() == {"packs": [stub.pack]}
+    assert stub.requests[-1][1] == "/api/replay/packs"
+    assert client.scenario_pack("practice") == stub.pack
+    assert stub.requests[-1][1] == "/api/replay/packs/practice"
+    pack = {"version": 1, "scenario": {"id": "practice"}, "seed": "18446744073709551615", "plan": "practice"}
+    assert client.import_scenario_pack(pack) == pack
+    assert stub.requests[-1][1] == "/api/replay/packs"
+    client.start_scenario_pack("practice")
+    assert stub.requests[-1][3] == {"pack": "practice", "paused": True, "speed": 1}
+    client.for_replay().note("1", "review", ["chased"], mistakes=["early exit"])
+    assert stub.requests[-1][1] == "/api/replay/trades/1/note?account=main"
+    assert stub.requests[-1][3] == {"note": "review", "tags": ["chased"], "mistakes": ["early exit"]}

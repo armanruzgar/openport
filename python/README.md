@@ -187,3 +187,13 @@ keep `error` as string/null and add failure wall/market timestamps and
 `error_recovered`. `account()` and account listings expose a nullable `damaged`
 object with the last verified sequence/time and recovery instructions; a damaged
 account remains readable and refuses writes with `ACCOUNT_DAMAGED`.
+
+Journal practice: `note(id, note, tags, mistakes=["chased"])` keeps fixed picks
+separate. `replay_from_trade(run_id, trade_id)` starts a fresh paused account before
+entry. `scenario_packs()`, `scenario_pack(pack_id)`, `import_scenario_pack(pack)` and
+`start_scenario_pack(pack_id)` export/import fixed seed/plan/objective packs.
+These controls use global replay routes even from a history client. MCP exposes
+`replay_from_trade`, `scenario_packs`, `import_scenario_pack`, and
+`start_scenario_pack`; writes retain its explicit account requirement. Drill
+scores and bests are returned in replay history; challenge inputs and recomputed
+results are included in verification receipts. See [scenarios](../docs/scenarios.md).

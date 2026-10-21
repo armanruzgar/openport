@@ -179,3 +179,20 @@ def test_joint_backtest_request_contract():
                     {key: value for key, value in body.items() if key != "playbooks"}):
         with pytest.raises(jsonschema.ValidationError):
             validator.validate(invalid)
+
+
+def test_practice_contract_rejects_unknown_mistakes_and_invalid_objectives():
+    contract = Contract("", None, SPEC)
+    def validator(name):
+        return jsonschema.Draft202012Validator(
+            {"$ref": f"urn:openport#/components/schemas/{name}"}, registry=contract.registry)
+    validator("TradeNote").validate({"note": "", "tags": [], "mistakes": ["chased", "A+ setup"]})
+    with pytest.raises(jsonschema.ValidationError):
+        validator("TradeNote").validate({"note": "", "tags": [], "mistakes": ["anything"]})
+    validator("ScenarioObjective").validate({"id": "flat", "type": "flat_by", "at": "15:45"})
+    validator("ScenarioObjective").validate({"id": "room", "type": "min_floor_room", "limit": 25})
+    for bad in ({"id": "room", "type": "min_floor_room", "limit": 101},
+                {"id": "flat", "type": "flat_by", "at": "15:45", "limit": 1},
+                {"id": "vega", "type": "max_net_vega", "limit": 10}):
+        with pytest.raises(jsonschema.ValidationError):
+            validator("ScenarioObjective").validate(bad)

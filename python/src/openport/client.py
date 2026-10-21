@@ -255,9 +255,9 @@ class Client:
         """What flatten would cancel and close now, and the account after it, without doing it."""
         return self._request("POST", "/positions/close/preview", self._flatten_body(underlying, type, limit_ticks), scoped=True)
 
-    def note(self, trade_id: str, note: str = "", tags: list[str] | None = None) -> JSON:
+    def note(self, trade_id: str, note: str = "", tags: list[str] | None = None, *, mistakes: list[str] | None = None) -> JSON:
         return self._request("PUT", "/trades/" + quote(str(trade_id), safe="") + "/note",
-                             {"note": note, "tags": tags or []}, scoped=True)
+                             {"note": note, "tags": tags or [], **({"mistakes": mistakes} if mistakes is not None else {})}, scoped=True)
 
     def group_trades(self, trade_ids: list[str]) -> JSON:
         """Join the open round trips' trades into one whole trade."""
@@ -365,6 +365,23 @@ class Client:
 
     def start_replay(self, **settings) -> ReplayResult:
         return self._request("POST", "/replay", settings, control=True)
+
+    def replay_from_trade(self, run_id: str, trade_id: str) -> ReplayResult:
+        """Fresh paused account five minutes before entry, with verified source inputs."""
+        return self._request("POST", "/replay", {"replay_from": run_id, "trade": str(trade_id)}, control=True, retry=False)
+
+    def scenario_packs(self) -> JSON:
+        return self._request("GET", "/replay/packs", control=True)
+
+    def scenario_pack(self, pack_id: str) -> JSON:
+        """One pack exactly as the server stores it; seeds stay decimal strings."""
+        return self._request("GET", "/replay/packs/" + quote(pack_id, safe=""), control=True)
+
+    def import_scenario_pack(self, pack: JSON) -> JSON:
+        return self._request("POST", "/replay/packs", pack, control=True)
+
+    def start_scenario_pack(self, pack_id: str, *, paused: bool = True, speed: int = 1) -> ReplayResult:
+        return self._request("POST", "/replay", {"pack": pack_id, "paused": paused, "speed": speed}, control=True, retry=False)
 
     def resume_replay(self, run_id: str, **settings) -> ReplayResult:
         """Continue a saved run a crash interrupted; settings may give speed and paused."""

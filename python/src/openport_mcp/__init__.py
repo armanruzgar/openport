@@ -296,6 +296,37 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return write(account, False, start)
 
     @server.tool()
+    def replay_from_trade(account: str, run_id: str, trade_id: str) -> dict:
+        """Start a fresh paused paper account before a source trade; unchanged source data is required."""
+        def start(target):
+            if account != "main":
+                raise ApiError(400, {"error": {"code": "INVALID_ACCOUNT", "message": "Replay's isolated account is main"}})
+            return target.replay_from_trade(run_id, trade_id)
+        return write(account, False, start)
+
+    @server.tool()
+    def scenario_packs() -> dict:
+        """Export simulated scenario packs, seeds, plans and declared objectives."""
+        response = result(client, client.scenario_packs)
+        response["as_of"] = None  # Definitions have no market observation time.
+        response["simulated"] = True
+        return response
+
+    @server.tool()
+    def import_scenario_pack(account: str, pack: dict) -> dict:
+        """Import a local JSON scenario pack. Requires replay scope and writable storage."""
+        return write(account, False, lambda target: target.import_scenario_pack(pack))
+
+    @server.tool()
+    def start_scenario_pack(account: str, pack_id: str) -> dict:
+        """Start a fixed pack or challenge paused, in the isolated main paper account."""
+        def start(target):
+            if account != "main":
+                raise ApiError(400, {"error": {"code": "INVALID_ACCOUNT", "message": "Replay's isolated account is main"}})
+            return target.start_scenario_pack(pack_id)
+        return write(account, False, start)
+
+    @server.tool()
     def step_replay(account: str, until: str) -> dict:
         """Step the scenario to a time, then pause.
 

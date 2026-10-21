@@ -68,6 +68,8 @@ class Stub:
                              underlyings=[shaped("UnderlyingStatus", symbol="SPX", spot=5000, as_of=TIME)])
         self.replay = None
         self.history = []
+        self.pack = {"version": 1, "scenario": {"id": "practice", "title": "Synthetic practice", "date": "2026-09-22"},
+                     "seed": "18446744073709551615", "plan": "practice"}
 
     def respond(self, method, target, headers, body):
         self.requests.append((method, target, dict(headers), copy.deepcopy(body)))
@@ -82,6 +84,10 @@ class Stub:
             return 202, shaped("BacktestState", id="000001", report=None)
         if path == "/api/backtests/000001":
             return 200, shaped("BacktestState", id="000001", report=None)
+        if path == "/api/replay/packs":
+            return (201, body) if method == "POST" else (200, {"packs": [self.pack]})
+        if path == "/api/replay/packs/practice":
+            return 200, self.pack
         if path == "/api/replay/history":
             return 200, {"history": self.history}
         if path == "/api/replay/history/run-1/verify":
@@ -101,6 +107,8 @@ class Stub:
         path = path.replace("/api/replay/history/run-1", "/api").replace("/api/replay", "/api")
         if path == "/api":
             path = "/api/account"
+        if path.startswith("/api/trades/") and path.endswith("/note"):
+            return 200, {**body, "trade": path.split("/")[-2], "account_version": "1"}
         if path == "/api/tokens/reload":
             return 200, {"names": ["operator"], "count": 1, "loaded_at": TIME}
         if path == "/api/status":
