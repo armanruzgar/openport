@@ -1,4 +1,5 @@
 #include "openport/providers/tastytrade.hpp"
+#include "../../apps/probe/certification.hpp"
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -299,6 +300,24 @@ TEST(Tastytrade, MapsSummaryClockAndSessionVolumeWithoutInventingTrades) {
   mapper.event({{"eventType", "Trade"}, {"eventSymbol", ".SPX261016C7400"}, {"dayVolume", 321},
                 {"time", 1790350200000LL}});
   ASSERT_EQ(sink.all<md::OptionVolume>().size(), 1u);  // same count, new trading day
+}
+
+TEST(Tastytrade, CertificationUsesTheExistingChainAndMapperFixtures) {
+  probe::Conformance monitor({{"SPX"}}, true, 1);
+  providers::TastytradeMapper mapper({{"SPX"}}, monitor, true);
+  mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  auto update = quote(".SPX261016C7400");
+  update["bidTime"] = update["askTime"] = 1790263800000LL;
+  mapper.event(update);
+  mapper.event({{"eventType", "Trade"}, {"eventSymbol", ".SPX261016C7400"},
+                {"dayVolume", 321}, {"time", 1790263800000LL}});
+  const auto report = monitor.report();
+  EXPECT_EQ(report["event_counts"]["OptionQuote"], 1);
+  EXPECT_EQ(report["event_counts"]["OptionTrade"], 0);
+  EXPECT_EQ(report["event_counts"]["SnapshotComplete"], 0);
+  EXPECT_EQ(report["presence"]["volume_contracts"], 1);
+  EXPECT_EQ(report["timestamps"]["OptionVolume"]["unknown"], 0);
+  EXPECT_EQ(report["exit_code"], 0);
 }
 
 TEST(Tastytrade, SandboxRefusalAndCredentialValidationDoNotStartNetwork) {

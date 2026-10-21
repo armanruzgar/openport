@@ -34,6 +34,9 @@ class Readiness {
       if (found == definitions_.end()) return;
       const auto progress = progress_.find(found->second);
       if (progress != progress_.end()) ++progress->second.quotes;
+    } else if (const auto* complete = std::get_if<md::SnapshotComplete>(&event)) {
+      const auto progress = progress_.find(complete->underlying);
+      if (!streaming_ && progress != progress_.end()) progress->second.snapshot = true;
     } else if (const auto* status = std::get_if<md::ProviderStatus>(&event)) {
       const auto progress = progress_.find(status->underlying);
       if (!streaming_ && progress != progress_.end() &&

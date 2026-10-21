@@ -1,5 +1,6 @@
-add_executable(openport-probe probe/main.cpp)
+add_executable(openport-probe probe/main.cpp probe/certification.cpp)
 target_link_libraries(openport-probe PRIVATE openport::providers openport::options)
+target_compile_definitions(openport-probe PRIVATE OPENPORT_VERSION="${PROJECT_VERSION}")
 
 add_executable(openportd openportd/main.cpp)
 target_link_libraries(openportd PRIVATE openport::server openport::providers openport::options)

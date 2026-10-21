@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include "openport/providers/factory.hpp"
+#include "../../apps/probe/certification.hpp"
 #include "support/broker_sink.hpp"
 #include "support/http_stub.hpp"
 
@@ -218,6 +219,21 @@ TEST(Tradier, FullPollUsesOnlyMarketPathsAndPublishesDefinitionBeforeData) {
   provider.poll_once(http, "SPX", {{"SPX"}, 1, .1}, sink);
   EXPECT_TRUE(sink.all<md::OptionQuote>().empty());
   EXPECT_EQ(sink.all<md::SnapshotComplete>().size(), 1u);
+}
+
+TEST(Tradier, CertificationUsesTheExistingChainAndHttpFixtures) {
+  providers::TradierProvider provider({.access_token = "redact-this-token", .clock = [] { return kNow; }});
+  test::HttpStub http;
+  http.respond = fixture;
+  probe::Conformance monitor({{"SPX"}, 1, .1}, false, 1);
+  provider.poll_once(http, "SPX", {{"SPX"}, 1, .1}, monitor);
+  const auto report = monitor.report();
+  EXPECT_EQ(report["contracts_seen"], 1);
+  EXPECT_EQ(report["presence"]["volume_contracts"], 1);
+  EXPECT_EQ(report["timestamps"]["VendorGreeks"]["unknown"], 1);
+  EXPECT_EQ(report["greeks"]["iv"]["minimum"], .3577);
+  EXPECT_EQ(report["outcome"], "review");
+  EXPECT_EQ(report.dump().find("redact-this-token"), std::string::npos);
 }
 
 TEST(Tradier, FailedRootDoesNotPublishOrRetireTheLastSnapshot) {
