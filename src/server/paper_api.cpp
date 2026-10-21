@@ -1832,8 +1832,16 @@ void check_plan_name(Money initial_cash, const AccountRules& rules) {
 }
 /// The account's margin, as a broker sets it, can stand beside a plan or custom
 /// rules, as the fill model does; the evaluation rules stay intact.
+/// Financing posts to realised P&L, so only a practice account may change the
+/// plan's rates; pin risk stays a simulation choice on any plan.
 void margin_model(const json& body, AccountRules& rules) {
+  const auto plan = rules;
   margin_fields(body, rules);
+  if (!plan.practice() && (rules.cash_credit_rate_bps != plan.cash_credit_rate_bps ||
+                           rules.margin_debit_rate_bps != plan.margin_debit_rate_bps ||
+                           rules.stock_borrow_rate_bps != plan.stock_borrow_rate_bps))
+    throw TradingError(Reason::PLAN_LOCKED, "Financing rates can be overridden only on practice accounts; "
+                       "evaluation, verification and funded plans use their own rates");
   validate_rules(rules);
 }
 /// Presets override only execution settings; all evaluation rules stay intact.

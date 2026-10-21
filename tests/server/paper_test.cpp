@@ -440,6 +440,26 @@ TEST_F(PaperEngine, SimulationSettingsRoundTripAndLiveHaltDrillsAreRefused) {
   expect_error(write(*engine, "POST", "/api/market/halt", {{"symbol", "SPY"}, {"minutes", 5}}), 422, "PLAN_LOCKED");
 }
 
+TEST_F(PaperEngine, FinancingOverridesArePracticeOnlyAndLeaveThePreset) {
+  seed();
+  // A credit rate would pay an evaluation's target without a trade.
+  for (const auto* plan : {"intraday-100k", "eod-25k"})
+    for (const auto* key : {"cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps"}) {
+      expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", plan}, {"reason", "financing"}, {key, 100000}}),
+                   422, "PLAN_LOCKED");
+      expect_error(write(*engine, "POST", "/api/accounts", {{"name", "Financed"}, {"plan", plan}, {key, 100000}}),
+                   422, "PLAN_LOCKED");
+    }
+  // Restating the plan's own rate is not an override.
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"plan", "intraday-100k"}, {"reason", "same"},
+      {"cash_credit_rate_bps", 0}}).status, 200);
+  EXPECT_EQ(read(*engine, "/api/account")["rules"]["plan_id"], "intraday-100k");
+  // Pin risk is still allowed, but the account no longer follows the preset.
+  const auto pinned = write(*engine, "POST", "/api/account/reset", {{"plan", "intraday-100k"}, {"reason", "pin"}, {"pin_risk", true}});
+  ASSERT_EQ(pinned.status, 200) << pinned.body;
+  EXPECT_TRUE(json::parse(pinned.body)["rules"]["plan_id"].is_null());
+}
+
 TEST_F(PaperEngine, WhatIfComparesCandidatesWithoutTrading) {
   seed();
   const auto before = read(*engine, "/api/account");

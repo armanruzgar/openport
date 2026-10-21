@@ -234,12 +234,9 @@ bool same_program_rules(AccountRules left, const AccountRules& right) {
   execution.fill_latency_ms = right.fill_latency_ms;
   execution.impact_ticks = right.impact_ticks;
   execution.inside_fill_percent = right.inside_fill_percent;
-  execution.cash_credit_rate_bps = right.cash_credit_rate_bps;
-  execution.margin_debit_rate_bps = right.margin_debit_rate_bps;
-  execution.stock_borrow_rate_bps = right.stock_borrow_rate_bps;
+  // Financing and pin risk change P&L without a trade, so they are program
+  // rules: an account that overrides them no longer follows the preset.
   execution.fees = right.fees;
-  execution.pin_risk = right.pin_risk;
-  execution.pin_risk_seed = right.pin_risk_seed;
   // The account's margin is the trader's broker's, not the plan's.
   execution.margin = right.margin;
   execution.account_type = right.account_type;

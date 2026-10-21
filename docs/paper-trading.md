@@ -97,7 +97,9 @@ time value left is a cost; it takes the account's checks and, with the
 ### Simulated expiry pin risk
 
 `pin_risk` defaults to false on every existing plan. Enable it when creating or
-resetting an account (also in the terminal's margin settings). For a physical short
+resetting an account (also in the terminal's margin settings); like the financing
+rates, it is a program rule, so an account that changes it no longer reports the
+preset's `plan_id`. For a physical short
 option whose actual settlement reference is within $0.10 of its strike, each
 contract has a 25% chance of the contrary exercise decision: an otherwise exercised
 short may lapse, and an otherwise lapsed short may be assigned. Calls and puts use
@@ -1557,7 +1559,11 @@ a latched risk limit. Existing closed-day history is retained.
 Three optional annual rates are in basis points (100 bps = 1%, integer 0–100000):
 `cash_credit_rate_bps`, `margin_debit_rate_bps`, `stock_borrow_rate_bps`. All default
 to zero, preserving existing plans. Set them in custom rules or as create/reset
-broker overrides, or in the terminal's margin settings. Credit interest uses
+broker overrides, or in the terminal's margin settings. Rates are program rules:
+an account whose rates differ from its preset's no longer reports that preset's
+`plan_id`, and create/reset overrides that change a plan's rates are refused with
+422 `PLAN_LOCKED` unless the plan is practice (no objectives, fees or evaluation
+counts), since credit interest would otherwise pay an evaluation's target. Credit interest uses
 positive closing cash. Debit interest applies to negative cash only under portfolio
 margin on margin accounts. Borrow fees use each short stock's last closing marked
 notional. No rate, borrow availability or price is inferred from a live broker.

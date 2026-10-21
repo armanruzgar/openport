@@ -1319,6 +1319,16 @@ TEST(DeskEquity, OnlyAPassOfThePresetItselfUnlocksItsFundedPlan) {
   auto looser = evaluation->rules;
   looser.max_drawdown = Money::parse("5000");
   EXPECT_FALSE(server::follows_plan(*evaluation, evaluation->initial_cash, looser));
+  // Financing and pin risk move P&L without a trade, so they are program rules.
+  for (const auto& change : std::vector<std::function<void(trading::AccountRules&)>>{
+           [](auto& r) { r.cash_credit_rate_bps = 100000; }, [](auto& r) { r.margin_debit_rate_bps = 1; },
+           [](auto& r) { r.stock_borrow_rate_bps = 1; }, [](auto& r) { r.pin_risk = true; },
+           [](auto& r) { r.pin_risk_seed = 7; }}) {
+    auto financed = evaluation->rules;
+    change(financed);
+    EXPECT_FALSE(server::follows_plan(*evaluation, evaluation->initial_cash, financed));
+    EXPECT_TRUE(server::preset_id(evaluation->initial_cash, financed).empty());
+  }
 }
 
 void write_stream(const std::filesystem::path& file, bool snapshots, md::Timestamp delay = 0) {
