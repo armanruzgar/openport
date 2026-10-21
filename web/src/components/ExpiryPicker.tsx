@@ -13,7 +13,8 @@ export function ExpiryPicker({ expiries, value, onChange }: { expiries: Expiry[]
     const container = strip.current
     const button = selected.current
     if (!container || !button) return
-    const left = button.offsetLeft - container.offsetLeft
+    // The strip is positioned, so the button's offset is already measured from it.
+    const left = button.offsetLeft
     if (left < container.scrollLeft || left + button.offsetWidth > container.scrollLeft + container.clientWidth) {
       container.scrollTo({ left: left - container.clientWidth / 3, behavior: "smooth" })
     }

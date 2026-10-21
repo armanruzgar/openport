@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { liveState, useLive } from "../api/live"
-import type { Chain, Expiry, ExposureMatrix, OptionQuote, Status, Summary, Tick } from "../api/types"
+import type { Chain, Expiry, ExposureMatrix, OptionQuote, ReplayState, Status, Summary, Tick } from "../api/types"
 import { Header } from "../components/Header"
 import { ChainView } from "./ChainView"
 import { EngineView } from "./EngineView"
@@ -191,5 +191,15 @@ describe("web follow-up rendering", () => {
     expect(html).not.toContain("700.00")
     vi.mocked(useLive).mockReturnValue(liveState({ ...status, market: undefined }, null, "open"))
     expect(render(<EngineView />)).not.toContain("overloaded")
+  })
+
+  it("ages a replay's underlying health by the replay clock", () => {
+    const tick: Tick = { type: "tick", feed: status.feed, engine: status.engine,
+      underlyings: [{ symbol: "SPY", spot: 700, as_of: asOf, version: 1, state: "live", message: null, last_success: asOf, last_error: null, last_error_time: null }] }
+    vi.mocked(useLive).mockReturnValue(liveState(status, tick, "open", 0, undefined, undefined, "replay", { time: "2026-09-22T19:59:30Z" } as ReplayState))
+    const html = render(<EngineView />)
+    const health = html.slice(html.indexOf("Underlying health"))
+    expect(health).toContain("15:59 ET, &lt;1 min old")
+    expect(health).not.toMatch(/\dd \d+h old/)
   })
 })

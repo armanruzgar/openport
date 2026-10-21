@@ -40,7 +40,6 @@ export function App() {
   const storage = live.accounts.find((account) => account.id === live.account)
   const symbols = (live.tick?.underlyings ?? live.status?.underlyings ?? []).map((u) => u.symbol)
   const symbol = route.symbol && symbols.includes(route.symbol) ? route.symbol : (symbols[0] ?? null)
-  const version = symbol ? live.version(symbol) : 0
   const payouts = payoutsVisible(useAccount().data)
   // Account pages need a paper-trading server; analytics-only servers land on Trade.
   const view = accountViews.includes(route.view) && !live.trading ? "chain"
@@ -63,10 +62,15 @@ export function App() {
         return
       }
       if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && symbol && view === "chain") {
-        const summary = matchingPayload(queryClient.getQueryData<Summary>(["summary", symbol, version]), symbol)
+        // Step from what the chain shows: the last summary loaded, while the new version's loads,
+        // and the default expiry once the route's has rolled off.
+        const latest = queryClient.getQueryCache().findAll({ queryKey: ["summary", symbol] })
+          .filter((query) => query.state.data !== undefined).sort((a, b) => b.state.dataUpdatedAt - a.state.dataUpdatedAt)[0]
+        const summary = matchingPayload(latest?.state.data as Summary | undefined, symbol)
         const ids = summary?.expiries.map((e) => e.id) ?? []
         if (ids.length === 0) return
-        const current = route.expiry ?? defaultExpiry(summary?.expiries ?? [], marketTime(live, symbol, summary?.as_of))
+        const current = route.expiry && ids.includes(route.expiry) ? route.expiry
+          : defaultExpiry(summary?.expiries ?? [], marketTime(live, symbol, summary?.as_of))
         const at = Math.max(0, ids.indexOf(current ?? ""))
         const step = ids[Math.min(ids.length - 1, Math.max(0, at + (event.key === "ArrowRight" ? 1 : -1)))]
         if (step) navigate({ expiry: step })
@@ -75,7 +79,7 @@ export function App() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [navigate, queryClient, route.expiry, view, symbol, version, pages, live])
+  }, [navigate, queryClient, route.expiry, view, symbol, pages, live])
 
   const waiting = live.status?.feed.message || "Connecting to openportd…"
   const content = view === "dashboard" ? <DashboardView />

@@ -15,15 +15,17 @@ export function intradayEquity(samples: readonly EquitySample[], day: string, at
       const gap = previous && (x - Date.parse(previous.time) > 90_000 || previous.attempt !== row.attempt)
       if (gap) points.push({ x: x - 1, y: null })
       // A floor or target changes at the recorded instant, not gradually over
-      // the preceding minute. Keep equity and the projected EOD floor continuous.
+      // the preceding minute; the old level ends just before it, so the readout
+      // at that instant shows the new one. Keep equity and the projected EOD floor continuous.
       if (!gap && previous && (key === "floor" || key === "target") && previous[key] != null && previous[key] !== row[key]) {
         const prior = Number(previous[key])
-        if (Number.isFinite(prior)) points.push({ x, y: prior })
+        if (Number.isFinite(prior)) points.push({ x: x - 1, y: prior })
       }
       const value = row[key] == null ? null : Number(row[key])
       points.push({ x, y: value != null && Number.isFinite(value) ? value : null })
     })
-    return { id: key, label, color, points, dashed: key !== "equity", dots: true }
+    // Equity marks each sample; the plan's levels are dashed lines.
+    return { id: key, label, color, points, dashed: key !== "equity", dots: key === "equity" }
   }).filter((s) => s.points.some((p) => p.y != null))
   const markers = rows.flatMap((row, i) => {
     const prior = rows[i - 1]
