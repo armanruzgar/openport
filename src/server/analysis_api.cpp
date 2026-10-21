@@ -109,30 +109,36 @@ ApiResponse profile_view(const AnalysisBook& book, const std::map<std::string, s
   config.days = days;
   const auto metrics = book.source->metrics(reference);
   const double spot = metrics && metrics->spot > 0 && std::isfinite(metrics->spot) ? metrics->spot : 0.0;
-  std::map<std::string, trading::Position> positions;
-  std::map<std::string, trading::StockPosition> stocks;
-  for (const auto& [symbol, p] : book.ledger.positions())
-    if (underlying.empty() || p.contract.underlying == underlying) positions.emplace(symbol, p);
-  for (const auto& [symbol, s] : book.ledger.stocks())
-    if (underlying.empty() || symbol == underlying) stocks.emplace(symbol, s);
   json betas = json::array();
   bool complete = book.unpriced.empty();
+  std::set<std::string> weighted;
   for (const auto& symbol : held_underlyings(book)) {
     if (!underlying.empty() && symbol != underlying) continue;
     const auto beta = underlying.empty() ? profile_beta(*book.source, symbol, reference, given) : BetaEstimate{1, analytics::kNaN, 0, "reference"};
+    // An underlying without a beta stays out of the curves; its beta reads null.
     if (beta.source.empty()) complete = false;
-    else config.betas[symbol] = beta.beta;
+    else {
+      config.betas[symbol] = beta.beta;
+      weighted.insert(symbol);
+    }
     betas.push_back({{"underlying", symbol}, {"beta", beta.source.empty() ? json(nullptr) : number(beta.beta)},
                      {"source", beta.source.empty() ? json(nullptr) : json(beta.source)}, {"observations", beta.observations}});
   }
-  if (positions.empty() && stocks.empty()) return api_error(404, "NOT_FOUND", "The portfolio holds nothing in " + reference);
+  std::map<std::string, trading::Position> positions;
+  std::map<std::string, trading::StockPosition> stocks;
+  for (const auto& [symbol, p] : book.ledger.positions())
+    if (weighted.contains(p.contract.underlying)) positions.emplace(symbol, p);
+  for (const auto& [symbol, s] : book.ledger.stocks())
+    if (weighted.contains(symbol)) stocks.emplace(symbol, s);
+  if (positions.empty() && stocks.empty())
+    return api_error(404, "NOT_FOUND", "Nothing valued in this portfolio moves with " + reference);
   const auto profile = trading::risk_profile(trading::Ledger::restore({}, std::move(positions), std::move(stocks)),
       book.valuations, config, spot, Money{}, std::nullopt, std::nullopt, book.now, book.max_age, book.stock_prices);
   complete = complete && profile.complete;
   json curves = json::array();
   for (const auto& curve : profile.curves) {
     json pnl = json::array();
-    for (const double value : curve.pnl) pnl.push_back(complete ? dollars(value) : json(nullptr));
+    for (const double value : curve.pnl) pnl.push_back(profile.complete ? dollars(value) : json(nullptr));
     curves.push_back({{"days", curve.days}, {"time", md::format_timestamp(curve.time)}, {"pnl", pnl}, {"clamped", curve.clamped}});
   }
   json prices = json::array();
@@ -144,7 +150,7 @@ ApiResponse profile_view(const AnalysisBook& book, const std::map<std::string, s
                {"prices", prices}, {"curves", curves}, {"betas", betas}, {"complete", complete},
                {"model", "Black-76 on each contract's smile IV plus the offset, sticky strike; remaining life and carry shrink by "
                          "the days; each underlying moves its beta times the reference's percent move. P&L is from the book's "
-                         "value now, not from its cost."}});
+                         "value now, not from its cost. Unpriced holdings and underlyings without a beta are left out."}});
   return {200, body.dump()};
 }
 
@@ -160,18 +166,23 @@ ApiResponse grid_view(const AnalysisBook& book, const std::map<std::string, std:
   }
   const auto grid = trading::scenario_grid(book.ledger, book.valuations, config, book.now, book.max_age, book.stock_prices);
   const bool complete = grid.complete && book.unpriced.empty();
-  json pnl = json::array();
+  json pnl = json::array(), clamped = json::array();
   std::size_t index = 0;
   for ([[maybe_unused]] double spot : config.spot_percent) {
-    json row = json::array();
-    for ([[maybe_unused]] double vol : config.vol_points) row.push_back(complete ? dollars(grid.cells.at(index++).pnl) : json(nullptr));
+    json row = json::array(), floors = json::array();
+    for ([[maybe_unused]] double vol : config.vol_points) {
+      const auto& cell = grid.cells.at(index++);
+      row.push_back(grid.complete ? dollars(cell.pnl) : json(nullptr));
+      floors.push_back(cell.clamped);
+    }
     pnl.push_back(std::move(row));
+    clamped.push_back(std::move(floors));
   }
   auto body = base(book);
   body.update({{"view", "grid"}, {"spot_percent", config.spot_percent}, {"vol_points", config.vol_points}, {"pnl", pnl},
-               {"complete", complete},
+               {"clamped", clamped}, {"complete", complete},
                {"model", "Every underlying moves by the same percent and every smile IV by the same points; Black-76 at "
-                         "today's remaining life. P&L is from the book's value now."}});
+                         "today's remaining life. P&L is from the book's value now; unpriced holdings are left out."}});
   return {200, body.dump()};
 }
 
@@ -281,17 +292,24 @@ AnalysisBook analysis_book(const AnalysisPortfolio& portfolio, const MetricsSour
     if (h.contract) {
       trading::Position position{*h.contract, h.quantity, {}, {}, {}};
       if (h.cost) position.basis = Money::from_double(*h.cost * static_cast<double>(h.quantity) * h.contract->multiplier);
+      const auto valuation = contract_valuation(h.symbol, *h.contract, m);
+      // A holding without a valuation stays out of the views, which name it as unpriced.
+      if (!valuation.valid) {
+        book.unpriced.push_back(h.symbol);
+        continue;
+      }
       positions.emplace(h.symbol, position);
       book.contracts.emplace(h.symbol, *h.contract);
-      const auto valuation = contract_valuation(h.symbol, *h.contract, m);
       book.valuations.emplace(h.symbol, valuation);
-      if (!valuation.valid) book.unpriced.push_back(h.symbol);
     } else {
       trading::StockPosition stock{h.symbol, h.quantity, {}, {}, {}};
       if (h.cost) stock.basis = Money::from_double(*h.cost * static_cast<double>(h.quantity));
-      stocks.emplace(h.symbol, stock);
-      if (m && m->spot > 0 && std::isfinite(m->spot)) book.stock_prices[h.symbol] = m->spot;
-      else book.unpriced.push_back(h.symbol);
+      if (m && m->spot > 0 && std::isfinite(m->spot)) {
+        book.stock_prices[h.symbol] = m->spot;
+        stocks.emplace(h.symbol, stock);
+      } else {
+        book.unpriced.push_back(h.symbol);
+      }
     }
   }
   book.ledger = trading::Ledger::restore({}, std::move(positions), std::move(stocks));

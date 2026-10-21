@@ -160,14 +160,16 @@ TEST(AnalysisApi, ImportsValuesRunsRiskViewsAndNeverTrades) {
   response = call(store, source, "GET", "/api/analysis/portfolios/ira-at-schwab/risk/grid?spot=-5,0,5&vol=0");
   ASSERT_EQ(response.status, 200) << response.body;
   body = json::parse(response.body);
-  EXPECT_EQ(body["complete"], false);  // the shares have no price
-  EXPECT_TRUE(body["pnl"][0][0].is_null());
+  EXPECT_EQ(body["complete"], false);  // the shares have no price and are left out
+  const auto without_shares = body["pnl"][0][0];
+  EXPECT_LT(without_shares.get<double>(), 0);
 
   // Without the shares the book is complete.
   call(store, source, "POST", "/api/analysis/portfolios",
        json{{"name", "Options only"}, {"csv", "symbol,quantity\nSPXW261022C05000000,2\nSPXW261022P04900000,-1\n"}}.dump());
   body = json::parse(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/grid?spot=-5,0,5&vol=0").body);
   ASSERT_EQ(body["complete"], true) << body.dump();
+  EXPECT_EQ(body["pnl"][0][0], without_shares);  // the same options, valued alike
   EXPECT_EQ(body["pnl"][1][0], 0.0);
   EXPECT_LT(body["pnl"][0][0].get<double>(), 0);  // long calls, short puts: a fall loses
   EXPECT_GT(body["pnl"][2][0].get<double>(), 0);

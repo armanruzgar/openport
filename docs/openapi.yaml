@@ -24959,10 +24959,13 @@
             "type": "number"
           },
           "type": {
-            "type": "string",
-            "enum": [
-              "call",
-              "put"
+            "anyOf": [
+              {
+                "const": "call"
+              },
+              {
+                "const": "put"
+              }
             ]
           },
           "price": {
@@ -25005,13 +25008,22 @@
             ]
           },
           "side": {
-            "type": "string",
-            "enum": [
-              "bid",
-              "ask",
-              "mid",
-              "outside",
-              "unquoted"
+            "anyOf": [
+              {
+                "const": "bid"
+              },
+              {
+                "const": "ask"
+              },
+              {
+                "const": "mid"
+              },
+              {
+                "const": "outside"
+              },
+              {
+                "const": "unquoted"
+              }
             ]
           },
           "aggressor": {
@@ -25093,11 +25105,16 @@
             "type": "boolean"
           },
           "source": {
-            "type": "string",
-            "enum": [
-              "feed",
-              "simulated",
-              "none"
+            "anyOf": [
+              {
+                "const": "feed"
+              },
+              {
+                "const": "simulated"
+              },
+              {
+                "const": "none"
+              }
             ]
           },
           "message": {
@@ -25194,10 +25211,13 @@
             "type": "string"
           },
           "session": {
-            "type": "string",
-            "enum": [
-              "before_open",
-              "after_close"
+            "anyOf": [
+              {
+                "const": "before_open"
+              },
+              {
+                "const": "after_close"
+              }
             ]
           },
           "label": {
@@ -25211,10 +25231,13 @@
             ]
           },
           "source": {
-            "type": "string",
-            "enum": [
-              "recorded",
-              "imported"
+            "anyOf": [
+              {
+                "const": "recorded"
+              },
+              {
+                "const": "imported"
+              }
             ]
           },
           "implied": {
@@ -25592,13 +25615,22 @@
             "type": "string"
           },
           "format": {
-            "type": "string",
-            "enum": [
-              "auto",
-              "generic",
-              "tastytrade",
-              "schwab",
-              "ibkr"
+            "anyOf": [
+              {
+                "const": "auto"
+              },
+              {
+                "const": "generic"
+              },
+              {
+                "const": "tastytrade"
+              },
+              {
+                "const": "schwab"
+              },
+              {
+                "const": "ibkr"
+              }
             ]
           }
         }
@@ -25629,11 +25661,16 @@
             "type": "string"
           },
           "type": {
-            "type": "string",
-            "enum": [
-              "call",
-              "put",
-              "shares"
+            "anyOf": [
+              {
+                "const": "call"
+              },
+              {
+                "const": "put"
+              },
+              {
+                "const": "shares"
+              }
             ]
           },
           "expiry": {
@@ -25730,13 +25767,22 @@
             ]
           },
           "status": {
-            "type": "string",
-            "enum": [
-              "priced",
-              "unpriced",
-              "no_market_data",
-              "not_in_chain",
-              "expired"
+            "anyOf": [
+              {
+                "const": "priced"
+              },
+              {
+                "const": "unpriced"
+              },
+              {
+                "const": "no_market_data"
+              },
+              {
+                "const": "not_in_chain"
+              },
+              {
+                "const": "expired"
+              }
             ]
           }
         },
@@ -26291,6 +26337,15 @@
               }
             }
           },
+          "clamped": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "boolean"
+              }
+            }
+          },
           "model": {
             "type": "string"
           }
@@ -26308,6 +26363,7 @@
           "spot_percent",
           "vol_points",
           "pnl",
+          "clamped",
           "model"
         ]
       }
