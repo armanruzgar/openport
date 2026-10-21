@@ -682,7 +682,9 @@ FillQuote fill_quote(const detail::Book& book, Side side) {
 }
 /// Slippage and simulated depth use the displayed price's tick tier. A negative
 /// budget carries depth consumed by earlier orders on this same observation.
-Money execution_price(const State& s, const std::string& symbol, Side side, std::optional<Money> limit = {}, Quantity offset = 0) {
+/// `stress` adds a stressed stop's extra adverse ticks (see stressed).
+Money execution_price(const State& s, const std::string& symbol, Side side, std::optional<Money> limit = {}, Quantity offset = 0,
+                      std::int64_t stress = 0) {
   const auto& book = s.books.at(symbol);
   const auto& quote = book.quote;
   const bool buy = side == Side::Buy;
@@ -691,7 +693,7 @@ Money execution_price(const State& s, const std::string& symbol, Side side, std:
   const auto left = buy ? book.ask_left : book.bid_left;
   const auto blocks = s.config.rules.impact_ticks > 0 ? depth_used(size, left, offset) / size : 0;
   const auto tick = tick_size(s.contracts.at(symbol).root, displayed);
-  const auto slip = tick * s.config.rules.slippage_ticks + tick * s.config.rules.impact_ticks * blocks;
+  const auto slip = tick * (s.config.rules.slippage_ticks + stress) + tick * s.config.rules.impact_ticks * blocks;
   const auto price = buy ? displayed + slip : std::max(Money{}, displayed - slip);
   return limit && s.config.rules.impact_ticks == 0 ? (buy ? std::min(*limit, price) : std::max(*limit, price)) : price;
 }
@@ -702,7 +704,7 @@ Money order_price(const State& s, const Order& o, const std::string& symbol, Sid
     const auto& q = s.books.at(symbol).quote;
     return side == Side::Buy ? *q.ask : *q.bid;
   }
-  return execution_price(s, symbol, side, limit, offset);
+  return execution_price(s, symbol, side, limit, offset, o.stress_ticks);
 }
 /// What a market order for `quantity` contracts would trade at now, as
 /// (price, contracts): an executable book's slipped far side, block by block
@@ -2406,7 +2408,181 @@ void count_execution(State& s, const Order& order) {
 bool data_gap(Reason code) {
   return code == Reason::STALE_QUOTE || code == Reason::INVALID_QUOTE || code == Reason::MISSING_VALUATION || code == Reason::MARKET_HALTED;
 }
+/// The queue fill model (AccountRules::queue_fills). A resting single-leg limit
+/// at its own side's touch waits behind the size displayed there when it joins
+/// (and the account's own earlier orders at its price). Trade prints at its price
+/// consume that queue; without prints, the contract's volume increases while the
+/// touch stays at the price, half of each counted on this side; without either,
+/// the volume-rate heuristic: the displayed size it last saw trades once every
+/// kQueueTurnover of market time. Size that leaves the displayed level without
+/// trading is cancelled from ahead of it in proportion to its place in the queue.
+/// What trades past the queue, and every print through its price, it may fill at
+/// its limit. Fractions round at random from the seed, the attempt, the order
+/// and the market time, so the same feed always gives the same fills.
+constexpr Timestamp kQueueTurnover = 300 * md::kNanosPerSecond;
+std::uint64_t mix(std::uint64_t x);
+bool queue_eligible(const State& s, const Order& o) {
+  const auto& r = o.request;
+  return s.config.rules.queue_fills && r.type == OrderType::Limit && r.limit_price && !multi_leg(r) && !o.system &&
+         o.status != OrderStatus::Armed && !touch_stop(s, o) && !inside_single(s, o);
+}
+/// Where the order's own side of a valid quote stands against its limit: at it,
+/// better (the order rests behind the touch) or worse (nothing displayed is ahead).
+enum class Touch { At, Behind, Clear };
+Touch touch_of(const QuoteObservation& q, Side side, Money limit) {
+  const auto own = side == Side::Buy ? *q.bid : *q.ask;
+  if (own == limit) return Touch::At;
+  return (side == Side::Buy ? own > limit : own < limit) ? Touch::Behind : Touch::Clear;
+}
+/// The account's own earlier orders resting at the same price, still unfilled.
+Quantity own_ahead(const State& s, const Order& o) {
+  Quantity total = 0;
+  for (const auto id : open_ids(s)) {
+    if (id >= o.id) break;
+    const auto& other = s.orders[id - 1];
+    if (other.queue && other.request.symbol == o.request.symbol && other.request.side == o.request.side &&
+        other.queue->price == *o.request.limit_price && other.request.limit_price == o.request.limit_price)
+      total += other.remaining() - other.queue->earned;
+  }
+  return total;
+}
+/// num / den, its fraction rounded up with that probability from the seed.
+Quantity queue_round(const State& s, OrderId id, std::uint64_t purpose, __int128 num, __int128 den) {
+  if (num <= 0 || den <= 0) return 0;
+  auto whole = num / den;
+  const auto part = num % den;
+  if (part != 0) {
+    auto seed = mix(static_cast<std::uint64_t>(s.evaluation.started) ^ mix(static_cast<std::uint64_t>(s.config.rules.queue_seed)));
+    seed = mix(seed ^ id);
+    seed = mix(seed ^ static_cast<std::uint64_t>(s.time));
+    seed = mix(seed ^ purpose);
+    if (static_cast<unsigned __int128>(seed) % static_cast<unsigned __int128>(den) < static_cast<unsigned __int128>(part)) ++whole;
+  }
+  return static_cast<Quantity>(std::min<__int128>(whole, std::numeric_limits<Quantity>::max()));
+}
+/// A new spot for an order joining at its limit now, or none while it rests behind the touch.
+std::optional<QueueSpot> join_spot(const State& s, const Order& o, bool through) {
+  const auto& q = s.books.at(o.request.symbol).quote;
+  const auto touch = touch_of(q, o.request.side, *o.request.limit_price);
+  if (touch == Touch::Behind && !through) return std::nullopt;
+  const auto shown = touch == Touch::At ? (o.request.side == Side::Buy ? q.bid_size : q.ask_size) : 0;
+  const auto own = own_ahead(s, o);
+  return QueueSpot{*o.request.limit_price, touch == Touch::Behind ? own : shown + own, 0, shown, q.observation,
+                   s.time, s.time, std::nullopt, "joined"};
+}
+/// Join an order that rests now, on its submission or once its price changed.
+void join_queue(State& s, OrderId id, std::optional<OrderId> incoming) {
+  const auto& o = s.orders[id - 1];
+  if (!o.open() || !queue_eligible(s, o) || !latency_ready(s, o) || !s.books.contains(o.request.symbol)) return;
+  const auto& book = s.books.at(o.request.symbol);
+  if ((incoming != id && book.quote.time < o.accepted_at) || !quote_check(s, o.request.symbol).ok() ||
+      marketable(o, book.quote) || (o.queue && o.queue->price == *o.request.limit_price))
+    return;
+  auto spot = join_spot(s, o, false);
+  if (spot != o.queue) s.orders.mut(id - 1).queue = std::move(spot);
+}
+/// One market batch's effect on an order's queue: see kQueueTurnover. `unspent`
+/// is what is left of each print through a price for the orders still to see it,
+/// best price and oldest order first.
+void queue_step(State& s, OrderId id, const MarketActivity& activity, const std::vector<const TradePrint*>& prints,
+                std::map<const TradePrint*, Quantity>& unspent) {
+  const auto& o = s.orders[id - 1];
+  if (!o.open() || !queue_eligible(s, o) || !latency_ready(s, o)) return;
+  const auto& symbol = o.request.symbol;
+  const auto& book = s.books.at(symbol);
+  if (book.quote.time < o.accepted_at || !quote_check(s, symbol).ok() || marketable(o, book.quote)) return;
+  const auto limit = *o.request.limit_price;
+  const auto side = o.request.side;
+  auto spot = o.queue && o.queue->price == limit ? o.queue : std::nullopt;
+  const auto since = spot ? spot->updated : std::max(o.accepted_at, o.triggered_at);
+  Quantity at = 0;
+  std::vector<const TradePrint*> through;
+  for (const auto* print : prints) {
+    if (print->time <= since || print->time > s.time) continue;
+    if (print->price == limit) at += print->size;
+    else if (side == Side::Buy ? print->price < limit : print->price > limit) through.push_back(print);
+  }
+  const auto touch = touch_of(book.quote, side, limit);
+  const auto shown = touch == Touch::At ? (side == Side::Buy ? book.quote.bid_size : book.quote.ask_size) : 0;
+  const auto volume = activity.volumes.find(symbol);
+  if (!spot) {
+    // Prints in the batch it joins in came before it rested at the touch, except
+    // those through its price, which any order there would have met.
+    spot = join_spot(s, o, !through.empty());
+    if (!spot) return;
+  } else {
+    const bool shown_before = spot->displayed > 0 && touch == Touch::At;
+    Quantity traded = 0;
+    if (activity.prints_supplied) {
+      traded = at;
+      spot->source = "prints";
+    } else if (activity.volumes_supplied && volume != activity.volumes.end()) {
+      if (spot->volume && volume->second >= *spot->volume && shown_before)
+        traded = queue_round(s, id, 1, static_cast<__int128>(volume->second) - *spot->volume, 2);
+      spot->source = "volume";
+    } else {
+      if (shown_before) {
+        const auto elapsed = std::min(s.time - spot->updated, s.config.limits.max_quote_age);
+        traded = queue_round(s, id, 2, static_cast<__int128>(spot->displayed) * std::max<Timestamp>(elapsed, 0), kQueueTurnover);
+      }
+      spot->source = "rate";
+    }
+    const auto taken = std::min(spot->ahead, traded);
+    spot->ahead -= taken;
+    spot->earned = static_cast<Quantity>(std::min<__int128>(static_cast<__int128>(spot->earned) + traded - taken, o.remaining()));
+    // Size that left the level without trading: cancelled ahead of the order in
+    // proportion to its place in the queue.
+    if (shown_before && book.quote.observation != spot->observation) {
+      const auto left = static_cast<__int128>(spot->displayed) - shown - traded;
+      if (left > 0 && spot->ahead > 0)
+        spot->ahead -= std::min(spot->ahead, queue_round(s, id, 3, left * spot->ahead, spot->displayed));
+    }
+    // Nothing displayed is ahead once the level clears, and never more than is displayed.
+    const auto own = own_ahead(s, o);
+    if (touch == Touch::Clear) spot->ahead = std::min(spot->ahead, own);
+    if (touch == Touch::At) spot->ahead = std::min(spot->ahead, shown + own);
+  }
+  for (const auto* print : through) {
+    auto& left = unspent.try_emplace(print, print->size).first->second;
+    const auto give = std::min(left, o.remaining() - spot->earned);
+    spot->earned += give;
+    left -= give;
+  }
+  spot->displayed = shown;
+  spot->observation = book.quote.observation;
+  spot->updated = s.time;
+  spot->volume = activity.volumes_supplied && volume != activity.volumes.end() ? std::optional(volume->second) : std::nullopt;
+  if (spot != o.queue) s.orders.mut(id - 1).queue = std::move(spot);
+}
+/// Advance every resting order's queue for a market batch, in price/time priority,
+/// and add the contracts where one may now fill to `changed`.
+void update_queues(State& s, const MarketActivity& activity, std::set<std::string>& changed) {
+  std::map<std::string, std::vector<const TradePrint*>> prints;
+  for (const auto& print : activity.prints)
+    if (print.size > 0 && print.price > Money{}) prints[print.symbol].push_back(&print);
+  std::vector<OrderId> ids;
+  for (const auto id : open_ids(s))
+    if (queue_eligible(s, s.orders[id - 1]) && s.books.contains(s.orders[id - 1].request.symbol)) ids.push_back(id);
+  std::stable_sort(ids.begin(), ids.end(), [&](OrderId a, OrderId b) {
+    const auto& x = s.orders[a - 1].request;
+    const auto& y = s.orders[b - 1].request;
+    if (x.symbol != y.symbol) return x.symbol < y.symbol;
+    if (x.side != y.side) return x.side == Side::Buy;
+    if (x.limit_price == y.limit_price) return a < b;
+    return x.side == Side::Buy ? *x.limit_price > *y.limit_price : *x.limit_price < *y.limit_price;
+  });
+  std::map<const TradePrint*, Quantity> unspent;
+  static const std::vector<const TradePrint*> none;
+  for (const auto id : ids) {
+    const auto& symbol = s.orders[id - 1].request.symbol;
+    const auto found = prints.find(symbol);
+    queue_step(s, id, activity, found == prints.end() ? none : found->second, unspent);
+    const auto& o = s.orders[id - 1];
+    if (o.queue && o.queue->earned > 0) changed.insert(symbol);
+  }
+}
 void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> incoming) {
+  if (s.config.rules.queue_fills) join_queue(s, id, incoming);
   // Read here; every write goes through mut() below, after which `o` is not read.
   const auto& o = s.orders.at(static_cast<std::size_t>(id - 1));
   if (!o.open() || o.status == OrderStatus::Armed || !latency_ready(s, o)) return;
@@ -2420,9 +2596,12 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   const bool given = one_sided && o.request.side == Side::Sell;
   if (!one_sided && !quote_check(s, o.request.symbol).ok()) return;
   const bool inside = inside_single(s, o);
-  if (!given && !inside && !marketable(o, s.books.at(o.request.symbol).quote)) return;
-  if (s.config.rules.impact_ticks > 0 && o.request.limit_price && !given && !inside) {
-    const auto candidate = execution_price(s, o.request.symbol, o.request.side);
+  // A resting limit the queue model lets fill: it trades at its limit, on its own side.
+  const bool queued = !given && !inside && queue_eligible(s, o) && !marketable(o, s.books.at(o.request.symbol).quote) &&
+                      o.queue && o.queue->price == *o.request.limit_price && o.queue->earned > 0;
+  if (!given && !inside && !queued && !marketable(o, s.books.at(o.request.symbol).quote)) return;
+  if (s.config.rules.impact_ticks > 0 && o.request.limit_price && !given && !inside && !queued) {
+    const auto candidate = execution_price(s, o.request.symbol, o.request.side, {}, 0, o.stress_ticks);
     if (o.request.side == Side::Buy ? candidate > *o.request.limit_price : candidate < *o.request.limit_price) return;
   }
   // System orders, bracket exits and reduce-only closes only ever reduce a position
@@ -2441,8 +2620,9 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   const auto symbol = o.request.symbol;
   const auto side = o.request.side;
   const auto& book = s.books.at(symbol);
-  if (!given && !inside && !marketable(o, book.quote)) return;
-  const Money price = given ? Money{} : order_price(s, o, symbol, side, o.request.limit_price);
+  if (!given && !inside && !queued && !marketable(o, book.quote)) return;
+  const Money price = given ? Money{} : queued ? *o.request.limit_price : order_price(s, o, symbol, side, o.request.limit_price);
+  const auto stress = given || inside || queued || touch_stop(s, o) ? 0 : o.stress_ticks;
   const auto remaining_depth = side == Side::Buy ? book.ask_left : book.bid_left;
   const auto size = side == Side::Buy ? book.quote.ask_size : book.quote.bid_size;
   const auto position = held(s, o.request.symbol);
@@ -2450,7 +2630,7 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
       ? closing_capacity(s, o.request.symbol, o.request.side)
       : o.request.side == Side::Sell ? std::max<Quantity>(position, 0) : std::max<Quantity>(-position, 0);
   // A long given away needs no bid, so no displayed size limits it.
-  const auto budget = given ? capacity
+  const auto budget = given ? capacity : queued ? o.queue->earned
       : s.config.rules.impact_ticks > 0 && !touch_stop(s, o) && !inside ? size - depth_used(size, remaining_depth) % size : remaining_depth;
   const Quantity quantity = reducing ? std::min({o.remaining(), budget, capacity}) : std::min(o.remaining(), budget);
   if (quantity <= 0) return;
@@ -2491,18 +2671,20 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   const auto quote = book.quote;
   const auto taken = fill_quote(book, side);
   fill_position(s, symbol, side == Side::Buy ? quantity : -quantity, price, fee);
-  if (!given) {
+  // A queued fill trades with the other side's flow at its own price, not the far side's displayed size.
+  if (!given && !queued) {
     auto& left = s.books[symbol];
     consume_depth(side == Side::Buy ? left.ask_left : left.bid_left, quantity);
   }
   auto& order = s.orders.mut(id - 1);
+  if (queued) order.queue->earned -= quantity;
   order.filled_quantity += quantity;
   order.filled_notional = order.filled_notional + price * quantity;
   order.status = order.remaining() == 0 ? OrderStatus::Filled : OrderStatus::PartiallyFilled;
   if (order.status == OrderStatus::Filled) order.ended_at = s.time;
   Fill fill{static_cast<std::uint64_t>(s.fills.size() + 1), id, symbol, side,
             quantity, price, fee, quote.observation, quote.time, s.time, context, order.actor, taken,
-            s.config.rules.fees ? std::optional(fees) : std::nullopt};
+            s.config.rules.fees ? std::optional(fees) : std::nullopt, stress, queued};
   s.fills.push_back(fill);
   event(events, "fill", fill);
   count_execution(s, order);
@@ -2581,6 +2763,7 @@ void match_combo(State& s, OrderId id, Events& events, std::optional<OrderId> in
   }
   const auto request = o.request;
   const auto actor = o.actor;
+  const auto stress = touch_stop(s, o) ? 0 : o.stress_ticks;
   const auto before = measure(s);
   const auto realised_before = s.ledger.account().realised;
   const bool opening = std::any_of(request.legs.begin(), request.legs.end(), [&](const Leg& leg) {
@@ -2602,7 +2785,7 @@ void match_combo(State& s, OrderId id, Events& events, std::optional<OrderId> in
     if (!slice.given) consume_depth(slice.side == Side::Buy ? book.ask_left : book.bid_left, size);
     Fill fill{static_cast<std::uint64_t>(s.fills.size() + 1), id, slice.symbol, slice.side,
               size, price, fee, quote.observation, quote.time, s.time, context, actor, taken,
-              s.config.rules.fees ? std::optional(slice_fees[i]) : std::nullopt};
+              s.config.rules.fees ? std::optional(slice_fees[i]) : std::nullopt, slice.given || inside ? 0 : stress};
     s.fills.push_back(fill);
     event(events, "fill", fill);
   }
@@ -2958,6 +3141,38 @@ void trail_level(State& s, OrderId id, Events& events) {
 /// A reached order runs its checks now: exits need only an executable book;
 /// entries take every pre-trade check. Stale data or a closed session keeps it
 /// armed for a later batch; any other failure cancels it with RISK_CHANGED.
+/// Stop stress (AccountRules::stop_stress_ticks): a price-triggered order is
+/// reached in a fast market when any of its contracts' latest quote was fast.
+bool fast_market(const State& s, const Order& o) {
+  if (s.config.rules.stop_stress_ticks == 0 || !o.request.trigger || conditional(*o.request.trigger)) return false;
+  for (const auto& symbol : order_symbols(o.request)) {
+    const auto book = s.books.find(symbol);
+    if (book != s.books.end() && book->second.activity && book->second.activity->fast) return true;
+  }
+  return false;
+}
+/// The next measure of normal quoting after a new observation of a contract: an
+/// observation is fast when, after eight valid ones, its spread is at least
+/// stop_stress_percent of the average, or the time since the one before at most
+/// 100 / stop_stress_percent of the average gap (quotes changing that much faster).
+detail::QuoteActivity next_activity(const State& s, const detail::Book& before, const QuoteObservation& quote) {
+  auto a = before.activity.value_or(detail::QuoteActivity{});
+  a.fast = false;
+  if (!valid_quote(quote)) return a;
+  constexpr std::int64_t kWarm = 8;
+  const auto percent = s.config.rules.stop_stress_percent;
+  const auto spread = *quote.ask - *quote.bid;
+  const bool timed = valid_quote(before.quote) && before.quote.time > 0 && quote.time >= before.quote.time;
+  const auto gap = timed ? quote.time - before.quote.time : Timestamp{0};
+  __extension__ using Wide = __int128;
+  if (a.samples >= kWarm)
+    a.fast = static_cast<Wide>(spread.micros()) * 100 >= static_cast<Wide>(a.spread.micros()) * percent ||
+             (timed && a.gap > 0 && static_cast<Wide>(gap) * percent <= static_cast<Wide>(a.gap) * 100);
+  a.spread = a.samples == 0 ? spread : a.spread + Money::from_micros((spread - a.spread).micros() / 8);
+  if (timed) a.gap = a.gap == 0 ? gap : a.gap + (gap - a.gap) / 8;
+  a.samples = std::min(a.samples + 1, kWarm);
+  return a;
+}
 void activate(State& s, OrderId id, Events& events) {
   {
     const auto& o = s.orders.at(static_cast<std::size_t>(id - 1));
@@ -2971,9 +3186,11 @@ void activate(State& s, OrderId id, Events& events) {
       cancel_order(s, id, d, events);
       return;
     }
+    const bool stressed = fast_market(s, o);
     auto& order = s.orders.mut(id - 1);
     order.status = OrderStatus::Working;
     order.triggered_at = s.time;
+    if (stressed) order.stress_ticks = s.config.rules.stop_stress_ticks;
     if (order.request.tif == TimeInForce::Day) order.day_end = day_deadline(s, order.request, s.time);
     event(events, "order_triggered", order);
   }
@@ -3479,11 +3696,15 @@ std::optional<OrderWait> waiting_for(const State& s, const Order& o, bool data_c
     const bool buy = r.side == Side::Buy;
     const bool given = !buy && ask_only_single(s, o);
     const bool inside = inside_single(s, o);
+    if (!given && !inside && !marketable(o, book.quote) && queue_eligible(s, o) && o.queue &&
+        o.queue->price == *r.limit_price && touch_of(book.quote, r.side, *r.limit_price) != Touch::Behind)
+      return wait("QUEUE", "Waits behind an estimated " + std::to_string(o.queue->ahead) + " contracts at " +
+                  r.limit_price->str() + " until trades use them up, or the far side reaches the limit");
     if (!given && !inside && !marketable(o, book.quote))
       return wait("LIMIT", std::string(buy ? "The ask " : "The bid ") + (buy ? *book.quote.ask : *book.quote.bid).str() +
                   (buy ? " is above" : " is below") + " the limit " + r.limit_price->str());
     if (impact && r.limit_price && !inside) {
-      const auto next = execution_price(s, r.symbol, r.side);
+      const auto next = execution_price(s, r.symbol, r.side, {}, 0, o.stress_ticks);
       if (buy ? next > *r.limit_price : next < *r.limit_price)
         return wait("LIMIT", "The next simulated block's price " + next.str() + " is beyond the limit " + r.limit_price->str());
     }
@@ -5743,7 +5964,7 @@ CommandResult TradingSession::close_positions(std::optional<std::string> underly
 }
 CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quotes,
     const std::vector<Valuation>& valuations, Timestamp time, const std::vector<StockPrice>& stocks,
-    const std::vector<Indicator>& indicators) {
+    const std::vector<Indicator>& indicators, const MarketActivity& activity) {
   // An empty batch on an idle account only moves the clock: not a transaction,
   // so nothing is journaled. The next transaction advances the clock itself.
   if (quotes.empty() && valuations.empty() && stocks.empty() && indicators.empty() && impl_->idle(time))
@@ -5774,7 +5995,8 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       }
       if (quote.observation <= book.quote.observation || quote.time < book.quote.time) continue;
       // A quote with only an ask offers it to the exits that may buy there (ask_only).
-      book = {quote, valid_quote(quote) ? quote.bid_size : 0, markable_quote(quote) ? quote.ask_size : 0};
+      auto measured = s.config.rules.stop_stress_ticks > 0 ? std::optional(next_activity(s, book, quote)) : std::nullopt;
+      book = {quote, valid_quote(quote) ? quote.bid_size : 0, markable_quote(quote) ? quote.ask_size : 0, std::move(measured)};
       changed.insert(quote.symbol);
       if (markable_quote(quote) && time - quote.time <= s.config.limits.max_quote_age)
         s.marks[quote.symbol] = {mark_of(quote), quote.time};
@@ -5835,6 +6057,14 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (o.status == OrderStatus::Armed) continue;
       for (const auto& symbol : order_symbols(o.request))
         if (offered_again.contains(symbol) && usable(symbol)) changed.insert(symbol);
+    }
+    // The queue model reads what traded, and the quotes now in place.
+    if (s.config.rules.queue_fills) {
+      for (const auto& print : activity.prints)
+        if (print.time > time) throw TradingError(Reason::INVALID_TIME, "Trade print is future-dated");
+      std::set<std::string> earned;
+      update_queues(s, activity, earned);
+      for (const auto& symbol : earned) if (usable(symbol)) changed.insert(symbol);
     }
     match_symbols(s, changed, events);
     // Triggers read the batch's books and valuations after resting orders match.

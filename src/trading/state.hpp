@@ -143,6 +143,17 @@ inline void from_json(const Json& j, OrderChangeRecord& c) {
   if (j.contains("walk")) c.walk.emplace(j.at("walk").get<std::optional<Walk>>());
   added_field(j, "previous_walk", c.previous_walk);
 }
+inline void to_json(Json& j, const QueueSpot& q) {
+  j = Json{{"price", q.price}, {"ahead", q.ahead}, {"earned", q.earned}, {"displayed", q.displayed},
+           {"observation", q.observation}, {"joined", q.joined}, {"updated", q.updated}, {"source", q.source}};
+  if (q.volume) j["volume"] = *q.volume;
+}
+inline void from_json(const Json& j, QueueSpot& q) {
+  j.at("price").get_to(q.price); j.at("ahead").get_to(q.ahead); j.at("earned").get_to(q.earned);
+  j.at("displayed").get_to(q.displayed); j.at("observation").get_to(q.observation);
+  j.at("joined").get_to(q.joined); j.at("updated").get_to(q.updated); j.at("source").get_to(q.source);
+  added_field(j, "volume", q.volume);
+}
 inline void to_json(Json& j, const Order& o) {
   j = Json{{"id", o.id}, {"request", o.request}, {"status", o.status}, {"filled_quantity", o.filled_quantity},
            {"filled_notional", o.filled_notional}, {"accepted_at", o.accepted_at}, {"day_end", o.day_end},
@@ -160,6 +171,9 @@ inline void to_json(Json& j, const Order& o) {
   // And a chained order's links.
   if (o.chained != 0) j["chained"] = o.chained;
   if (o.chained_from != 0) j["chained_from"] = o.chained_from;
+  // The optional fill models' state, only while they use it.
+  if (o.queue) j["queue"] = *o.queue;
+  if (o.stress_ticks != 0) j["stress_ticks"] = o.stress_ticks;
 }
 inline void from_json(const Json& j, Order& o) {
   j.at("id").get_to(o.id); j.at("request").get_to(o.request); j.at("status").get_to(o.status);
@@ -174,6 +188,7 @@ inline void from_json(const Json& j, Order& o) {
   added_field(j, "walked_at", o.walked_at);
   added_field(j, "opening_counted", o.opening_counted);
   added_field(j, "chained", o.chained); added_field(j, "chained_from", o.chained_from);
+  added_field(j, "queue", o.queue); added_field(j, "stress_ticks", o.stress_ticks);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(FillContext, spot, spot_source, iv, delta, years, equity, floor_room, buying_power)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Excursion, pnl, time, spot)
@@ -196,6 +211,8 @@ inline void to_json(Json& j, const Fill& f) {
            {"time", f.time}, {"context", f.context}, {"actor", f.actor}};
   if (f.quote) j["quote"] = *f.quote;
   if (f.fees) j["fees"] = *f.fees;
+  if (f.stress_ticks != 0) j["stress_ticks"] = f.stress_ticks;
+  if (f.queued) j["queued"] = true;
 }
 inline void from_json(const Json& j, Fill& f) {
   j.at("id").get_to(f.id); j.at("order_id").get_to(f.order_id); j.at("symbol").get_to(f.symbol);
@@ -203,7 +220,7 @@ inline void from_json(const Json& j, Fill& f) {
   j.at("fee").get_to(f.fee); j.at("observation").get_to(f.observation);
   j.at("quote_time").get_to(f.quote_time); j.at("time").get_to(f.time);
   added_field(j, "context", f.context); added_field(j, "actor", f.actor); added_field(j, "quote", f.quote);
-  added_field(j, "fees", f.fees);
+  added_field(j, "fees", f.fees); added_field(j, "stress_ticks", f.stress_ticks); added_field(j, "queued", f.queued);
 }
 inline void to_json(Json& j, const QuoteObservation& q) {
   j = Json{{"symbol", q.symbol}, {"observation", q.observation}, {"time", q.time}, {"bid", q.bid}, {"ask", q.ask},
@@ -429,12 +446,23 @@ inline void to_json(Json& j, const AccountRules& r) {
   if (r.stock_borrow_rate_bps != 0) j["stock_borrow_rate_bps"] = r.stock_borrow_rate_bps;
   if (r.pin_risk) j["pin_risk"] = true;
   if (r.pin_risk_seed != 0) j["pin_risk_seed"] = r.pin_risk_seed;
+  if (r.queue_fills) j["queue_fills"] = true;
+  if (r.queue_seed != 0) j["queue_seed"] = r.queue_seed;
+  if (r.stop_stress_ticks != 0) j["stop_stress_ticks"] = r.stop_stress_ticks;
+  if (r.stop_stress_percent != AccountRules{}.stop_stress_percent) j["stop_stress_percent"] = r.stop_stress_percent;
 }
 inline void from_json(const Json& j, AccountRules& r) {
   added_field(j, "stock_borrow_rate_bps", r.stock_borrow_rate_bps);
   added_field(j, "margin_debit_rate_bps", r.margin_debit_rate_bps);
   added_field(j, "cash_credit_rate_bps", r.cash_credit_rate_bps);
   added_field(j, "pin_risk", r.pin_risk); added_field(j, "pin_risk_seed", r.pin_risk_seed);
+  if (const auto it = j.find("queue_fills"); it != j.end() && !it->is_boolean())
+    throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded queue_fills must be a boolean");
+  for (const auto* key : {"queue_seed", "stop_stress_ticks", "stop_stress_percent"})
+    if (const auto it = j.find(key); it != j.end() && !it->is_number_integer())
+      throw TradingError(Reason::JOURNAL_CORRUPT, "Recorded fill settings must be integers");
+  added_field(j, "queue_fills", r.queue_fills); added_field(j, "queue_seed", r.queue_seed);
+  added_field(j, "stop_stress_ticks", r.stop_stress_ticks); added_field(j, "stop_stress_percent", r.stop_stress_percent);
   j.at("plan").get_to(r.plan); j.at("profit_target").get_to(r.profit_target); j.at("max_drawdown").get_to(r.max_drawdown);
   j.at("drawdown_mode").get_to(r.drawdown_mode); j.at("buy_only").get_to(r.buy_only); j.at("buying_power").get_to(r.buying_power);
   j.at("expiry_cutoff").get_to(r.expiry_cutoff);
@@ -739,11 +767,23 @@ inline void from_json(const Json& j, TradingSnapshot& s) {
 }
 
 namespace detail {
+/// Stop stress only: what is normal for a contract's quotes, as exponential
+/// averages (weight 1/8) of its spread and of the market time between its new
+/// observations, over `samples` of them, and whether the latest one, measured
+/// against the averages before it, was fast (see AccountRules::stop_stress_percent).
+struct QuoteActivity {
+  std::int64_t samples = 0;
+  Money spread;
+  Timestamp gap = 0;
+  bool fast = false;
+  bool operator==(const QuoteActivity&) const = default;
+};
 struct Book {
   QuoteObservation quote;
   // With impact enabled, negative budgets count contracts beyond displayed size.
   Quantity bid_left = 0;
   Quantity ask_left = 0;
+  std::optional<QuoteActivity> activity = {};
 };
 struct Mark {
   Money price;
@@ -879,7 +919,16 @@ inline void reindex(State& s) {
   s.working = open_ids(s);
   s.indexed = s.orders.size();
 }
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Book, quote, bid_left, ask_left)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(QuoteActivity, samples, spread, gap, fast)
+inline void to_json(Json& j, const Book& b) {
+  j = Json{{"quote", b.quote}, {"bid_left", b.bid_left}, {"ask_left", b.ask_left}};
+  // Kept only while stop stress measures it, so other books keep their bytes.
+  if (b.activity) j["activity"] = *b.activity;
+}
+inline void from_json(const Json& j, Book& b) {
+  j.at("quote").get_to(b.quote); j.at("bid_left").get_to(b.bid_left); j.at("ask_left").get_to(b.ask_left);
+  added_field(j, "activity", b.activity);
+}
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Mark, price, time)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Reference, quantity, mark, valuation)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AlertBook, created, items)
