@@ -116,19 +116,33 @@ json expiry_json(const UnderlyingMetrics& m, const SliceMetrics& slice) {
       {"atm_iv", sig(slice.atm_iv)},
       {"gex", sig(slice.gex)},
       {"vex", sig(slice.vex)},
+      {"dex", sig(slice.dex)},
+      {"cex", sig(slice.cex)},
+      {"vomex", sig(slice.vomex)},
       {"strikes", slice.strikes.size()},
   };
 }
 
 json exposure_summary(const UnderlyingMetrics& m) {
-  return {
+  json result = {
       {"oi_coverage", sig(m.exposure.oi_coverage)},
-      {"gex", sig(m.exposure.gex)},
-      {"vex", sig(m.exposure.vex)},
+      {"available", m.exposure.available},
+      {"unavailable_reason", m.exposure.unavailable_reason.empty()
+          ? json(nullptr) : json(m.exposure.unavailable_reason)},
       {"gamma_flip", price(m.exposure.gamma_flip)},
       {"call_wall", price(m.exposure.call_wall)},
       {"put_wall", price(m.exposure.put_wall)},
   };
+  json levels = json::object();
+  for (std::size_t i = 0; i < analytics::kExposureNames.size(); ++i) {
+    const auto name = analytics::kExposureNames[i];
+    result[name] = sig(m.exposure.*analytics::kExposureFields[i]);
+    const auto& level = m.exposure.levels[i];
+    levels[name] = {{"flip", price(level.flip)}, {"positive_wall", price(level.positive_wall)},
+                    {"negative_wall", price(level.negative_wall)}};
+  }
+  result["levels"] = std::move(levels);
+  return result;
 }
 
 /// Why paper orders cannot fill against a displayed quote, or null when they can:
@@ -389,6 +403,9 @@ json chain_json(const UnderlyingMetrics& m, const SliceMetrics& slice, double wi
                        {"iv", sig(row.iv)},
                        {"gex", sig(row.gex)},
                        {"vex", sig(row.vex)},
+                       {"dex", sig(row.dex)},
+                       {"cex", sig(row.cex)},
+                       {"vomex", sig(row.vomex)},
                        {"call", option_json(row.call)},
                        {"put", option_json(row.put)}});
   }
@@ -413,42 +430,46 @@ json exposure_json(const UnderlyingMetrics& m, std::size_t max_expiries, double 
   std::map<double, std::size_t> column;
   for (std::size_t i = 0; i < strikes.size(); ++i) column[strikes[i]] = i;
 
-  std::vector<double> total(strikes.size(), 0.0);
   json expiries = json::array();
+  json totals = json::object();
   for (std::size_t i = 0; i < count; ++i) {
-    const SliceMetrics& slice = m.slices[i];
-    std::vector<double> gex(strikes.size(), 0.0);
-    std::vector<double> vex(strikes.size(), 0.0);
-    for (const auto& row : slice.strikes) {
-      const auto it = column.find(row.strike);
-      if (it == column.end()) continue;
-      gex[it->second] = row.gex;
-      vex[it->second] = row.vex;
-      total[it->second] += row.gex;
-    }
-    json gex_json = json::array();
-    json vex_json = json::array();
-    for (std::size_t j = 0; j < strikes.size(); ++j) {
-      gex_json.push_back(sig(gex[j], 4));
-      vex_json.push_back(sig(vex[j], 4));
-    }
-    expiries.push_back({{"id", expiry_id(slice)},
-                        {"expiry", md::format_date(slice.expiry)},
-                        {"days", sig(slice.years * 365.0, 4)},
-                        {"gex", gex_json},
-                        {"vex", vex_json}});
+    const auto& slice = m.slices[i];
+    expiries.push_back({{"id", expiry_id(slice)}, {"expiry", md::format_date(slice.expiry)},
+                        {"days", sig(slice.years * 365.0, 4)}});
   }
-  json total_json = json::array();
-  for (double x : total) total_json.push_back(sig(x, 4));
-  return {{"symbol", m.symbol},
+  for (std::size_t metric = 0; metric < analytics::kExposureNames.size(); ++metric) {
+    const auto name = analytics::kExposureNames[metric];
+    const auto field = analytics::kExposureFields[metric];
+    const double empty = m.exposure.available ? 0 : analytics::kNaN;
+    std::vector<double> total(strikes.size(), empty);
+    for (std::size_t i = 0; i < count; ++i) {
+      std::vector<double> values(strikes.size(), empty);
+      for (const auto& row : m.slices[i].strikes) {
+        const auto it = column.find(row.strike);
+        if (it == column.end()) continue;
+        values[it->second] = row.*field;
+        total[it->second] += row.*field;
+      }
+      json cells = json::array();
+      for (const double value : values) cells.push_back(sig(value, 4));
+      expiries[i][name] = std::move(cells);
+    }
+    json cells = json::array();
+    for (const double value : total) cells.push_back(sig(value, 4));
+    totals[std::string("total_") + name] = std::move(cells);
+  }
+  json result = {{"symbol", m.symbol},
           {"spot", price(m.spot)},
           {"spot_source", spot_source_json(m)},
           {"as_of", md::format_timestamp(m.as_of)},
           {"version", m.version},
+          {"convention", analytics::to_string(m.exposure_convention)},
+          {"slice", analytics::to_string(m.exposure_slice)},
           {"strikes", strikes},
           {"expiries", expiries},
-          {"total_gex", total_json},
           {"exposure", exposure_summary(m)}};
+  result.update(totals);
+  return result;
 }
 
 json svi_json(const analytics::SviFit& fit) {
@@ -802,8 +823,26 @@ ApiResponse handle_api(const ApiRequest& request, const MetricsSource& source) {
     if (!slice) return error(404, "no expiry " + (it == query.end() ? "" : it->second));
     return ok(chain_json(*metrics, *slice, window));
   }
-  if (view == "exposure")
-    return ok(exposure_json(*metrics, expiries, query.contains("window") ? window : 0.08));
+  if (view == "exposure") {
+    auto convention = analytics::ExposureConvention::OpenInterest;
+    auto slice = analytics::ExposureSlice::All;
+    if (const auto it = query.find("convention"); it != query.end()) {
+      if (it->second == "short_all") convention = analytics::ExposureConvention::ShortAll;
+      else if (it->second == "long_calls_short_puts") convention = analytics::ExposureConvention::LongCallsShortPuts;
+      else if (it->second == "customer_flow") convention = analytics::ExposureConvention::CustomerFlow;
+      else if (it->second != "open_interest")
+        return error(400, "convention must be open_interest, short_all, long_calls_short_puts or customer_flow");
+    }
+    if (const auto it = query.find("slice"); it != query.end()) {
+      if (it->second == "0dte") slice = analytics::ExposureSlice::ZeroDte;
+      else if (it->second == "ex_0dte") slice = analytics::ExposureSlice::ExZeroDte;
+      else if (it->second != "all") return error(400, "slice must be all, 0dte or ex_0dte");
+    }
+    const double width = query.contains("window") ? window : 0.08;
+    if (convention == analytics::ExposureConvention::OpenInterest && slice == analytics::ExposureSlice::All)
+      return ok(exposure_json(*metrics, expiries, width));
+    return ok(exposure_json(analytics::exposure_view(*metrics, convention, slice), expiries, width));
+  }
   if (view == "surface")
     return ok(surface_json(metrics, expiries, query.contains("window") ? window : 0.2));
   return error(404, "unknown view " + std::string(view));

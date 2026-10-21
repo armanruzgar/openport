@@ -209,6 +209,67 @@ TEST(Api, ChainReturnsBothSidesOfEveryStrike) {
   EXPECT_EQ(narrow["strikes"].size(), 9u);  // 4900..5100
 }
 
+TEST(Api, ExposureModesAndAllMetricsHaveAlignedTotalsAndLevels) {
+  StubSource source;
+  const auto original = get(source, "/api/underlyings/SPX/exposure?window=0");
+  const auto alias = get(source, "/api/underlyings/SPX/exposure?window=0&convention=long_calls_short_puts");
+  EXPECT_EQ(original["exposure"], alias["exposure"]);
+  EXPECT_EQ(original["convention"], "open_interest");
+  EXPECT_EQ(original["slice"], "all");
+  for (const auto name : analytics::kExposureNames) {
+    const auto total = std::string("total_") + name;
+    EXPECT_EQ(original[total].size(), original["strikes"].size());
+    EXPECT_EQ(original["expiries"][0][name], original[total]);
+    EXPECT_TRUE(original["exposure"][name].is_number());
+    EXPECT_TRUE(original["exposure"]["levels"][name].contains("flip"));
+    EXPECT_TRUE(original["exposure"]["levels"][name].contains("positive_wall"));
+    EXPECT_TRUE(original["exposure"]["levels"][name].contains("negative_wall"));
+  }
+  const auto short_all = get(source, "/api/underlyings/SPX/exposure?convention=short_all");
+  EXPECT_LT(short_all["exposure"]["gex"].get<double>(), 0);
+  EXPECT_TRUE(short_all["exposure"]["gamma_flip"].is_null());
+  const auto flow = get(source, "/api/underlyings/SPX/exposure?convention=customer_flow");
+  EXPECT_EQ(flow["exposure"]["available"], false);
+  EXPECT_TRUE(flow["exposure"]["unavailable_reason"].is_string());
+  for (const auto name : analytics::kExposureNames) {
+    EXPECT_TRUE(flow["exposure"][name].is_null());
+    EXPECT_TRUE(flow["expiries"][0][name][0].is_null());
+    EXPECT_TRUE(flow[std::string("total_") + name][0].is_null());
+  }
+  // The base publication remains untouched by request-specific calculations.
+  EXPECT_EQ(original, get(source, "/api/underlyings/SPX/exposure?window=0"));
+  for (const auto query : {"convention=bad", "convention=", "slice=bad", "slice="})
+    EXPECT_TRUE(get(source, std::string("/api/underlyings/SPX/exposure?") + query, 400).contains("error"));
+}
+
+TEST(Api, ExposureSlicePrecedesDisplayLimitsAndSummaryIgnoresWindow) {
+  test::SyntheticChain chain;
+  auto m = analytics::analyze(chain.book.underlyings().at("SPX"), chain.book, chain.as_of);
+  // A priced fixture with three expiry buckets; first is same-day at market time.
+  auto later = m.slices[0];
+  m.slices[0].expiry = md::new_york_time(m.as_of).date;
+  m.slices.push_back(later);
+  later.expiry.day += 1;
+  m.slices.push_back(later);
+  m = analytics::exposure_view(std::move(m));
+  StubSource source(m);
+  const auto ex = get(source, "/api/underlyings/SPX/exposure?slice=ex_0dte&expiries=1&window=0.001");
+  ASSERT_EQ(ex["expiries"].size(), 1u);
+  EXPECT_EQ(ex["expiries"][0]["expiry"], "2026-10-22");
+  const auto full = get(source, "/api/underlyings/SPX/exposure?slice=ex_0dte&expiries=8&window=0");
+  EXPECT_EQ(ex["exposure"], full["exposure"]);
+  const auto today = get(source, "/api/underlyings/SPX/exposure?slice=0dte");
+  ASSERT_EQ(today["expiries"].size(), 1u);
+  EXPECT_EQ(today["expiries"][0]["expiry"], "2026-09-22");
+  EXPECT_EQ(today["as_of"], md::format_timestamp(chain.as_of));
+  const auto all = get(source, "/api/underlyings/SPX/exposure");
+  for (const auto name : analytics::kExposureNames) {
+    const double total = all["exposure"][name];
+    EXPECT_NEAR(total, today["exposure"][name].get<double>() + full["exposure"][name].get<double>(),
+                std::max(1.0, std::abs(total) * 1e-5));
+  }
+}
+
 TEST(Api, ExposureMatrixIsAlignedByStrike) {
   StubSource source;
   const json exposure = get(source, "/api/underlyings/SPX/exposure?window=0.05");
@@ -589,7 +650,9 @@ namespace {
 TEST(Api, ContractFixture) {
   const StubSource source;
   for (const auto* path : {"/api/status", "/api/underlyings/SPX", "/api/underlyings/SPX/summary", "/api/underlyings/SPX/chain",
-      "/api/underlyings/SPX/exposure", "/api/underlyings/SPX/surface", "/api/underlyings/SPX/volatility", "/api/underlyings/SPX/candles"}) {
+      "/api/underlyings/SPX/exposure", "/api/underlyings/SPX/exposure?convention=short_all&slice=ex_0dte",
+      "/api/underlyings/SPX/exposure?convention=customer_flow", "/api/underlyings/SPX/exposure?slice=0dte",
+      "/api/underlyings/SPX/surface", "/api/underlyings/SPX/volatility", "/api/underlyings/SPX/candles"}) {
     const auto response = server::handle_api({"GET", path}, source);
     EXPECT_EQ(response.status, 200) << response.body;
     test::capture_contract("analytics", "GET", path, response);
