@@ -53,7 +53,8 @@ class Playbooks {
       const TradingView& view, const std::function<PlaybookInputs(const std::string&, const Json&)>& inputs,
       const Preview& preview, const Send& send, const Cancel& cancel);
   trading::OrderRequest take(const std::string& account, const std::string& staged);
-  void remove_account(const std::string& account);
+  /// Forgets a deleted or expired account: its modes, and its forward tests end at `now`.
+  void remove_account(const std::string& account, md::Timestamp now = 0);
  private:
   void save(const Json& next);
   std::filesystem::path file_;

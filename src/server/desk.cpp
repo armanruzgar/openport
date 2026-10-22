@@ -667,7 +667,7 @@ void Desk::expire_sandboxes(const std::vector<std::string>& expired) {
       // As for a deleted account: notifications and playbook modes forget it too.
       if (removal_sink_) removal_sink_(id);
       if (playbooks_) {
-        try { playbooks_->remove_account(id); }
+        try { playbooks_->remove_account(id, market_time_); }
         catch (const std::exception&) { /* Kept in memory; written with the catalogue's next change. */ }
       }
     }
@@ -802,7 +802,7 @@ void Desk::manage_account(const TradingCommand& c, TradingReply& reply) {
       playbook_publications_.erase(id);
       if (removal_sink_) removal_sink_(id);
       publish_trading();
-      if (playbooks_) playbooks_->remove_account(id);
+      if (playbooks_) playbooks_->remove_account(id, market_time_);
       retain_deleted_files(options_.paper_accounts, id);
       reply.account_result = nlohmann::json{{"deleted", id}}.dump();
     } else {
