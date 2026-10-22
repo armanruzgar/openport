@@ -336,7 +336,11 @@ business day; GTC works until it fills or is cancelled.
 
 An extended-hours limit fills only on a print fresh within the session it fills in
 (`max_quote_age` of the market time in premarket and after hours as in the regular
-session): at 18:30 neither the 16:00 close nor a 16:05 print fills it.
+session): at 18:30 neither the 16:00 close nor a 16:05 print fills it. Outside the
+regular session a share price keeps its own print time (the close's at the latest)
+even while its feed's snapshots are current, since a snapshot feed such as Cboe's
+goes on sending the last close then: after earnings, or premarket while SPX options
+trade overnight, the close is never taken for a fresh print.
 
 Opening orders take, when accepted, the account checks (kill switch, decided attempt,
 plan entry rules), buy-only, defined-risk and cash/IRA short-sale checks that count the

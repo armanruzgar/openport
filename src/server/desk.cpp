@@ -440,6 +440,19 @@ std::optional<MarketHalt> circuit_breaker(double reference, double price, md::Ti
   return MarketHalt{level, time, time + 15 * md::kNanosPerMinute, reference, price};
 }
 
+/// When a share price was current. In the regular session a price from a current
+/// snapshot is current at the market time. Outside it a snapshot feed keeps the last
+/// regular close (Cboe does, its after- and premarket trades aside), so a current
+/// snapshot does not make the price current: it keeps its own print time, the close's
+/// at the latest, and an extended-hours order sees how old it is.
+static md::Timestamp share_price_time(md::Timestamp print, bool current, md::Timestamp market_time) {
+  if (!current) return print;
+  const auto session = md::stock_session(market_time);
+  if (session.open) return market_time;
+  if (session.market_time == md::kInvalidTimestamp) return print;
+  return std::clamp(session.market_time, print, market_time);
+}
+
 trading::Decision paper_acceptance(std::string_view underlying, md::Timestamp market_time,
     md::Timestamp wall_time, std::chrono::seconds delay, md::Timestamp max_quote_age,
     const std::vector<MarketHalt>& halts) {
@@ -1477,7 +1490,7 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
       for (const auto& symbol : deliverable) {
         const auto book = book_.underlyings().find(symbol);
         if (book == book_.underlyings().end() || book->second.spot_ts <= 0 || book->second.spot_ts > market_time_) continue;
-        const auto time = current(symbol) ? market_time_ : book->second.spot_ts;
+        const auto time = share_price_time(book->second.spot_ts, current(symbol), market_time_);
         if (const auto price = quote_price(book->second.spot)) stocks.push_back({symbol, time, *price});
       }
       // Conditional triggers watch other underlyings' prices and studies, read from
@@ -2319,10 +2332,10 @@ void Desk::price_stock_command(TradingCommand& c, md::Timestamp driver_time) {
   if (book == book_.underlyings().end() || book->second.spot_ts <= 0 || book->second.spot_ts > market_time_) return;
   const auto* account = find_account(c.account);
   if (!account || !account->session) return;
-  auto time = book->second.spot_ts;
   const auto complete = snapshots_.find(c.symbol);
-  if (complete != snapshots_.end() && paper_acceptance(c.symbol, complete->second, driver_time, capabilities_.delay,
-      account->session->config().limits.max_quote_age, breaker_.halts).ok()) time = market_time_;
+  const auto time = share_price_time(book->second.spot_ts, complete != snapshots_.end() &&
+      paper_acceptance(c.symbol, complete->second, driver_time, capabilities_.delay,
+                       account->session->config().limits.max_quote_age, breaker_.halts).ok(), market_time_);
   if (const auto price = quote_price(book->second.spot)) c.stock_price = StockPrice{c.symbol, time, *price};
 }
 void Desk::command(TradingCommand command, TradingCompletion completion, md::Timestamp time, md::Timestamp driver_time) {

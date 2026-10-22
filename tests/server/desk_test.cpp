@@ -668,6 +668,41 @@ TEST(Desk, RestingShareOrdersTakeTheCounterPositionGateWhenTheyFill) {
   desk.stop();
 }
 
+TEST(Desk, AfterHoursShareOrdersNeedAnAfterHoursPrintNotTheClose) {
+  test::RecordingFile file;
+  server::Desk::Options options;
+  options.paper_accounts = file.directory / "accounts";
+  server::Desk desk("test", {}, {{"SPY"}}, options);
+  desk.start_trading();
+  const md::Date day{2026, 9, 22};
+  // Complete snapshots after the close that still carry the 16:00 close, as Cboe sends
+  // it outside the regular session (SPY's options trade on to 16:15): the share price
+  // is the close's, too old for an extended-hours order to fill on.
+  const auto last_trade = md::new_york_to_utc(day, 15, 59, 59);
+  const auto evening = md::new_york_to_utc(day, 16, 10);
+  desk.replay_batch({md::UnderlyingQuote{"SPY", last_trade, 0, 0, 500}, md::SnapshotComplete{"SPY", evening}}, evening);
+  server::TradingCommand rest;
+  rest.kind = server::TradingCommand::Kind::SubmitStockOrder;
+  trading::StockOrderRequest buy;
+  buy.client_order_id = "after-earnings"; buy.symbol = "SPY"; buy.side = trading::Side::Buy;
+  buy.type = trading::StockOrderType::Limit; buy.shares = 10; buy.limit_price = Money::parse("505");
+  buy.extended_hours = true;
+  rest.stock_order = buy;
+  const auto accepted = command(desk, rest, evening, evening).decision;
+  ASSERT_TRUE(accepted.ok()) << accepted.message;
+  const auto later = evening + md::kNanosPerMinute;
+  desk.replay_batch({md::SnapshotComplete{"SPY", later}}, later);
+  ASSERT_EQ(desk.trading_view()->snapshot->stock_orders.size(), 1U);
+  EXPECT_TRUE(desk.trading_view()->snapshot->stock_orders[0].open());
+  EXPECT_TRUE(desk.trading_view()->snapshot->stocks.empty());
+  // A print of its own in after hours fills it.
+  const auto print = later + md::kNanosPerMinute;
+  desk.replay_batch({md::UnderlyingQuote{"SPY", print, 503.9, 504, 503.95}, md::SnapshotComplete{"SPY", print}}, print);
+  ASSERT_EQ(desk.trading_view()->snapshot->stocks.size(), 1U);
+  EXPECT_EQ(desk.trading_view()->snapshot->stocks[0].position.shares, 10);
+  desk.stop();
+}
+
 TEST(Desk, DemoAmSettlementUsesFirstExpiryOpeningPrintAndLiveKeepsManualImport) {
   for (const auto* provider : {"demo", "live"}) {
     for (const bool manual : {false, true}) {
