@@ -244,7 +244,8 @@ reverse split leaves an effective strike such as 333.33 no exchange lists) or th
 delivers cash only, the desk values it by model: Black at its effective strike, at the
 expiry's forward and discount from the analytics, with the smile IV interpolated between
 the listed strikes either side of it (the nearest one beyond the listed range), scaled
-to its shares (a cash-only series is worth its discounted intrinsic value). It is a
+to its shares (a cash-only series is worth its discounted intrinsic value, at which
+historical stress also margins a short one, whatever the shock). It is a
 European model of an American series, floored at the deliverable's exercise value at
 the analytics' spot (shares times its distance from the effective strike, over 100),
 as the American series would be: a deep in-the-money put's European value falls below

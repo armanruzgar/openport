@@ -51,10 +51,13 @@ class DeliverablesScope {
 };
 /// How a series reprices: its strike per share of the deliverable (the strike for a
 /// standard series) and how many standard contracts one contract is (1 for one; 0
-/// for a deliverable of cash only, whose payoff no move reprices).
+/// for a deliverable of cash only, whose payoff no move reprices). `payoff` is what
+/// one unit of a deliverable of cash only pays exercised, fixed: its cash over 100
+/// less the strike for a call, the reverse for a put, at least zero.
 struct Equivalent {
   double strike = 0;
   double contracts = 1;
+  double payoff = 0;
 };
 [[nodiscard]] Equivalent equivalent(const std::string& symbol, const md::OptionContract& contract);
 

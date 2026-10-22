@@ -55,6 +55,9 @@ ShockResult stress_book(const Ledger& ledger, const Valuations& valuations,
   try {
     std::vector<MarginLeg> legs;
     std::vector<MarginStock> stocks;
+    // Series that deliver cash only owe a fixed amount: a short requires its buy-back
+    // value, its discounted payoff, whatever the shock, as account margin has it.
+    Money cash_only;
     Valuations shocked_values;
     std::map<std::string, double> shocked_prices;
     for (const auto& symbol : held_underlyings(ledger)) {
@@ -85,6 +88,11 @@ ShockResult stress_book(const Ledger& ledger, const Valuations& valuations,
         shocked.forward *= 1 + factor.spot_percent / 100;
         shocked.smile_iv = std::max(profile.vol_floor, shocked.smile_iv + profile.vol_points / 100);
         const auto e = equivalent(symbol, p.contract);
+        if (e.contracts == 0) {
+          if (p.quantity < 0)
+            cash_only = cash_only + Money::from_double(shocked.discount * e.payoff * 100 * std::abs(static_cast<double>(p.quantity)));
+          continue;
+        }
         const double price = e.contracts * pricing::black_price(p.contract.type, shocked.forward, e.strike,
             shocked.years, shocked.smile_iv, shocked.discount);
         legs.push_back({p.contract, p.quantity, Money::from_double(price * 100 * std::abs(static_cast<double>(p.quantity))), shocked.spot});
@@ -106,6 +114,7 @@ ShockResult stress_book(const Ledger& ledger, const Valuations& valuations,
       if (rules.margin == MarginMode::Portfolio)
         result.margin = portfolio_margin_requirement(legs, shocked_values, now, max_age, ledger.stocks(), shocked_prices, margin_policy(rules));
       else result.margin = margin_requirement(legs, stocks, margin_policy(rules));
+      if (result.margin) result.margin = *result.margin + cash_only;
     }
     return result;
   } catch (const TradingError& error) {

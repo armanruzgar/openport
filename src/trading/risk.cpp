@@ -25,7 +25,10 @@ Equivalent equivalent(const std::string& symbol, const md::OptionContract& contr
   if (it == current_deliverables->end() || standard_deliverable(it->second)) return {contract.strike, 1};
   const auto& d = it->second;
   // Cash only: the payoff is fixed, so no move in the underlying reprices it.
-  if (d.shares == 0) return {contract.strike, 0};
+  if (d.shares == 0) {
+    const double worth = d.cash.dollars() / 100;
+    return {contract.strike, 0, std::max(0.0, contract.type == pricing::OptionType::Call ? worth - contract.strike : contract.strike - worth)};
+  }
   const double shares = static_cast<double>(d.shares);
   return {(contract.strike * 100 - d.cash.dollars()) / shares, shares / 100};
 }

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "openport/trading/risk.hpp"
 #include "openport/trading/stress.hpp"
 #include "support/scripted_market.hpp"
 
@@ -38,6 +39,29 @@ TEST(HistoricalStress, OptionsUseTenorVolAndBothMarginModelsAndRefuseStaleBooks)
   ASSERT_TRUE(portfolio.margin); EXPECT_GT(portfolio.margin->dollars(), 0);
   EXPECT_FALSE(stress_book(ledger, values, shock.factors, 0, {}, {}, f.time + 2 * md::kNanosPerMinute,
       md::kNanosPerMinute, {}).complete);
+}
+TEST(HistoricalStress, AShortDeliveringCashOnlyIsMarginedAtItsFixedPayoff) {
+  test::ScriptedMarket f;
+  f.contract = *md::parse_osi("SPY261016C00500000");
+  // After a 1:200 split the call delivers $51,000 in cash: $510 a unit against its
+  // $500 strike, $10 a unit whatever the shares do, worth that discounted (0.99).
+  const SharedMap<std::string, Deliverable> deliverables{{f.symbol(), Deliverable{0, Money::parse("51000")}}};
+  const DeliverablesScope adjusted(&deliverables);
+  Ledger ledger; ledger.fill(f.contract, -1, Money::parse("9.90"), {});
+  Valuations values{{f.symbol(), f.valuation()}};
+  for (const auto mode : {MarginMode::Strategy, MarginMode::Portfolio}) {
+    AccountRules rules;
+    rules.margin = mode;
+    for (const auto& shock : historical_stresses()) {
+      SCOPED_TRACE(shock.id);
+      const auto stressed = stress_book(ledger, values, shock.factors, 0, Money::parse("10000"), {}, f.time,
+          md::kNanosPerMinute, {}, rules);
+      ASSERT_TRUE(stressed.complete);
+      EXPECT_DOUBLE_EQ(stressed.pnl, 0);
+      ASSERT_TRUE(stressed.margin);
+      EXPECT_EQ(*stressed.margin, Money::parse("990"));
+    }
+  }
 }
 TEST(HistoricalRisk, EmpiricalQuantilesAndFractionalTailMean) {
   std::vector<double> losses;
