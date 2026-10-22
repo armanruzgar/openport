@@ -791,6 +791,36 @@ TEST(CboeSoq, ReadsTheDaysValueFromTheDelayedQuote) {
   EXPECT_THROW((void)providers::parse_cboe_soq_quote("{}", "SPX", "SET"), std::runtime_error);
 }
 
+TEST(CboeSoq, TakesADelayedQuoteOnlyOnceComputedPastTheOpeningPrints) {
+  md::Timestamp clock = md::new_york_to_utc({2026, 10, 21}, 9, 50);
+  std::vector<std::vector<providers::SettlementQuotation>> received;
+  providers::CboeSettlementQuotations::Options options;
+  options.clock = [&] { return clock; };
+  options.lookback_days = 3;
+  providers::CboeSettlementQuotations soq({"SPX"},
+      [&](std::vector<providers::SettlementQuotation> all) { received.push_back(std::move(all)); }, options);
+  std::string stamp = "2026-10-21T09:45:00";
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) {
+    if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, "DATE,SET\n10/20/2026,7681.230000\n"};
+    auto quote = std::string(kSetQuote);
+    quote.replace(quote.find("2026-10-21T10:35:51"), 19, stamp);
+    return net::HttpResponse{200, quote};
+  };
+  soq.poll_once(http);
+  // At 09:45 the value may predate the components' opening prints: only the history is held.
+  ASSERT_EQ(received.size(), 1u);
+  ASSERT_EQ(received[0].size(), 1u);
+  EXPECT_EQ(received[0][0].date, (md::Date{2026, 10, 20}));
+  stamp = "2026-10-21T10:35:51";
+  clock += 15 * 60 * md::kNanosPerSecond;
+  soq.poll_once(http);
+  ASSERT_EQ(received.size(), 2u);
+  ASSERT_EQ(received[1].size(), 2u);
+  EXPECT_EQ(received[1][1].date, (md::Date{2026, 10, 21}));
+  EXPECT_GT(received[1][1].quote_time, 0);
+}
+
 TEST(CboeSoq, FetchesQuotesOftenAndTheHistoryRarely) {
   md::Timestamp clock = md::new_york_to_utc({2026, 10, 21}, 11, 0);
   std::vector<std::vector<providers::SettlementQuotation>> received;

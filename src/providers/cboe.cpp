@@ -460,7 +460,9 @@ md::Timestamp CboeSettlementQuotations::poll_once(net::HttpClient& http) {
         if (response.status != 200) throw std::runtime_error("HTTP " + std::to_string(response.status));
         if (from_history) {
           for (auto& row : parse_cboe_soq_history(response.body, underlying, index, since)) keep(std::move(row), true);
-        } else if (auto quote = parse_cboe_soq_quote(response.body, underlying, index); quote && !(quote->date < since)) {
+        } else if (auto quote = parse_cboe_soq_quote(response.body, underlying, index);
+                   quote && !(quote->date < since) &&
+                   quote->quote_time >= md::new_york_to_utc(quote->date, 9, 30) + options_.quote_after_open.count() * md::kNanosPerSecond) {
           keep(std::move(*quote), false);
         }
       } catch (const std::exception& e) {

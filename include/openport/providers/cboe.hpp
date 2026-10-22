@@ -296,6 +296,10 @@ class CboeSettlementQuotations {
     std::chrono::seconds retry{15 * 60};
     std::chrono::seconds timeout{30};
     std::int64_t lookback_days = 14;
+    /// A delayed quote's value is taken only when computed on its date this long
+    /// after the 09:30 ET open: earlier, the index's components may not all have
+    /// printed their openings. History rows are always taken and are preferred.
+    std::chrono::seconds quote_after_open{30 * 60};
     std::function<md::Timestamp()> clock = md::now;
   };
 
