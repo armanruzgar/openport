@@ -96,9 +96,12 @@ void add_volatility_history(json& response, const MetricsSource& source, const s
 
 ApiResponse series_response(const MetricsSource& source, const std::string& symbol,
                             const std::map<std::string, std::string>& query) {
-  const auto bad = [](const std::string& message) { return ApiResponse{400, json{{"error", message}}.dump()}; };
+  // Errors share every other route's {"error": {"code", "message"}} shape.
+  const auto bad = [](const std::string& message) { return api_error(400, "INVALID_REQUEST", message); };
   const auto symbols = source.symbols();
-  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return {404, json{{"error", "unknown underlying"}}.dump()};
+  // A finished replay's archive is its account alone: it keeps no market data.
+  if (symbols.empty()) return api_error(404, "NOT_FOUND", "This source has no market data or metric series");
+  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return api_error(404, "NOT_FOUND", "unknown underlying");
   for (const auto& [key, value] : query) {
     (void)value;
     if (key != "fields" && key != "interval" && key != "from" && key != "to") return bad("unknown series query parameter");
