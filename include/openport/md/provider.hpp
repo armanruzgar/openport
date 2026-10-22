@@ -24,6 +24,9 @@ struct Capabilities {
   bool open_interest = false;
   bool vendor_greeks = false;
   bool history = false;
+  /// Delivers the underlying's own premarket and after-hours prints, so an
+  /// extended-hours share limit can fill on them. Not kept in recordings.
+  bool extended_hours_prints = false;
 };
 
 /// Which option chains to deliver.

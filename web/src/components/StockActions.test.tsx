@@ -202,8 +202,28 @@ describe("trading shares", () => {
     await type(host.querySelector("input")!, "101")
     expect([...host.querySelectorAll("button")].find((b) => b.textContent === "Sell 101 SPY")!.disabled).toBe(true)
   })
+  it("offers extended hours only on a feed with extended-hours prints", async () => {
+    vi.mocked(useLive).mockReturnValue({ ...liveState({ ...status, provider: { ...status.provider, name: "cboe", extended_hours_prints: false } }, null, "open"), underlyings: [
+      { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },
+    ] } as ReturnType<typeof useLive>)
+    vi.spyOn(api, "portfolio").mockResolvedValue({ ...portfolio, stocks: [] })
+    vi.spyOn(api, "account").mockResolvedValue(account)
+    const preview = vi.spyOn(api, "previewStockOrder").mockRejectedValue(new Error("fixture preview"))
+    vi.spyOn(api, "previewStock").mockRejectedValue(new Error("fixture preview"))
+    await act(async () => root.render(<QueryClientProvider client={new QueryClient()}>
+      <TradeSharesDialog trading={status.trading!} onClose={() => {}} /></QueryClientProvider>))
+    const kind = host.querySelector<HTMLSelectElement>('select[aria-label="Share order type"]')!
+    await act(async () => { kind.value = "limit"; kind.dispatchEvent(new Event("change", { bubbles: true })) })
+    const input = (label: string) => [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith(label))!.querySelector("input")!
+    await type(input("Limit price"), "505.00")
+    expect(input("Extended hours").disabled).toBe(true)
+    expect(host.textContent).toContain("cboe delivers no premarket or after-hours prints, so an extended-hours limit could not fill here.")
+    expect(host.textContent).not.toContain("04:00–20:00 ET")
+    await waitForRender(() => expect(preview).toHaveBeenCalled())
+    expect(preview).toHaveBeenLastCalledWith(expect.not.objectContaining({ extended_hours: true }), status.trading!.write)
+  })
   it("places a working bracketed limit and cancels working share orders", async () => {
-    vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), underlyings: [
+    vi.mocked(useLive).mockReturnValue({ ...liveState({ ...status, provider: { ...status.provider, extended_hours_prints: true } }, null, "open"), underlyings: [
       { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },
     ] } as ReturnType<typeof useLive>)
     const working = { id: "4", client_order_id: "x", actor: "web", symbol: "SPY", side: "sell" as const, type: "stop" as const, time_in_force: "gtc" as const,

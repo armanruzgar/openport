@@ -126,6 +126,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Published AM settlement values from Cboe's delayed quote count only once computed 30 minutes after the open; the history row is preferred and never displaced by a quote.
 - **Published AM settlement values.** `--am-settlement cboe` fetches the special opening quotations Cboe publishes for SPX, RUT, DJX and VIX (indices SET, RLS, DJS and VRO, from Cboe's public daily history) and settles live AM positions only on the history row for their exact expiry date, with source `published_soq`; waiting positions show `settle_by: "soq"` until it appears, and manual import remains the fallback. The index's delayed quote is not used: its trade time cannot tell reliably when it shows the day's value. Tested with responses recorded on 2026-10-21.
 - An AM position awaiting a published Cboe value keeps `settle_by: "soq"` while its expiry date is within the fetcher's 14-day lookback, instead of turning `manual` at 17:00 ET on the expiry date while the fetcher still looks for the row. The docs say options trading and rollover wait while a position awaits settlement, and that Cboe's posting lag is unmeasured.
+- `/api/status` reports `provider.extended_hours_prints`, false for Cboe (which publishes only the close outside the session) and the demo market; the share ticket disables Extended hours with a caption while it is false, since an extended-hours limit could never fill there.
 
 ### API, Python and automation
 

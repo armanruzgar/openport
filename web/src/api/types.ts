@@ -16,6 +16,8 @@ export interface ProviderInfo {
   trades: boolean
   open_interest: boolean
   vendor_greeks: boolean
+  /** The feed delivers premarket and after-hours underlying prints. Absent on older servers. */
+  extended_hours_prints?: boolean
 }
 
 export interface EngineMetrics {

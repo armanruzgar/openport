@@ -94,7 +94,7 @@ export function shareEffect(held: number, side: Side, shares: number): "opens" |
 export function TradeSharesDialog({ initial, trading, onClose }: { initial?: string; trading: TradingStatus; onClose: () => void }) {
   const api = useActionApi()
   const write = useWrite(trading)
-  const { underlyings, accountScope, source, replay } = useLive()
+  const { underlyings, accountScope, source, replay, status: feedStatus } = useLive()
   const token = useWriteToken()
   const portfolio = usePortfolio().data
   const stocks = portfolio?.stocks ?? []
@@ -110,6 +110,8 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
   const [stop, setStop] = useState("")
   const [tif, setTif] = useState<"day" | "gtc">("day")
   const [extended, setExtended] = useState(false)
+  // Only a feed with its own premarket and after-hours prints can fill an extended-hours limit.
+  const extendedPrints = feedStatus?.provider.extended_hours_prints === true
   const [stopLoss, setStopLoss] = useState("")
   const [takeProfit, setTakeProfit] = useState("")
   const clientId = useRef<string | undefined>(undefined)
@@ -138,7 +140,7 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
   const order: StockOrderRequest | null = working && valid ? {
     client_order_id: clientId.current ?? "", symbol, side, type: kind, shares: n, time_in_force: tif,
     ...(needsLimit ? { limit_price: limit.trim() } : {}), ...(needsStop ? { stop_price: stop.trim() } : {}),
-    ...(kind === "limit" && extended ? { extended_hours: true } : {}),
+    ...(kind === "limit" && extended && extendedPrints ? { extended_hours: true } : {}),
     ...(stopLoss.trim() || takeProfit.trim() ? { bracket: { ...(stopLoss.trim() ? { stop_loss: stopLoss.trim() } : {}), ...(takeProfit.trim() ? { take_profit: takeProfit.trim() } : {}) } } : {}),
   } : null
   const preview = useQuery({
@@ -175,7 +177,9 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
         <label className="trade-label">Time in force
           <select className="trade-input" value={tif} onChange={(e) => setTif(e.target.value as "day" | "gtc")}>
             <option value="day">DAY</option><option value="gtc">GTC</option></select></label>
-        {kind === "limit" && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={extended} onChange={(e) => setExtended(e.target.checked)} />Extended hours</label>}
+        {kind === "limit" && <div className="text-xs">
+          <label className="flex items-center gap-2"><input type="checkbox" disabled={!extendedPrints} checked={extended && extendedPrints} onChange={(e) => setExtended(e.target.checked)} />Extended hours</label>
+          {!extendedPrints && <p className="mt-1 text-muted">{feedStatus?.provider.name ?? "This feed"} delivers no premarket or after-hours prints, so an extended-hours limit could not fill here.</p>}</div>}
         <label className="trade-label">Bracket stop-loss ($)
           <input className="trade-input" inputMode="decimal" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="Optional" /></label>
         <label className="trade-label">Bracket take-profit ($)
@@ -185,7 +189,7 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
         {effect ? `${side === "buy" ? "Buying" : "Selling"} ${n} ${effect} the position` : "Enter a whole number of shares"}
         {isNum(spot) && valid ? `, about ${dollars(spot * n)} at ${symbol}'s price of ${fixed(spot, 2)}` : ""}, without a fee.</p>
       <p className="text-xs text-muted">{working
-        ? `A working order fills whole at the underlying's price once a later print ${needsStop ? "reaches its stop" : ""}${needsStop && needsLimit ? " and then " : ""}${needsLimit ? "crosses its limit" : ""}${!needsStop && !needsLimit ? "arrives in the session" : ""}, in the regular session${extended && kind === "limit" ? " or premarket and after hours (04:00–20:00 ET)" : ""}. Opening orders reserve buying power while they work. A bracket places a stop and a target for the filled shares, one cancelling the other.`
+        ? `A working order fills whole at the underlying's price once a later print ${needsStop ? "reaches its stop" : ""}${needsStop && needsLimit ? " and then " : ""}${needsLimit ? "crosses its limit" : ""}${!needsStop && !needsLimit ? "arrives in the session" : ""}, in the regular session${extended && extendedPrints && kind === "limit" ? " or premarket and after hours (04:00–20:00 ET)" : ""}. Opening orders reserve buying power while they work. A bracket places a stop and a target for the filled shares, one cancelling the other.`
         : "Shares trade at the underlying's price in the stock market's regular session."} Long shares are paid for in
         full under strategy margin, where unprotected short shares hold 150% of their value. Portfolio margin scans the book. Opening takes the account's checks, including exposure limits.</p>
       <section aria-label="Share preview" className="rounded-md border border-border p-3 text-xs space-y-1">

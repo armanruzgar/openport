@@ -336,7 +336,13 @@ work in the regular session; `extended_hours: true` lets a limit also work prema
 (04:00 ET to the open) and after hours (to 20:00 ET, 17:00 on an early close), sessions
 `md::stock_extended_session` models on the stock market's business days. The prices
 are the feed's underlying prints in those hours; the simulator adds no extended-hours
-spread or liquidity of its own. DAY ends at its date's regular close (after hours' end
+spread or liquidity of its own, so an extended-hours limit can fill only on a feed that
+delivers those prints. `/api/status` reports it per provider as
+`provider.extended_hours_prints`: false for Cboe, which outside the regular session
+publishes only the close, and for the demo market, which prints only through the
+regular session; no adapter reports it true yet, and replays report false. The
+terminal's share ticket disables its Extended hours box, with a caption saying why,
+while it is false; the API still accepts the flag. DAY ends at its date's regular close (after hours' end
 with extended hours) with `DAY_END`, and an order placed after it works the next
 business day; GTC works until it fills or is cancelled.
 

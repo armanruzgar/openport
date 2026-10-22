@@ -6624,6 +6624,10 @@
           },
           "vendor_greeks": {
             "type": "boolean"
+          },
+          "extended_hours_prints": {
+            "type": "boolean",
+            "description": "The provider delivers the underlying's own premarket and after-hours prints, so an extended-hours share limit can fill on them. False for Cboe (which publishes only the close outside the session) and the demo market."
           }
         },
         "required": [

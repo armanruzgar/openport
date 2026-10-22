@@ -68,6 +68,12 @@ TEST(Cboe, ParsesTheChainDocument) {
   EXPECT_DOUBLE_EQ(chain.options[2].iv, 0.0);  // null becomes zero
 }
 
+TEST(Cboe, ReportsNoExtendedHoursPrints) {
+  // Outside the regular session the underlying keeps its close, so an
+  // extended-hours share limit never has a print to fill on.
+  EXPECT_FALSE(providers::CboeDelayedProvider{}.capabilities().extended_hours_prints);
+}
+
 TEST(Cboe, PublishesDefinitionsBeforeDataAndSkipsBadSymbols) {
   providers::CboeDelayedProvider provider;
   Collector sink;

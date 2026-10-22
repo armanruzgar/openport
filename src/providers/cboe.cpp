@@ -564,6 +564,8 @@ md::Capabilities CboeDelayedProvider::capabilities() const noexcept {
   caps.open_interest = true;
   caps.vendor_greeks = true;
   caps.history = false;
+  // Outside the regular session the underlying keeps its close (see publish_chain).
+  caps.extended_hours_prints = false;
   return caps;
 }
 
