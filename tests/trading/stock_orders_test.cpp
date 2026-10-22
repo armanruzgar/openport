@@ -211,6 +211,30 @@ TEST(StockOrders, ExtendedHoursLimitsWorkPremarketAndDayOrdersEndWithTheirSessio
   EXPECT_TRUE(stock_order(s, 5).open());
 }
 
+TEST(StockOrders, ExtendedHoursOrdersFillOnlyOnPricesFreshInTheirSession) {
+  auto after_hours = [](std::string id, std::string_view limit) {
+    auto r = order(std::move(id), Side::Buy, StockOrderType::Limit, 5, limit);
+    r.extended_hours = true;
+    return r;
+  };
+  // At 18:30 the regular close is hours old: an after-hours buy does not fill on it.
+  TradingSession s(config(), ny(15, 59));
+  ASSERT_TRUE(price(s, ny(15, 59), "531").decision.ok());
+  ASSERT_TRUE(s.submit_stock_order(after_hours("late", "532.00"), ny(18, 30)).decision.ok());
+  EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Working);
+  // A fresh after-hours print fills it.
+  ASSERT_TRUE(price(s, ny(18, 31), "531.50").decision.ok());
+  EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
+  EXPECT_EQ(stock_order(s, 1).fill_price, m("531.50"));
+  // Nor on a 16:05 print, once it is stale within after hours.
+  TradingSession t(config(), ny(15, 59));
+  ASSERT_TRUE(price(t, ny(16, 5), "529").decision.ok());
+  ASSERT_TRUE(t.submit_stock_order(after_hours("print", "530.00"), ny(16, 5)).decision.ok());
+  EXPECT_EQ(stock_order(t, 1).status, OrderStatus::Filled);  // fresh at 16:05
+  ASSERT_TRUE(t.submit_stock_order(after_hours("stale", "530.00"), ny(18, 30)).decision.ok());
+  EXPECT_EQ(stock_order(t, 2).status, OrderStatus::Working);
+}
+
 TEST(StockOrders, WorkingOpeningOrdersReserveBuyingPower) {
   auto c = config();
   c.rules.buying_power = true;
@@ -233,6 +257,30 @@ TEST(StockOrders, WorkingOpeningOrdersReserveBuyingPower) {
   EXPECT_EQ(s.snapshot()->buying_power.reserved, Money{});
   EXPECT_EQ(s.cancel_stock_order(1, open).decision.code, Reason::ORDER_TERMINAL);
   EXPECT_EQ(s.cancel_stock_order(9, open).decision.code, Reason::UNKNOWN_ORDER);
+}
+
+TEST(StockOrders, StopAndMarketOrdersReserveAtAcceptance) {
+  auto c = config();
+  c.rules.buying_power = true;
+  const auto open = ny(10);
+  TradingSession s(c, open);
+  // With no price yet, a buy stop reserves at its stop.
+  ASSERT_TRUE(s.submit_stock_order(order("stop", Side::Buy, StockOrderType::Stop, 100, std::nullopt, "510.00"), open).decision.ok());
+  EXPECT_EQ(s.snapshot()->buying_power.reserved, m("51000"));
+  // A market order has no price to reserve against until one is known.
+  const auto unpriced = s.submit_stock_order(order("mkt", Side::Buy, StockOrderType::Market, 50), open);
+  EXPECT_EQ(unpriced.decision.code, Reason::STALE_QUOTE);
+  EXPECT_EQ(s.snapshot()->stock_orders.size(), 1u);
+  // Once priced, a market order outside the session rests reserving the last price.
+  const auto early = ny(8);
+  TradingSession t(c, early);
+  ASSERT_TRUE(t.submit_stock_order(order("mkt", Side::Buy, StockOrderType::Market, 50), early,
+                                   StockPrice{"SPY", early, m("500")}).decision.ok());
+  EXPECT_EQ(stock_order(t, 1).status, OrderStatus::Working);
+  EXPECT_EQ(t.snapshot()->buying_power.reserved, m("25000"));
+  // Another the rest cannot pay for is refused.
+  EXPECT_EQ(t.submit_stock_order(order("more", Side::Buy, StockOrderType::Stop, 160, std::nullopt, "505.00"), early).decision.code,
+            Reason::BUYING_POWER);
 }
 
 TEST(StockOrders, AccountAndPlanRulesSeeWorkingSells) {

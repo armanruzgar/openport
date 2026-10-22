@@ -476,6 +476,10 @@ struct QuoteObservation {
   Timestamp quoted = 0;
   /// When the quote was first given.
   [[nodiscard]] Timestamp first_time() const { return quoted > 0 ? quoted : time; }
+  /// Not a market quote: a value the integration models from listed data, as for a
+  /// split-adjusted series no listed series pays the same as. Its bid and ask are the
+  /// one value and it has no size: it marks the position and never fills an order.
+  bool modelled = false;
 };
 
 /// One coherent caller valuation at strike smile IV. Greeks are per unit:

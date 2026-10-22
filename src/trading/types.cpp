@@ -109,7 +109,9 @@ Decision eligible(const md::OptionContract& c, const Deliverable* adjusted) {
   // lieu, of an underlying that delivers shares.
   if (!c.standard && !adjusted)
     return {Reason::NONSTANDARD_UNSUPPORTED, "An adjusted series needs its deliverable (shares and cash) to trade", {}, {}, {}};
-  if (adjusted && (adjusted->shares < 1 || adjusted->shares > 100'000 || adjusted->cash < Money{} ||
+  // A deliverable may be cash alone, once a split leaves less than a whole share.
+  if (adjusted && (adjusted->shares < 0 || adjusted->shares > 100'000 || adjusted->cash < Money{} ||
+                   (adjusted->shares == 0 && adjusted->cash == Money{}) ||
                    md::is_index_underlying(c.underlying) || c.style != pricing::ExerciseStyle::American))
     return {Reason::NONSTANDARD_UNSUPPORTED, "Adjusted deliverables are modelled for share-settled American options only", {}, {}, {}};
   // American equity, ETF and OEX options trade too. Equity and ETF options deliver
@@ -232,10 +234,11 @@ std::optional<WalkStep> next_walk(const Order& o) {
   return WalkStep{since + interval, price};
 }
 bool valid_quote(const QuoteObservation& q) {
-  return q.observation > 0 && q.bid && q.ask && *q.bid > Money{} && *q.ask >= *q.bid &&
+  return !q.modelled && q.observation > 0 && q.bid && q.ask && *q.bid > Money{} && *q.ask >= *q.bid &&
          q.bid_size > 0 && q.ask_size > 0;
 }
 bool markable_quote(const QuoteObservation& q) {
+  if (q.modelled) return q.observation > 0 && q.bid && q.ask && *q.bid >= Money{} && *q.ask == *q.bid;
   return valid_quote(q) ||
          (q.observation > 0 && !q.bid && q.bid_size == 0 && q.ask && *q.ask > Money{} && q.ask_size > 0);
 }

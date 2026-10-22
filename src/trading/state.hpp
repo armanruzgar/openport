@@ -210,11 +210,12 @@ inline void to_json(Json& j, const QuoteObservation& q) {
            {"bid_size", q.bid_size}, {"ask_size", q.ask_size}};
   // Only a quote first given before its time records that; others keep their bytes.
   if (q.quoted != 0) j["quoted"] = q.quoted;
+  if (q.modelled) j["modelled"] = true;
 }
 inline void from_json(const Json& j, QuoteObservation& q) {
   j.at("symbol").get_to(q.symbol); j.at("observation").get_to(q.observation); j.at("time").get_to(q.time);
   j.at("bid").get_to(q.bid); j.at("ask").get_to(q.ask); j.at("bid_size").get_to(q.bid_size);
-  j.at("ask_size").get_to(q.ask_size); added_field(j, "quoted", q.quoted);
+  j.at("ask_size").get_to(q.ask_size); added_field(j, "quoted", q.quoted); added_field(j, "modelled", q.modelled);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(Valuation, symbol, time, delta, gamma, vega, theta, spot, forward, discount, years, smile_iv, valid, spot_source)
 inline void from_json(const Json& j, Valuation& v) {
@@ -741,12 +742,14 @@ inline void to_json(Json& j, const MarkedPosition& p) {
   // Older snapshots have neither; write them only when set.
   if (p.no_bid) j["no_bid"] = true;
   if (p.do_not_exercise) j["do_not_exercise"] = true;
+  if (p.modelled_mark) j["modelled_mark"] = true;
 }
 inline void from_json(const Json& j, MarkedPosition& p) {
   j.at("position").get_to(p.position); j.at("mark").get_to(p.mark); j.at("mark_time").get_to(p.mark_time);
   j.at("mark_age").get_to(p.mark_age); j.at("market_value").get_to(p.market_value); j.at("unrealised").get_to(p.unrealised);
   j.at("fresh").get_to(p.fresh); j.at("awaiting_settlement").get_to(p.awaiting_settlement);
   added_field(j, "no_bid", p.no_bid); added_field(j, "do_not_exercise", p.do_not_exercise);
+  added_field(j, "modelled_mark", p.modelled_mark);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MarkedStock, position, mark, mark_time, market_value, unrealised, fresh)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CashFlow, id, attempt, time, day, kind, symbol, amount, basis, rate_bps, days, client_id)

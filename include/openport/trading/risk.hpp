@@ -50,7 +50,8 @@ class DeliverablesScope {
   const SharedMap<std::string, Deliverable>* previous_;
 };
 /// How a series reprices: its strike per share of the deliverable (the strike for a
-/// standard series) and how many standard contracts one contract is (1 for one).
+/// standard series) and how many standard contracts one contract is (1 for one; 0
+/// for a deliverable of cash only, whose payoff no move reprices).
 struct Equivalent {
   double strike = 0;
   double contracts = 1;

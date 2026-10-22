@@ -24,6 +24,8 @@ Equivalent equivalent(const std::string& symbol, const md::OptionContract& contr
   const auto it = current_deliverables->find(symbol);
   if (it == current_deliverables->end() || standard_deliverable(it->second)) return {contract.strike, 1};
   const auto& d = it->second;
+  // Cash only: the payoff is fixed, so no move in the underlying reprices it.
+  if (d.shares == 0) return {contract.strike, 0};
   const double shares = static_cast<double>(d.shares);
   return {(contract.strike * 100 - d.cash.dollars()) / shares, shares / 100};
 }

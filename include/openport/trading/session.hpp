@@ -53,6 +53,9 @@ struct MarkedPosition {
   bool no_bid = false;
   /// A long option the trader instructed not to be exercised at expiry.
   bool do_not_exercise = false;
+  /// Its mark is modelled (QuoteObservation::modelled), not quoted: it cannot trade
+  /// until a listed series quotes it.
+  bool modelled_mark = false;
 };
 struct MarkedStock {
   StockPosition position;

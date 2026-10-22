@@ -39,6 +39,25 @@ Decision share_entry_checks(const State& s, const std::string& symbol, Quantity 
   return {};
 }
 
+/// The opening rule inputs an option fill takes (opening_fill_check), for shares that
+/// open: other accounts' held and working dollar delta, as the server supplies it for
+/// the transaction (none in a replay, for a sandbox or with no other account). A
+/// resting share order checks it when it fills, as an option order does.
+Decision opening_share_check(const State& s, const std::string& symbol, Quantity signed_shares, Money price,
+                             const ShareTerms& terms, Events& events) {
+  if (!s.opening_rule_inputs || !s.config.rules.no_counter_positions || s.opening_rule_inputs->counter_positions.empty())
+    return {};
+  const auto& inputs = *s.opening_rule_inputs;
+  OpeningRuleInputs used;
+  if (s.compact_opening_rule_inputs)
+    for (const auto& other : inputs.counter_positions)
+      if (other.underlying == symbol) used.counter_positions.push_back(other);
+  Json recorded{{"symbol", symbol}, {"shares", signed_shares}, {"inputs", s.compact_opening_rule_inputs ? used : inputs}};
+  if (terms.order) recorded["stock_order"] = terms.order;
+  event(events, "opening_rule_inputs", std::move(recorded));
+  return counter_position_check({{symbol, static_cast<double>(signed_shares) * price.dollars()}}, inputs.counter_positions);
+}
+
 /// Trade shares at `price` after the entry checks and those an opening trade takes at
 /// its price: the stop requirement, hedging, complete marks, the loss and trade-risk
 /// limits and exposure, and then buying power. The caller has checked the session and
@@ -54,6 +73,7 @@ Decision trade_shares_checked(State& s, const std::string& symbol, Quantity sign
       return failure(Reason::STOP_REQUIRED, terms.order ? "This plan requires a stop-loss: enter shares with a bracket stop_loss"
                                                         : "This plan requires a stop-loss; share entries do not support brackets");
     if (const auto d = hedging_direction_check(s, symbol, static_cast<double>(signed_shares) * price.dollars()); !d.ok()) return d;
+    if (const auto d = opening_share_check(s, symbol, signed_shares, price, terms, events); !d.ok()) return d;
     const auto before = measure(s);
     if (!before.valuation_complete)
       return failure(Reason::STALE_QUOTE, "All held positions need fresh marks before opening shares");
@@ -144,7 +164,8 @@ Quantity pending_short_shares(const State& s, const std::string& symbol, OrderId
 }
 
 /// The price bound a working share order is reserved at: its limit, or for market and
-/// stop orders the underlying's price (a buy stop at least its stop).
+/// stop orders the underlying's price, fresh or last (a buy stop at least its stop, a
+/// sell stop at most it, and the stop without a price).
 std::optional<Money> stock_order_bound(const State& s, const StockOrder& o) {
   if (o.request.limit_price) return *o.request.limit_price;
   auto price = stock_price(s, o.request.symbol);
@@ -223,6 +244,11 @@ Decision stock_acceptance_check(const State& s, const StockOrderRequest& r, Orde
   }
   if (s.config.rules.require_stop_loss && !r.stop_loss)
     return failure(Reason::STOP_REQUIRED, "This plan requires a stop-loss: enter shares with a bracket stop_loss");
+  // Opening orders reserve buying power at acceptance (stock_order_bound): a limit at
+  // its limit, a stop at least at its stop, and a market order at the last price,
+  // which it therefore needs.
+  if (s.config.rules.buying_power && r.type == StockOrderType::Market && !s.stock_marks.contains(r.symbol))
+    return failure(Reason::STALE_QUOTE, "A market share order needs a price for " + r.symbol + " to reserve buying power against");
   return {};
 }
 
@@ -306,7 +332,8 @@ void place_stock_bracket(State& s, OrderId entry, Events& events) {
 /// Reasons a share order keeps waiting instead of ending: the market or its data, not
 /// the order or the account.
 bool share_data_gap(Reason code) {
-  return code == Reason::STALE_QUOTE || code == Reason::SESSION_CLOSED || code == Reason::MARKET_HALTED;
+  return code == Reason::STALE_QUOTE || code == Reason::SESSION_CLOSED || code == Reason::MARKET_HALTED ||
+         code == Reason::MISSING_VALUATION;
 }
 
 void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
@@ -315,7 +342,9 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
     if (!o.open() || (only && o.id != *only)) continue;
     const auto& symbol = o.request.symbol;
     const auto mark = s.stock_marks.find(symbol);
-    const auto price = stock_price(s, symbol);
+    // An extended-hours order fills only on a price fresh within the session it
+    // fills in: after hours, not the regular close.
+    const auto price = stock_price(s, symbol, s.time, o.request.extended_hours);
     // A resting order takes a price printed after it was accepted; the one it was
     // accepted on executes it at once.
     if (!price || mark == s.stock_marks.end() || (mark->second.time < o.accepted_at && !only)) continue;

@@ -143,6 +143,51 @@ TEST(CorporateActions, FractionsArePaidInCashAndReverseSplitsDeliverCashInLieu) 
   EXPECT_EQ(s.snapshot()->closures.back().price, m("50"));  // 500 - (5 x 9000) / 100
 }
 
+TEST(CorporateActions, ContractsDeliveringLessThanAShareDeliverCashOnly) {
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  // 100 shares at $510 split into 150 or 200, or half or a tenth of a share: the
+  // fraction is all cash at the split price, $51,000 either way, not a whole share.
+  const std::vector<std::tuple<std::int64_t, std::int64_t, Deliverable>> splits{
+      {3, 2, {150, {}}}, {2, 1, {200, {}}}, {1, 200, {0, m("51000")}}, {1, 1000, {0, m("51000")}}};
+  for (const auto& [numerator, denominator, expected] : splits) {
+    SCOPED_TRACE(std::to_string(numerator) + ":" + std::to_string(denominator));
+    Spy f;
+    TradingSession s(roomy(), f.time);
+    ASSERT_TRUE(s.define(call, f.time).decision.ok());
+    f.quote(s, call, "14.00", "14.20");
+    ASSERT_TRUE(s.submit(f.market("long", call, 1, Side::Buy), f.time).decision.ok());
+    ASSERT_TRUE(s.roll_day(at(kExDate, 9), {}, {{"SPY", kExDate, numerator, denominator}}).decision.ok());
+    EXPECT_EQ(s.snapshot()->deliverables.at(call.osi_symbol()), expected);
+    EXPECT_EQ(s.snapshot()->corporate_actions[0].series.at(call.osi_symbol()), expected);
+    if (expected.shares != 0) continue;
+    // It pays $510 a unit against the $500 strike whatever the shares do, and
+    // exercise delivers no shares.
+    ASSERT_TRUE(s.settle(call.osi_symbol(), m("1"), call.expiry_time()).decision.ok());
+    EXPECT_EQ(s.snapshot()->closures.back().price, m("10"));
+    EXPECT_EQ(stock(s), nullptr);
+    EXPECT_TRUE(s.snapshot()->stock_fills.empty());
+  }
+}
+
+TEST(CorporateActions, AShortDeliveringCashOnlyRequiresWhatItOwes) {
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  Spy f;
+  TradingSession s(roomy(), f.time);
+  ASSERT_TRUE(s.define(call, f.time).decision.ok());
+  f.quote(s, call, "14.00", "14.20");
+  ASSERT_TRUE(s.submit(f.market("short", call, 1, Side::Sell), f.time).decision.ok());
+  ASSERT_TRUE(s.roll_day(at(kExDate, 9), {}, {{"SPY", kExDate, 1, 200}}).decision.ok());
+  f.time = at(kExDate);
+  f.spot = 102000;
+  f.quote(s, call, "9.90", "10.10");
+  const auto& snapshot = *s.snapshot();
+  // Its payoff is fixed: what buying it back costs, and no move in the shares changes it.
+  ASSERT_EQ(snapshot.margin.size(), 1u);
+  EXPECT_EQ(snapshot.margin[0].requirement, snapshot.positions[0].market_value ? -*snapshot.positions[0].market_value : Money{});
+  EXPECT_GT(snapshot.margin[0].requirement, Money{});
+  EXPECT_TRUE(snapshot.risk.complete);
+}
+
 TEST(CorporateActions, AdjustedSeriesListedWithTheirDeliverableTrade) {
   auto adjusted = *md::parse_osi("SPY261016C00500000");
   adjusted.root = "SPY1";

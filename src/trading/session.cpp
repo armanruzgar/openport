@@ -192,6 +192,7 @@ Decision quote_check(const State& s, const std::string& symbol) {
 }
 /// Why a quote that is not executable cannot fill paper orders, in words.
 std::string quote_problem(const QuoteObservation& q) {
+  if (q.modelled && q.observation > 0) return "Modelled: no listed series quotes it";
   if (q.observation == 0 || (!q.bid && !q.ask)) return "No quote";
   if (!q.bid || *q.bid <= Money{}) return "No bid: the quote is one-sided";
   if (!q.ask || *q.ask <= Money{}) return "No ask: the quote is one-sided";
@@ -222,7 +223,7 @@ bool asks_only(const State& s, const std::string& symbol) {
     if (s.time < end || (book != s.books.end() && book->second.quote.time < end)) return false;
   }
   const auto it = s.books.find(symbol);
-  return it != s.books.end() && !valid_quote(it->second.quote) && marked_now(s, symbol);
+  return it != s.books.end() && !it->second.quote.modelled && !valid_quote(it->second.quote) && marked_now(s, symbol);
 }
 /// A combo exit's (or reduce-only close's) leg whose fresh quote shows only an ask.
 /// The order buys such a leg back at that ask and gives it away at zero when it
@@ -382,13 +383,15 @@ Quantity shares_held(const State& s, const std::string& symbol) {
 }
 /// The underlying's price if fresh at `at`: within max_quote_age of it while the
 /// stock market is open, or of its last close while it is not (the 16:00 close
-/// stays current while the options trade on to 16:15, and overnight).
-std::optional<Money> stock_price(const State& s, const std::string& symbol, Timestamp at) {
+/// stays current while the options trade on to 16:15, and overnight). `extended`
+/// measures it against the session with premarket and after hours instead, as an
+/// extended-hours share order fills in it: at 18:30 the 16:00 close is stale.
+std::optional<Money> stock_price(const State& s, const std::string& symbol, Timestamp at, bool extended = false) {
   const auto end = halt_end(s, symbol);
   if (at < end) return std::nullopt;
   const auto it = s.stock_marks.find(symbol);
   if (it == s.stock_marks.end() || it->second.time < end || it->second.time > at) return std::nullopt;
-  const auto session = md::stock_session(at);
+  const auto session = extended ? md::stock_extended_session(at) : md::stock_session(at);
   const auto observed = session.open || session.market_time == md::kInvalidTimestamp ? at : std::min(at, session.market_time);
   if (observed - it->second.time > s.config.limits.max_quote_age) return std::nullopt;
   return it->second.price;
@@ -447,11 +450,12 @@ Quantity delivered(const State& s, const md::OptionContract& c, Quantity contrac
   return (c.type == pricing::OptionType::Call ? 1 : -1) * deliverable_of(s, c.osi_symbol()).shares * contracts;
 }
 /// What a share of the deliverable costs at the strike: the strike, for a standard
-/// series; 100 times it, less the cash in lieu, over the deliverable's shares.
+/// series; 100 times it, less the cash in lieu, over the deliverable's shares. A
+/// deliverable of cash only has no share to price; it keeps the strike.
 Money effective_strike(const State& s, const md::OptionContract& c) {
   const Money strike = Money::from_double(c.strike);
   const auto d = deliverable_of(s, c.osi_symbol());
-  if (standard_deliverable(d)) return strike;
+  if (standard_deliverable(d) || d.shares == 0) return strike;
   return (strike * 100 - d.cash).prorate(1, d.shares);
 }
 /// What exercising one unit (a contract over its multiplier of 100) is worth with the
@@ -948,6 +952,13 @@ std::vector<LotGroup> lot_groups(const State& s, std::vector<MarginLeg> legs, st
     auto [it, added] = index.try_emplace(key, groups.size());
     if (added) groups.push_back({d.shares, {}, {}, {}});
     auto& group = groups[it->second];
+    // A deliverable of cash only pays a fixed amount: no shares cover it and no
+    // standard series is its equivalent.
+    if (d.shares == 0) {
+      group.symbols[symbol] = symbol;
+      group.legs.push_back(std::move(leg));
+      continue;
+    }
     MarginLeg equivalent = leg;
     equivalent.contract.strike = effective_strike(s, leg.contract).dollars();
     equivalent.contract.standard = true;
@@ -958,7 +969,7 @@ std::vector<LotGroup> lot_groups(const State& s, std::vector<MarginLeg> legs, st
   for (auto& stock : stocks) {
     for (std::size_t g = 1; g < groups.size() && stock.shares != 0; ++g) {
       auto& group = groups[g];
-      if (group.legs.empty() || group.legs.front().contract.underlying != stock.underlying) continue;
+      if (group.shares == 0 || group.legs.empty() || group.legs.front().contract.underlying != stock.underlying) continue;
       // Long shares cover short calls, short shares short puts, a lot a contract.
       Quantity shorts = 0;
       for (const auto& leg : group.legs)
@@ -975,13 +986,22 @@ std::vector<LotGroup> lot_groups(const State& s, std::vector<MarginLeg> legs, st
   }
   return groups;
 }
+/// What a group of series that deliver cash only requires: each short's buy-back
+/// value, the fixed amount it owes less the strike, as its payoff cannot move.
+Money cash_only_requirement(const LotGroup& group) {
+  Money total;
+  for (const auto& leg : group.legs)
+    if (leg.quantity < 0) total = total + leg.value;
+  return total;
+}
 /// margin_requirement over the lot groups, each scaled back to its deliverable.
 Money grouped_requirement(const std::vector<LotGroup>& groups, const MarginPolicy& policy, bool standard = true) {
   Money total;
   for (std::size_t g = standard ? 0 : 1; g < groups.size(); ++g) {
     const auto& group = groups[g];
     if (group.legs.empty() && group.stocks.empty()) continue;
-    total = total + margin_requirement(group.legs, group.stocks, policy).prorate(group.shares, 100);
+    total = total + (group.shares == 0 ? cash_only_requirement(group)
+                                       : margin_requirement(group.legs, group.stocks, policy).prorate(group.shares, 100));
   }
   return total;
 }
@@ -1040,6 +1060,16 @@ std::vector<MarginUnderlying> margin_detail(const State& s) {
         detail = margin_breakdown(groups[0].legs, groups[0].stocks, allocation_policy(s));
       for (std::size_t g = 1; g < groups.size(); ++g) {
         const auto& group = groups[g];
+        if (group.shares == 0) {
+          MarginUnderlying item{group.legs.front().contract.underlying, cash_only_requirement(group), {}, std::nullopt, "exact"};
+          for (const auto& leg : group.legs)
+            if (leg.quantity < 0) item.parts.push_back({MarginPartKind::Naked, {{leg.contract.osi_symbol(), leg.quantity}}, leg.value});
+          const auto same = std::find_if(detail.begin(), detail.end(), [&](const auto& u) { return u.underlying == item.underlying; });
+          if (same == detail.end()) { detail.push_back(std::move(item)); continue; }
+          same->requirement = same->requirement + item.requirement;
+          same->parts.insert(same->parts.end(), item.parts.begin(), item.parts.end());
+          continue;
+        }
         for (auto item : margin_breakdown(group.legs, group.stocks, allocation_policy(s))) {
           item.requirement = item.requirement.prorate(group.shares, 100);
           for (auto& part : item.parts) {
@@ -1358,6 +1388,7 @@ Measures measure(const State& s) {
       out.unrealised = out.unrealised + *p.unrealised;
     }
     p.no_bid = p.awaiting_settlement || asks_only(s, symbol);
+    if (const auto book = s.books.find(symbol); book != s.books.end()) p.modelled_mark = it != s.marks.end() && book->second.quote.modelled;
     p.do_not_exercise = s.do_not_exercise.contains(symbol);
     out.valuation_complete &= p.fresh;
     out.positions.push_back(std::move(p));
@@ -1923,7 +1954,7 @@ Quantity disallowed(const State& s, const std::vector<std::pair<std::string, Qua
   // Adjusted series need their own lots of shares to be covered.
   Quantity count = 0;
   for (const auto& group : lot_groups(s, std::move(legs), std::move(stocks)))
-    count += disallowed_shorts(group.legs, group.stocks, s.config.rules.account_type);
+    if (group.shares != 0) count += disallowed_shorts(group.legs, group.stocks, s.config.rules.account_type);
   return count;
 }
 /// A cash account or IRA refuses additional uncovered calls or short shares.
@@ -4165,7 +4196,7 @@ std::optional<Money> alert_value(const State& s, const AlertCondition& c, const 
       if (c.metric == "mark") return mark(c.symbol);
       if (c.metric == "bid" || c.metric == "ask") {
         const auto book = s.books.find(c.symbol);
-        if (book == s.books.end() || !markable_quote(book->second.quote) ||
+        if (book == s.books.end() || !markable_quote(book->second.quote) || book->second.quote.modelled ||
             !recent(book->second.quote.time, s.config.limits.max_quote_age)) return std::nullopt;
         return c.metric == "bid" ? book->second.quote.bid : book->second.quote.ask;
       }
@@ -6138,7 +6169,7 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     // A long instructed not to be exercised expires worthless.
     const bool unexercised = quantity > 0 && s.do_not_exercise.contains(symbol);
     const Money exercise_value = unit_exercise_value(s, it->second, settlement);
-    const bool pin = s.config.rules.pin_risk && quantity < 0 && physical(it->second) &&
+    const bool pin = s.config.rules.pin_risk && quantity < 0 && physical(it->second) && deliverable_of(s, symbol).shares != 0 &&
         exercise_value >= Money::parse("-0.10") && exercise_value <= Money::parse("0.10");
     const auto assigned = pin ? -pin_assignments(s, it->second, -quantity, exercise_value >= Money::from_micros(10'000)) : quantity;
     // Pin assignments close the option at zero and deliver at the strike. This
@@ -6153,7 +6184,9 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
       at_expiry->years = 0;
     }
     end_stretch(s, symbol, intrinsic, at_expiry ? &*at_expiry : nullptr);
-    const bool delivers = pin ? assigned != 0 : physical(it->second) && intrinsic >= Money::from_micros(10'000);
+    // A deliverable of cash only settles in its intrinsic value, delivering nothing.
+    const bool delivers = pin ? assigned != 0
+                              : physical(it->second) && deliverable_of(s, symbol).shares != 0 && intrinsic >= Money::from_micros(10'000);
     const Money fee = delivers ? exercise_fee(s, assigned) : Money{};
     s.settlements.push_back(settlement_record(s.ledger.positions().at(symbol), settlement, intrinsic, fee, time, source));
     s.ledger.settle(symbol, intrinsic, fee);
@@ -6244,9 +6277,9 @@ void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp cl
     const auto fee = exercise_fee(s, contracts);
     fill_position(s, symbol, contracts, intrinsic, fee);
     s.closures.push_back({symbol, -contracts, intrinsic, s.time, ClosureKind::Assignment, s.fills.size(), fee});
-    trade_shares(s, contract.underlying, shares, *price, StockSource::Assignment, symbol);
+    if (shares != 0) trade_shares(s, contract.underlying, shares, *price, StockSource::Assignment, symbol);
     sync_exits(s, symbol, events);
-    if (s.config.rules.buying_power)
+    if (shares != 0 && s.config.rules.buying_power)
       s.stock_fills.mut(s.stock_fills.size() - 1).buying_power_after = buying_power(s).total.available;
     event(events, "assignment", Json{{"symbol", symbol}, {"contracts", contracts}, {"of", short_contracts}, {"reason", reason},
                                      {"intrinsic", intrinsic}, {"mark", mark->second.price},
@@ -6294,7 +6327,8 @@ void accrue_financing(State& s, const State& closing, std::int64_t days, Events&
 /// once: held shares split, the fraction of a share left over paid in cash at the
 /// split mark (or the average cost without one) and the mark split with them; every
 /// share-settled series on the underlying that has not expired takes the split
-/// deliverable, whole shares with the fraction as cash at that price; and working
+/// deliverable, whole shares with the fraction as cash at that price (cash only once
+/// a contract delivers less than a whole share, as after a 1:200 reverse split); and working
 /// share orders on the stock are cancelled, their prices no longer applying.
 void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actions, Events& events) {
   for (const auto& a : actions) {
@@ -6343,7 +6377,6 @@ void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actio
       if (const auto rest = scaled % a.denominator; rest != 0)
         after.cash = after.cash + nearest_cent((split_price ? *split_price : effective_strike(s, contract).prorate(a.denominator, a.numerator))
                                                    .prorate(rest, a.denominator));
-      if (after.shares == 0) after.shares = 1;  // never below a share: the rest is cash
       s.deliverables[symbol] = after;
       record.series[symbol] = after;
     }
@@ -6874,7 +6907,7 @@ CommandResult TradingSession::exercise(const std::string& symbol, Quantity contr
       const auto fee = exercise_fee(t, contracts);
       fill_position(t, symbol, -contracts, intrinsic, fee);
       t.closures.push_back({symbol, contracts, intrinsic, t.time, ClosureKind::Exercise, t.fills.size(), fee});
-      trade_shares(t, contract.underlying, shares, *price, StockSource::Exercise, symbol);
+      if (shares != 0) trade_shares(t, contract.underlying, shares, *price, StockSource::Exercise, symbol);
     };
     if (s.config.rules.buying_power) {
       State projected = s;
