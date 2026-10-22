@@ -1,11 +1,11 @@
 import { useCallback, useSyncExternalStore } from "react"
 
-export const views = ["chart", "dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "payouts", "smile", "exposure", "flow", "replay", "engine", "brief", "backtest", "vol-scanner", "analysis"] as const
+export const views = ["chart", "dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "payouts", "smile", "exposure", "flow", "replay", "engine", "brief", "backtest", "vol-scanner", "analysis", "analyze"] as const
 export type View = (typeof views)[number]
 /** Sidebar order; number keys switch between them. */
 export const primaryViews = ["dashboard", "chain", "positions", "orders", "journal", "rules", "playbooks", "brief", "payouts", "analysis"] as const satisfies readonly View[]
 /** Market analytics sit beside the chain as the Trade page's tabs. */
-export const tradeViews = ["chain", "smile", "exposure", "vol-scanner", "flow"] as const satisfies readonly View[]
+export const tradeViews = ["chain", "analyze", "smile", "exposure", "vol-scanner", "flow"] as const satisfies readonly View[]
 /** Pages that exist only with a paper-trading server. */
 export const accountViews: readonly View[] = ["dashboard", "positions", "orders", "journal", "rules", "playbooks", "payouts"]
 /** Sidebar pages that apply: account pages need trading, and Payouts is shown only when offered. */

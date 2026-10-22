@@ -15,8 +15,10 @@ import { OrderResult } from "./OrderTicket"
 import { TradingError, WriteAccess } from "./TradingControls"
 
 /** Two explicit orders: shares first, then a covered call or the collar's option pair. */
-export function CoveredStrategyDialog({ kind, chain, trading, onClose }: {
+export function CoveredStrategyDialog({ kind, chain, trading, onClose, initialCall, initialQuantity }: {
   kind: "covered-call" | "collar"; chain: Chain; trading: TradingStatus; onClose: () => void
+  /** The call to start with (an optimizer candidate's); the first strike at or above spot otherwise. */
+  initialCall?: string; initialQuantity?: number
 }) {
   const api = useActionApi()
   const { accountScope } = useLive()
@@ -26,9 +28,10 @@ export function CoveredStrategyDialog({ kind, chain, trading, onClose }: {
   const calls = chain.strikes.filter((r) => r.call?.tradable && r.call.symbol)
   const puts = chain.strikes.filter((r) => r.put?.tradable && r.put.symbol)
   const spot = chain.spot ?? chain.expiry.forward ?? 0
-  const [call, setCall] = useState(() => (calls.find((r) => r.strike >= spot) ?? calls.at(-1))?.call?.symbol ?? "")
+  const [call, setCall] = useState(() => calls.find((r) => r.call?.symbol === initialCall)?.call?.symbol ??
+    (calls.find((r) => r.strike >= spot) ?? calls.at(-1))?.call?.symbol ?? "")
   const [put, setPut] = useState(() => (puts.filter((r) => r.strike <= spot).at(-1) ?? puts[0])?.put?.symbol ?? "")
-  const [quantity, setQuantity] = useState("1")
+  const [quantity, setQuantity] = useState(String(initialQuantity ?? 1))
   const [bought, setBought] = useState(false)
   const [attempted, setAttempted] = useState(false)
   const [order, setOrder] = useState<Order>()

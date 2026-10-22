@@ -44,7 +44,9 @@ with zero. It does not coerce monetary strings into floats.
 | `status`, `symbols` | `/api/status`; symbols are its underlying names |
 | `summary` | `/api/underlyings/{symbol}/summary`, including its expiries |
 | `chain`, `exposure`, `surface`, `volatility`, `candles`, `series`, `probability` | The corresponding underlying views; `series` (and `volatility_history`, with keyword arguments) is metric history such as `mfiv30` ([fields](../docs/volatility.md#series-api)) |
-| `account`, `portfolio`, `orders`, `fills`, `trades`, `risk`, `risk_profile`, `risk_scenarios`, `risk_history`, `plans`, `accounts`, `equity` | The terminal's paper reads |
+| `optimize_strategies(symbol, target, budget, ...)` | `/api/underlyings/{symbol}/optimizer`: ranked candidate strategies within a loss budget |
+| `account`, `portfolio`, `orders`, `fills`, `trades`, `risk`, `risk_profile`, `risk_scenarios`, `risk_history`, `plans`, `accounts`, `equity` | The terminal's paper reads; `risk_profile(legs={osi: qty}, held=False)` profiles hypothetical legs |
+| `hedges(target, scope, betas=)` | `/api/risk/hedges`: the smallest share, ATM option or SPX/SPY beta hedge back inside a limit, beta hedges sized on beta-weighted delta |
 | `place_order`, `preview_order`, `modify_order`, `cancel_order`, `cancel_all`, `cancel_orders`, `flatten` | Paper orders and position closure |
 | `settlements` | Settlement references, proceeds and provenance, newest first (live, replay or history) |
 | `note`, `day_note`, `export_csv` | Trade/day annotations and fills/trades exports |
@@ -107,7 +109,7 @@ is never a tool argument. The installed SDK is MCP 2.x: `MCPServer`, not `FastMC
 
 Tools include status, symbols, summary, chain, volatility, volatility history,
 surface history, the volatility scanner, exposure, account,
-positions, orders, risk, risk profile, probability cones, order preview/place/cancel, flatten, scenario listing and
+positions, orders, risk, risk profile (with hypothetical legs), hedge suggestions, the strategy optimizer, probability cones, order preview/place/cancel, flatten, scenario listing and
 replay start/step/stop (scenarios or recordings). Chain results default to a 3% strike window and at most 80
 strikes; a capped response says `truncated: true`. Windows must be in `(0, 0.1]`.
 Volatility accepts an account for plan event estimates. Surface history defaults

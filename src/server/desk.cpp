@@ -98,40 +98,6 @@ std::optional<Money> quote_price(double price) {
   try { return Money::from_double(price); }
   catch (const TradingError&) { return {}; }
 }
-Valuation valuation_for(const std::string& symbol, const md::OptionContract& contract,
-                         const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
-  Valuation result;
-  result.symbol = symbol;
-  result.valid = false;
-  if (!metrics) return result;
-  result.time = metrics->as_of;
-  for (const auto& slice : metrics->slices) {
-    if (slice.expiry_time != contract.expiry_time() || slice.style != contract.style) continue;
-    for (const auto& strike : slice.strikes) {
-      const auto& option = contract.type == pricing::OptionType::Call ? strike.call : strike.put;
-      if (option.id == analytics::kNoInstrument || option.contract.osi_symbol() != symbol) continue;
-      result = {symbol, metrics->as_of, option.delta, option.gamma, option.vega, option.theta,
-                metrics->spot, slice.forward.forward, slice.forward.discount, slice.years,
-                strike.iv, true};
-      result.valid = valid_valuation(result);
-      // A far wing without a bid can leave its strike with no smile IV. Its own ask's
-      // (or bid's) IV, at the expiry's forward, still measures holding it.
-      const double vol = std::isfinite(option.ask_iv) ? option.ask_iv : option.bid_iv;
-      const double spot = metrics->spot, forward = slice.forward.forward;
-      if (!result.valid && vol > 0 && std::isfinite(vol) && spot > 0 && forward > 0 && slice.years > 0) {
-        const double carry = forward / spot;
-        const auto g = pricing::black_greeks(contract.type, forward, contract.strike, slice.years, vol,
-                                             slice.forward.discount);
-        result = {symbol, metrics->as_of, g.delta * carry, g.gamma * carry * carry, g.vega / 100.0,
-                  g.theta / 365.0, spot, forward, slice.forward.discount, slice.years, vol, true};
-        result.valid = valid_valuation(result);
-      }
-      result.spot_source = metrics->spot_source;
-      return result;
-    }
-  }
-  return result;
-}
 /// Opens a journal for writing, making each directory created on the way durable:
 /// an existing file is locked, then read for recovery; otherwise a new one is created.
 /// An empty journal, as a create that failed before its first record leaves, holds
@@ -265,6 +231,54 @@ std::optional<double> implied_variance_to_close(const analytics::UnderlyingMetri
   if (today <= 0) return 0.0;
   if (until_expiry <= 0) return {};
   return iv * iv * front->years * std::min(1.0, static_cast<double>(today) / static_cast<double>(until_expiry));
+}
+
+Valuation valuation_for(const std::string& symbol, const md::OptionContract& contract,
+                         const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
+  Valuation result;
+  result.symbol = symbol;
+  result.valid = false;
+  if (!metrics) return result;
+  result.time = metrics->as_of;
+  for (const auto& slice : metrics->slices) {
+    if (slice.expiry_time != contract.expiry_time() || slice.style != contract.style) continue;
+    for (const auto& strike : slice.strikes) {
+      const auto& option = contract.type == pricing::OptionType::Call ? strike.call : strike.put;
+      if (option.id == analytics::kNoInstrument || option.contract.osi_symbol() != symbol) continue;
+      result = {symbol, metrics->as_of, option.delta, option.gamma, option.vega, option.theta,
+                metrics->spot, slice.forward.forward, slice.forward.discount, slice.years,
+                strike.iv, true};
+      result.valid = valid_valuation(result);
+      // A far wing without a bid can leave its strike with no smile IV. Its own ask's
+      // (or bid's) IV, at the expiry's forward, still measures holding it.
+      const double vol = std::isfinite(option.ask_iv) ? option.ask_iv : option.bid_iv;
+      const double spot = metrics->spot, forward = slice.forward.forward;
+      if (!result.valid && vol > 0 && std::isfinite(vol) && spot > 0 && forward > 0 && slice.years > 0) {
+        const double carry = forward / spot;
+        const auto g = pricing::black_greeks(contract.type, forward, contract.strike, slice.years, vol,
+                                             slice.forward.discount);
+        result = {symbol, metrics->as_of, g.delta * carry, g.gamma * carry * carry, g.vega / 100.0,
+                  g.theta / 365.0, spot, forward, slice.forward.discount, slice.years, vol, true};
+        result.valid = valid_valuation(result);
+      }
+      result.spot_source = metrics->spot_source;
+      return result;
+    }
+  }
+  return result;
+}
+const analytics::OptionMetrics* find_option(const analytics::UnderlyingMetrics& metrics, std::string_view symbol) {
+  const auto contract = md::parse_osi(symbol);
+  if (!contract) return nullptr;
+  for (const auto& slice : metrics.slices) {
+    if (md::format_date(slice.expiry) != md::format_date(contract->expiry)) continue;
+    for (const auto& strike : slice.strikes) {
+      if (strike.strike != contract->strike) continue;
+      const auto& option = contract->type == pricing::OptionType::Call ? strike.call : strike.put;
+      if (option.id != analytics::kNoInstrument && option.contract.osi_symbol() == symbol) return &option;
+    }
+  }
+  return nullptr;
 }
 
 md::Timestamp probability_horizon(md::Timestamp now, double days) {

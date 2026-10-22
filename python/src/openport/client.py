@@ -14,7 +14,8 @@ from .types import (JSON, Account, Chain, Fills, OrderResult, Orders, Portfolio,
                     ReplayListing, ReplayResult, RunVerification, Status, Summary, Surface, Trades, Settlements,
                     Exposure, ExposureConvention, ExposureSlice, Volatility, Candles, Series, Risk, OrderPreview, SubmitResult,
                     Plans, Accounts, EquityHistory, CancelAllResult, FlattenResult,
-                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis, Heston)
+                    WhatIfResult, FlattenPreview, StockPreview, RiskProfile, Probability, HistoricalRisk, ScenarioAnalysis, Heston,
+                    StrategySearch, HedgeSuggestions)
 
 
 def _list(values) -> str | None:
@@ -238,6 +239,17 @@ class Client:
     def delete_analysis_portfolio(self, portfolio: str) -> JSON:
         return self._request("DELETE", "/analysis/portfolios/" + quote(portfolio, safe=""), control=True, retry=False)
 
+    def optimize_strategies(self, symbol: str, target: float, budget: float, *, date: str | None = None,
+                            expiries: list[str] | None = None, structures: list[str] | None = None,
+                            rank: str | None = None, vol_points: float | None = None, price: str | None = None,
+                            limit: int | None = None, max_candidates: int | None = None) -> StrategySearch:
+        """Search listed strategies within a loss budget for a target price and date, ranked by expected P&L under
+        the user's shifted distribution (rank="expected"), the risk-neutral one, probability of profit or return on risk.
+        Derived estimates from current quotes; a busy search pool answers 503 SEARCH_BUSY, retried like other 503s."""
+        return self._market(symbol, "optimizer", target=target, budget=budget, date=date, expiry_ids=_list(expiries),
+                            structures=_list(structures), rank=rank, vol_points=vol_points, price=price,
+                            limit=limit, max_candidates=max_candidates)
+
     def account(self) -> Account:
         return self._request("GET", "/account", scoped=True)
 
@@ -286,13 +298,26 @@ class Client:
                      days: list[float | str] | None = None, iv: float | None = None,
                      range: float | None = None, steps: int | None = None,
                      betas: dict[str, float] | None = None, term_scaled: bool = False,
-                     dynamics: str | None = None) -> RiskProfile:
-        """The held book's P&L curves over dates, against one underlying or beta-weighted to SPY or SPX."""
+                     dynamics: str | None = None, legs: dict[str, int] | None = None, held: bool = True) -> RiskProfile:
+        """The held book's P&L curves over dates, against one underlying or beta-weighted to SPY or SPX.
+        legs adds hypothetical contracts {padded OSI: signed quantity} (with underlying); held=False values them alone."""
         return self._request("GET", "/risk/profile", scoped=True, params={
             "underlying": underlying, "benchmark": benchmark, "days": _list(days), "iv": iv, "range": range,
             "term_scaled": "true" if term_scaled else None, "steps": steps,
             "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None,
-            "dynamics": dynamics})
+            "dynamics": dynamics,
+            "legs": ",".join(f"{symbol}:{quantity}" for symbol, quantity in legs.items()) if legs else None,
+            "held": None if held else "false"})
+
+    def hedges(self, target: str, scope: str = "aggregate", utilisation: float | None = None,
+               betas: dict[str, float] | None = None) -> HedgeSuggestions:
+        """The smallest share, ATM option or SPX/SPY beta hedge bringing a bucket's delta, vega or worst grid cell
+        (target) inside its limit or above the floor, ranked by spread cost then residual risk. For a delta target,
+        beta hedges are sized on the beta-weighted dollar delta to SPY; betas overrides each underlying's beta.
+        Nothing is traded."""
+        return self._request("GET", "/risk/hedges", scoped=True, params={
+            "target": target, "scope": scope, "utilisation": utilisation,
+            "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
 
     def equity(self, start: str | None = None, end: str | None = None, *,
                limit: int | None = None, cursor: str | None = None) -> EquityHistory:

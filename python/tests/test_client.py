@@ -227,6 +227,8 @@ def test_base_url_rejects_ambiguous_credentials(url):
     ("risk_scenarios", (), "GET", "/api/risk/scenarios", "ScenarioAnalysis"),
     ("risk_profile", ("SPX",), "GET", "/api/risk/profile", "RiskProfile"),
     ("probability", ("SPX", [0, 7], [5900]), "GET", "/api/underlyings/SPX/probability", "Probability"),
+    ("optimize_strategies", ("SPX", 5050, 1000), "GET", "/api/underlyings/SPX/optimizer", "StrategySearch"),
+    ("hedges", ("delta",), "GET", "/api/risk/hedges", "HedgeSuggestions"),
     ("plans", (), "GET", "/api/plans", "PlansResponse"),
     ("equity", (), "GET", "/api/account/equity", "EquityHistory"),
     ("cancel_all", ("SPX",), "POST", "/api/orders/cancel", "CancelAllResponse"),

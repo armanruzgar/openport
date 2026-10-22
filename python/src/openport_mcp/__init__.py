@@ -255,6 +255,20 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(client, lambda: client.analysis_risk(portfolio, view, **params))
 
     @server.tool()
+    def optimize_strategies(symbol: str, target: float, budget: float, date: str | None = None,
+                            expiries: list[str] | None = None, structures: list[str] | None = None,
+                            rank: Literal["expected", "risk_neutral", "pop", "return_on_risk"] = "expected",
+                            vol_points: float = 0, price: Literal["natural", "mid"] = "natural", limit: int = 10,
+                            replay: bool = False) -> dict:
+        """Search verticals, iron condors, butterflies, calendars, single options and covered calls within a loss
+        budget (dollars per candidate) for a target price and date (YYYY-MM-DD), ranked under the risk-neutral and
+        the shifted distribution. Derived estimates from current quotes, not advice; legs can go to preview_order."""
+        target_client = selected(replay=replay)
+        return result(target_client, lambda: target_client.optimize_strategies(
+            symbol, target, budget, date=date, expiries=expiries, structures=structures, rank=rank,
+            vol_points=vol_points, price=price, limit=limit))
+
+    @server.tool()
     def exposure(symbol: str, replay: bool = False, convention: ExposureConvention = "long_calls_short_puts",
                  slice: ExposureSlice = "all", expiries: int = 8, window: float = 0.08) -> dict:
         """Derived OI-weighted GEX, VEX, DEX, daily charm and vomma, with walls/flips.
@@ -309,12 +323,26 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     @server.tool()
     def risk_profile(account: str | None = None, underlying: str | None = None, benchmark: str | None = None,
                      days: list[float | str] | None = None, iv: float | None = None,
-                     dynamics: str | None = None, replay: bool = False) -> dict:
+                     dynamics: str | None = None, legs: dict[str, int] | None = None, held: bool = True,
+                     replay: bool = False) -> dict:
         """The held book's P&L curves over dates (days, or "expiry") and an IV offset, against one underlying
         or beta-weighted to SPY or SPX, with the levels where each date reaches the floors. dynamics is
-        sticky_strike (default), sticky_moneyness or sticky_delta, the last two along the SSVI surface."""
+        sticky_strike (default), sticky_moneyness or sticky_delta, the last two along the SSVI surface. legs adds
+        hypothetical contracts {padded OSI: signed quantity} on the underlying; held=False values them alone."""
         target = selected(account, replay)
-        return result(target, lambda: target.risk_profile(underlying, benchmark, days, iv, dynamics=dynamics))
+        return result(target, lambda: target.risk_profile(underlying, benchmark, days, iv, dynamics=dynamics,
+                                                          legs=legs, held=held))
+
+    @server.tool()
+    def hedges(target: Literal["delta", "vega", "grid"], account: str | None = None, scope: str = "aggregate",
+               utilisation: float | None = None, betas: dict[str, float] | None = None, replay: bool = False) -> dict:
+        """The smallest hedge (shares, an ATM option, or an SPY/SPX beta hedge for the aggregate) bringing a risk
+        bucket's delta, vega or worst grid cell inside its limit or above the floor, ranked by spread cost then
+        residual risk. A delta target sizes beta hedges on the beta-weighted dollar delta to SPY (betas overrides
+        an underlying's beta); beta_note says when one is missing and sizing fell back to one for one. Nothing is
+        traded; try an option hedge's order with what_if or preview_order."""
+        client = selected(account, replay)
+        return result(client, lambda: client.hedges(target, scope, utilisation, betas))
 
     def order_body(order):
         body = _body(asdict(order))

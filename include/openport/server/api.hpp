@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -33,6 +35,10 @@ struct ApiRequest {
   ApiAccess access;
   std::string client_ip;  ///< Connection peer, or the explicitly configured proxy header.
   bool ambiguous_headers = false;
+  /// Set by the transport once nobody will read the response: the client closed
+  /// its connection or the server is stopping. Null when the caller cannot tell.
+  /// Long reads (strategy searches) stop early when it turns true.
+  std::shared_ptr<const std::atomic_bool> cancelled;
 };
 
 struct ApiResponse {

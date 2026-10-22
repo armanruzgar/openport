@@ -27,6 +27,10 @@ export interface Marker {
   x: number
   label: string
   color: string
+  /** Makes the marker draggable: called with the x under the pointer while it moves. */
+  onDrag?: (x: number) => void
+  /** Arrow keys on a draggable marker's handle step it, as one notch left (-1) or right (+1). */
+  onStep?: (step: 1 | -1) => void
 }
 
 /** A horizontal level such as a target or floor, always kept in view. */
@@ -57,6 +61,7 @@ const margin = { top: 12, right: 16, bottom: 28, left: 52 }
 export function LineChart({ series, markers = [], references = [], height = 320, formatX, formatY, xLabel, xTicks, marginLeft = margin.left }: Props) {
   const [ref, { width }] = useSize<HTMLDivElement>()
   const [hoverX, setHoverX] = useState<number | null>(null)
+  const [dragging, setDragging] = useState<number | null>(null)
   const left = marginLeft
 
   const layout = useMemo(() => {
@@ -113,7 +118,14 @@ export function LineChart({ series, markers = [], references = [], height = 320,
   const onMove = (event: PointerEvent<SVGSVGElement>) => {
     if (!layout) return
     const rect = event.currentTarget.getBoundingClientRect()
-    setHoverX(layout.x.invert(event.clientX - rect.left))
+    const x = layout.x.invert(event.clientX - rect.left)
+    if (dragging != null) markers[dragging]?.onDrag?.(x)
+    setHoverX(x)
+  }
+  const endDrag = (event: PointerEvent<SVGSVGElement>) => {
+    if (dragging == null) return
+    setDragging(null)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
   const readout =
@@ -132,7 +144,8 @@ export function LineChart({ series, markers = [], references = [], height = 320,
   return (
     <div ref={ref} className="relative w-full select-none" style={{ height }}>
       {layout && (
-        <svg width={width} height={height} onPointerMove={onMove} onPointerLeave={() => setHoverX(null)} className="block">
+        <svg width={width} height={height} onPointerMove={onMove} onPointerUp={endDrag} onPointerCancel={endDrag}
+          onPointerLeave={() => { if (dragging == null) setHoverX(null) }} className="block">
           {layout.yTicks.map((t) => (
             <g key={`y${t}`}>
               <line x1={left} x2={width - margin.right} y1={layout.y(t)} y2={layout.y(t)} className="stroke-border" strokeDasharray="2 3" />
@@ -165,6 +178,21 @@ export function LineChart({ series, markers = [], references = [], height = 320,
               <text x={layout.x(m.x) + 4} y={margin.top + 10 + 12 * layout.rows[i]!} style={{ fill: m.color, stroke: "var(--panel)", strokeWidth: 3, paintOrder: "stroke" }} className="text-[10px]">
                 {m.label}
               </text>
+              {m.onDrag && <g role="slider" tabIndex={0} aria-label={`Drag ${m.label}`} aria-valuenow={m.x} aria-valuetext={formatX(m.x)}
+                className="cursor-ew-resize outline-none focus-visible:[&>circle]:stroke-accent"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  ;(event.currentTarget.ownerSVGElement as SVGSVGElement | null)?.setPointerCapture?.(event.pointerId)
+                  setDragging(i)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+                  event.preventDefault()
+                  m.onStep?.(event.key === "ArrowRight" ? 1 : -1)
+                }}>
+                <line x1={layout.x(m.x)} x2={layout.x(m.x)} y1={margin.top} y2={height - margin.bottom} stroke="transparent" strokeWidth={12} />
+                <circle cx={layout.x(m.x)} cy={height - margin.bottom} r={5} style={{ fill: m.color }} className="stroke-background" strokeWidth={1.5} />
+              </g>}
             </g>
           ))}
           {series.map((s) =>

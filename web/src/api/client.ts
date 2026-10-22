@@ -6,8 +6,8 @@ import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
 import type { AnalysisFormat, AnalysisGrid, AnalysisPortfolio, AnalysisPortfolios, AnalysisProfile, AnalysisStress, AnalysisVar, EarningsHistory, EarningsImport, Flow, FlowQuery } from "./types"
 import type { NotificationChannel, NotificationStatus, TokenReloadResponse } from "./types"
-import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, Summary, Surface, RunVerification } from "./types"
-import type { Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
+import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, StrategySearch, StrategySearchQuery, Summary, Surface, RunVerification } from "./types"
+import type { Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, HedgeSuggestions, HedgeTarget, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
 import { activeAccount, MAIN_ACCOUNT } from "../lib/active-account"
 import { dataSource } from "../lib/data-source"
 import { isSandboxToken, writeToken } from "../lib/write-token"
@@ -131,7 +131,24 @@ export function riskProfilePath(query: RiskProfileQuery): string {
   const betas = Object.entries(query.betas ?? {}).map(([symbol, beta]) => `${symbol}:${beta}`)
   if (betas.length) params.set("betas", betas.join(","))
   if (query.dynamics && query.dynamics !== "sticky_strike") params.set("dynamics", query.dynamics)
-  return `/api/risk/profile${params.size ? `?${params}` : ""}`
+  const legs = Object.entries(query.legs ?? {}).filter(([, quantity]) => quantity !== 0).map(([symbol, quantity]) => `${symbol}:${quantity}`)
+  if (legs.length) params.set("legs", legs.join(","))
+  if (query.held === false) params.set("held", "false")
+  // The server reads "+" as a plus sign, so the padded OSI symbols' spaces go as %20.
+  return `/api/risk/profile${params.size ? `?${params.toString().replace(/\+/g, "%20")}` : ""}`
+}
+/** GET /api/underlyings/{symbol}/optimizer's query. */
+export function optimizerPath(symbol: string, query: StrategySearchQuery): string {
+  const params = new URLSearchParams({ target: String(query.target), budget: String(query.budget) })
+  if (query.date) params.set("date", query.date)
+  if (query.expiries?.length) params.set("expiry_ids", query.expiries.join(","))
+  if (query.structures?.length) params.set("structures", query.structures.join(","))
+  if (query.rank) params.set("rank", query.rank)
+  if (query.vol_points) params.set("vol_points", String(query.vol_points))
+  if (query.price) params.set("price", query.price)
+  if (query.limit != null) params.set("limit", String(query.limit))
+  if (query.max_candidates != null) params.set("max_candidates", String(query.max_candidates))
+  return `${underlying(symbol)}/optimizer?${params}`
 }
 /** GET /api/underlyings/{symbol}/flow's query; defaults are left to the server. */
 export function flowPath(symbol: string, query: FlowQuery): string {
@@ -210,6 +227,8 @@ export const api = {
   riskScenarios: (dynamics: import("./trading-types").SmileDynamics, signal?: AbortSignal) =>
     get<Risk>(scoped(`/api/risk?dynamics=${dynamics}`), signal),
   riskProfile: (query: RiskProfileQuery, signal?: AbortSignal) => get<RiskProfile>(scoped(riskProfilePath(query)), signal),
+  hedges: (target: HedgeTarget, scope: string, utilisation: number, signal?: AbortSignal) =>
+    get<HedgeSuggestions>(scoped(`/api/risk/hedges?${new URLSearchParams({ target, scope, ...(utilisation < 1 ? { utilisation: String(utilisation) } : {}) })}`), signal),
   order: (id: string, signal?: AbortSignal) => get<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), signal),
   submitOrder: (order: NewOrder, mode: WriteMode) => accountWrite<SubmitOrderResponse>(scoped("/api/orders"), "POST", mode, order),
   cancelOrder: (id: string, mode: WriteMode) => accountWrite<OrderResponse>(scoped(`/api/orders/${encodeURIComponent(id)}`), "DELETE", mode),
@@ -297,6 +316,7 @@ export const api = {
   controlReplay: (change: ReplayControl, mode: WriteMode) =>
     write<ReplayResult>("/api/replay", "PUT", mode, change),
   stopReplay: (mode: WriteMode) => write<{ replay: null }>("/api/replay", "DELETE", mode),
+  optimizer: (symbol: string, query: StrategySearchQuery, signal?: AbortSignal) => get<StrategySearch>(optimizerPath(symbol, query), signal),
   probability: (symbol: string, days: number[], prices: number[], signal?: AbortSignal) =>
     get<Probability>(`${underlying(symbol)}/probability?days=${days.join(",")}${prices.length ? `&prices=${prices.join(",")}` : ""}`, signal),
   flow: (symbol: string, query: FlowQuery, signal?: AbortSignal) => get<Flow>(flowPath(symbol, query), signal),

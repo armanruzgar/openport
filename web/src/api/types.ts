@@ -1098,5 +1098,75 @@ export interface AnalysisVar {
   view: "var"
   sticky_strike: TailRisk
   atm_vol_change: TailRisk
+
+export type SearchStructure = "vertical" | "condor" | "butterfly" | "calendar" | "single" | "covered"
+export type SearchRank = "expected" | "risk_neutral" | "pop" | "return_on_risk"
+/** GET /api/underlyings/{symbol}/optimizer's query; omitted fields take the server's defaults. */
+export interface StrategySearchQuery {
+  target: number
+  budget: number
+  date?: string
+  expiries?: string[]
+  structures?: SearchStructure[]
+  rank?: SearchRank
+  vol_points?: number
+  price?: "natural" | "mid"
+  limit?: number
+  max_candidates?: number
+}
+export interface StrategySearchLeg {
+  symbol: string
+  side: "buy" | "sell"
+  ratio: number
+  type: "call" | "put"
+  strike: number
+  expiry: string
+  bid: number | null
+  ask: number | null
+  mid: number | null
+  iv: number
+}
+/** Per unit: net is the entry price (debit positive); losses, profits and expectations are dollars. */
+export interface StrategyCandidate {
+  name: string
+  structure: SearchStructure
+  legs: StrategySearchLeg[]
+  shares: number
+  net: number
+  max_loss: number
+  max_profit: number | null
+  breakevens: number[]
+  pop: { risk_neutral: number; user: number }
+  expected: { risk_neutral: number; user: number }
+  return_on_risk: number
+  quantity: number
+  valued_at: string
+  sigma: { risk_neutral: number; user: number }
+}
+export interface StrategySearch {
+  symbol: string
+  as_of: string
+  spot: number
+  target_price: number
+  target_date: string
+  target_time: string
+  budget: number
+  vol_points: number
+  rank: SearchRank
+  price: "natural" | "mid"
+  structures: SearchStructure[]
+  expiries: string[]
+  skipped: { expiry: string; reason: string }[]
+  considered: number
+  evaluated: number
+  unbounded: number
+  over_budget: number
+  within_budget: number
+  truncated: boolean
+  max_candidates: number
+  /** No at-the-money term structure: the distributions used an expiry's ATM IV over the time instead. */
+  variance_fallback: boolean
+  candidates: StrategyCandidate[]
+  label: string
   model: string
 }

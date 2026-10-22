@@ -136,6 +136,13 @@ struct TradingView {
 /// come and in a replay whenever it does; or by a value entered by hand.
 [[nodiscard]] std::string_view settle_by(const md::OptionContract& contract, const trading::TradingSnapshot& snapshot,
                                          const TradingView& view);
+/// A contract's valuation from an analytics snapshot: its strike's smile IV and its
+/// own Greeks, or, for a far wing without a smile IV, its ask's (or bid's) IV at the
+/// expiry's forward. Invalid when the snapshot does not quote the contract.
+[[nodiscard]] trading::Valuation valuation_for(const std::string& symbol, const md::OptionContract& contract,
+                                               const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics);
+/// The snapshot's quote of a padded OSI symbol, or null when it lists none.
+[[nodiscard]] const analytics::OptionMetrics* find_option(const analytics::UnderlyingMetrics& metrics, std::string_view symbol);
 
 /// The market's implied variance of an underlying's log price from its analytics'
 /// market time to that day's regular close: the nearest expiry's at-the-money IV²

@@ -644,6 +644,151 @@
         }
       }
     },
+    "/api/underlyings/{symbol}/optimizer": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "target",
+          "in": "query",
+          "required": true,
+          "description": "The price the user expects at the target date.",
+          "schema": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        {
+          "name": "budget",
+          "in": "query",
+          "required": true,
+          "description": "The most one candidate's quantity may lose, in dollars; candidates whose unit loses more are left out.",
+          "schema": {
+            "type": "number",
+            "minimum": 0.01
+          }
+        },
+        {
+          "name": "date",
+          "in": "query",
+          "required": false,
+          "description": "The target date (YYYY-MM-DD), valued at its regular close or a leg's earlier expiry; default the first searched expiry.",
+          "schema": {
+            "type": "string",
+            "format": "date"
+          }
+        },
+        {
+          "name": "expiry_ids",
+          "in": "query",
+          "required": false,
+          "description": "Up to four comma-separated expiry IDs; default the first four on or after the date.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "structures",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated vertical, condor, butterfly, calendar, single and covered (default all).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "rank",
+          "in": "query",
+          "required": false,
+          "description": "Order: expected P&L under the user's distribution, under the risk-neutral one, the user's probability of profit, or return on risk.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "expected",
+              "risk_neutral",
+              "pop",
+              "return_on_risk"
+            ],
+            "default": "expected"
+          }
+        },
+        {
+          "name": "vol_points",
+          "in": "query",
+          "required": false,
+          "description": "The user's volatility change, applied to the distribution and to legs alive at the valuation time.",
+          "schema": {
+            "type": "number",
+            "minimum": -50,
+            "maximum": 100
+          }
+        },
+        {
+          "name": "price",
+          "in": "query",
+          "required": false,
+          "description": "Enter at the far sides or the mids.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "natural",
+              "mid"
+            ],
+            "default": "natural"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "description": "Candidates returned.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 20
+          }
+        },
+        {
+          "name": "max_candidates",
+          "in": "query",
+          "required": false,
+          "description": "Candidates valued; when more are listed, an even sample across structures and expiries is valued and the result is marked truncated.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25000,
+            "default": 5000
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/optimizer",
+        "description": "Searches listed verticals, short iron condors, long butterflies, long calendars, single options and covered calls (not naked short calls) within a loss budget and ranks them under the risk-neutral and the user's shifted lognormal distributions. Runs on a two-worker search pool; 503 SEARCH_BUSY with Retry-After when it is full. A search stops early (truncated) when its client disconnects or the server stops; one still queued at shutdown answers 503 ENGINE_STOPPING. Derived estimates, not advice.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StrategySearch"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/account": {
       "parameters": [
         {
@@ -1012,6 +1157,25 @@
           }
         },
         {
+          "name": "legs",
+          "in": "query",
+          "required": false,
+          "description": "Up to eight comma-separated OSI:QUANTITY legs (padded OSI, signed whole contracts from -10000 to 10000 with at most one sign) added to the profile as if held; they need underlying.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "held",
+          "in": "query",
+          "required": false,
+          "description": "false profiles the legs alone, without the held book or its floors.",
+          "schema": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        {
           "name": "dynamics",
           "in": "query",
           "required": false,
@@ -1028,7 +1192,7 @@
       ],
       "get": {
         "summary": "GET /api/risk/profile",
-        "description": "The held book's P&L across moves of a reference price on several dates, where each date's curve reaches the floors, and beta-weighted delta. Analytical; nothing is recorded.",
+        "description": "The held book's P&L across moves of a reference price on several dates, where each date's curve reaches the floors, and beta-weighted delta. Analytical; nothing is recorded. legs adds hypothetical contracts, priced from the underlying's analytics with the same model; held=false values them alone.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -1037,6 +1201,78 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RiskProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/risk/hedges": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "target",
+          "in": "query",
+          "required": true,
+          "description": "What to bring back: dollar delta or vega inside the bucket's limit, or the worst scenario-grid cell inside the grid limit and above the floor.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "delta",
+              "vega",
+              "grid"
+            ]
+          }
+        },
+        {
+          "name": "scope",
+          "in": "query",
+          "required": false,
+          "description": "aggregate (SPY and SPX beta hedges) or a held underlying (its shares and ATM options).",
+          "schema": {
+            "type": "string",
+            "default": "aggregate"
+          }
+        },
+        {
+          "name": "utilisation",
+          "in": "query",
+          "required": false,
+          "description": "The share of the limit to bring the bucket to.",
+          "schema": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "default": 1
+          }
+        },
+        {
+          "name": "betas",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated SYMBOL:BETA overrides of betas to SPY (each within 10 of zero), as the risk profile's.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/risk/hedges",
+        "description": "For each candidate hedge (underlying shares, an ATM option, or an SPX/SPY beta hedge for the aggregate, sized for a delta target on the beta-weighted dollar delta to SPY when every beta is known), the smallest whole size that meets the target, ranked by spread cost and then residual risk, with an order to try in the what-if and the ticket. Analytical; nothing is recorded.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HedgeSuggestions"
                 }
               }
             }
@@ -2747,6 +2983,9 @@
     "/api/replay/underlyings/{symbol}/probability": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1probability"
     },
+    "/api/replay/underlyings/{symbol}/optimizer": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1optimizer"
+    },
     "/api/replay/account": {
       "$ref": "#/paths/~1api~1account"
     },
@@ -3009,6 +3248,9 @@
     "/api/replay/risk/profile": {
       "$ref": "#/paths/~1api~1risk~1profile"
     },
+    "/api/replay/risk/hedges": {
+      "$ref": "#/paths/~1api~1risk~1hedges"
+    },
     "/api/replay/history/{run_id}/risk": {
       "parameters": [
         {
@@ -3131,6 +3373,25 @@
           }
         },
         {
+          "name": "legs",
+          "in": "query",
+          "required": false,
+          "description": "Up to eight comma-separated OSI:QUANTITY legs (padded OSI, signed whole contracts from -10000 to 10000 with at most one sign) added to the profile as if held; they need underlying.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "held",
+          "in": "query",
+          "required": false,
+          "description": "false profiles the legs alone, without the held book or its floors.",
+          "schema": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        {
           "name": "dynamics",
           "in": "query",
           "required": false,
@@ -3156,6 +3417,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RiskProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/replay/history/{run_id}/risk/hedges": {
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "target",
+          "in": "query",
+          "required": true,
+          "description": "What to bring back: dollar delta or vega inside the bucket's limit, or the worst scenario-grid cell inside the grid limit and above the floor.",
+          "schema": {
+            "type": "string",
+            "enum": [
+              "delta",
+              "vega",
+              "grid"
+            ]
+          }
+        },
+        {
+          "name": "scope",
+          "in": "query",
+          "required": false,
+          "description": "aggregate (SPY and SPX beta hedges) or a held underlying (its shares and ATM options).",
+          "schema": {
+            "type": "string",
+            "default": "aggregate"
+          }
+        },
+        {
+          "name": "utilisation",
+          "in": "query",
+          "required": false,
+          "description": "The share of the limit to bring the bucket to.",
+          "schema": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1,
+            "default": 1
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/risk/hedges",
+        "description": "For each candidate hedge (underlying shares, an ATM option, or an SPX/SPY beta hedge for the aggregate), the smallest whole size that meets the target, ranked by spread cost and then residual risk, with an order to try in the what-if and the ticket. Analytical; nothing is recorded.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HedgeSuggestions"
                 }
               }
             }
@@ -18773,6 +19105,29 @@
           },
           "term_scaled": {
             "type": "boolean"
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Whether the held book in scope is included."
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "symbol": {
+                  "type": "string"
+                },
+                "quantity": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "symbol",
+                "quantity"
+              ]
+            },
+            "description": "The hypothetical legs added, as requested."
           }
         },
         "required": [
@@ -31711,6 +32066,1017 @@
           "simulated",
           "provider",
           "units"
+        ]
+      },
+      "StrategySearchLeg": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "ratio": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "call",
+              "put"
+            ]
+          },
+          "strike": {
+            "type": "number"
+          },
+          "expiry": {
+            "type": "string"
+          },
+          "bid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ask": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "iv": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "symbol",
+          "side",
+          "ratio",
+          "type",
+          "strike",
+          "expiry",
+          "bid",
+          "ask",
+          "mid",
+          "iv"
+        ]
+      },
+      "StrategyCandidate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "structure": {
+            "type": "string",
+            "enum": [
+              "vertical",
+              "condor",
+              "butterfly",
+              "calendar",
+              "single",
+              "covered"
+            ]
+          },
+          "legs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrategySearchLeg"
+            }
+          },
+          "shares": {
+            "type": "integer",
+            "description": "Shares bought with each unit: 100 for a covered call, otherwise 0."
+          },
+          "net": {
+            "type": "number",
+            "description": "Entry price per unit, debit positive, in option points (shares at their price over 100)."
+          },
+          "max_loss": {
+            "type": "number",
+            "description": "Largest loss per unit at the valuation time, in dollars, volatility unchanged."
+          },
+          "max_profit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null when unbounded."
+          },
+          "breakevens": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "pop": {
+            "type": "object",
+            "properties": {
+              "risk_neutral": {
+                "type": "number"
+              },
+              "user": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "risk_neutral",
+              "user"
+            ],
+            "description": "Probability the unit makes money at valued_at under each distribution."
+          },
+          "expected": {
+            "type": "object",
+            "properties": {
+              "risk_neutral": {
+                "type": "number"
+              },
+              "user": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "risk_neutral",
+              "user"
+            ],
+            "description": "Expected P&L per unit in dollars under each distribution."
+          },
+          "return_on_risk": {
+            "type": "number",
+            "description": "expected.user divided by max_loss."
+          },
+          "quantity": {
+            "type": "integer",
+            "description": "Units that fit the budget."
+          },
+          "valued_at": {
+            "type": "string"
+          },
+          "sigma": {
+            "type": "object",
+            "properties": {
+              "risk_neutral": {
+                "type": "number"
+              },
+              "user": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "risk_neutral",
+              "user"
+            ],
+            "description": "Standard deviation of the log price to valued_at."
+          }
+        },
+        "required": [
+          "name",
+          "structure",
+          "legs",
+          "shares",
+          "net",
+          "max_loss",
+          "max_profit",
+          "breakevens",
+          "pop",
+          "expected",
+          "return_on_risk",
+          "quantity",
+          "valued_at",
+          "sigma"
+        ]
+      },
+      "StrategySearch": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "as_of": {
+            "type": "string"
+          },
+          "spot": {
+            "type": "number"
+          },
+          "target_price": {
+            "type": "number"
+          },
+          "target_date": {
+            "type": "string"
+          },
+          "target_time": {
+            "type": "string"
+          },
+          "budget": {
+            "type": "number"
+          },
+          "vol_points": {
+            "type": "number"
+          },
+          "rank": {
+            "type": "string",
+            "enum": [
+              "expected",
+              "risk_neutral",
+              "pop",
+              "return_on_risk"
+            ]
+          },
+          "price": {
+            "type": "string",
+            "enum": [
+              "natural",
+              "mid"
+            ]
+          },
+          "structures": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "vertical",
+                "condor",
+                "butterfly",
+                "calendar",
+                "single",
+                "covered"
+              ]
+            }
+          },
+          "expiries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "expiry": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "expiry",
+                "reason"
+              ]
+            }
+          },
+          "considered": {
+            "type": "integer",
+            "description": "Bounded candidates listed (net short calls are counted in unbounded instead)."
+          },
+          "evaluated": {
+            "type": "integer",
+            "description": "Candidates valued: all listed, or an even sample of max_candidates."
+          },
+          "unbounded": {
+            "type": "integer"
+          },
+          "over_budget": {
+            "type": "integer"
+          },
+          "within_budget": {
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "max_candidates": {
+            "type": "integer"
+          },
+          "variance_fallback": {
+            "type": "boolean",
+            "description": "True when the chain had no at-the-money term structure for a valuation time, so its distributions used the first searched expiry settling then or later: its at-the-money IV squared times the years to that time."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrategyCandidate"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "symbol",
+          "as_of",
+          "spot",
+          "target_price",
+          "target_date",
+          "target_time",
+          "budget",
+          "vol_points",
+          "rank",
+          "price",
+          "structures",
+          "expiries",
+          "skipped",
+          "considered",
+          "evaluated",
+          "unbounded",
+          "over_budget",
+          "within_budget",
+          "truncated",
+          "max_candidates",
+          "variance_fallback",
+          "candidates",
+          "label",
+          "model"
+        ]
+      },
+      "HedgeResidual": {
+        "type": "object",
+        "properties": {
+          "dollar_delta_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dollar_delta_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vega_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vega_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "worst_cell": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delta_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "vega_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grid_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beta_weighted_dollar_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beta_weighted_dollar_delta_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The beta-weighted dollar delta to SPY across what open orders can reach, after the hedge; null without every beta."
+          },
+          "beta_weighted_dollar_delta_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beta_weighted_delta_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The larger end of the beta-weighted range over the delta limit; a beta-sized hedge keeps it at or below the target share."
+          }
+        },
+        "required": [
+          "dollar_delta_low",
+          "dollar_delta_high",
+          "vega_low",
+          "vega_high",
+          "worst_cell",
+          "delta_utilisation",
+          "vega_utilisation",
+          "grid_utilisation",
+          "beta_weighted_dollar_delta",
+          "beta_weighted_dollar_delta_low",
+          "beta_weighted_dollar_delta_high",
+          "beta_weighted_delta_utilisation"
+        ]
+      },
+      "HedgeOrder": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "type": {
+            "const": "limit"
+          },
+          "time_in_force": {
+            "const": "day"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "limit_price": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "symbol",
+          "side",
+          "type",
+          "time_in_force",
+          "quantity",
+          "limit_price"
+        ]
+      },
+      "Hedge": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "shares",
+              "option"
+            ]
+          },
+          "underlying": {
+            "type": "string"
+          },
+          "instrument": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beta_hedge": {
+            "type": "boolean"
+          },
+          "expiry": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An option hedge's expiry ID, as the chain lists it."
+          },
+          "strike": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "call",
+                  "put"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "feasible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "side": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "buy",
+                  "sell"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "premium": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cash for the whole hedge at its price, debit positive."
+          },
+          "spread_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What crossing the spread costs against the mid, in dollars, before fees."
+          },
+          "residual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HedgeResidual"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "order": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HedgeOrder"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An option hedge as an order for the what-if and the ticket."
+          },
+          "stock_trade": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "symbol": {
+                    "type": "string"
+                  },
+                  "side": {
+                    "type": "string",
+                    "enum": [
+                      "buy",
+                      "sell"
+                    ]
+                  },
+                  "shares": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "symbol",
+                  "side",
+                  "shares"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A share hedge as POST /api/stocks/trade takes it."
+          },
+          "exceeds_order_limit": {
+            "type": "boolean"
+          },
+          "sizing": {
+            "type": "string",
+            "enum": [
+              "beta_weighted_dollar_delta",
+              "dollar_delta",
+              "vega",
+              "grid"
+            ],
+            "description": "What the size was solved on. A delta target sizes beta hedges on the beta-weighted dollar delta to SPY when every underlying in scope and the hedge have a beta, else on dollar delta one for one (see beta_note)."
+          },
+          "instrument_beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hedge's underlying's beta to SPY, by the same sources as the book's; null when unknown."
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "underlying",
+          "instrument",
+          "beta_hedge",
+          "expiry",
+          "strike",
+          "type",
+          "feasible",
+          "reason",
+          "side",
+          "quantity",
+          "price",
+          "premium",
+          "spread_cost",
+          "residual",
+          "order",
+          "stock_trade",
+          "exceeds_order_limit",
+          "sizing",
+          "instrument_beta"
+        ]
+      },
+      "HedgeSuggestions": {
+        "type": "object",
+        "properties": {
+          "account_version": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "delta",
+              "vega",
+              "grid"
+            ]
+          },
+          "utilisation": {
+            "type": "number"
+          },
+          "current": {
+            "type": "object",
+            "properties": {
+              "dollar_delta_low": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "dollar_delta_high": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "vega_low": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "vega_high": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "worst_cell": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "beta_weighted_dollar_delta": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "beta_weighted_dollar_delta_low": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "beta_weighted_dollar_delta_high": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "delta_limit": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "vega_limit": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "grid_floor": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "dollar_delta_low",
+              "dollar_delta_high",
+              "vega_low",
+              "vega_high",
+              "worst_cell",
+              "beta_weighted_dollar_delta",
+              "beta_weighted_dollar_delta_low",
+              "beta_weighted_dollar_delta_high",
+              "delta_limit",
+              "vega_limit",
+              "grid_floor"
+            ]
+          },
+          "betas": {
+            "type": "array",
+            "description": "Each underlying in scope's beta to SPY: given (betas=), reference, index family, or estimated from daily then intraday history as in the risk profile.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "underlying": {
+                  "type": "string"
+                },
+                "beta": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "reference",
+                        "given",
+                        "index",
+                        "daily",
+                        "intraday"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observations": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "underlying",
+                "beta",
+                "source",
+                "observations"
+              ]
+            }
+          },
+          "betas_missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Underlyings with no beta to SPY."
+          },
+          "beta_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why there is no beta-weighted delta and, for a delta target, that beta hedges fell back to one-for-one dollar delta."
+          },
+          "hedges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hedge"
+            }
+          },
+          "simulated": {
+            "const": true
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account_version",
+          "time",
+          "scope",
+          "target",
+          "utilisation",
+          "current",
+          "betas",
+          "betas_missing",
+          "beta_note",
+          "hedges",
+          "simulated",
+          "model"
         ]
       },
       "AnalysisStressScenario": {

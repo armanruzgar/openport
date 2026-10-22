@@ -90,7 +90,9 @@ export function shareEffect(held: number, side: Side, shares: number): "opens" |
  * hedge, or the shares behind a covered call or a collar. Opening takes the account's
  * checks; reducing works under the kill switch.
  */
-export function TradeSharesDialog({ initial, trading, onClose }: { initial?: string; trading: TradingStatus; onClose: () => void }) {
+export function TradeSharesDialog({ initial, initialSide = "buy", initialShares = 100, trading, onClose }: {
+  initial?: string; initialSide?: Side; initialShares?: number; trading: TradingStatus; onClose: () => void
+}) {
   const api = useActionApi()
   const write = useWrite(trading)
   const { underlyings, accountScope, source, replay } = useLive()
@@ -100,8 +102,8 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
   const rules = account?.rules
   const symbols = [...new Set([...underlyings.map((u) => u.symbol), ...stocks.map((s) => s.symbol)])].filter(deliversShares).sort()
   const [symbol, setSymbol] = useState(initial ?? symbols[0] ?? "")
-  const [side, setSide] = useState<Side>("buy")
-  const [shares, setShares] = useState("100")
+  const [side, setSide] = useState<Side>(initialSide)
+  const [shares, setShares] = useState(String(initialShares))
   const n = Number(shares)
   const valid = symbols.includes(symbol) && /^\d+$/.test(shares) && Number.isSafeInteger(n) && n > 0 && n <= 10_000_000
   const held = stocks.find((s) => s.symbol === symbol)?.shares ?? 0

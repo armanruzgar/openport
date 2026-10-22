@@ -1,5 +1,6 @@
 #include "openport/server/api.hpp"
 #include "openport/server/sandboxes.hpp"
+#include "openport/server/strategy_search.hpp"
 #include "metric_cache.hpp"
 #include "series_api.hpp"
 #include "flow_api.hpp"
@@ -1004,6 +1005,12 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
 
   if (view == "summary") return ok(summary_json(*metrics));
   if (view == "probability") return probability_response(*metrics, query);
+  if (view == "optimizer") {
+    // The network path runs this on the search pool (see handle_api_async).
+    const auto cancelled = [cancel = request.cancelled] { return cancel && cancel->load(); };
+    try { return ok(search_strategies(*metrics, parse_strategy_search(query), cancelled)); }
+    catch (const std::invalid_argument& failure) { return error(400, failure.what()); }
+  }
   if (view == "volatility") {
     const auto account = query_account(request.target, request.access.sandbox);
     if (!account) return error(400, "invalid account");

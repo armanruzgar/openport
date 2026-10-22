@@ -364,6 +364,21 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   or tastytrade, Schwab and IBKR exports) to see their Greeks, risk profile and
   scenario grid on your feed. They are analysis only: not paper accounts, never
   traded, and labelled as such. [Analysis](analysis.md).
+- **Analyze tab** (Trade): up to four candidate strategies' P&L by price today, on a
+  custom date and at expiry, with or without the held book, under an IV shift; a price
+  slices table (% moves, prices, ±σ, breakevens); strikes dragged on the chart or
+  stepped per leg; and Send to ticket. Curves use the risk profile's model.
+  [Analyze](paper-trading.md#hypothetical-legs-and-the-analyze-tab).
+- **Strategy optimizer**: searches verticals, iron condors, butterflies, calendars,
+  singles and covered calls for a target price, date and loss budget server-side,
+  ranked by expected P&L under the market's or the user's shifted distribution,
+  probability of profit or return on risk, with bounded candidate counts and a
+  two-worker search pool. [Optimizer](paper-trading.md#strategy-optimizer).
+- **Hedge suggestions** (Positions): the smallest share, ATM option or SPX/SPY beta
+  hedge bringing a bucket's delta, vega or worst grid cell back inside its limit or
+  above the floor, ranked by spread cost and residual risk, sent to the what-if and
+  then the ticket. Beta hedges size on the beta-weighted dollar delta to SPY, and say
+  so when a missing beta leaves them one for one. [Hedges](paper-trading.md#hedge-suggestions).
 
 ## Journal and review
 
