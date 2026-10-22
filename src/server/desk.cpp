@@ -643,6 +643,8 @@ void Desk::start_trading() {
   if (!options_.run_input.empty()) {
     nlohmann::json start{{"kind", "start"}, {"input", nlohmann::json::parse(options_.run_input)},
         {"calendar", md::scheduled_days()}, {"analytics", options_.analytics}, {"dividends", dividends_}, {"symbols", subscription_.underlyings}};
+    // Written only when a run has splits, so other runs keep their bytes.
+    if (!corporate_actions_.empty()) start["corporate_actions"] = corporate_actions_;
     if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? 6 : 5) : 4) : 3;
     if (options_.exact_margin) start["exact_margin"] = true;
     if (options_.run_start_at) start["start_at"] = *options_.run_start_at;
@@ -1250,7 +1252,8 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         if (!batch.empty() && day > session.trading_day() &&
             md::market_session(md::new_york_to_utc(day, 12, 0)).open &&
             session.snapshot()->valuation_complete)
-          session.roll_day(market_time_, trading::dividends_due(dividends_, session.trading_day(), day));
+          session.roll_day(market_time_, trading::dividends_due(dividends_, session.trading_day(), day),
+                           trading::corporate_actions_due(corporate_actions_, session.trading_day(), day));
       };
       // A new trading date's first batch closes the finished day on its own marks
       // before its quotes replace them, so the overnight move and any fill at the
@@ -1339,15 +1342,39 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
             throw TradingError(Reason::INVALID_CONTRACT, "INVALID_CONTRACT: listed terms conflict with registered definition");
         }
         const auto& underlying = definition->second.underlying;
+        // A series the account adjusted for a split trades as the standard series that
+        // pays the same: shares/100 contracts at its effective strike, whose listing,
+        // quote and valuation price it. Its own listing has pre-split terms.
+        const auto adjusted = session.deliverables().find(symbol);
+        double scale = 1;
+        auto priced = definition->second;
+        if (adjusted != session.deliverables().end()) {
+          const auto& d = adjusted->second;
+          scale = static_cast<double>(d.shares) / 100;
+          priced.strike = std::round((priced.strike * 100 - d.cash.dollars()) / static_cast<double>(d.shares) * 1000) / 1000;
+          priced.standard = true;
+          const auto listed = instruments_.find(priced.osi_symbol());
+          option = listed == instruments_.end() ? nullptr : book_.option(listed->second);
+        }
         const bool quoted = option && option->has_quote && option->quote_ts >= 0;
         const bool fresh = current(underlying);
         if (quoted && (fresh || open(underlying, option->quote_ts))) {
           // A vouched quote offered later than the provider gave it keeps that first time.
           const auto time = fresh ? offered(underlying, option->quote_ts) : option->quote_ts;
-          quotes.push_back({symbol, observations_[symbol], time, quote_price(option->bid), quote_price(option->ask),
-                            whole_size(option->bid_size), whole_size(option->ask_size), std::min(option->quote_ts, time)});
+          // An adjusted series' observations advance as its standard series' do.
+          if (adjusted != session.deliverables().end()) {
+            auto& seen = equivalent_observations_[symbol];
+            if (seen != observations_[priced.osi_symbol()]) { seen = observations_[priced.osi_symbol()]; ++observations_[symbol]; }
+          }
+          quotes.push_back({symbol, observations_[symbol], time, quote_price(option->bid * scale), quote_price(option->ask * scale),
+                            whole_size(option->bid_size / scale), whole_size(option->ask_size / scale), std::min(option->quote_ts, time)});
         }
-        auto valuation = valuation_for(symbol, definition->second, metrics(underlying));
+        auto valuation = adjusted == session.deliverables().end() ? valuation_for(symbol, definition->second, metrics(underlying))
+                                                                  : valuation_for(priced.osi_symbol(), priced, metrics(underlying));
+        if (adjusted != session.deliverables().end()) {
+          valuation.symbol = symbol;
+          valuation.delta *= scale; valuation.gamma *= scale; valuation.vega *= scale; valuation.theta *= scale;
+        }
         if (fresh && valuation.time > 0) valuation.time = market_time_;
         // Missing live analytics after recovery must not overwrite a recorded frame, and
         // a valuation ahead of the market time the account runs on would fail it.
@@ -2031,7 +2058,7 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
 
 Desk::Desk(std::string provider, md::Capabilities capabilities, md::Subscription subscription, Options options)
     : options_(std::move(options)), provider_(std::move(provider)), subscription_(std::move(subscription)),
-      capabilities_(capabilities), dividends_(options_.dividends) {
+      capabilities_(capabilities), dividends_(options_.dividends), corporate_actions_(options_.corporate_actions) {
   if (options_.resume) {
     const auto inputs = run_inputs(*options_.resume);
     if (!inputs.empty()) {
@@ -2056,6 +2083,13 @@ void Desk::set_dividends(std::vector<trading::Dividend> dividends) {
   ++dividends_version_;
   if (!options_.run_input.empty() && !accounts_.empty()) {
     record_input(nlohmann::json{{"kind", "dividends"}, {"dividends", dividends_}}.dump());
+    publish_trading();
+  }
+}
+void Desk::set_corporate_actions(std::vector<trading::CorporateAction> actions) {
+  corporate_actions_ = std::move(actions);
+  if (!options_.run_input.empty() && !accounts_.empty()) {
+    record_input(nlohmann::json{{"kind", "corporate_actions"}, {"corporate_actions", corporate_actions_}}.dump());
     publish_trading();
   }
 }
@@ -2136,6 +2170,8 @@ void Desk::replay_recorded() {
               input.at("driver_time").get<md::Timestamp>());
     } else if (kind == "dividends") {
       set_dividends(input.at("dividends").get<std::vector<trading::Dividend>>());
+    } else if (kind == "corporate_actions") {
+      set_corporate_actions(input.at("corporate_actions").get<std::vector<trading::CorporateAction>>());
     } else if (kind == "restart") {
       replay_restart(input.dump());
     } else {

@@ -35,7 +35,7 @@ std::string_view to_string(Reason reason) noexcept {
     CASE(TRADE_CONSISTENCY); CASE(MIN_TRADES); CASE(MIN_HOLD); CASE(MICROSCALPING);
     CASE(HEDGING); CASE(COUNTER_POSITION); CASE(MAX_VOLUME_SHARE);
     CASE(NEWS_BLACKOUT); CASE(HOLD_RESTRICTED); CASE(RESET_LIMIT);
-    CASE(GAMMA_LIMIT); CASE(THETA_LIMIT); CASE(GRID_LOSS_LIMIT); CASE(SHORT_VEGA_LIMIT);
+    CASE(GAMMA_LIMIT); CASE(THETA_LIMIT); CASE(GRID_LOSS_LIMIT); CASE(SHORT_VEGA_LIMIT); CASE(CORPORATE_ACTION);
   }
 #undef CASE
   return "UNKNOWN";
@@ -101,11 +101,17 @@ void validate_stock_order(const StockOrderRequest& r) {
     validate_stock_order(named);
   }
 }
-Decision eligible(const md::OptionContract& c) {
+Decision eligible(const md::OptionContract& c, const Deliverable* adjusted) {
   const auto conventions = md::conventions_for_root(c.root);
   if (c.style == pricing::ExerciseStyle::American && conventions.style != pricing::ExerciseStyle::American)
     return {Reason::AMERICAN_UNSUPPORTED, "American exercise is not listed on this European-style root", {}, {}, {}};
-  if (!c.standard) return {Reason::NONSTANDARD_UNSUPPORTED, "Adjusted deliverables are unsupported", {}, {}, {}};
+  // An adjusted series trades once its deliverable is known: shares, and any cash in
+  // lieu, of an underlying that delivers shares.
+  if (!c.standard && !adjusted)
+    return {Reason::NONSTANDARD_UNSUPPORTED, "An adjusted series needs its deliverable (shares and cash) to trade", {}, {}, {}};
+  if (adjusted && (adjusted->shares < 1 || adjusted->shares > 100'000 || adjusted->cash < Money{} ||
+                   md::is_index_underlying(c.underlying) || c.style != pricing::ExerciseStyle::American))
+    return {Reason::NONSTANDARD_UNSUPPORTED, "Adjusted deliverables are modelled for share-settled American options only", {}, {}, {}};
   // American equity, ETF and OEX options trade too. Equity and ETF options deliver
   // shares when exercised or assigned; OEX settles in cash.
   constexpr std::string_view roots[] = {"SPX", "SPXW", "XSP", "NDX", "NDXP", "RUT", "RUTW", "XND", "MRUT", "DJX", "VIX", "VIXW"};

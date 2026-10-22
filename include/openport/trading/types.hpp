@@ -36,10 +36,11 @@ enum class Reason {
   MAX_CONTRACTS_HELD, STOP_REQUIRED, MAX_TRADE_RISK,
   TIME_LIMIT, INACTIVITY, INSTRUMENT_NOT_ALLOWED, OUTSIDE_PLAN_HOURS,
   FLAT_TIME, OVERNIGHT_HOLD, SCALING_LIMIT, TRADE_CONSISTENCY, MIN_TRADES, MIN_HOLD, MICROSCALPING,
-  HEDGING, COUNTER_POSITION, MAX_VOLUME_SHARE, NEWS_BLACKOUT, HOLD_RESTRICTED, RESET_LIMIT, GAMMA_LIMIT, THETA_LIMIT, GRID_LOSS_LIMIT, SHORT_VEGA_LIMIT
+  HEDGING, COUNTER_POSITION, MAX_VOLUME_SHARE, NEWS_BLACKOUT, HOLD_RESTRICTED, RESET_LIMIT, GAMMA_LIMIT, THETA_LIMIT, GRID_LOSS_LIMIT, SHORT_VEGA_LIMIT,
+  CORPORATE_ACTION
 };
 /// The last Reason; recorded codes are strings, so new codes append here.
-inline constexpr Reason kLastReason = Reason::SHORT_VEGA_LIMIT;
+inline constexpr Reason kLastReason = Reason::CORPORATE_ACTION;
 [[nodiscard]] std::string_view to_string(Reason reason) noexcept;
 
 class TradingError : public std::runtime_error {
@@ -805,7 +806,19 @@ struct SessionConfig {
   Guardrails guardrails;
 };
 
-[[nodiscard]] Decision eligible(const md::OptionContract& contract);
+/// What one contract of an option delivers on exercise for 100 times its strike: a
+/// standard series 100 shares; an adjusted one (after a split, or a series listed
+/// with adjusted terms) other whole shares and, for a split's fraction, cash. The
+/// premium multiplier stays 100 either way.
+struct Deliverable {
+  Quantity shares = 100;
+  Money cash;  ///< Cash in lieu a contract delivers with its shares.
+  bool operator==(const Deliverable&) const = default;
+};
+[[nodiscard]] inline bool standard_deliverable(const Deliverable& d) { return d.shares == 100 && d.cash == Money{}; }
+/// Whether a contract is tradable: its root's conventions, terms and a standard
+/// deliverable, or with `adjusted` the deliverable that adjusted series names.
+[[nodiscard]] Decision eligible(const md::OptionContract& contract, const Deliverable* adjusted = nullptr);
 /// v1 policy, not an exchange routing rule; includes the >= $3 upper tier.
 [[nodiscard]] Money tick_size(std::string_view root, Money price);
 [[nodiscard]] bool valid_quote(const QuoteObservation& quote);

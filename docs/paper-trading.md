@@ -81,7 +81,12 @@ cash-settled index options: SPX/SPXW, XSP, NDX/NDXP, RUT/RUTW, XND, MRUT, DJX,
 VIX/VIXW. American equity, ETF and OEX options on any other root, e.g. SPY, QQQ, IWM, DIA,
 AAPL. The underlying and exercise style must match the root's conventions: American
 exercise on a European index root is `AMERICAN_UNSUPPORTED`, a European contract on any
-other root is `ROOT_UNSUPPORTED`. Adjusted deliverables are rejected.
+other root is `ROOT_UNSUPPORTED`. A listed adjusted series (`standard` false) is
+`NONSTANDARD_UNSUPPORTED` unless its deliverable is known: `define(contract, time,
+deliverable)` admits a share-settled American series with its whole shares and cash in
+lieu a contract, and the series a split adjusts keep theirs (see
+[Splits and adjusted series](#splits-and-adjusted-series)). The feed's own nonstandard
+listings carry no deliverable, so the desk still leaves them out.
 
 American equity and ETF options deliver shares; OEX, like the European index roots,
 settles in cash. By default, held into expiry, an equity or ETF option a cent or more in the money
@@ -192,6 +197,50 @@ is saved in the start record, so resume and verification use the same payments.
 The revision 4 demo feed uses its generated calendar when no `--dividends` source
 was supplied, including American analytics and dividend/assignment warnings. An
 explicit source replaces the demo account calendar, without changing its prices.
+### Splits and adjusted series
+
+`openportd --corporate-actions FILE` reads `SYMBOL,YYYY-MM-DD,split,NUMERATOR:DENOMINATOR`
+lines (`2:1` doubles the shares, `3:2` makes 100 shares 150, `1:10` is a reverse split;
+blank lines, `#` comments and a `symbol,...` header are skipped) with
+`parse_corporate_actions`. `roll_day(time, dividends, actions)` applies those going ex
+after the last trading date and on or before the new one, once each, after the night's
+assignments and before the day's dividends:
+
+- Held shares split toward zero, keeping their basis. A fraction of a share left over is
+  paid in cash at the split mark (the last mark times denominator over numerator; the
+  average cost without a mark), with the basis it carried released as realised P&L, as a
+  broker's cash in lieu is. The stock fill records the split (`source: "split"`, no price)
+  and the round trip continues.
+- The mark splits with the shares, so equity does not move.
+- Every share-settled series on the underlying that has not expired keeps its symbol,
+  strike, contract count and 100 premium multiplier, as OCC adjusts a series, and takes
+  the split deliverable: 100 shares a contract become 200 for 2:1, 150 for 3:2 and 10 for
+  1:10. A fraction of a share in the deliverable becomes cash in lieu at the split mark (a
+  simulated estimate of the amount OCC later fixes). OCC instead re-strikes whole-number
+  forward splits (twice the contracts at half the strike); the adjusted series pays
+  exactly the same.
+- Working share orders on the stock are cancelled with `CORPORATE_ACTION`; working option
+  orders stay, their premium being per contract either way.
+
+An adjusted series settles, is exercised and is assigned on its deliverable: one unit is
+worth its shares (and cash) over 100 against the strike, so a 2:1-adjusted 500 call with
+the stock at 260 is worth 200 × 260 / 100 − 500 = 20, and delivers 200 shares at the
+settlement price, together the $50,000 its strike was worth. Strategy margin takes each
+underlying's series of one deliverable as the standard series that pay the same (each
+contract shares/100 standard contracts at its effective strike, 100 × strike less the
+cash over the shares) and covers them with lots of their own deliverable; shares go to
+an adjusted group's shorts first. Cash accounts and IRAs cover an adjusted call with its
+deliverable's shares. Scenario grids, risk profiles, breach risk and historical stress
+reprice it the same way. Portfolio margin scans the standard series and shares and adds
+strategy margin for adjusted series, which its scan does not reprice. The desk quotes,
+values and fills an adjusted series from the standard series that pays the same (the 250
+call for a 2:1-adjusted 500 call): prices times shares/100, displayed sizes over it and
+Greeks scaled the same, once the feed lists that series; until then the series has no
+mark. Positions report `deliverable` (`{shares, cash}`, null for 100 shares) and
+`GET /api/account` the applied `corporate_actions`. Replays and scenario runs given a
+corporate-actions file keep it in their start record, so resume and verification apply
+the same splits; generated scenario prices do not split themselves.
+
 `roll_day(time, dividends)` takes those going ex after the last trading date and
 on or before the new one (`dividends_due`, so a server that was down
 across an ex-date still pays it), after the night's assignments: shares held into the
@@ -3580,6 +3629,7 @@ opening orders and cancels working openings outside the plan window.
 | `SESSION_CLOSED`, `EXPIRED`, `AWAITING_SETTLEMENT` | Outside the product's sessions (or an AM-settled series after its last regular close), expiry or last-trade boundary, or pending settlement quality flag |
 | `LIMIT_ONLY` | Overnight/curb executions require limits. Plain market entry/flatten is refused. Only EXTO/GTC_EXTO simulator-managed stops and brackets work there; legacy protection waits for regular hours |
 | `GTD_END` | The order reached its explicit `good_till` timestamp |
+| `CORPORATE_ACTION` | A split went ex on the order's stock: working share orders on it are cancelled, as their prices no longer apply |
 | `FEED_STALLED` | Market data lags what a healthy feed would show by more than `max_quote_age` (a delayed feed: at least three minutes); message includes the lag behind the wall clock |
 | `REPLAY_FAST_FORWARD` | The replay is preparing its start state; wait before submitting orders or changing playback |
 | `REPLAY_STEPPING` | A lockstep step (`PUT /api/replay {"until"}`) is playing; orders wait for its response and then use the paused market time |

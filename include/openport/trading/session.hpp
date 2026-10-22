@@ -121,6 +121,9 @@ struct TradingSnapshot {
   std::vector<AttemptSummary> attempts;  ///< Earlier attempts, oldest first.
   SharedVector<StockFill> stock_fills;    ///< Every change in shares held, oldest first.
   SharedVector<StockOrder> stock_orders;  ///< Every share order, in acceptance sequence.
+  /// Adjusted series' deliverables by padded OSI, and the splits applied, oldest first.
+  SharedMap<std::string, Deliverable> deliverables;
+  SharedVector<CorporateActionRecord> corporate_actions;
   SharedVector<CashFlow> cash_flows;
   SharedVector<DividendPayment> dividends;  ///< Dividends paid on held shares, oldest first.
   /// Notes and tags by trade, named by its opening fill's ID.
@@ -430,7 +433,9 @@ class TradingSession {
   TradingSession& operator=(const TradingSession&) = delete;
 
   /// Caller must resolve from a known definition. Conflicting OSI terms reject.
-  CommandResult define(const md::OptionContract& contract, Timestamp time);
+  /// An adjusted series (OptionContract::standard false) needs its `deliverable`;
+  /// one the account adjusted itself keeps the deliverable it was given.
+  CommandResult define(const md::OptionContract& contract, Timestamp time, std::optional<Deliverable> deliverable = {});
   /// The integration may reject a resolved but unsupported definition before
   /// registration; it still consumes the client ID and journals a rejected order.
   CommandResult submit(OrderRequest request, Timestamp time, Decision rejection = {});
@@ -555,7 +560,13 @@ class TradingSession {
   /// Kill latch persists across rollover.
   /// `dividends` are those going ex on the new trading date (and any skipped while
   /// the server was down): each pays the shares held into it, once.
-  CommandResult roll_day(Timestamp time, const std::vector<Dividend>& dividends = {});
+  /// `actions` are the splits going ex on the new trading date (and any skipped): each
+  /// applies once, before the dividends (see CorporateAction). Invalid terms throw
+  /// INVALID_ORDER.
+  CommandResult roll_day(Timestamp time, const std::vector<Dividend>& dividends = {},
+                         const std::vector<CorporateAction>& actions = {});
+  /// What each adjusted series delivers, by padded OSI; standard series are absent.
+  [[nodiscard]] const SharedMap<std::string, Deliverable>& deliverables() const;
   /// Practice only: positive deposits, negative withdrawals, whole cents. Retries
   /// of the same client ID and amount do nothing; transfers never count as P&L.
   CommandResult transfer_cash(std::string client_id, Money amount, Timestamp time);

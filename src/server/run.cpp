@@ -474,6 +474,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     options.paper = json::parse(expected.records.front().payload).at("state").at("config").get<trading::SessionConfig>();
     options.analytics = start.at("analytics").get<analytics::AnalyticsOptions>();
     options.dividends = start.at("dividends").get<std::vector<trading::Dividend>>();
+    if (start.contains("corporate_actions")) options.corporate_actions = start.at("corporate_actions").get<std::vector<trading::CorporateAction>>();
     Desk desk("replay (" + reader->header().provider + ")", reader->header().capabilities, subscription, options);
     desk.start_trading();
     for (std::size_t index = 1; index < inputs.size() && comparison->error.empty() && !comparison->cut; ++index) {
@@ -496,6 +497,8 @@ RunVerification verify_run(const std::filesystem::path& journal,
                      operation.at("time").get<md::Timestamp>(), operation.at("driver_time").get<md::Timestamp>());
       } else if (operation.at("kind") == "dividends") {
         desk.set_dividends(operation.at("dividends").get<std::vector<trading::Dividend>>());
+      } else if (operation.at("kind") == "corporate_actions") {
+        desk.set_corporate_actions(operation.at("corporate_actions").get<std::vector<trading::CorporateAction>>());
       } else if (operation.at("kind") == "restart") {
         desk.replay_restart(operation.dump());
       } else throw std::runtime_error("Unknown recorded run operation");

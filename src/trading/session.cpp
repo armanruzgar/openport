@@ -436,10 +436,32 @@ void trade_shares(State& s, const std::string& symbol, Quantity signed_shares, M
   s.stock_fills.push_back({s.stock_fills.size() + 1, symbol, signed_shares, price, s.time, source, option});
   start_stock_stretch(s, symbol);
 }
-/// Shares an option position becomes: 100 a contract, bought by long calls and
-/// short puts, sold by long puts and short calls.
-Quantity delivered(const md::OptionContract& c, Quantity contracts) {
-  return (c.type == pricing::OptionType::Call ? 1 : -1) * static_cast<Quantity>(c.multiplier) * contracts;
+/// What one contract of `symbol` delivers: its adjusted deliverable, or 100 shares.
+Deliverable deliverable_of(const State& s, const std::string& symbol) {
+  const auto it = s.deliverables.find(symbol);
+  return it == s.deliverables.end() ? Deliverable{} : it->second;
+}
+/// Shares an option position becomes: its deliverable's shares a contract (100 for a
+/// standard series), bought by long calls and short puts, sold by long puts and short calls.
+Quantity delivered(const State& s, const md::OptionContract& c, Quantity contracts) {
+  return (c.type == pricing::OptionType::Call ? 1 : -1) * deliverable_of(s, c.osi_symbol()).shares * contracts;
+}
+/// What a share of the deliverable costs at the strike: the strike, for a standard
+/// series; 100 times it, less the cash in lieu, over the deliverable's shares.
+Money effective_strike(const State& s, const md::OptionContract& c) {
+  const Money strike = Money::from_double(c.strike);
+  const auto d = deliverable_of(s, c.osi_symbol());
+  if (standard_deliverable(d)) return strike;
+  return (strike * 100 - d.cash).prorate(1, d.shares);
+}
+/// What exercising one unit (a contract over its multiplier of 100) is worth with the
+/// underlying at `price`, negative out of the money: the deliverable's shares and cash
+/// over 100, against the strike.
+Money unit_exercise_value(const State& s, const md::OptionContract& c, Money price) {
+  const Money strike = Money::from_double(c.strike);
+  const auto d = deliverable_of(s, c.osi_symbol());
+  const Money worth = standard_deliverable(d) ? price : (price * d.shares + d.cash).prorate(1, 100);
+  return c.type == pricing::OptionType::Call ? worth - strike : strike - worth;
 }
 /// A bracket's two exits can fill only once between them: checks count the pair
 /// through its earlier order, so the later one is shadowed while both are open.
@@ -898,7 +920,91 @@ MarginPolicy allocation_policy(const State& s) {
   policy.exact = s.exact_margin;
   return policy;
 }
+/// Series of one underlying and one deliverable, margined together. An adjusted
+/// series pays what `shares`/100 standard contracts struck at its effective strike
+/// pay, so its group is margined as those standard series (each contract's values
+/// scaled to 100 shares) and the requirement scaled back by shares/100. The shares
+/// an adjusted group's shorts are written against are taken in its own lots first;
+/// the standard group, first, keeps the rest.
+struct LotGroup {
+  Quantity shares = 100;
+  std::vector<MarginLeg> legs;
+  std::vector<MarginStock> stocks;
+  std::map<std::string, std::string> symbols;  ///< Standard-equivalent OSI to the adjusted series.
+};
+std::vector<LotGroup> lot_groups(const State& s, std::vector<MarginLeg> legs, std::vector<MarginStock> stocks) {
+  std::vector<LotGroup> groups(1);
+  if (s.deliverables.empty()) {
+    groups[0].legs = std::move(legs);
+    groups[0].stocks = std::move(stocks);
+    return groups;
+  }
+  std::map<std::tuple<std::string, Quantity, std::int64_t>, std::size_t> index;
+  for (auto& leg : legs) {
+    const auto symbol = leg.contract.osi_symbol();
+    const auto d = deliverable_of(s, symbol);
+    if (standard_deliverable(d)) { groups[0].legs.push_back(std::move(leg)); continue; }
+    const auto key = std::make_tuple(leg.contract.underlying, d.shares, d.cash.micros());
+    auto [it, added] = index.try_emplace(key, groups.size());
+    if (added) groups.push_back({d.shares, {}, {}, {}});
+    auto& group = groups[it->second];
+    MarginLeg equivalent = leg;
+    equivalent.contract.strike = effective_strike(s, leg.contract).dollars();
+    equivalent.contract.standard = true;
+    equivalent.value = leg.value.prorate(100, d.shares);
+    group.symbols[equivalent.contract.osi_symbol()] = symbol;
+    group.legs.push_back(std::move(equivalent));
+  }
+  for (auto& stock : stocks) {
+    for (std::size_t g = 1; g < groups.size() && stock.shares != 0; ++g) {
+      auto& group = groups[g];
+      if (group.legs.empty() || group.legs.front().contract.underlying != stock.underlying) continue;
+      // Long shares cover short calls, short shares short puts, a lot a contract.
+      Quantity shorts = 0;
+      for (const auto& leg : group.legs)
+        if (leg.quantity < 0 && (leg.contract.type == pricing::OptionType::Call) == (stock.shares > 0)) shorts -= leg.quantity;
+      const auto lots = std::min(shorts, magnitude(stock.shares) / group.shares);
+      if (lots == 0) continue;
+      const auto taken = lots * group.shares;
+      const auto value = stock.value.prorate(taken, magnitude(stock.shares));
+      group.stocks.push_back({stock.underlying, (stock.shares > 0 ? 1 : -1) * lots * 100, value.prorate(100, group.shares)});
+      stock.value = stock.value - value;
+      stock.shares -= (stock.shares > 0 ? 1 : -1) * taken;
+    }
+    if (stock.shares != 0) groups[0].stocks.push_back(std::move(stock));
+  }
+  return groups;
+}
+/// margin_requirement over the lot groups, each scaled back to its deliverable.
+Money grouped_requirement(const std::vector<LotGroup>& groups, const MarginPolicy& policy, bool standard = true) {
+  Money total;
+  for (std::size_t g = standard ? 0 : 1; g < groups.size(); ++g) {
+    const auto& group = groups[g];
+    if (group.legs.empty() && group.stocks.empty()) continue;
+    total = total + margin_requirement(group.legs, group.stocks, policy).prorate(group.shares, 100);
+  }
+  return total;
+}
 Margin margin_of(const State& s, const MarginBook& book) {
+  if (!s.deliverables.empty()) {
+    const auto groups = lot_groups(s, margin_legs(s, book), margin_stocks(s));
+    if (groups.size() > 1) {
+      // Portfolio margin scans the standard series and shares; adjusted series take
+      // strategy margin on top, which the scan's repricing does not cover.
+      if (s.config.rules.margin == MarginMode::Portfolio) {
+        const auto adjusted = grouped_requirement(groups, allocation_policy(s), false);
+        if (const auto scanned = portfolio_margin_requirement(groups[0].legs, s.valuations, s.time,
+            s.config.limits.max_valuation_age, s.ledger.stocks(), share_prices(s), margin_policy(s.config.rules)))
+          return {*scanned + adjusted, *scanned + adjusted - position_value(s, book)};
+      }
+      Money minimum;
+      if (s.config.rules.margin == MarginMode::Portfolio)
+        for (const auto& [symbol, entry] : book)
+          minimum = minimum + Money::from_double(0.375 * s.contracts.at(symbol).multiplier) * magnitude(entry.first);
+      const auto strategy = grouped_requirement(groups, allocation_policy(s)) + minimum;
+      return {strategy, strategy};
+    }
+  }
   const auto legs = margin_legs(s, book);
   Money minimum;
   if (s.config.rules.margin == MarginMode::Portfolio) {
@@ -920,6 +1026,38 @@ Money requirement(const State& s, const MarginBook& book) { return margin_of(s, 
 /// margin_of reckons it: an incomplete portfolio scan falls back to strategy
 /// margin's parts, each underlying adding the option minimum.
 std::vector<MarginUnderlying> margin_detail(const State& s) {
+  if (!s.deliverables.empty()) {
+    const auto groups = lot_groups(s, margin_legs(s, held_book(s)), margin_stocks(s));
+    if (groups.size() > 1) {
+      // Each adjusted group's parts, scaled back to its deliverable and named by its series.
+      std::vector<MarginUnderlying> detail;
+      const bool portfolio = s.config.rules.margin == MarginMode::Portfolio;
+      if (portfolio)
+        if (auto scanned = portfolio_margin_breakdown(groups[0].legs, s.valuations, s.time, s.config.limits.max_valuation_age,
+            s.ledger.stocks(), share_prices(s), margin_policy(s.config.rules)))
+          detail = std::move(*scanned);
+      if (detail.empty() && (!groups[0].legs.empty() || !groups[0].stocks.empty()))
+        detail = margin_breakdown(groups[0].legs, groups[0].stocks, allocation_policy(s));
+      for (std::size_t g = 1; g < groups.size(); ++g) {
+        const auto& group = groups[g];
+        for (auto item : margin_breakdown(group.legs, group.stocks, allocation_policy(s))) {
+          item.requirement = item.requirement.prorate(group.shares, 100);
+          for (auto& part : item.parts) {
+            part.requirement = part.requirement.prorate(group.shares, 100);
+            for (auto& [symbol, quantity] : part.legs) {
+              if (const auto named = group.symbols.find(symbol); named != group.symbols.end()) symbol = named->second;
+              else quantity = quantity * group.shares / 100;  // shares, in the deliverable's lots
+            }
+          }
+          const auto same = std::find_if(detail.begin(), detail.end(), [&](const auto& u) { return u.underlying == item.underlying; });
+          if (same == detail.end()) { detail.push_back(std::move(item)); continue; }
+          same->requirement = same->requirement + item.requirement;
+          same->parts.insert(same->parts.end(), item.parts.begin(), item.parts.end());
+        }
+      }
+      return detail;
+    }
+  }
   const auto legs = margin_legs(s, held_book(s));
   const bool portfolio = s.config.rules.margin == MarginMode::Portfolio;
   if (portfolio)
@@ -1201,6 +1339,7 @@ std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
   return result;
 }
 Measures measure(const State& s) {
+  const DeliverablesScope adjusted(&s.deliverables);
   Measures out;
   out.equity = s.ledger.account().cash;
   for (const auto& [symbol, position] : s.ledger.positions()) {
@@ -1272,6 +1411,7 @@ Money exit_equity_of(const State& s, const TradingSnapshot& out) {
   return value;
 }
 TradingSnapshot snapshot_of(const State& s) {
+  const DeliverablesScope adjusted(&s.deliverables);
   auto m = measure(s);
   TradingSnapshot out;
   out.account_version = s.version;
@@ -1313,6 +1453,8 @@ TradingSnapshot snapshot_of(const State& s) {
   out.payouts_received = s.payouts_received;
   out.stock_fills = s.stock_fills;
   out.stock_orders = s.stock_orders;
+  out.deliverables = s.deliverables;
+  out.corporate_actions = s.corporate_actions;
   out.dividends = s.dividends;
   out.cash_flows = s.cash_flows;
   out.closing_prints = s.closing_prints;
@@ -1778,7 +1920,11 @@ Quantity disallowed(const State& s, const std::vector<std::pair<std::string, Qua
   std::vector<MarginStock> stocks;
   for (const auto& [symbol, q] : held_shares)
     if (q != 0) stocks.push_back({symbol, q, {}});
-  return disallowed_shorts(legs, stocks, s.config.rules.account_type);
+  // Adjusted series need their own lots of shares to be covered.
+  Quantity count = 0;
+  for (const auto& group : lot_groups(s, std::move(legs), std::move(stocks)))
+    count += disallowed_shorts(group.legs, group.stocks, s.config.rules.account_type);
+  return count;
 }
 /// A cash account or IRA refuses additional uncovered calls or short shares.
 /// Pending orders' sells reserve their covers, just as for defined risk.
@@ -3549,6 +3695,7 @@ std::map<std::string, double> fresh_stock_prices(const State& s) {
   return prices;
 }
 BreachRisk breach_of(const State& s, const std::map<std::string, double>& close_variances) {
+  const DeliverablesScope adjusted(&s.deliverables);
   const auto snapshot = measure(s);
   auto result = breach_risk(s.ledger, s.valuations, snapshot.equity,
       s.config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt,
@@ -3683,14 +3830,15 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
       expiring.push_back({symbol, *price, Money{}});
       continue;
     }
-    const Money strike = Money::from_double(c.strike);
-    if (rules.pin_risk && position.quantity < 0 && *price >= strike - Money::parse("0.10") && *price <= strike + Money::parse("0.10"))
+    const Money strike = effective_strike(s, c);
+    const Money value = unit_exercise_value(s, c, *price);
+    if (rules.pin_risk && position.quantity < 0 && value >= Money::parse("-0.10") && value <= Money::parse("0.10"))
       add("PIN_RISK", true, c.underlying, symbol,
           "Simulated pin risk: short " + contract_name(c) + " expires today within $0.10 of the strike. "
           "Each contract has a seeded 25% chance of contrary exercise, modelling after-hours uncertainty before the 17:30 ET cutoff. "
           "Out-of-money shorts can deliver shares; in-money shorts may not. No after-hours price is observed or invented.",
           (*price - strike).dollars(), 0.10);
-    const Money intrinsic = std::max(Money{}, c.type == pricing::OptionType::Call ? *price - strike : strike - *price);
+    const Money intrinsic = std::max(Money{}, value);
     if (intrinsic >= Money::from_micros(10'000)) expiring.push_back({symbol, *price, intrinsic});
   }
   if (!expiring.empty()) {
@@ -3698,7 +3846,7 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
     State delivered_state = s;
     for (const auto& x : expiring) {
       const auto& c = delivered_state.contracts.at(x.symbol);
-      const auto shares = x.intrinsic > Money{} ? delivered(c, held(delivered_state, x.symbol)) : 0;
+      const auto shares = x.intrinsic > Money{} ? delivered(delivered_state, c, held(delivered_state, x.symbol)) : 0;
       delivered_state.ledger.settle(x.symbol, x.intrinsic, shares != 0 ? exercise_fee(delivered_state, held(delivered_state, x.symbol)) : Money{});
       if (shares != 0) {
         delivered_state.stock_marks[c.underlying] = {x.price, delivered_state.time};
@@ -3710,8 +3858,8 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
       if (x.intrinsic == Money{}) continue;
       const auto& c = s.contracts.at(x.symbol);
       const auto contracts = held(s, x.symbol);
-      const auto shares = delivered(c, contracts);
-      const Money strike = Money::from_double(c.strike);
+      const auto shares = delivered(s, c, contracts);
+      const Money strike = effective_strike(s, c);
       const auto cutoff = c.last_trade_time() - rules.expiry_cutoff;
       const bool before_cutoff = rules.expiry_cutoff > 0 && s.time < cutoff;
       const auto expiry = before_cutoff
@@ -3741,9 +3889,8 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
     const auto mark = s.marks.find(symbol);
     const auto price = underlying_price(s, symbol);
     if (mark == s.marks.end() || !price) continue;
-    const Money strike = Money::from_double(c.strike);
     const bool call = c.type == pricing::OptionType::Call;
-    const Money intrinsic = std::max(Money{}, call ? *price - strike : strike - *price);
+    const Money intrinsic = std::max(Money{}, unit_exercise_value(s, c, *price));
     if (intrinsic < Money::from_micros(10'000)) continue;
     const auto name = std::to_string(-position.quantity) + " short " + contract_name(c);
     if (mark->second.price < intrinsic) {
@@ -3804,7 +3951,7 @@ std::optional<Money> expiry_loss(const State& s, const OrderRequest& request, Mo
     const auto& contract = s.contracts.at(leg.symbol);
     if (contract.expiry_time() != first.expiry_time() || contract.underlying != first.underlying) return {};
     if (contract.type == pricing::OptionType::Call) call_slope += leg.side == Side::Buy ? leg.ratio : -leg.ratio;
-    knots.push_back(Money::from_double(contract.strike));
+    knots.push_back(effective_strike(s, contract));
   }
   if (call_slope < 0) return {};
   std::optional<Money> minimum;
@@ -3812,8 +3959,7 @@ std::optional<Money> expiry_loss(const State& s, const OrderRequest& request, Mo
     Money payoff;
     for (const auto& leg : legs) {
       const auto& contract = s.contracts.at(leg.symbol);
-      const auto strike = Money::from_double(contract.strike);
-      const auto intrinsic = std::max(Money{}, contract.type == pricing::OptionType::Call ? spot - strike : strike - spot);
+      const auto intrinsic = std::max(Money{}, unit_exercise_value(s, contract, spot));
       payoff = payoff + (intrinsic * contract.multiplier) * signed_contracts(leg, request.quantity);
     }
     minimum = minimum ? std::min(*minimum, payoff) : payoff;
@@ -3963,7 +4109,8 @@ State prepared(const State& state, Timestamp time, const PreviewMarket& market) 
   State before = state;
   for (const auto& contract : market.contracts) {
     const auto symbol = contract.osi_symbol();
-    if (!eligible(contract).ok()) continue;
+    const auto adjusted = state.deliverables.find(symbol);
+    if (!eligible(contract, adjusted == state.deliverables.end() ? nullptr : &adjusted->second).ok()) continue;
     if (const auto saved = before.contracts.find(symbol); saved != before.contracts.end() && Json(saved->second) != Json(contract))
       throw TradingError(Reason::INVALID_CONTRACT, "Preview definition conflicts with registered terms");
     before.contracts[symbol] = contract;
@@ -4002,6 +4149,7 @@ std::optional<Money> floor_room(const State& s) {
 /// within the quote age, valuations and indicators within the valuation age,
 /// and account measures on complete marks (exposures on complete valuations).
 std::optional<Money> alert_value(const State& s, const AlertCondition& c, const std::function<const Measures&()>& measures) {
+  const DeliverablesScope adjusted(&s.deliverables);
   const auto recent = [&](Timestamp time, Timestamp age) { return time <= s.time && s.time - time <= age; };
   const auto money = [](double value) -> std::optional<Money> {
     if (!std::isfinite(value)) return std::nullopt;
@@ -4739,6 +4887,10 @@ Json state_change(const State& before, const State& after) {
   else if (auto change = field_change(before.indicators, after.indicators)) changes["indicators"] = std::move(*change);
   if (before.cash_flows.empty() && !after.cash_flows.empty()) changes["cash_flows"] = Json{{"v", after.cash_flows}};
   else if (auto change = field_change(before.cash_flows, after.cash_flows)) changes["cash_flows"] = std::move(*change);
+  if (before.deliverables.empty() && !after.deliverables.empty()) changes["deliverables"] = Json{{"v", after.deliverables}};
+  else if (auto change = field_change(before.deliverables, after.deliverables)) changes["deliverables"] = std::move(*change);
+  if (before.corporate_actions.empty() && !after.corporate_actions.empty()) changes["corporate_actions"] = Json{{"v", after.corporate_actions}};
+  else if (auto change = field_change(before.corporate_actions, after.corporate_actions)) changes["corporate_actions"] = std::move(*change);
   if (before.stock_orders.empty() && !after.stock_orders.empty()) changes["stock_orders"] = Json{{"v", after.stock_orders}};
   else if (auto change = field_change(before.stock_orders, after.stock_orders)) changes["stock_orders"] = std::move(*change);
   if (before.market_halts.empty() && !after.market_halts.empty()) changes["market_halts"] = Json{{"v", after.market_halts}};
@@ -5143,16 +5295,26 @@ void TradingSession::record_input(std::string_view input, Timestamp time) {
 }
 TradingSession::TradingSession(TradingSession&&) noexcept = default;
 TradingSession& TradingSession::operator=(TradingSession&&) noexcept = default;
-CommandResult TradingSession::define(const md::OptionContract& contract, Timestamp time) {
+CommandResult TradingSession::define(const md::OptionContract& contract, Timestamp time, std::optional<Deliverable> deliverable) {
   return impl_->transact(time, "definition", [&](State& s, Events& events) {
-    const auto decision = eligible(contract);
-    if (!decision.ok()) return CommandResult{decision, {}, 0};
     const auto symbol = contract.osi_symbol();
+    // A series the account has adjusted keeps the deliverable it adjusted it to.
+    const auto known = s.deliverables.find(symbol);
+    if (!deliverable && known != s.deliverables.end()) deliverable = known->second;
+    const auto decision = eligible(contract, deliverable ? &*deliverable : nullptr);
+    if (!decision.ok()) return CommandResult{decision, {}, 0};
     const auto old = s.contracts.find(symbol);
     if (old != s.contracts.end() && Json(old->second) != Json(contract))
       return CommandResult{failure(Reason::INVALID_CONTRACT, "OSI definition conflicts with registered terms"), {}, 0};
+    if (known != s.deliverables.end() && deliverable && *deliverable != known->second)
+      return CommandResult{failure(Reason::INVALID_CONTRACT, "The series' deliverable conflicts with the one registered"), {}, 0};
     s.contracts[symbol] = contract;
-    event(events, "definition", contract);
+    Json defined = contract;
+    if (deliverable && !standard_deliverable(*deliverable) && known == s.deliverables.end()) {
+      s.deliverables[symbol] = *deliverable;
+      defined["deliverable"] = *deliverable;
+    }
+    event(events, "definition", defined);
     return CommandResult{};
   });
 }
@@ -5180,6 +5342,7 @@ CommandResult TradingSession::submit(OrderRequest request, Timestamp time, Decis
 }
 RiskProfile snapshot_profile(const TradingSnapshot& snapshot, const SessionConfig& config,
     const Valuations& valuations, const ProfileConfig& profile, double reference_spot, const std::string& underlying) {
+  const DeliverablesScope adjusted(&snapshot.deliverables);
   std::map<std::string, Position> positions;
   std::map<std::string, StockPosition> stocks;
   std::map<std::string, double> prices;
@@ -5970,11 +6133,11 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     if (s.settled.contains(symbol)) return CommandResult{failure(Reason::ALREADY_SETTLED, "Settlement is exactly once per OSI"), {}, 0};
     if (time < it->second.expiry_time() || settlement < Money{} || !s.ledger.positions().contains(symbol))
       return CommandResult{failure(Reason::INVALID_SETTLEMENT, "Settlement requires expiry, a position and nonnegative reference"), {}, 0};
-    const Money strike = Money::from_double(it->second.strike);
+    const Money strike = effective_strike(s, it->second);
     const auto quantity = held(s, symbol);
     // A long instructed not to be exercised expires worthless.
     const bool unexercised = quantity > 0 && s.do_not_exercise.contains(symbol);
-    const Money exercise_value = it->second.type == pricing::OptionType::Call ? settlement - strike : strike - settlement;
+    const Money exercise_value = unit_exercise_value(s, it->second, settlement);
     const bool pin = s.config.rules.pin_risk && quantity < 0 && physical(it->second) &&
         exercise_value >= Money::parse("-0.10") && exercise_value <= Money::parse("0.10");
     const auto assigned = pin ? -pin_assignments(s, it->second, -quantity, exercise_value >= Money::from_micros(10'000)) : quantity;
@@ -6015,7 +6178,7 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     // settlement price, which together cost the strike.
     if (delivers) {
       const auto underlying = it->second.underlying;
-      const auto shares = delivered(it->second, assigned);
+      const auto shares = delivered(s, it->second, assigned);
       const auto delivery_price = pin ? strike : settlement;
       if (const auto mark = s.stock_marks.find(underlying); mark == s.stock_marks.end() || mark->second.time <= time)
         s.stock_marks[underlying] = {settlement, time};
@@ -6063,9 +6226,8 @@ void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp cl
     const auto mark = s.marks.find(symbol);
     const auto price = stock_price(s, contract.underlying, closing);
     if (mark == s.marks.end() || !price) continue;
-    const Money strike = Money::from_double(contract.strike);
     const bool call = contract.type == pricing::OptionType::Call;
-    const Money intrinsic = std::max(Money{}, call ? *price - strike : strike - *price);
+    const Money intrinsic = std::max(Money{}, unit_exercise_value(s, contract, *price));
     if (intrinsic < Money::from_micros(10'000)) continue;
     // Holders exercise an option trading below its exercise value, and a call
     // whose time value is less than a dividend going ex on the new day.
@@ -6078,7 +6240,7 @@ void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp cl
     const auto short_contracts = -held(s, symbol);
     const auto contracts = assigned_contracts(s, symbol, short_contracts);
     if (contracts == 0) continue;
-    const auto shares = delivered(contract, -contracts);
+    const auto shares = delivered(s, contract, -contracts);
     const auto fee = exercise_fee(s, contracts);
     fill_position(s, symbol, contracts, intrinsic, fee);
     s.closures.push_back({symbol, -contracts, intrinsic, s.time, ClosureKind::Assignment, s.fills.size(), fee});
@@ -6128,6 +6290,71 @@ void accrue_financing(State& s, const State& closing, std::int64_t days, Events&
 }
 /// On an ex-date the shares held into it are paid the dividend, and short shares
 /// pay it, in whole cents: once per symbol and date, into the new day's P&L as other.
+/// Splits going ex on the new trading date (and any the server was down for), each
+/// once: held shares split, the fraction of a share left over paid in cash at the
+/// split mark (or the average cost without one) and the mark split with them; every
+/// share-settled series on the underlying that has not expired takes the split
+/// deliverable, whole shares with the fraction as cash at that price; and working
+/// share orders on the stock are cancelled, their prices no longer applying.
+void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actions, Events& events) {
+  for (const auto& a : actions) {
+    if (std::any_of(s.corporate_actions.begin(), s.corporate_actions.end(),
+                    [&](const CorporateActionRecord& r) { return r.symbol == a.symbol && r.ex_date == a.ex_date; }))
+      continue;
+    if (md::is_index_underlying(a.symbol)) continue;
+    CorporateActionRecord record{a.symbol, a.ex_date, a.numerator, a.denominator};
+    record.time = s.time;
+    // The price a split share is worth: the mark, split; without one, the average cost.
+    const auto mark = s.stock_marks.find(a.symbol);
+    const auto shares = shares_held(s, a.symbol);
+    std::optional<Money> split_price;
+    if (mark != s.stock_marks.end()) split_price = mark->second.price.prorate(a.denominator, a.numerator);
+    record.shares_before = shares;
+    record.shares_after = shares;
+    if (shares != 0) {
+      const auto& stock = s.ledger.stocks().at(a.symbol);
+      const auto price = split_price ? *split_price
+          : (stock.basis < Money{} ? -stock.basis : stock.basis).prorate(a.denominator, magnitude(shares) * a.numerator);
+      using Wide = __int128;
+      const Wide scaled = static_cast<Wide>(shares) * a.numerator;
+      const auto whole = static_cast<Quantity>(scaled / a.denominator);
+      const auto fraction = static_cast<std::int64_t>(scaled - static_cast<Wide>(whole) * a.denominator);
+      const Money cash = nearest_cent(price.prorate(fraction, a.denominator));
+      // The stretch before the split ends on the old mark; the next starts on the split one.
+      if (const auto it = s.references.find(a.symbol); it != s.references.end()) {
+        if (mark != s.stock_marks.end()) explain_part(s, a.symbol, explain_stock(it->second, mark->second.price));
+        s.references.erase(it);
+      }
+      record.shares_after = s.ledger.split_stock(a.symbol, a.numerator, a.denominator, cash);
+      record.cash_in_lieu = cash;
+      StockFill fill{s.stock_fills.size() + 1, a.symbol, record.shares_after - shares, Money{}, s.time, StockSource::Split, {}};
+      fill.split_numerator = a.numerator;
+      fill.split_denominator = a.denominator;
+      fill.cash_in_lieu = cash;
+      s.stock_fills.push_back(std::move(fill));
+    }
+    if (mark != s.stock_marks.end()) s.stock_marks[a.symbol].price = *split_price;
+    start_stock_stretch(s, a.symbol);
+    for (const auto& [symbol, contract] : s.contracts) {
+      if (contract.underlying != a.symbol || !physical(contract) || contract.expiry < a.ex_date) continue;
+      const auto before = deliverable_of(s, symbol);
+      const auto scaled = before.shares * a.numerator;
+      Deliverable after{scaled / a.denominator, before.cash};
+      if (const auto rest = scaled % a.denominator; rest != 0)
+        after.cash = after.cash + nearest_cent((split_price ? *split_price : effective_strike(s, contract).prorate(a.denominator, a.numerator))
+                                                   .prorate(rest, a.denominator));
+      if (after.shares == 0) after.shares = 1;  // never below a share: the rest is cash
+      s.deliverables[symbol] = after;
+      record.series[symbol] = after;
+    }
+    for (std::size_t i = 0; i < s.stock_orders.size(); ++i)
+      if (s.stock_orders[i].open() && s.stock_orders[i].request.symbol == a.symbol)
+        end_stock_order(s, s.stock_orders[i].id, OrderStatus::Cancelled,
+                        failure(Reason::CORPORATE_ACTION, "A split went ex on the stock; place the order again on the split shares"), events);
+    s.corporate_actions.push_back(record);
+    event(events, "corporate_action", s.corporate_actions.back());
+  }
+}
 void pay_dividends(State& s, const std::vector<Dividend>& dividends, Events& events) {
   for (const auto& d : dividends) {
     const auto shares = shares_held(s, d.symbol);
@@ -6166,7 +6393,12 @@ std::optional<ClosingPrint> TradingSession::closing_print(const std::string& und
   const auto it = prints.find(close_key(underlying, date));
   return it == prints.end() ? std::nullopt : std::optional(it->second);
 }
-CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividend>& dividends) {
+CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividend>& dividends,
+                                       const std::vector<CorporateAction>& actions) {
+  for (const auto& action : actions) {
+    try { validate_corporate_action(action); }
+    catch (const std::invalid_argument& error) { throw TradingError(Reason::INVALID_ORDER, error.what()); }
+  }
   // The finished day closes on the marks it last published, before a new day's
   // quotes replace them: its close, P&L by Greek and the night's assignments come
   // from them, and the move from them to the new day's first quotes is the new day's.
@@ -6265,6 +6497,8 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     // charges can consume loss room and interest changes marked equity.
     accrue_financing(s, impl_->state, days, events);
     assign_early(s, dividends, closing_time, events);
+    // Splits take effect before the day's dividends, which are quoted on the split shares.
+    apply_corporate_actions(s, actions, events);
     pay_dividends(s, dividends, events);
     return CommandResult{};
   });
@@ -6440,6 +6674,7 @@ std::shared_ptr<const TradingSnapshot> TradingSession::snapshot() const { return
 std::string TradingSession::snapshot_json() const { return Json(*impl_->snapshot).dump(); }
 const SessionConfig& TradingSession::config() const { return impl_->state.config; }
 const Contracts& TradingSession::contracts() const { return impl_->state.contracts; }
+const SharedMap<std::string, Deliverable>& TradingSession::deliverables() const { return impl_->state.deliverables; }
 const Valuations& TradingSession::valuations() const { return impl_->state.valuations; }
 OpeningOrder TradingSession::opening_order(const OrderRequest& request, Timestamp time, const PreviewMarket& market,
                                             const std::map<std::string, Quantity>& preceding) const {
@@ -6618,22 +6853,21 @@ CommandResult TradingSession::exercise(const std::string& symbol, Quantity contr
     if (s.time >= contract.expiry_time()) return CommandResult{failure(Reason::EXPIRED, "The contract has expired; settlement exercises it"), {}, 0};
     if (const auto d = account_check(s); !d.ok()) return CommandResult{d, {}, 0};
     if (held(s, symbol) < contracts) return CommandResult{failure(Reason::INVALID_ORDER, "Exercise needs that many long contracts"), {}, 0};
-    // Stock trades execute synchronously: there are no working share sells to reserve.
+    // A put's sale of shares counts the working share sells before it.
     if (s.config.rules.buy_only && contract.type == pricing::OptionType::Put &&
-        -delivered(contract, contracts) > std::max<Quantity>(0, shares_held(s, contract.underlying)))
+        pending_short_shares(s, contract.underlying, 0, delivered(s, contract, contracts)) < 0)
       return CommandResult{failure(Reason::BUY_ONLY, "This plan is buy-only: put exercise would sell shares short; hold enough long shares first"), {}, 0};
     if (const auto d = defined_risk_check(s, {{symbol, -contracts}},
                                           "Exercising this long would leave a short option uncovered; close the short first");
         !d.ok())
       return CommandResult{d, {}, 0};
-    if (const auto d = account_type_check(s, {{symbol, -contracts}}, {{contract.underlying, delivered(contract, contracts)}}); !d.ok())
+    if (const auto d = account_type_check(s, {{symbol, -contracts}}, {{contract.underlying, delivered(s, contract, contracts)}}); !d.ok())
       return CommandResult{d, {}, 0};
     const auto price = stock_price(s, contract.underlying);
     if (!price) return CommandResult{failure(Reason::STALE_QUOTE, "Exercise needs a fresh price for " + contract.underlying), {}, 0};
-    const Money strike = Money::from_double(contract.strike);
-    const Money intrinsic = std::max(Money{}, contract.type == pricing::OptionType::Call ? *price - strike : strike - *price);
+    const Money intrinsic = std::max(Money{}, unit_exercise_value(s, contract, *price));
     if (intrinsic <= Money{}) return CommandResult{failure(Reason::INVALID_ORDER, "Exercise needs the option in the money"), {}, 0};
-    const auto shares = delivered(contract, contracts);
+    const auto shares = delivered(s, contract, contracts);
     // The contracts close at intrinsic value, so any time value left is a cost,
     // and the shares change hands at the underlying's price.
     const auto apply = [&](State& t) {

@@ -90,6 +90,8 @@ class Desk {
     trading::SessionConfig paper;
     /// Dividends every account pays on held shares at the rollover into each ex-date.
     std::vector<trading::Dividend> dividends;
+    /// Splits for day rollovers; recorded runs keep them as an input when given.
+    std::vector<trading::CorporateAction> corporate_actions;
     std::vector<analytics::EventLabel> events;
     std::shared_ptr<trading::Journal> paper_sink;  ///< Optional in-process test/simulation sink.
     /// A saved replay run to continue, read from paper_journal: the main account starts
@@ -117,6 +119,8 @@ class Desk {
   /// Owner-thread durability barrier. A failed sync disables that account.
   void flush_journals();
   void set_dividends(std::vector<trading::Dividend> dividends);
+  /// Replaces the splits day rollovers apply (Options::corporate_actions at first).
+  void set_corporate_actions(std::vector<trading::CorporateAction> actions);
   /// Replaces the published opening quotations AM settlement reads (see Options).
   void set_opening_quotations(std::vector<OpeningQuotation> quotations);
   void set_publication_sink(std::function<void(std::string_view, const TradingView&)> sink) {
@@ -233,6 +237,9 @@ class Desk {
   std::vector<trading::Dividend> dividends_;
   std::uint64_t dividends_version_ = 0;
   std::map<std::pair<std::string, md::Date>, OpeningQuotation> opening_quotations_;
+  std::vector<trading::CorporateAction> corporate_actions_;
+  /// Adjusted series: the standard series' observation each last quoted.
+  std::map<std::string, std::uint64_t> equivalent_observations_;
   void check_circuit_breaker(const md::UnderlyingQuote& spot);
   void advance_circuit_breaker(md::Timestamp time);
   void publish_circuit_breaker();

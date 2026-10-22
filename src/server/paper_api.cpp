@@ -744,6 +744,12 @@ json portfolio_json(const TradingView& view) {
               (s.closing_prints.contains(c.underlying + " " + md::format_date(c.expiry)) ||
                s.time < md::new_york_to_utc(c.expiry, md::regular_close_hour(c.expiry), 0) + kLastPrintWait)
                 ? json("closing_print") : json("manual")},
+        // An adjusted series: what one contract delivers now, or null for 100 shares.
+        {"deliverable", [&]() -> json {
+           const auto d = s.deliverables.find(c.osi_symbol());
+           if (d == s.deliverables.end()) return nullptr;
+           return {{"shares", d->second.shares}, {"cash", d->second.cash.str()}};
+         }()},
         {"greeks", position_greeks(p, view)},
         {"attribution", s.attributions.contains(c.osi_symbol()) ? attribution_json(s.attributions.at(c.osi_symbol())) : json(nullptr)},
         {"trade", trade_of(c.osi_symbol())}, {"lifetime", lifetime_of(c.osi_symbol())}});
@@ -983,6 +989,18 @@ json account_json(const TradingView& view) {
                      {"payouts_received", costs.payouts_received.str()}, {"net", (costs.payouts_received - costs.total()).str()},
                      {"fee_charged", s.fee_charged.amount.str()}, {"fee_kind", nullable(s.fee_charged.kind)}}},
           {"cash_transfers_allowed", r.practice()}, {"cash_flows", cash_flows},
+          {"corporate_actions", [&] {
+             json list = json::array();
+             for (const auto& a : s.corporate_actions) {
+               json series = json::array();
+               for (const auto& [symbol, d] : a.series) series.push_back({{"symbol", symbol}, {"shares", d.shares}, {"cash", d.cash.str()}});
+               list.push_back({{"symbol", a.symbol}, {"ex_date", md::format_date(a.ex_date)}, {"kind", "split"},
+                               {"numerator", a.numerator}, {"denominator", a.denominator}, {"shares_before", a.shares_before},
+                               {"shares_after", a.shares_after}, {"cash_in_lieu", a.cash_in_lieu.str()},
+                               {"time", md::format_timestamp(a.time)}, {"series", series}});
+             }
+             return list;
+           }()},
           {"attempts", attempts}};
 }
 /// How a change in shares came about.
@@ -999,6 +1017,7 @@ json share_source(const StockFill& fill) {
     case StockSource::Trade: return "trade";
     case StockSource::Rule: return "rule";
     case StockSource::Reset: return "reset";
+    case StockSource::Split: return "split";
   }
   return nullptr;
 }
@@ -2776,6 +2795,8 @@ json historical_risk_json(const TradingView& view, const MetricsSource& source) 
     if (stock.fresh && stock.mark) prices[stock.position.symbol] = stock.mark->dollars();
   }
   const auto ledger = Ledger::restore({}, positions, stocks);
+  // Adjusted series reprice as the standard series that pay the same.
+  const DeliverablesScope adjusted(&s.deliverables);
   std::optional<Money> floor = view.config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt;
   if (s.soft_floor) floor = floor ? std::max(*floor, *s.soft_floor) : s.soft_floor;
   json stress = json::array();

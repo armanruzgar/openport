@@ -103,6 +103,7 @@ struct Settings {
   bool massive_dividends = false;
   bool dividends_source = false;
   bool cboe_soq = false;
+  std::vector<trading::CorporateAction> corporate_actions;
   std::vector<analytics::EventLabel> events;
   const server::PlanPreset* plan = server::find_plan("practice");
   std::optional<trading::Money> paper_cash;
@@ -140,7 +141,7 @@ int usage(const char* error = nullptr) {
       "                 [--sandboxes N] [--sandbox-idle-seconds N] [--client-ip-header NAME]\n"
       "                 [--no-paper] [--write-token TOKEN] [--write-token-file PATH] [--candle-dir DIR] [--no-history]\n"
       "                 [--dividends FILE|massive] [--event-calendar FILE] [--events FILE] [--no-cboe-holidays]\n"
-      "                 [--am-settlement manual|cboe]\n"
+      "                 [--am-settlement manual|cboe] [--corporate-actions FILE]\n"
       "                 [--series-dir DIR] [--no-series]\n"
       "                 [--open] [--no-token-link] [--crash-log PATH]\n"
       "       openportd --print-url [--open] [--write-token-file PATH] [--address ADDR] [--port N]\n"
@@ -180,6 +181,9 @@ int usage(const char* error = nullptr) {
       "           held shares receive the dividend and short shares pay it. \"massive\" reads\n"
       "           them for the stock and ETF symbols from Massive's API instead, every six\n"
       "           hours, with MASSIVE_API_KEY (any stocks plan), whatever the provider\n"
+      "corporate actions: SYMBOL,YYYY-MM-DD,split,NUMERATOR:DENOMINATOR lines (2:1 doubles\n"
+      "                   the shares, 1:10 is a reverse split); on each ex-date held shares\n"
+      "                   split and their options take the adjusted deliverable\n"
       "am settlement: \"cboe\" settles live AM index options (SPX, RUT, DJX, VIX) on the\n"
       "               special opening quotation Cboe publishes (SET, RLS, DJS, VRO), fetched\n"
       "               from cdn.cboe.com; default manual (POST /api/settlements), which stays\n"
@@ -528,6 +532,14 @@ int run(int argc, char** argv) {
       if (!file) return usage(("--event-calendar: cannot read " + value).c_str());
       try { settings.event_calendar = trading::parse_event_calendar(file); }
       catch (const std::exception& error) { return usage(error.what()); }
+    } else if (arg == "--corporate-actions") {
+      std::ifstream file(value);
+      if (!file) return usage(("--corporate-actions: cannot read " + value).c_str());
+      try {
+        settings.corporate_actions = trading::parse_corporate_actions(file);
+      } catch (const std::invalid_argument& error) {
+        return usage(error.what());
+      }
     } else if (arg == "--am-settlement") {
       if (value != "manual" && value != "cboe") return usage("--am-settlement must be manual or cboe");
       settings.cboe_soq = value == "cboe";
@@ -718,6 +730,7 @@ int run(int argc, char** argv) {
   engine_options.paper = settings.paper;
   engine_options.dividends = settings.dividends;
   engine_options.demo_dividends = !settings.dividends_source;
+  engine_options.corporate_actions = settings.corporate_actions;
   // Account groups for copied orders live beside the main journal.
   if (settings.paper_enabled && !settings.paper_journal.empty() && !settings.sandboxes.capacity) {
     try {

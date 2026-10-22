@@ -92,7 +92,7 @@ TEST(TradingJournal, EveryReasonRoundTripsIncludingScalingAndCalendarCodes) {
   EXPECT_EQ(static_cast<int>(Reason::NEWS_BLACKOUT), static_cast<int>(Reason::MAX_VOLUME_SHARE) + 1);
   EXPECT_EQ(static_cast<int>(Reason::HOLD_RESTRICTED), static_cast<int>(Reason::NEWS_BLACKOUT) + 1);
   EXPECT_EQ(static_cast<int>(Reason::RESET_LIMIT), static_cast<int>(Reason::HOLD_RESTRICTED) + 1);
-  EXPECT_EQ(kLastReason, Reason::SHORT_VEGA_LIMIT);
+  EXPECT_EQ(kLastReason, Reason::CORPORATE_ACTION);
   for (int i = 0; i <= static_cast<int>(kLastReason); ++i) {
     const auto reason = static_cast<Reason>(i);
     const nlohmann::json encoded = reason;

@@ -49,6 +49,10 @@ class Ledger {
   /// A dividend on held shares: cash and realised P&L move by `amount`, which is
   /// negative when short shares pay it.
   void receive_dividend(const std::string& symbol, Money amount);
+  /// Split held shares: every `denominator` become `numerator`, whole shares toward
+  /// zero; the fraction left leaves with its proportional basis for `cash_in_lieu`
+  /// (signed: short shares pay it), realising the difference. Returns the shares now held.
+  Quantity split_stock(const std::string& symbol, std::int64_t numerator, std::int64_t denominator, Money cash_in_lieu);
   /// Validated journal outcomes only; public for independent outcome consumers.
   static Ledger restore(Account account, std::map<std::string, Position> positions,
                         std::map<std::string, StockPosition> stocks = {});

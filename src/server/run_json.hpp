@@ -16,6 +16,7 @@ inline void from_json(const nlohmann::json& j, OrderChange& c) {
   if (j.contains("walk")) c.walk.emplace(j.at("walk").get<std::optional<Walk>>());
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Dividend, symbol, ex_date, per_share)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CorporateAction, symbol, ex_date, numerator, denominator)
 }
 namespace openport::analytics {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(AnalyticsOptions, parity_strikes, flip_range, flip_steps,

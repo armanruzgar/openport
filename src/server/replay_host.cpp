@@ -1430,6 +1430,8 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     engine.initial_playbooks = start.contains("playbooks") && !start.at("playbooks").is_null() ? start.at("playbooks").dump() : "";
     engine.analytics = start.at("analytics").get<analytics::AnalyticsOptions>();
     engine.dividends = start.at("dividends").get<std::vector<trading::Dividend>>();
+    engine.corporate_actions = start.contains("corporate_actions")
+        ? start.at("corporate_actions").get<std::vector<trading::CorporateAction>>() : std::vector<trading::CorporateAction>{};
     if (!sandbox) engine.resume = std::make_shared<const trading::JournalRecovery>(std::move(recovery));
     else engine.resume.reset();
     std::unique_lock handoff(handoff_mutex_);

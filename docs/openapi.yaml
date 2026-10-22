@@ -12730,6 +12730,13 @@
           "cash_transfers_allowed": {
             "type": "boolean",
             "description": "True only on practice accounts with no evaluation objectives, program fees or funded phase."
+          },
+          "corporate_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorporateActionApplied"
+            },
+            "description": "Splits applied to the account, oldest first."
           }
         },
         "required": [
@@ -13488,6 +13495,10 @@
           },
           {
             "const": "reset",
+            "type": "string"
+          },
+          {
+            "const": "split",
             "type": "string"
           }
         ]
@@ -15882,6 +15893,17 @@
               }
             ],
             "description": "The holding's round trips this attempt together. Absent from older servers."
+          },
+          "deliverable": {
+            "description": "An adjusted series' deliverable after a split; null for a standard series (100 shares).",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Deliverable"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -22805,7 +22827,8 @@
               "GAMMA_LIMIT",
               "THETA_LIMIT",
               "GRID_LOSS_LIMIT",
-              "SHORT_VEGA_LIMIT"
+              "SHORT_VEGA_LIMIT",
+              "CORPORATE_ACTION"
             ]
           },
           "message": {
@@ -30032,6 +30055,97 @@
           "stop_loss",
           "take_profit"
         ]
+      },
+      "Deliverable": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "shares": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "shares",
+          "cash"
+        ],
+        "description": "What one contract of an adjusted series delivers for 100 times its strike: whole shares and cash in lieu."
+      },
+      "AdjustedSeries": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "shares": {
+            "type": "integer"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "symbol",
+          "shares",
+          "cash"
+        ]
+      },
+      "CorporateActionApplied": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "ex_date": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "split",
+            "type": "string"
+          },
+          "numerator": {
+            "type": "integer"
+          },
+          "denominator": {
+            "type": "integer"
+          },
+          "shares_before": {
+            "type": "integer"
+          },
+          "shares_after": {
+            "type": "integer"
+          },
+          "cash_in_lieu": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "time": {
+            "type": "string"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdjustedSeries"
+            }
+          }
+        },
+        "required": [
+          "symbol",
+          "ex_date",
+          "kind",
+          "numerator",
+          "denominator",
+          "shares_before",
+          "shares_after",
+          "cash_in_lieu",
+          "time",
+          "series"
+        ],
+        "description": "A split applied on its ex-date: shares held before and after, cash paid for a fraction of a share, and each option series it adjusted."
       }
     }
   }

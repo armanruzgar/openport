@@ -238,6 +238,23 @@ std::vector<ShareLifecycle> share_lifecycles(const SharedVector<StockFill>& fill
   };
   for (std::size_t filled = 0; filled < fills.size(); ++filled) {
     const auto& fill = fills[filled];
+    // A split changes the shares of the round trip open in them, keeping its basis,
+    // and closes it when only a fraction was left to be paid in cash.
+    if (fill.source == StockSource::Split && fill.split_numerator > 0) {
+      pay_until(filled, &fill);
+      const auto it = open.find(fill.symbol);
+      if (it == open.end()) continue;
+      auto& life = out[it->second.index];
+      life.shares = it->second.ledger.split_stock(fill.symbol, fill.split_numerator, fill.split_denominator, fill.cash_in_lieu);
+      life.max_shares = std::max(life.max_shares, magnitude(life.shares));
+      life.gross = it->second.ledger.account().realised;
+      life.fills.push_back(fill.id);
+      if (life.shares == 0) {
+        life.closed = fill.time;
+        open.erase(it);
+      }
+      continue;
+    }
     if (fill.shares == 0) continue;
     pay_until(filled, &fill);
     if (!open.contains(fill.symbol)) start(fill, fill.shares);

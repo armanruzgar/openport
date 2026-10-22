@@ -422,6 +422,8 @@ export interface CashFlow {
 
 export interface Account {
   cash_flows?: CashFlow[]
+  /** Splits applied to the account, oldest first; absent from older servers. */
+  corporate_actions?: CorporateActionApplied[]
   cash_transfers_allowed?: boolean
   damaged?: AccountDamage | null
   journal_size?: JournalSize
@@ -566,7 +568,7 @@ export interface TradeNoteResponse extends TradeNote {
   trade: string
 }
 /** How shares changed hands: an option's exercise or assignment, a trade that reduced them, the account closing them when an evaluation is decided, or a reset. */
-export type ShareSource = "expiry_exercise" | "assignment" | "early_exercise" | "trade" | "rule" | "reset"
+export type ShareSource = "expiry_exercise" | "assignment" | "early_exercise" | "trade" | "rule" | "reset" | "split"
 /** One round trip in an underlying's shares from exercise and assignment, flat to flat or still open. */
 export interface ShareTrade {
   kind: "shares"
@@ -945,7 +947,14 @@ export interface Fill {
   quote_time: string
   time: string
 }
+/** What one contract of an adjusted series delivers for 100 times its strike. */
+export interface Deliverable { shares: number; cash: Money }
+export interface AdjustedSeries { symbol: string; shares: number; cash: Money }
+/** A split applied to the account on its ex-date. */
+export interface CorporateActionApplied { symbol: string; ex_date: string; kind: "split"; numerator: number; denominator: number; shares_before: number; shares_after: number; cash_in_lieu: Money; time: string; series: AdjustedSeries[] }
 export interface Position {
+  /** An adjusted series' deliverable after a split; null or absent for 100 shares. */
+  deliverable?: Deliverable | null
   symbol: string
   underlying: string
   expiry: string

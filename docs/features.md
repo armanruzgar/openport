@@ -178,6 +178,11 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   are separate orders: shares remain if the option step fails or fills partly.
   Automatic playbook stages remain option orders; share purchases are manual.
   [Strategies with shares](playbooks.md#practising-strategies-with-shares).
+- Stock splits from `--corporate-actions` apply on their ex-date: held shares split
+  with cash in lieu of a fraction, and their options keep symbol and strike while their
+  deliverable, settlement, exercise, margin and risk follow the split shares. Adjusted
+  series are quoted from the standard series that pays the same.
+  [Splits](paper-trading.md#splits-and-adjusted-series).
 - European index options settle in cash; American equity and ETF options deliver
   shares on exercise or assignment. In-the-money expiry exercise, requested early
   exercise and simulated partial overnight assignment are supported. Assignment

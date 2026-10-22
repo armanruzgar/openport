@@ -84,7 +84,8 @@ ShockResult stress_book(const Ledger& ledger, const Valuations& valuations,
         shocked.spot *= 1 + factor.spot_percent / 100;
         shocked.forward *= 1 + factor.spot_percent / 100;
         shocked.smile_iv = std::max(profile.vol_floor, shocked.smile_iv + profile.vol_points / 100);
-        const double price = pricing::black_price(p.contract.type, shocked.forward, p.contract.strike,
+        const auto e = equivalent(symbol, p.contract);
+        const double price = e.contracts * pricing::black_price(p.contract.type, shocked.forward, e.strike,
             shocked.years, shocked.smile_iv, shocked.discount);
         legs.push_back({p.contract, p.quantity, Money::from_double(price * 100 * std::abs(static_cast<double>(p.quantity))), shocked.spot});
         shocked_values[symbol] = shocked;

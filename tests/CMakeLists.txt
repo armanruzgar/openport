@@ -114,6 +114,7 @@ target_sources(openport_tests PRIVATE
   trading/multileg_test.cpp
   trading/orders_test.cpp
   trading/stock_orders_test.cpp
+  trading/corporate_actions_test.cpp
 )
 target_link_libraries(openport_tests PRIVATE openport::trading nlohmann_json::nlohmann_json)
 

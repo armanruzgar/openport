@@ -306,8 +306,9 @@ struct Closure {
 /// How shares changed hands: delivered by an option at settlement, delivered by
 /// an early exercise, traded to reduce them, closed by the account when an
 /// evaluation is decided, dropped at their mark by an account reset, or
-/// delivered by a short option's early assignment.
-enum class StockSource { Delivery, Exercise, Trade, Rule, Reset, Assignment };
+/// delivered by a short option's early assignment, or added or removed by a split
+/// (at no price: the basis stays with the shares).
+enum class StockSource { Delivery, Exercise, Trade, Rule, Reset, Assignment, Split };
 
 /// An underlying's closing print for a date: what its PM-settled options settle on.
 struct ClosingPrint {
@@ -328,6 +329,22 @@ struct DividendPayment {
   std::optional<std::uint64_t> after_stock_fill;
 };
 
+/// A split applied to the account on its ex-date: the shares held before and after,
+/// the cash paid for a fraction of a share, and each option series it adjusted.
+struct CorporateActionRecord {
+  std::string symbol;
+  md::Date ex_date;
+  std::int64_t numerator = 1;
+  std::int64_t denominator = 1;
+  Quantity shares_before = 0;
+  Quantity shares_after = 0;
+  Money cash_in_lieu = {};  ///< Signed: short shares pay it.
+  Timestamp time = 0;
+  /// Adjusted series by padded OSI: what one contract delivers after the split.
+  std::map<std::string, Deliverable> series = {};
+  bool operator==(const CorporateActionRecord&) const = default;
+};
+
 /// One change in the shares an account holds, so trade history can follow them.
 struct StockFill {
   std::uint64_t id = 0;  ///< 1, 2, ...: its place in the account's stock fills.
@@ -339,6 +356,10 @@ struct StockFill {
   std::string option;  ///< The OSI that delivered them, for Delivery and Exercise.
   std::optional<Money> buying_power_after = {};  ///< Automatic delivery with buying-power checks; absent in old journals.
   std::uint64_t stock_order = 0;  ///< The working share order it filled, by its ID; zero for an immediate trade.
+  /// Split fills: the split's terms and the cash paid for the fraction of a share.
+  std::int64_t split_numerator = 0;
+  std::int64_t split_denominator = 0;
+  Money cash_in_lieu = {};
 };
 
 /// Buying power. Under strategy margin it is cash: long premium is paid in full and
