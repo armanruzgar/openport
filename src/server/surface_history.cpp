@@ -245,9 +245,9 @@ std::vector<SurfaceSnapshot> SeriesStore::surfaces(const std::string& symbol, md
 
 ApiResponse surface_history_response(const MetricsSource& source, const std::string& symbol,
                                      const std::map<std::string, std::string>& query) {
-  const auto bad = [](const std::string& message) { return ApiResponse{400, json{{"error", message}}.dump()}; };
+  const auto bad = [](const std::string& message) { return api_error(400, "INVALID_REQUEST", message); };
   const auto symbols = source.symbols();
-  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return {404, json{{"error", "unknown underlying"}}.dump()};
+  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return api_error(404, "NOT_FOUND", "unknown underlying");
   for (const auto& [key, val] : query) {
     (void)val;
     if (key != "from" && key != "to" && key != "compare") return bad("unknown surface-history parameter");
