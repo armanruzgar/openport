@@ -126,13 +126,18 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   single-leg limit at the touch waits behind the size displayed when it joins; trade
   prints at its price use that queue up before it fills at its limit, prints through
   its price fill it, and cancellations come out of the queue in proportion. Without
-  prints, volume increases (half each side) or a documented five-minute turnover of
-  the displayed size stand in. Fractions round at random from the seed, so the same
-  feed always gives the same fills. Orders show the estimate and wait with `QUEUE`.
-  Recordings' trade prints reach only accounts using it; others keep their bytes.
+  prints, volume increases while the touch stays at its price (half each side) or a
+  documented five-minute turnover of the displayed size stand in; the turnover fills
+  orders even when nothing traded at their price. Time priority follows when an order
+  reached its price (after latency, or the change that sent it there), and only a
+  smaller size keeps its place: a larger size or any other change goes to the back.
+  Fractions round at random from the seed, so the same feed always gives the same
+  fills. Orders show the estimate and wait with `QUEUE`. Recordings' trade prints
+  reach only accounts using it; others keep their bytes.
 - **Stop stress** (`stop_stress_ticks`, `stop_stress_percent`): stops reached while a
-  contract's spread or quote rate is a chosen multiple of its normal slip extra ticks,
-  reported on the order and its fills. Off by default.
+  contract's spread or quote rate is a chosen multiple of its normal slip extra ticks
+  on their first fill attempt, never past a stop-limit's limit, reported on the order
+  and its fills. A stop-limit that rests after it fills later unstressed. Off by default.
 - Queue fills and stop stress are program rules: an attempt with either leaves its
   preset, unlike latency, slippage, impact and inside fills. Daemon flags
   `--paper-fill-model queue`, `--paper-queue-seed`, `--paper-stop-stress-ticks` and
@@ -143,8 +148,12 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Real-fill calibration** (`POST /api/fills/calibration`, Journal): import generic,
   tastytrade, thinkorswim/Schwab or IBKR fills, compare each with the same-time
   recorded quote and what the paper models would have done, and get suggested
-  settings. Analysis only: nothing is stored or traded. The broker layouts are tested
-  on sample files, not live exports.
+  settings. Analysis only: nothing is stored or traded. It needs a read token (not
+  anonymous where reads are public; never a sandbox), runs one at a time on a worker
+  (503 `CALIBRATION_BUSY`) and searches at most 31 days of fills, 32 recordings,
+  4 GiB and 20 seconds, newest first, stopping once every fill has a quote; `search`
+  reports how far it got. Quantities above a million contracts are skipped. The
+  broker layouts are tested on sample files, not live exports.
 
 ### API, Python and automation
 

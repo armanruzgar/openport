@@ -146,11 +146,14 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   bounded by the far side's remaining size. [Fill models](paper-trading.md#optional-fill-models).
 - **Queue position** puts a resting limit at the touch behind the size displayed
   when it joins. Trade prints at its price use the queue up before it fills at its
-  limit; prints through the price fill it; without prints, volume increases or a
-  documented five-minute turnover stand in. Seeded, deterministic and replayable;
-  off by default and a program rule. [Queue fills](paper-trading.md#queue-fills).
-- **Stop stress** adds 0–10 adverse ticks to stops reached while the spread or the
-  quote rate is a chosen multiple of its normal; off by default and a program rule.
+  limit; prints through the price fill it; without prints, volume increases at the
+  touch or a documented five-minute turnover stand in (the turnover fills orders even
+  when nothing traded at their price). Only a smaller size keeps an order's place.
+  Seeded, deterministic and replayable; off by default and a program rule.
+  [Queue fills](paper-trading.md#queue-fills).
+- **Stop stress** adds 0–10 adverse ticks to the first fill attempt of stops reached
+  while the spread or the quote rate is a chosen multiple of its normal, never past a
+  stop-limit's limit; off by default and a program rule.
   [Stop stress](paper-trading.md#stop-stress).
 - DAY/GTC single-leg and net combo limits can walk by a chosen step and interval
   toward a cap on market time. Tickets, previews, edits and history expose the
@@ -367,7 +370,8 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   Conservative suggestion. [Fill quality](paper-trading.md#fill-quality).
 - Real-fill calibration reads generic, tastytrade, thinkorswim/Schwab and IBKR
   exports, compares each fill with the same-time recorded quote and the paper models,
-  and suggests settings; analysis only, nothing stored or traded. Parsers are tested
+  and suggests settings; analysis only, nothing stored or traded, with a read token
+  and a bounded search of the recorded days on a worker. Parsers are tested
   on sample files, not live exports. [Calibration](paper-trading.md#real-fill-calibration).
 
 ## Replay, scenarios and the demo market

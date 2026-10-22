@@ -522,31 +522,48 @@ is not marketable **joins the queue** at its price:
 
 - At its own side's touch (a buy limit equal to the bid, a sell equal to the ask),
   the estimated queue ahead is the size displayed there when it joins, plus the
-  account's own earlier orders at the same price that have not filled.
+  account's own orders that reached the same price earlier and have not filled.
 - Strictly inside the spread, nothing displayed is ahead; only the account's own
-  earlier orders at that price are.
+  orders that reached that price earlier are.
 - Behind the touch (a buy below the bid), it has no queue yet. It joins when the
   touch comes to its price, behind what is displayed then.
+
+An order reaches its price when it is accepted (or its stop triggers), once the
+account's fill latency has passed, or when a later change sends it to the back (see
+below). **Time priority** among the account's orders at one price follows that
+moment, then the order ID: an old order repriced to a level where a newer one
+already rests queues behind it, and a print through the price goes to the newer
+one first.
 
 Each market batch then **uses the queue up**, in price/time priority across the
 account's orders:
 
 1. **Trade prints.** When the feed supplies trades (its `trades` capability, as
    recordings with prints and OPRA-style feeds do), contracts printed at the
-   order's price after it joined consume the queue ahead. What prints past the
+   order's price after it joined consume the queue ahead. Prints are counted from
+   when the order reached its price, never from before its latency passed or
+   before the change that sent it there. What prints past the
    queue the order may fill, at its limit. A print **through** the price (below a
    buy limit, above a sell limit) fills it whatever is ahead: any order there would
    have met it. Prints reported in the batch an order joins in came before it
    rested at the touch, so only those through its price count. A print's optional
    venue is kept with it but never required.
-2. **Volume increases.** Without prints, an increase in the contract's cumulative
-   day volume between batches while the touch stayed at the order's price counts
-   as traded there, half of it on this side (volume carries no side or price). The
-   first reading is only a baseline.
+2. **Volume increases.** Without prints, the increase in the contract's cumulative
+   day volume from one batch to the next counts as traded at the order's price,
+   half of it on this side (volume carries no side or price), only when the order's
+   own side of the quote was at its price in **both** batches. An increase across
+   a batch where the touch was elsewhere is not counted, even after it comes back;
+   a batch without a volume reading for the contract starts the count again. The
+   first reading is only a baseline. Volume reported between two batches is
+   assumed to have traded at the touch; it may have traded at other prices.
 3. **The volume-rate heuristic.** With neither, the displayed size the order last
    saw at its price is assumed to trade once every **300 seconds** of market time,
    pro rata between batches (each step at most the freshness window, 60 seconds by
    default). Without a displayed level at the price, nothing is assumed to trade.
+   **Warning:** this fallback fills a resting order at the touch within about five
+   minutes even when nothing at all traded at its price; on a feed without trades
+   or volume, queued fills are an assumption, not evidence. Prefer a feed or
+   recording with prints, and treat `source: "rate"` estimates accordingly.
 
 Displayed size that **leaves the level without trading** (the size shrinking by more
 than the contracts counted as traded) is treated as cancellations spread evenly
@@ -565,8 +582,14 @@ A queued fill trades at the order's **limit**, without slippage or impact, and t
 nothing from the far side's displayed size; the fill records `queued: true` and the
 book it saw. It is bounded by the contracts that traded past the queue, and passes
 the usual fill-time checks. The far side reaching the limit still fills the order
-at once as before (`queued: false`), and a changed price joins the queue again at
-the new price. Orders report the estimate as `queue` (`price`, `ahead`, `earned`,
+at once as before (`queued: false`).
+
+Only a **smaller size** keeps an order's place in the queue. A larger size, a new
+price (by hand, by a walking step or by a flatten close following the touch), a new
+time in force or a new walk sends it to the **back**: it joins again behind what is
+displayed then, and behind the account's orders already at that price, as an
+exchange treats a replaced order. A bracket exit that grows with its entry's fills
+goes to the back too. Orders report the estimate as `queue` (`price`, `ahead`, `earned`,
 `displayed`, `joined_at`, `updated_at`, `source` and `simulated: true`) and wait with
 `QUEUE` while contracts are ahead.
 
@@ -592,10 +615,13 @@ After eight valid observations, a new one is **fast** when its spread is at leas
 `stop_stress_percent` of the average, or it came at most 100/`stop_stress_percent`
 of the average gap after the one before (quotes changing that much faster than
 normal), each measured against the averages before it. A stop reached on a fast
-quote of any of its contracts records `stress_ticks`, and every fill of it slips
-that many more ticks in the displayed price's tick tier, on top of the account's
-slippage and impact; fills report `stress_ticks`. A stop-limit's limit still caps
-its price. Extended-hours stops, which send a limit at the touch, are unaffected.
+quote of any of its contracts records `stress_ticks`, and its **first fill attempt**
+after the trigger (once any fill latency has passed) slips that many more ticks in
+the displayed price's tick tier, on top of the account's slippage and impact; fills
+report `stress_ticks`. A stop-limit's limit always caps its price: stress never
+moves a fill past it, and with impact the next block's unstressed price decides
+whether it may fill. A stop-limit still resting after that attempt drops its stress
+(`stress_ticks` returns to zero) and fills later like any other limit. Extended-hours stops, which send a limit at the touch, are unaffected.
 
 Spread and quote rate stand in for what a live fast market does to stops; they are
 measured from the supplied quotes only, so a sparse or snapshot feed shows less of
@@ -3035,8 +3061,10 @@ fills only; real fills calibrate from data below.
 
 `POST /api/fills/calibration` (the Fill quality panel's **Calibrate from real fills**)
 reads a CSV of the trader's real broker fills into a separate analysis and returns
-it; **nothing is stored, journaled or traded**, and no account changes. A read token
-may post it. The request is JSON, `{"csv": "...", "format": "auto",
+it; **nothing is stored, journaled or traded**, and no account changes. It needs a
+token with read scope (or admin), even on a server whose GET routes are public:
+anonymous callers are refused unless the server is an open loopback one, where they
+may already trade. Sandbox tokens are refused. The request is JSON, `{"csv": "...", "format": "auto",
 "max_quote_age_seconds": 60}`, within the 64 KiB request limit (split longer
 exports); at most 5,000 fills are read. Formats:
 
@@ -3058,7 +3086,18 @@ ask when it has them, otherwise the **last recorded quote** at or before the fil
 no older than `max_quote_age_seconds`, from the complete recordings in the directory
 the replay picker lists (`--record-dir`, else `~/.openport/recordings`) that start
 on the fill's trading date. A fill with no time, or no quote, is listed with a note
-and left out of the comparison. For each matched fill the response gives its place
+and left out of the comparison.
+
+The search runs on a worker, one calibration at a time (another meanwhile is 503
+`CALIBRATION_BUSY` with `Retry-After`), and is bounded: timed fills may span at most
+31 days (400 otherwise); recordings are read **newest first** and the search stops
+once every timed fill has a quote, or at 32 recordings, 4 GiB, 20 seconds or 10,000
+recordings in the directory. A fill keeps the latest quote any recording read gave
+it, so a fill covered by two overlapping recordings uses the newer one's. The
+response's `search` gives `files`, `bytes` and why it `stopped` (`complete`,
+`all_matched`, `file_limit`, `byte_limit` or `time_limit`); fills a stopped search
+did not reach are unmatched. Imported quantities above 1,000,000 contracts are
+skipped as misread. For each matched fill the response gives its place
 on the book and what each paper model would have done at once with a **limit at the
 real price** on that book: **as displayed** fills at the natural only when it is
 marketable and within the displayed size; **Conservative** adds a slippage tick
