@@ -3,8 +3,6 @@ import json
 from decimal import Decimal
 
 import pandas
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 from openport.frames import arrow_table, backtest_frame, fills_frame, write_arrow, write_parquet
 
@@ -19,6 +17,9 @@ from openport.frames import arrow_table, backtest_frame, fills_frame, write_arro
                "strikes": [{"strike": 5000, "call": {"bid": 1.25, "ask": None}, "put": None}]}),
 ])
 def test_columnar_roundtrip_preserves_money_nulls_and_late_columns(tmp_path, kind, data):
+    # pyarrow is the optional openport[arrow] extra, so CI without it still runs the pandas tests.
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
     table = arrow_table(data, kind)
     parquet = tmp_path / "data.parquet"
     ipc = tmp_path / "data.arrow"
@@ -38,20 +39,25 @@ def test_columnar_roundtrip_preserves_money_nulls_and_late_columns(tmp_path, kin
         assert json.loads(table["context"][1].as_py()) == {"pnl": "0.01"}
 
 
-def test_frames_and_empty_exports(tmp_path):
+def test_frames():
     frame = fills_frame({"fills": [{"price": "1.230000"}, {"price": None}]})
     assert str(frame.dtypes["price"]) == "string"
     assert frame.price[0] == "1.230000" and pandas.isna(frame.price[1])
     assert backtest_frame({"days": [None]}).iloc[0]["missing"]
-    assert arrow_table({"fills": []}, "fills").num_rows == 0
-    write_parquet({"fills": []}, tmp_path / "empty.parquet", "fills")
-    with pytest.raises(ValueError, match="kind"):
-        arrow_table({}, "unknown")
     with pytest.raises(ValueError, match="variant"):
         backtest_frame({"mode": "sweep"})
 
 
+def test_empty_exports(tmp_path):
+    pytest.importorskip("pyarrow")
+    assert arrow_table({"fills": []}, "fills").num_rows == 0
+    write_parquet({"fills": []}, tmp_path / "empty.parquet", "fills")
+    with pytest.raises(ValueError, match="kind"):
+        arrow_table({}, "unknown")
+
+
 def test_offline_example_notebook_runs():
+    pytest.importorskip("pyarrow")
     from conftest import ROOT
     notebook = json.loads((ROOT / "python/examples/columnar.ipynb").read_text())
     namespace = {}
