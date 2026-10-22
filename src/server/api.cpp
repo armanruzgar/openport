@@ -375,6 +375,7 @@ json status_json(const MetricsSource& source) {
         {"trades", s.capabilities.trades},
         {"open_interest", s.capabilities.open_interest},
         {"vendor_greeks", s.capabilities.vendor_greeks},
+        {"extended_hours_prints", s.capabilities.extended_hours_prints},
         {"fallback", s.fallback ? json{{"primary", s.fallback->primary}, {"backup", s.fallback->backup},
                                        {"after_seconds", s.fallback->after.count()}}
                                 : json(nullptr)}}},

@@ -103,6 +103,8 @@ TEST(Api, StatusDescribesProviderFeedAndUnderlyings) {
   const json status = get(source, "/api/status");
   EXPECT_EQ(status["provider"]["name"], "cboe");
   EXPECT_EQ(status["provider"]["delay_seconds"], 900);
+  // Cboe publishes only the close outside the session.
+  EXPECT_EQ(status["provider"]["extended_hours_prints"], false);
   EXPECT_EQ(status["feed"]["state"], "delayed");
   ASSERT_EQ(status["underlyings"].size(), 1u);
   EXPECT_EQ(status["underlyings"][0]["symbol"], "SPX");

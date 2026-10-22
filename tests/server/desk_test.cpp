@@ -645,6 +645,78 @@ TEST(Desk, CounterPositionsIncludeShareEntriesAndAllowShareReductions) {
   desk.stop();
 }
 
+TEST(Desk, RestingShareOrdersTakeTheCounterPositionGateWhenTheyFill) {
+  test::RecordingFile file;
+  test::ScriptedMarket market;
+  server::Desk::Options options;
+  options.paper_accounts = file.directory / "accounts";
+  options.paper.rules.no_counter_positions = true;
+  server::Desk desk("test", {}, {{"SPY"}}, options);
+  desk.start_trading();
+  server::TradingCommand create;
+  create.kind = server::TradingCommand::Kind::CreateAccount;
+  create.name = "Other"; create.initial_cash = Money::parse("100000");
+  ASSERT_EQ(command(desk, create, market.time, market.time).account, "other");
+  desk.replay_batch({md::UnderlyingQuote{"SPY", market.time, 500, 500, 500}, md::SnapshotComplete{"SPY", market.time}}, market.time);
+  // A rests a buy below the price; nothing opposes it yet.
+  server::TradingCommand rest;
+  rest.kind = server::TradingCommand::Kind::SubmitStockOrder;
+  trading::StockOrderRequest buy;
+  buy.client_order_id = "dip"; buy.symbol = "SPY"; buy.side = trading::Side::Buy;
+  buy.type = trading::StockOrderType::Limit; buy.shares = 10; buy.limit_price = Money::parse("495");
+  rest.stock_order = buy;
+  ASSERT_TRUE(command(desk, rest, market.time, market.time).decision.ok());
+  // B then sells SPY short.
+  server::TradingCommand shorts;
+  shorts.kind = server::TradingCommand::Kind::TradeStock;
+  shorts.account = "other"; shorts.symbol = "SPY"; shorts.quantity = -10;
+  ASSERT_TRUE(command(desk, shorts, market.time, market.time).decision.ok());
+  // When A's limit is reached, its fill would open against B's short: refused.
+  const auto later = market.time + md::kNanosPerMinute;
+  desk.replay_batch({md::UnderlyingQuote{"SPY", later, 494, 494, 494}, md::SnapshotComplete{"SPY", later}}, later);
+  const auto& orders = desk.trading_view()->snapshot->stock_orders;
+  ASSERT_EQ(orders.size(), 1U);
+  EXPECT_EQ(orders[0].status, trading::OrderStatus::Rejected);
+  EXPECT_EQ(orders[0].reason.code, trading::Reason::COUNTER_POSITION) << orders[0].reason.message;
+  EXPECT_TRUE(desk.trading_view()->snapshot->stocks.empty());
+  desk.stop();
+}
+
+TEST(Desk, AfterHoursShareOrdersNeedAnAfterHoursPrintNotTheClose) {
+  test::RecordingFile file;
+  server::Desk::Options options;
+  options.paper_accounts = file.directory / "accounts";
+  server::Desk desk("test", {}, {{"SPY"}}, options);
+  desk.start_trading();
+  const md::Date day{2026, 9, 22};
+  // Complete snapshots after the close that still carry the 16:00 close, as Cboe sends
+  // it outside the regular session (SPY's options trade on to 16:15): the share price
+  // is the close's, too old for an extended-hours order to fill on.
+  const auto last_trade = md::new_york_to_utc(day, 15, 59, 59);
+  const auto evening = md::new_york_to_utc(day, 16, 10);
+  desk.replay_batch({md::UnderlyingQuote{"SPY", last_trade, 0, 0, 500}, md::SnapshotComplete{"SPY", evening}}, evening);
+  server::TradingCommand rest;
+  rest.kind = server::TradingCommand::Kind::SubmitStockOrder;
+  trading::StockOrderRequest buy;
+  buy.client_order_id = "after-earnings"; buy.symbol = "SPY"; buy.side = trading::Side::Buy;
+  buy.type = trading::StockOrderType::Limit; buy.shares = 10; buy.limit_price = Money::parse("505");
+  buy.extended_hours = true;
+  rest.stock_order = buy;
+  const auto accepted = command(desk, rest, evening, evening).decision;
+  ASSERT_TRUE(accepted.ok()) << accepted.message;
+  const auto later = evening + md::kNanosPerMinute;
+  desk.replay_batch({md::SnapshotComplete{"SPY", later}}, later);
+  ASSERT_EQ(desk.trading_view()->snapshot->stock_orders.size(), 1U);
+  EXPECT_TRUE(desk.trading_view()->snapshot->stock_orders[0].open());
+  EXPECT_TRUE(desk.trading_view()->snapshot->stocks.empty());
+  // A print of its own in after hours fills it.
+  const auto print = later + md::kNanosPerMinute;
+  desk.replay_batch({md::UnderlyingQuote{"SPY", print, 503.9, 504, 503.95}, md::SnapshotComplete{"SPY", print}}, print);
+  ASSERT_EQ(desk.trading_view()->snapshot->stocks.size(), 1U);
+  EXPECT_EQ(desk.trading_view()->snapshot->stocks[0].position.shares, 10);
+  desk.stop();
+}
+
 TEST(Desk, DemoAmSettlementUsesFirstExpiryOpeningPrintAndLiveKeepsManualImport) {
   for (const auto* provider : {"demo", "live"}) {
     for (const bool manual : {false, true}) {

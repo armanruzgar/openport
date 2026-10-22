@@ -16,6 +16,7 @@ inline void from_json(const nlohmann::json& j, OrderChange& c) {
   if (j.contains("walk")) c.walk.emplace(j.at("walk").get<std::optional<Walk>>());
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Dividend, symbol, ex_date, per_share)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CorporateAction, symbol, ex_date, numerator, denominator)
 }
 namespace openport::analytics {
 inline void to_json(nlohmann::json& j, const AnalyticsOptions& o) {
@@ -61,6 +62,7 @@ inline void to_json(nlohmann::json& j, const TradingCommand& c) {
   if (!c.mistakes.empty()) j["mistakes"] = c.mistakes;
   if (c.close_pricing.limit) { j["close_limit"] = true; j["limit_ticks"] = c.close_pricing.limit_ticks; }
   if (!c.order_ids.empty()) j["order_ids"] = c.order_ids;
+  if (c.stock_order) j["stock_order"] = *c.stock_order;
 }
 inline void from_json(const nlohmann::json& j, TradingCommand& c) {
   j.at("kind").get_to(c.kind);
@@ -108,5 +110,6 @@ inline void from_json(const nlohmann::json& j, TradingCommand& c) {
   trading::added_field(j, "close_limit", c.close_pricing.limit);
   trading::added_field(j, "limit_ticks", c.close_pricing.limit_ticks);
   trading::added_field(j, "order_ids", c.order_ids);
+  trading::added_field(j, "stock_order", c.stock_order);
 }
 }

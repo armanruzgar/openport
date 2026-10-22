@@ -22,6 +22,18 @@ class Playbooks;
 class SeriesStore;
 class Sandboxes;
 
+/// A published special opening quotation (SOQ): the value an AM-settled underlying's
+/// options settle on for a date, with where it was published: the publisher's record
+/// for that date (Cboe's daily history row), never a delayed quote of the index.
+struct OpeningQuotation {
+  std::string underlying;
+  md::Date date;
+  double value = 0;
+  std::string provider;
+  std::string index;
+  std::string url;
+};
+
 /// Single-owner market-to-account kernel. The caller supplies both clocks and
 /// drain boundaries; this class has no threads, queue, HTTP or clock reads.
 class Desk {
@@ -60,6 +72,10 @@ class Desk {
     /// Driver 5 settles AM positions on their expiry date's first print at or after
     /// 09:30 ET in demo and replay. False preserves drivers 1–4's manual AM import.
     bool opening_settlement = true;
+    /// Live accounts settle these underlyings' AM options on their published special
+    /// opening quotation (set_opening_quotations), keeping manual import as the fallback.
+    /// Demo and replay runs keep their opening print.
+    std::vector<std::string> published_opening_quotations;
     /// Driver 6 labels automatic time-stop cancellations. Drivers 1–5 retain
     /// USER_CANCEL, including their journal bytes during offline verification.
     bool playbook_cancel_labels = true;
@@ -74,6 +90,8 @@ class Desk {
     trading::SessionConfig paper;
     /// Dividends every account pays on held shares at the rollover into each ex-date.
     std::vector<trading::Dividend> dividends;
+    /// Splits for day rollovers; recorded runs keep them as an input when given.
+    std::vector<trading::CorporateAction> corporate_actions;
     std::vector<analytics::EventLabel> events;
     std::shared_ptr<trading::Journal> paper_sink;  ///< Optional in-process test/simulation sink.
     /// A saved replay run to continue, read from paper_journal: the main account starts
@@ -104,6 +122,10 @@ class Desk {
   /// Owner-thread durability barrier. A failed sync disables that account.
   void flush_journals();
   void set_dividends(std::vector<trading::Dividend> dividends);
+  /// Replaces the splits day rollovers apply (Options::corporate_actions at first).
+  void set_corporate_actions(std::vector<trading::CorporateAction> actions);
+  /// Replaces the published opening quotations AM settlement reads (see Options).
+  void set_opening_quotations(std::vector<OpeningQuotation> quotations);
   void set_publication_sink(std::function<void(std::string_view, const TradingView&)> sink) {
     publication_sink_ = std::move(sink);
   }
@@ -226,6 +248,12 @@ class Desk {
   bool breaker_storage_ = false;  // only while the main journal's writer lock is held
   std::vector<trading::Dividend> dividends_;
   std::uint64_t dividends_version_ = 0;
+  std::map<std::pair<std::string, md::Date>, OpeningQuotation> opening_quotations_;
+  std::vector<trading::CorporateAction> corporate_actions_;
+  /// Adjusted series: the standard series' observation each last quoted.
+  std::map<std::string, std::uint64_t> equivalent_observations_;
+  /// Adjusted series valued by model: the analytics version each was last modelled from.
+  std::map<std::string, std::uint64_t> modelled_versions_;
   void check_circuit_breaker(const md::UnderlyingQuote& spot);
   void advance_circuit_breaker(md::Timestamp time);
   void publish_circuit_breaker();

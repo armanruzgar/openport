@@ -419,7 +419,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     const bool account_read = read && (path == "/ws/events" || path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/account/rules-compare" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/fills/quality" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/risk/hedges" || path == "/api/trades" ||
-        path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts");
+        path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts" || path == "/api/stocks/orders");
     if ((!market_read && account != sandbox) || (read && !market_read && !account_read) ||
         (!read && path.starts_with("/api/playbooks")))
       return api_error(403, "SCOPE_REQUIRED", "Sandbox tokens may access only their own account and the demo market");
@@ -429,6 +429,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   else if (path.starts_with("/api/")) path.remove_prefix(4);
   const bool trade = path == "/orders" || path == "/orders/preview" || path == "/orders/cancel" ||
       path.starts_with("/orders/") || path == "/positions/close" || path == "/positions/close/preview" || path == "/positions/exercise" || path == "/stocks/close" || path == "/stocks/trade" || path == "/stocks/trade/preview" ||
+      path == "/stocks/orders" || path.starts_with("/stocks/orders/") ||
       path == "/positions/abandon" || path == "/positions/instruction" ||
       path.starts_with("/playbooks/staged/") || (path.starts_with("/playbooks/") && path.ends_with("/evaluate")) || path == "/alerts" || path.starts_with("/alerts/") ||
       path == "/trades/group" || path == "/trades/ungroup" ||
@@ -439,6 +440,12 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool replay_settings = replay &&
       ((request.method == "POST" && (path == "/account/reset" || path == "/risk/kill" || path == "/account/cash-flows" || path == "/market/halt")) ||
        (request.method == "PUT" && (path == "/risk/limits" || path == "/risk/guardrails")));
+  // A copied order trades every account of its group, so it needs every account's
+  // trade scope; the groups themselves are server configuration.
+  const bool copy = !replay && (path == "/orders/copy" || path == "/orders/copy/preview");
+  const bool groups = !replay && (path == "/account-groups" || path.starts_with("/account-groups/"));
+  if (!read && (copy || groups) && !has("admin") && !(copy && has("trade:*")))
+    return api_error(403, "SCOPE_REQUIRED", copy ? "Copied orders require trade:* scope" : "Account groups require admin scope");
   const bool permitted = (create_sandbox && sandbox.empty()) || has("admin") || (read ? has("read") || !policy.require_token : calibration ? has("read") :
       ((path == "/replay" || (replay && path == "/packs") || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
        (replay_settings && has("replay")) || (trade && (replay ? has("replay") : has("trade:*") || has("trade:" + account)))));
@@ -457,7 +464,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool counted_order = (path == "/orders" || (path.starts_with("/orders/") && path != "/orders/cancel")) &&
       request.method != "DELETE";
   const bool counted_stock_trade = request.method == "POST" &&
-      (path == "/stocks/trade" || path == "/stocks/trade/preview");
+      (path == "/stocks/trade" || path == "/stocks/trade/preview" || path == "/stocks/orders" || path == "/stocks/orders/preview");
   // Journaled writes that reduce no risk share the order budget, so a visitor cannot
   // grow a journal or fill the shared inbox with notes, alerts or grouping. Closing,
   // exercise and cancelling stay unlimited.

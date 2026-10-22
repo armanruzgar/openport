@@ -13,6 +13,27 @@
 
 namespace openport::trading {
 namespace {
+thread_local const SharedMap<std::string, Deliverable>* current_deliverables = nullptr;
+}  // namespace
+DeliverablesScope::DeliverablesScope(const SharedMap<std::string, Deliverable>* deliverables) : previous_(current_deliverables) {
+  current_deliverables = deliverables;
+}
+DeliverablesScope::~DeliverablesScope() { current_deliverables = previous_; }
+Equivalent equivalent(const std::string& symbol, const md::OptionContract& contract) {
+  if (!current_deliverables || current_deliverables->empty()) return {contract.strike, 1};
+  const auto it = current_deliverables->find(symbol);
+  if (it == current_deliverables->end() || standard_deliverable(it->second)) return {contract.strike, 1};
+  const auto& d = it->second;
+  // Cash only: the payoff is fixed, so no move in the underlying reprices it.
+  if (d.shares == 0) {
+    const double worth = d.cash.dollars() / 100;
+    return {contract.strike, 0, std::max(0.0, contract.type == pricing::OptionType::Call ? worth - contract.strike : contract.strike - worth)};
+  }
+  const double shares = static_cast<double>(d.shares);
+  return {(contract.strike * 100 - d.cash.dollars()) / shares, shares / 100};
+}
+
+namespace {
 bool fresh(const Valuation& v, const md::OptionContract& c, Timestamp now, Timestamp max_age) {
   return valid_valuation(v) && v.time >= 0 && v.time <= now && observation_time(c, now) - v.time <= max_age;
 }
@@ -132,6 +153,8 @@ ScenarioGrid cached_grid(const Ledger& ledger, const Valuations& valuations, con
   for (const auto& [symbol, p] : ledger.positions()) {
     text(symbol); text(p.contract.underlying);
     put(p.quantity); put(p.contract.type); put(p.contract.strike); put(p.contract.expiry_time());
+    const auto e = equivalent(symbol, p.contract);
+    put(e.strike); put(e.contracts);
     const auto it = valuations.find(symbol);
     const bool usable = now < p.contract.expiry_time() && it != valuations.end() && fresh(it->second, p.contract, now, max_age);
     put(usable);
@@ -513,7 +536,9 @@ ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
         for (const auto& [position, valuation, surface] : positions) {
           const auto& p = *position;
           const auto& v = *valuation;
-          const auto shocked_vol = scenario_vol(smile, surface, v.smile_iv, p.contract.strike, v.forward, v.years,
+          // An adjusted series moves as its standard equivalent, on that one's smile.
+          const auto e = equivalent(p.contract.osi_symbol(), p.contract);
+          const auto shocked_vol = scenario_vol(smile, surface, v.smile_iv, e.strike, v.forward, v.years,
               v.forward * (1 + spot / 100), v.years, vol / 100);
           if (!shocked_vol) {
             result.complete = false;
@@ -522,10 +547,10 @@ ScenarioGrid scenario_grid(const Ledger& ledger, const Valuations& valuations,
           cell.clamped |= *shocked_vol < config.vol_floor;
           // Avoid subtraction and floor artifacts: zero shock is exactly zero.
           if (spot == 0 && vol == 0) continue;
-          const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
+          const double base = pricing::black_price(p.contract.type, v.forward, e.strike, v.years, v.smile_iv, v.discount);
           const double shocked = pricing::black_price(p.contract.type, v.forward * (1 + spot / 100),
-              p.contract.strike, v.years, std::max(config.vol_floor, *shocked_vol), v.discount);
-          const double pnl = static_cast<double>(p.quantity) * 100 * (shocked - base);
+              e.strike, v.years, std::max(config.vol_floor, *shocked_vol), v.discount);
+          const double pnl = static_cast<double>(p.quantity) * 100 * e.contracts * (shocked - base);
           if (!std::isfinite(pnl) || !std::isfinite(cell.pnl + pnl)) result.complete = false;
           else cell.pnl += pnl;
         }
@@ -654,7 +679,8 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
           if (v.spot > 0) forward = v.spot + (v.forward - v.spot) * share;
           if (v.years > 0) discount = std::pow(v.discount, share);
         }
-        const double base = pricing::black_price(p.contract.type, v.forward, p.contract.strike, v.years, v.smile_iv, v.discount);
+        const auto e = equivalent(p.contract.osi_symbol(), p.contract);
+        const double base = pricing::black_price(p.contract.type, v.forward, e.strike, v.years, v.smile_iv, v.discount);
         const double scale = config.term_scaled ? std::sqrt(30.0 / std::max(1.0, life * 365.0)) : 1;
         double sigma = v.smile_iv + config.vol_points * scale / 100;
         if (surface) {
@@ -665,9 +691,9 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
           sigma = *moved;
         }
         curve.clamped |= sigma < config.vol_floor;
-        const double shocked = pricing::black_price(p.contract.type, forward * move, p.contract.strike, life,
+        const double shocked = pricing::black_price(p.contract.type, forward * move, e.strike, life,
             std::max(config.vol_floor, sigma), discount);
-        total += static_cast<double>(p.quantity) * 100 * (shocked - base);
+        total += static_cast<double>(p.quantity) * 100 * e.contracts * (shocked - base);
       }
       for (const auto& stock : shares) total += stock.shares * stock.price * std::max(-0.9999, stock.beta * percent / 100);
       if (std::isfinite(total)) it->second = total;

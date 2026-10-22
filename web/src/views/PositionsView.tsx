@@ -127,8 +127,13 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
           {position.awaiting_settlement && <span className="mt-1 inline-block rounded-full border border-warn px-2 py-0.5 text-[10px] text-warn">Awaiting settlement</span>}
           {position.awaiting_settlement && position.settle_by && <div className="mt-1 text-[11px] text-muted">
             {position.settle_by === "opening_print" ? "Waiting for opening print · AM approximation"
+              : position.settle_by === "soq" ? "Waiting for the published opening quotation (SOQ)"
               : position.settle_by === "closing_print" ? "Waiting for closing print" : "Manual settlement value required"}
           </div>}
+          {position.deliverable && <div className="mt-1 text-[11px] text-muted" title="Adjusted for a split: priced and quoted as the standard series that pays the same">
+            Adjusted · delivers {position.deliverable.shares > 0 ? `${position.deliverable.shares} shares` : "cash only"}{position.deliverable.cash !== "0.00" ? `${position.deliverable.shares > 0 ? " + " : ": "}${formatMoney(position.deliverable.cash)}` : ""} a contract</div>}
+          {position.modelled_mark && <div className="mt-1 text-[10px] text-warn" title="No listed series pays the same: valued by model from the listed strikes around it. It does not trade until one is quoted.">
+            Modelled mark · not tradable</div>}
           {position.do_not_exercise && <span className="mt-1 ml-1 inline-block rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">Not to be exercised</span>}
           {position.no_bid && !position.awaiting_settlement && <div className="mt-1 text-[10px] text-warn">Nobody bids for it</div>}
           {protection(position, orders) && <div className="mt-1 text-[10px] text-accent">{protection(position, orders)}</div>}
@@ -155,7 +160,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
             <button type="button" className="trade-button" aria-label={`Abandon ${position.symbol}`} onClick={() => onAbandon(position)}>Abandon</button>}
           {onClose && !position.awaiting_settlement && <button type="button" className="trade-button" aria-label={`Close ${position.symbol}`} onClick={() => onClose(position)}>Close</button>}
           {onExits && !position.awaiting_settlement && <button type="button" className="trade-button" aria-label={`Exits for ${position.symbol}`} onClick={() => onExits(position)}>Exits…</button>}
-          {onSettle && position.awaiting_settlement && (position.settle_by === "manual" || position.settle_by === "opening_print") &&
+          {onSettle && position.awaiting_settlement && (position.settle_by === "manual" || position.settle_by === "opening_print" || position.settle_by === "soq") &&
             <button type="button" className="trade-button" aria-label={`Settle ${position.symbol}`} onClick={() => onSettle(position)}>Settle</button>}
         </div></td>
       </tr>

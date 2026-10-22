@@ -94,6 +94,11 @@ void Engine::set_dividends(std::vector<trading::Dividend> dividends) {
   pending_dividends_ = std::move(dividends);
 }
 
+void Engine::set_opening_quotations(std::vector<OpeningQuotation> quotations) {
+  const std::lock_guard lock(dividends_mutex_);
+  pending_quotations_ = std::move(quotations);
+}
+
 Engine::~Engine() { stop(); }
 
 void Engine::start() {
@@ -384,6 +389,10 @@ void Engine::run() {
         options_.demo_dividends = false;
         desk_.set_dividends(std::move(*pending_dividends_));
         pending_dividends_.reset();
+      }
+      if (pending_quotations_) {
+        desk_.set_opening_quotations(std::move(*pending_quotations_));
+        pending_quotations_.reset();
       }
     }
     const auto received = options_.clock();

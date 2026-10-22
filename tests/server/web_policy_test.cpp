@@ -1336,3 +1336,29 @@ TEST(WebServer, SignalSecretRoutesAndWebhookTransportHeaders) {
   EXPECT_EQ(send(http::verb::post, target, revoked).result_int(), 403);
   web.stop();
 }
+
+TEST(WebPolicy, CopiedOrdersNeedEveryAccountsScopeAndGroupsNeedAdmin) {
+  server::WritePolicy policy{"0.0.0.0", "", {},
+      server::parse_token_file("mainer trade:main mainer-secret\ntrader trade:* trade-secret\nowner admin owner-secret\nreader read read-secret"), true};
+  const auto check = [&](std::string method, std::string path, const std::string& secret) {
+    server::ApiRequest request{std::move(method), std::move(path)};
+    request.content_type = "application/json";
+    request.authorization = "Bearer " + secret;
+    return server::check_api_write(request, policy);
+  };
+  for (const auto* path : {"/api/orders/copy", "/api/orders/copy/preview"}) {
+    const auto refused = check("POST", path, "mainer-secret");
+    ASSERT_TRUE(refused) << path;
+    EXPECT_EQ(refused->status, 403);
+    EXPECT_NE(refused->body.find("trade:*"), std::string::npos);
+    EXPECT_FALSE(check("POST", path, "trade-secret")) << path;
+    EXPECT_FALSE(check("POST", path, "owner-secret")) << path;
+  }
+  for (const auto& [method, path] : std::vector<std::pair<std::string, std::string>>{
+           {"PUT", "/api/account-groups/desk"}, {"DELETE", "/api/account-groups/desk"}}) {
+    EXPECT_TRUE(check(method, path, "trade-secret")) << method << path;
+    EXPECT_TRUE(check(method, path, "mainer-secret")) << method << path;
+    EXPECT_FALSE(check(method, path, "owner-secret")) << method << path;
+  }
+  EXPECT_FALSE(check("GET", "/api/account-groups", "read-secret"));
+}

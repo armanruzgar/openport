@@ -1395,6 +1395,16 @@ it, without a new build, and dates seen earlier stay when the schedule rolls to 
 year. `--no-cboe-holidays` turns the fetch off; replay and demo feeds never fetch it.
 The National Day of Mourning on 2025-01-09 is built in.
 
+`--am-settlement cboe` (default `manual`) likewise fetches the special opening
+quotations Cboe Global Indices publishes for the subscribed AM-settled index
+underlyings (`providers::CboeSettlementQuotations`): SPX's `SET`, RUT's `RLS`, DJX's
+`DJS` and VIX's `VRO`, from the daily history CSV at startup and every 15 minutes.
+Live accounts settle their AM options on the row for their expiry date and wait until
+it appears; the index's delayed quote is not used. A failed
+fetch is retried within 15 minutes, and the manual `POST /api/settlements` import stays
+available. Demo and replay providers refuse the
+flag. See [Durable startup and settlement sources](paper-trading.md#durable-startup-and-settlement-sources).
+
 Around holidays GTH follows Cboe's schedule. It does not run into a weekend, New
 Year's Day, Good Friday or Christmas; into the other seven holidays it runs from
 20:15 the evening before until 11:30 ET on the holiday, for the next business day's

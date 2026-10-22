@@ -2700,7 +2700,8 @@ TEST(PaperRecovery, EtfOptionsSettleAtTheQuarterHourOnTheClosingPrint) {
   const auto fills = read(engine, "/api/trades?status=all")["stock_fills"];
   ASSERT_EQ(fills.size(), 1);
   EXPECT_EQ(fills[0], json({{"id", "1"}, {"symbol", "SPY"}, {"shares", 100}, {"price", "501.00"},
-      {"time", md::format_timestamp(market.contract.expiry_time())}, {"source", "expiry_exercise"}, {"option", market.symbol()}, {"buying_power_after", snapshot->buying_power.available.str()}}));
+      {"time", md::format_timestamp(market.contract.expiry_time())}, {"source", "expiry_exercise"}, {"option", market.symbol()}, {"buying_power_after", snapshot->buying_power.available.str()},
+                    {"stock_order", nullptr}}));
   EXPECT_EQ(shares["opened_by"], "expiry_exercise");
   EXPECT_EQ(shares["option"], market.symbol());
   EXPECT_EQ(shares["closed_by"], nullptr);
@@ -5958,4 +5959,641 @@ TEST_F(PaperEngine, AMinuteVolumeCapRefusesWithoutAMinuteOfVolume) {
   response = write(*engine, "POST", "/api/orders", two);
   EXPECT_EQ(response.status, 201) << response.body;
 }
+}
+
+TEST(PaperRecovery, LiveAMPositionsSettleOnThePublishedOpeningQuotation) {
+  const auto path = paper_path();
+  auto options = paper_options(); options.paper_journal = path;
+  options.published_opening_quotations = {"SPX"};
+  test::ScriptedMarket market;
+  market.contract = *md::parse_osi("SPX261016C05000000");  // October's monthly, AM-settled
+  const auto later = *md::parse_osi("SPXW261019C05000000");
+  {
+    PaperProvider provider;
+    server::Engine engine(provider, {{"SPX"}}, options); engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+    provider.sink->publish(md::ContractDefinition{0, market.contract});
+    provider.sink->publish(md::ContractDefinition{1, later});
+    provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+    provider.sink->publish(md::OptionQuote{0, market.time, 4, 4.2, 1, 1});
+    provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
+    ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
+    // Another date's value, or another underlying's, does not settle it.
+    engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, "cboe", "SET", "https://example.test/SET"},
+                                   {"RUT", {2026, 10, 16}, 2400, "cboe", "RLS", "https://example.test/RLS"}});
+    const auto after = market.contract.expiry_time() + 30 * md::kNanosPerMinute;
+    provider.sink->publish(md::OptionQuote{1, after, 8, 8.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] {
+      const auto view = engine.trading_view();
+      return view->snapshot->time == after && !view->snapshot->positions.empty() && view->snapshot->positions[0].awaiting_settlement;
+    }));
+    EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq");
+    engine.set_opening_quotations({{"SPX", {2026, 10, 16}, 7757.09, "cboe", "SET", "https://example.test/SET"}});
+    provider.sink->publish(md::OptionQuote{1, after + md::kNanosPerMinute, 8, 8.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->positions.empty(); }));
+    engine.stop();
+  }
+  bool found = false;
+  for (const auto& record : trading::FileJournal::read(path.string()).records) {
+    if (record.type != "settlement") continue;
+    const auto payload = json::parse(record.payload);
+    const auto source = payload["settlement_source"];
+    EXPECT_EQ(source["kind"], "published_soq");
+    EXPECT_EQ(source["provider"], "cboe");
+    EXPECT_EQ(source["index"], "SET");
+    EXPECT_EQ(source["date"], "2026-10-16");
+    EXPECT_FALSE(source.contains("quote_time"));  // a row has a date, not a time
+    found = true;
+  }
+  EXPECT_TRUE(found);
+  std::filesystem::remove_all(path.parent_path());
+}
+
+TEST(PaperRecovery, AMPositionsWaitForTheHistoryRowOfTheirDate) {
+  auto options = paper_options();
+  options.published_opening_quotations = {"SPX"};
+  test::ScriptedMarket market;
+  market.contract = *md::parse_osi("SPX261016C05000000");
+  const auto later = *md::parse_osi("SPXW261019C05000000");
+  PaperProvider provider;
+  server::Engine engine(provider, {{"SPX"}}, options); engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  provider.sink->publish(md::ContractDefinition{0, market.contract});
+  provider.sink->publish(md::ContractDefinition{1, later});
+  provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+  provider.sink->publish(md::OptionQuote{0, market.time, 4, 4.2, 1, 1});
+  provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
+  ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
+  // Hours after the open, with the history's earlier rows held but not its date's,
+  // the position waits.
+  const md::Date expiry{2026, 10, 16};
+  engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, "cboe", "SET", "https://example.test/SET_History.csv"}});
+  const auto after = market.contract.expiry_time() + 6 * 60 * md::kNanosPerMinute;
+  provider.sink->publish(md::OptionQuote{1, after, 8, 8.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time == after; }));
+  engine.synchronize().get();
+  ASSERT_EQ(engine.trading_view()->snapshot->positions.size(), 1u);
+  EXPECT_TRUE(engine.trading_view()->snapshot->positions[0].awaiting_settlement);
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq");
+  // The row appears.
+  engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, "cboe", "SET", "https://example.test/SET_History.csv"},
+                                 {"SPX", expiry, 7757.50, "cboe", "SET", "https://example.test/SET_History.csv"}});
+  provider.sink->publish(md::OptionQuote{1, after + md::kNanosPerMinute, 8, 8.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->positions.empty(); }));
+  const auto& settlements = engine.trading_view()->snapshot->settlements;
+  ASSERT_EQ(settlements.size(), 1u);
+  EXPECT_EQ(settlements[0].value, Money::parse("7757.50"));
+  ASSERT_TRUE(settlements[0].source);
+  EXPECT_EQ(settlements[0].source->at("url"), "https://example.test/SET_History.csv");
+  engine.stop();
+}
+
+TEST(PaperRecovery, WithoutAPublishedOpeningQuotationAMPositionsSettleByHandPastTheLookback) {
+  auto options = paper_options();
+  options.published_opening_quotations = {"SPX"};
+  test::ScriptedMarket market;
+  market.contract = *md::parse_osi("SPX261016C05000000");
+  const auto later = *md::parse_osi("SPXW261120C05000000");
+  PaperProvider provider;
+  server::Engine engine(provider, {{"SPX"}}, options); engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  provider.sink->publish(md::ContractDefinition{0, market.contract});
+  provider.sink->publish(md::ContractDefinition{1, later});
+  provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+  provider.sink->publish(md::OptionQuote{0, market.time, 4, 4.2, 1, 1});
+  provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
+  ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
+  // The fetcher still looks for the date's row after it: the evening of the expiry
+  // date, the next trading days and the last date of its 14-day lookback.
+  for (const auto& time : {md::new_york_to_utc({2026, 10, 16}, 17, 30), md::new_york_to_utc({2026, 10, 19}, 9, 45),
+                           md::new_york_to_utc({2026, 10, 30}, 9, 45)}) {
+    provider.sink->publish(md::OptionQuote{1, time, 8, 8.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time; }));
+    EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq") << md::format_timestamp(time);
+  }
+  // Past it, the row can no longer arrive: the position settles by hand.
+  const auto monday = md::new_york_to_utc({2026, 11, 2}, 9, 45);
+  provider.sink->publish(md::OptionQuote{1, monday, 8, 8.2, 1, 1});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= monday; }));
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "manual");
+  const auto settled = write(engine, "POST", "/api/settlements", {{"symbol", market.symbol()}, {"value", "5010.25"}});
+  ASSERT_EQ(settled.status, 200) << settled.body;
+  EXPECT_TRUE(engine.trading_view()->snapshot->positions.empty());
+  engine.stop();
+}
+
+TEST(AccountGroups, AllocateByRatioOrByEquity) {
+  server::AccountGroup group{"desk", server::Allocation::Ratio,
+      {{"main", Money::parse("1")}, {"small", Money::parse("0.5")}, {"big", Money::parse("2.5")}}};
+  EXPECT_EQ(server::allocate(group, 3), (std::vector<trading::Quantity>{3, 1, 7}));
+  EXPECT_EQ(server::allocate(group, 0), (std::vector<trading::Quantity>{0, 0, 0}));
+  group.allocation = server::Allocation::Equity;
+  // 10 units by equity 50k, 25k, 25k: 5, 2.5, 2.5; the tie's remainder goes to the earlier member.
+  EXPECT_EQ(server::allocate(group, 10, {Money::parse("50000"), Money::parse("25000"), Money::parse("25000")}),
+            (std::vector<trading::Quantity>{5, 3, 2}));
+  // Without positive equity a member takes none, and the others take every unit.
+  EXPECT_EQ(server::allocate(group, 7, {Money::parse("100"), std::nullopt, Money::parse("-5")}),
+            (std::vector<trading::Quantity>{7, 0, 0}));
+  EXPECT_EQ(server::allocate(group, 7, {}), (std::vector<trading::Quantity>{0, 0, 0}));
+  const auto sizes = server::allocate(group, 1'000'001, {Money::parse("3"), Money::parse("3"), Money::parse("3")});
+  EXPECT_EQ(sizes[0] + sizes[1] + sizes[2], 1'000'001);
+}
+
+TEST(AccountGroups, ValidateAndPersistGroups) {
+  const auto directory = std::filesystem::temp_directory_path() / ("openport-groups-" + std::to_string(md::now()));
+  std::filesystem::create_directories(directory);
+  const auto file = directory / "account-groups.json";
+  const server::AccountGroup desk{"desk", server::Allocation::Ratio, {{"main", Money::parse("1")}, {"other", Money::parse("2")}}};
+  {
+    server::AccountGroups groups(file);
+    EXPECT_TRUE(groups.list().empty());
+    for (const auto& bad : std::vector<server::AccountGroup>{
+             {"Desk", server::Allocation::Ratio, desk.members},
+             {"desk", server::Allocation::Ratio, {}},
+             {"desk", server::Allocation::Ratio, {{"main"}, {"main"}}},
+             {"desk", server::Allocation::Ratio, {{"main", Money::parse("101")}}},
+             {"desk", server::Allocation::Ratio, {{"main", Money::parse("0")}}},
+             {"desk", server::Allocation::Ratio, {{"Main"}}}})
+      EXPECT_THROW(groups.put(bad), std::invalid_argument);
+    groups.put(desk);
+    groups.put({"equal", server::Allocation::Equity, {{"other"}}});
+    EXPECT_FALSE(groups.remove("none"));
+  }
+  server::AccountGroups reloaded(file);
+  ASSERT_EQ(reloaded.list().size(), 2u);
+  EXPECT_EQ(*reloaded.find("desk"), desk);
+  EXPECT_EQ(reloaded.find("equal")->allocation, server::Allocation::Equity);
+  EXPECT_TRUE(reloaded.remove("equal"));
+  EXPECT_EQ(server::AccountGroups(file).list().size(), 1u);
+  std::ofstream(file) << "{\"schema\":1,\"groups\":[{\"name\":\"x\",\"allocation\":\"sideways\",\"members\":[]}]}";
+  EXPECT_THROW(server::AccountGroups{file}, std::runtime_error);
+  std::filesystem::remove_all(directory);
+}
+
+TEST_F(PaperEngine, CopiedOrdersFanOutAsEachAccountsOwnSubmission) {
+  engine.reset();
+  const auto path = paper_path();
+  auto options = paper_options();
+  options.paper_journal = path.string();
+  options.paper_accounts = path.parent_path() / "accounts";
+  options.account_groups = std::make_shared<server::AccountGroups>(path.parent_path() / "account-groups.json");
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  seed("4.00", "4.20", 100);
+  auto response = write(*engine, "POST", "/api/accounts", {{"name", "Half"}, {"plan", "practice"}});
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto half = json::parse(response.body)["account"]["id"].get<std::string>();
+  response = write(*engine, "POST", "/api/accounts", {{"name", "Small"}, {"plan", "practice"}});
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto small = json::parse(response.body)["account"]["id"].get<std::string>();
+  engine->synchronize().get();
+
+  expect_error(write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"}, {"members", {{{"account", "nobody"}}}}}),
+               404, "UNKNOWN_ACCOUNT");
+  expect_error(write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"}, {"members", json::array()}}),
+               400, "INVALID_REQUEST");
+  response = write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"},
+      {"members", {{{"account", "main"}, {"ratio", "1.5"}}, {{"account", half}, {"ratio", "0.5"}}, {{"account", small}, {"ratio", "0.1"}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("paper", "PUT", "/api/account-groups/{name}", response);
+  response = write(*engine, "GET", "/api/account-groups");
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("paper", "GET", "/api/account-groups", response);
+  EXPECT_EQ(json::parse(response.body)["groups"][0]["members"][1]["ratio"], "0.50");
+
+  auto copied = order(market, "copy-1", "4.20");
+  copied["quantity"] = 2;
+  response = write(*engine, "POST", "/api/orders/copy/preview", {{"group", "desk"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  auto body = json::parse(response.body);
+  EXPECT_TRUE(body["preview"]);
+  EXPECT_TRUE(read(*engine, "/api/orders")["orders"].empty());
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "desk"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  test::capture_contract("paper", "POST", "/api/orders/copy", response);
+  body = json::parse(response.body);
+  ASSERT_EQ(body["results"].size(), 3);
+  EXPECT_EQ(body["results"][0]["account"], "main");
+  EXPECT_EQ(body["results"][0]["quantity"], 3);
+  EXPECT_EQ(body["results"][0]["status"], 201) << response.body;
+  EXPECT_EQ(body["results"][1]["quantity"], 1);
+  EXPECT_TRUE(body["results"][1]["ok"]);
+  // 2 x 0.1 rounds down to nothing: that account is skipped, not sent an order.
+  EXPECT_EQ(body["results"][2]["quantity"], 0);
+  EXPECT_TRUE(body["results"][2]["skipped"]);
+  EXPECT_EQ(read(*engine, "/api/orders")["orders"][0]["quantity"], 3);
+  EXPECT_EQ(read(*engine, "/api/orders?account=" + half)["orders"][0]["quantity"], 1);
+  EXPECT_TRUE(read(*engine, "/api/orders?account=" + small)["orders"].empty());
+  // A retry is answered by each account as first submitted.
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "desk"}, {"order", copied}});
+  body = json::parse(response.body);
+  EXPECT_EQ(body["results"][0]["status"], 200);
+  EXPECT_EQ(read(*engine, "/api/orders")["orders"].size(), 1);
+
+  // Equity allocation splits the order's own size; each account's checks still apply.
+  response = write(*engine, "PUT", "/api/account-groups/even", {{"allocation", "equity"},
+      {"members", {{{"account", half}}, {{"account", small}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  copied["client_order_id"] = "copy-2";
+  copied["quantity"] = 3;
+  // Each account keeps its own checks: four contracts more would pass main's delta limit.
+  response = write(*engine, "PUT", "/api/account-groups/solo", {{"allocation", "ratio"}, {"members", {{{"account", "main"}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  copied["quantity"] = 4;
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "solo"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  EXPECT_EQ(json::parse(response.body)["results"][0]["response"]["error"]["code"], "DELTA_LIMIT");
+  ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/solo").status, 200);
+  copied["quantity"] = 3;
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "even"}, {"order", copied}});
+  body = json::parse(response.body);
+  ASSERT_EQ(body["results"].size(), 2) << response.body;
+  // The account that paid the first copy's fee has a little less equity, so the
+  // remainder of the even split goes to the other one.
+  EXPECT_EQ(body["results"][0]["quantity"], 1);
+  EXPECT_EQ(body["results"][1]["quantity"], 2);
+  EXPECT_EQ(response.status, 200) << response.body;
+  // A member whose positions are not all marked is skipped with its reason; the
+  // others take the whole order.
+  market.time += 5 * md::kNanosPerMinute;
+  provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+  ASSERT_TRUE(wait_for([&] { return !engine->trading_view(half)->snapshot->valuation_complete; }));
+  response = write(*engine, "POST", "/api/accounts", {{"name", "Flat"}, {"plan", "practice"}});
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto flat = json::parse(response.body)["account"]["id"].get<std::string>();
+  response = write(*engine, "PUT", "/api/account-groups/marked", {{"allocation", "equity"},
+      {"members", {{{"account", half}}, {{"account", flat}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  copied["client_order_id"] = "copy-3";
+  response = write(*engine, "POST", "/api/orders/copy/preview", {{"group", "marked"}, {"order", copied}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  body = json::parse(response.body);
+  ASSERT_EQ(body["results"].size(), 2) << response.body;
+  EXPECT_TRUE(body["results"][0]["skipped"]);
+  EXPECT_EQ(body["results"][0]["code"], "STALE_QUOTE");
+  EXPECT_EQ(body["results"][0]["quantity"], 0);
+  EXPECT_EQ(body["results"][1]["quantity"], 3);
+  EXPECT_TRUE(body["results"][1].contains("status")) << response.body;
+  ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/marked").status, 200);
+  copied["then"] = order(market, "next", "4.00");
+  expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "even"}, {"order", copied}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "none"}, {"order", order(market)}}), 404, "UNKNOWN_GROUP");
+  expect_error(write(*engine, "POST", "/api/orders/copy?account=" + half, {{"group", "even"}, {"order", order(market)}}), 400, "INVALID_REQUEST");
+  ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/even").status, 200);
+  expect_error(write(*engine, "DELETE", "/api/account-groups/even"), 404, "UNKNOWN_GROUP");
+  engine->stop();
+  // The groups outlive the server.
+  EXPECT_EQ(server::AccountGroups(path.parent_path() / "account-groups.json").list().size(), 1u);
+  std::filesystem::remove_all(path.parent_path());
+}
+
+TEST_F(PaperEngine, AccountGroupsAreNotOfferedWithoutAStore) {
+  expect_error(write(*engine, "GET", "/api/account-groups"), 404, "NOT_FOUND");
+}
+
+TEST(PaperStocks, WorkingShareOrdersRestAndFillOnLaterPrices) {
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, paper_options());
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", time, 519.9, 520.1, 520});
+  ASSERT_TRUE(wait_for([&] { const auto view = engine.trading_view(); return view && view->market_times.contains("SPY") && view->market_times.at("SPY") == time; }));
+  const json entry = {{"client_order_id", "dip"}, {"symbol", "SPY"}, {"side", "buy"}, {"type", "limit"}, {"shares", 10},
+                      {"limit_price", "515.00"}, {"time_in_force", "gtc"}, {"bracket", {{"stop_loss", "505.00"}, {"take_profit", "530.00"}}}};
+  // Terms the type does not fit are refused before anything is recorded.
+  EXPECT_EQ(write(engine, "POST", "/api/stocks/orders", {{"client_order_id", "x"}, {"symbol", "SPY"}, {"side", "buy"},
+                                                         {"type", "limit"}, {"shares", 1}}).status, 422);
+  EXPECT_EQ(write(engine, "POST", "/api/stocks/orders", {{"client_order_id", "x"}, {"symbol", "SPY"}, {"side", "buy"},
+                                                         {"type", "market"}, {"shares", 1}, {"time_in_force", "ioc"}}).status, 400);
+  const auto preview = write(engine, "POST", "/api/stocks/orders/preview", entry);
+  ASSERT_EQ(preview.status, 200) << preview.body;
+  test::capture_contract("stocks", "POST", "/api/stocks/orders/preview", preview);
+  EXPECT_EQ(json::parse(preview.body)["cost"], "5150.00");
+  EXPECT_TRUE(read(engine, "/api/stocks/orders")["stock_orders"].empty());
+  const auto placed = write(engine, "POST", "/api/stocks/orders", entry);
+  ASSERT_EQ(placed.status, 201) << placed.body;
+  test::capture_contract("stocks", "POST", "/api/stocks/orders", placed);
+  auto body = json::parse(placed.body);
+  EXPECT_EQ(body["stock_order"]["status"], "working");
+  EXPECT_EQ(body["stock_order"]["bracket"]["stop_loss"], "505.00");
+  EXPECT_EQ(write(engine, "POST", "/api/stocks/orders", entry).status, 200);  // the retry
+  EXPECT_EQ(read(engine, "/api/portfolio")["stock_orders"].size(), 1);
+  // A later print through the limit fills it and places its exits.
+  const auto later = time + md::kNanosPerMinute;
+  provider.sink->publish(md::UnderlyingQuote{"SPY", later, 514.4, 514.6, 514.5});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->stock_orders.size() == 3; }));
+  const auto listed = server::handle_api({"GET", "/api/stocks/orders?status=all"}, engine);
+  ASSERT_EQ(listed.status, 200);
+  test::capture_contract("stocks", "GET", "/api/stocks/orders", listed);
+  const auto orders = json::parse(listed.body)["stock_orders"];
+  EXPECT_EQ(orders[2]["status"], "filled");  // newest first: the entry is last
+  EXPECT_EQ(orders[2]["fill_price"], "514.50");
+  EXPECT_EQ(orders[0]["role"], "take_profit");
+  EXPECT_EQ(orders[1]["status"], "armed");
+  const auto fills = read(engine, "/api/trades")["stock_fills"];
+  EXPECT_EQ(fills[0]["stock_order"], "1");
+  const auto cancelled = write(engine, "DELETE", "/api/stocks/orders/3");
+  ASSERT_EQ(cancelled.status, 200) << cancelled.body;
+  test::capture_contract("stocks", "DELETE", "/api/stocks/orders/{id}", cancelled);
+  EXPECT_EQ(json::parse(cancelled.body)["stock_order"]["reason"]["code"], "USER_CANCEL");
+  EXPECT_EQ(write(engine, "DELETE", "/api/stocks/orders/3").status, 409);
+  EXPECT_EQ(write(engine, "DELETE", "/api/stocks/orders/99").status, 404);
+  engine.stop();
+}
+
+TEST(PaperStocks, SplitsAdjustHeldSeriesWhichThenTradeAsTheirStandardEquivalents) {
+  auto options = paper_options();
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 2, 1}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  const auto half = *md::parse_osi("SPY261016C00250000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, call});
+  provider.sink->publish(md::ContractDefinition{1, half});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 14, 14.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  ASSERT_EQ(write(engine, "POST", "/api/stocks/trade", {{"symbol", "SPY"}, {"side", "buy"}, {"shares", 100}}).status, 200);
+  auto order = json{{"client_order_id", "covered"}, {"symbol", call.osi_symbol()}, {"side", "sell"}, {"type", "limit"},
+                    {"quantity", 1}, {"limit_price", "14.00"}, {"time_in_force", "day"}};
+  const auto sold = write(engine, "POST", "/api/orders", order);
+  ASSERT_EQ(sold.status, 201) << sold.body;
+  // The next day the feed has split: SPY at $255 and the 250 call, which pays what
+  // half the adjusted 500 call does.
+  const auto tuesday = md::new_york_to_utc({2026, 9, 23}, 9, 45);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", tuesday, 254.9, 255.1, 255});
+  provider.sink->publish(md::OptionQuote{1, tuesday, 7, 7.1, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->corporate_actions.size() == 1 &&
+                                    engine.trading_view()->snapshot->time >= tuesday; }));
+  provider.sink->publish(md::OptionQuote{1, tuesday + md::kNanosPerSecond, 7, 7.1, 20, 20});
+  ASSERT_TRUE(wait_for([&] {
+    const auto& positions = engine.trading_view()->snapshot->positions;
+    return !positions.empty() && positions[0].mark && *positions[0].mark == Money::parse("14.10");
+  }));
+  const auto portfolio = read(engine, "/api/portfolio");
+  EXPECT_EQ(portfolio["stocks"][0]["shares"], 200);
+  EXPECT_EQ(portfolio["positions"][0]["deliverable"], json({{"shares", 200}, {"cash", "0.00"}}));
+  EXPECT_EQ(portfolio["positions"][0]["mark"], "14.10");  // twice the 250 call's mid
+  const auto account = read(engine, "/api/account");
+  ASSERT_EQ(account["corporate_actions"].size(), 1);
+  EXPECT_EQ(account["corporate_actions"][0]["shares_after"], 200);
+  EXPECT_EQ(account["corporate_actions"][0]["series"][0]["shares"], 200);
+  // It closes against the standard series' quote, scaled to its deliverable.
+  order = json{{"client_order_id", "close"}, {"symbol", call.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+               {"quantity", 1}, {"limit_price", "14.20"}, {"time_in_force", "day"}};
+  const auto closed = write(engine, "POST", "/api/orders", order);
+  ASSERT_EQ(closed.status, 201) << closed.body;
+  EXPECT_EQ(json::parse(closed.body)["fills"][0]["price"], "14.20");
+  engine.stop();
+}
+
+TEST(PaperStocks, AListedEquivalentThatNeverQuotesLeavesTheSeriesModelled) {
+  auto options = paper_options();
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 2, 1}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, call});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016C00250000")});  // listed, never quoted
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016C00245000")});
+  provider.sink->publish(md::ContractDefinition{3, *md::parse_osi("SPY261016C00255000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 14, 14.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  const auto bought = write(engine, "POST", "/api/orders",
+                            {{"client_order_id", "long"}, {"symbol", call.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+                             {"quantity", 1}, {"limit_price", "14.20"}, {"time_in_force", "day"}});
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  const auto day = [&](md::Date date, double shift) {
+    const auto time = md::new_york_to_utc(date, 9, 45);
+    provider.sink->publish(md::UnderlyingQuote{"SPY", time, 254.9 + shift, 255.1 + shift, 255 + shift});
+    provider.sink->publish(md::OptionQuote{2, time, 13 + shift, 13.2 + shift, 20, 20});
+    provider.sink->publish(md::OptionQuote{3, time, 6 + shift, 6.2 + shift, 20, 20});
+    EXPECT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+    engine.synchronize().get();
+    provider.sink->publish(md::OptionQuote{2, time + md::kNanosPerSecond, 13 + shift, 13.2 + shift, 20, 20});
+    EXPECT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+    engine.synchronize().get();
+  };
+  day({2026, 9, 23}, 0);
+  ASSERT_EQ(engine.trading_view()->snapshot->corporate_actions.size(), 1u);
+  const auto days = engine.trading_view()->snapshot->evaluation.days.size();
+  auto portfolio = read(engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["positions"].size(), 1);
+  EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+  ASSERT_TRUE(portfolio["positions"][0]["mark"].is_string()) << portfolio["positions"][0].dump();
+  EXPECT_TRUE(engine.trading_view()->snapshot->valuation_complete);
+  // The next day rolls over on the modelled mark.
+  day({2026, 9, 24}, 1);
+  EXPECT_EQ(engine.trading_view()->snapshot->evaluation.days.size(), days + 1);
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["modelled_mark"], true);
+  engine.stop();
+}
+
+TEST(PaperStocks, ModelledDeepInTheMoneyPutsAreMarkedAtLeastAtTheirExerciseValue) {
+  for (const bool long_put : {true, false}) {
+    SCOPED_TRACE(long_put ? "long" : "short");
+    auto options = paper_options();
+    options.analytics.fallback_rate = 0.10;  // a European model of a deep put then falls below intrinsic
+    options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};
+    PaperProvider provider;
+    server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+    engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+    const auto put = *md::parse_osi("SPY261016P00500000");
+    const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+    provider.sink->publish(md::ContractDefinition{0, put});
+    provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016P00330000")});
+    provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016P00340000")});
+    provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+    provider.sink->publish(md::OptionQuote{0, monday, 9, 9.2, 10, 10});
+    ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+    engine.synchronize().get();
+    const auto contracts = long_put ? 1 : 6;
+    const auto traded = write(engine, "POST", "/api/orders",
+        {{"client_order_id", "put"}, {"symbol", put.osi_symbol()}, {"side", long_put ? "buy" : "sell"}, {"type", "limit"},
+         {"quantity", contracts}, {"limit_price", long_put ? "9.20" : "9.00"}, {"time_in_force", "day"}});
+    ASSERT_EQ(traded.status, 201) << traded.body;
+    // After 3-for-2 the put delivers 150 shares at an effective 333.33, deep in the money
+    // with SPY at 250: worth at least 1.5 x 83.33 = 125.00 exercised.
+    const auto day = [&](md::Date date) {
+      const auto time = md::new_york_to_utc(date, 9, 45);
+      provider.sink->publish(md::UnderlyingQuote{"SPY", time, 249.9, 250.1, 250});
+      provider.sink->publish(md::OptionQuote{1, time, 80, 80.4, 20, 20});
+      provider.sink->publish(md::OptionQuote{2, time, 90, 90.4, 20, 20});
+      EXPECT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+      engine.synchronize().get();
+      provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 80, 80.4, 20, 20});
+      EXPECT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+      engine.synchronize().get();
+    };
+    day({2026, 9, 23});
+    auto portfolio = read(engine, "/api/portfolio");
+    ASSERT_EQ(portfolio["positions"].size(), 1);
+    EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+    ASSERT_TRUE(portfolio["positions"][0]["mark"].is_string()) << portfolio["positions"][0].dump();
+    EXPECT_GE(Money::parse(portfolio["positions"][0]["mark"].get<std::string>()), Money::parse("125.00"));
+    // Holders exercise only an option trading below its exercise value: the short put's
+    // modelled mark gives them no reason overnight.
+    day({2026, 9, 24});
+    portfolio = read(engine, "/api/portfolio");
+    ASSERT_EQ(portfolio["positions"].size(), 1);
+    EXPECT_EQ(portfolio["positions"][0]["quantity"], long_put ? 1 : -6);
+    EXPECT_TRUE(engine.trading_view()->snapshot->closures.empty());
+    engine.stop();
+  }
+}
+
+TEST(PaperStocks, AFlooredModelledMarkIsTheSessionsExerciseValueToTheMicro) {
+  auto options = paper_options();
+  options.analytics.fallback_rate = 0.10;
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto put = *md::parse_osi("SPY261016P00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, put});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016P00330000")});
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016P00340000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 9, 9.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  ASSERT_EQ(write(engine, "POST", "/api/orders",
+      {{"client_order_id", "put"}, {"symbol", put.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+       {"quantity", 1}, {"limit_price", "9.20"}, {"time_in_force", "day"}}).status, 201);
+  // At 250.000001 the 150 shares are worth 375.0000015 a unit, which the session
+  // rounds to 375.000002: the put is worth 124.999998 exercised, not the double's
+  // 124.9999985 rounded either way.
+  const auto time = md::new_york_to_utc({2026, 9, 23}, 9, 45);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", time, 249.900001, 250.100001, 250.000001});
+  provider.sink->publish(md::OptionQuote{1, time, 80, 80.4, 20, 20});
+  provider.sink->publish(md::OptionQuote{2, time, 90, 90.4, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+  engine.synchronize().get();
+  provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 80, 80.4, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+  engine.synchronize().get();
+  const auto snapshot = engine.trading_view()->snapshot;
+  ASSERT_EQ(snapshot->positions.size(), 1u);
+  EXPECT_TRUE(snapshot->positions[0].modelled_mark);
+  ASSERT_TRUE(snapshot->positions[0].mark);
+  EXPECT_EQ(*snapshot->positions[0].mark, Money::parse("124.999998"));
+  engine.stop();
+}
+
+TEST(PaperStocks, AnAmericanSeriesDeliveringCashOnlyIsMarkedAtItsUndiscountedPayoff) {
+  auto options = paper_options();
+  options.analytics.fallback_rate = 0.10;
+  // 1-for-101: 100 shares become 0.99 of a share, all of it paid in cash.
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 1, 101}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, call});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016C50000000")});
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016C51500000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 14, 14.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  ASSERT_EQ(write(engine, "POST", "/api/orders",
+      {{"client_order_id", "call"}, {"symbol", call.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+       {"quantity", 1}, {"limit_price", "14.20"}, {"time_in_force", "day"}}).status, 201);
+  // A share held marks the split at the stock's price.
+  ASSERT_EQ(write(engine, "POST", "/api/stocks/trade", {{"symbol", "SPY"}, {"side", "buy"}, {"shares", 1}}).status, 200);
+  const auto time = md::new_york_to_utc({2026, 9, 23}, 9, 45);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", time, 51500, 51520, 51510});
+  provider.sink->publish(md::OptionQuote{1, time, 2130, 2140, 20, 20});
+  provider.sink->publish(md::OptionQuote{2, time, 1220, 1230, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+  engine.synchronize().get();
+  provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 2130, 2140, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+  engine.synchronize().get();
+  const auto portfolio = read(engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["positions"].size(), 1);
+  // The 510.00 a share of the split mark, 0.99 of a split share: $51,000 a contract.
+  EXPECT_EQ(portfolio["positions"][0]["deliverable"], json({{"shares", 0}, {"cash", "51000.00"}}));
+  EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+  // $510 a unit against the $500 strike, exercisable now: 10.00, not discounted.
+  EXPECT_EQ(portfolio["positions"][0]["mark"], "10.00") << portfolio["positions"][0].dump();
+  engine.stop();
+}
+
+TEST(PaperStocks, AdjustedSeriesWithoutAListedEquivalentAreModelledAndTheDaysRollOn) {
+  auto options = paper_options();
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, call});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016C00330000")});
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016C00340000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 14, 14.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  const auto bought = write(engine, "POST", "/api/orders",
+                            {{"client_order_id", "long"}, {"symbol", call.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+                             {"quantity", 1}, {"limit_price", "14.20"}, {"time_in_force", "day"}});
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  // After 3-for-2 the call delivers 150 shares, a standard 333.33 call no one lists:
+  // it is valued by model from the 330 and 340 calls around it.
+  const auto day = [&](md::Date date, double shift) {
+    const auto time = md::new_york_to_utc(date, 9, 45);
+    provider.sink->publish(md::UnderlyingQuote{"SPY", time, 339.9 + shift, 340.1 + shift, 340 + shift});
+    provider.sink->publish(md::OptionQuote{1, time, 14 + shift, 14.2 + shift, 20, 20});
+    provider.sink->publish(md::OptionQuote{2, time, 8 + shift, 8.2 + shift, 20, 20});
+    EXPECT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+    engine.synchronize().get();
+    provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 14 + shift, 14.2 + shift, 20, 20});
+    EXPECT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+    engine.synchronize().get();
+  };
+  day({2026, 9, 23}, 0);
+  ASSERT_EQ(engine.trading_view()->snapshot->corporate_actions.size(), 1u);
+  const auto days = engine.trading_view()->snapshot->evaluation.days.size();
+  auto portfolio = read(engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["positions"].size(), 1);
+  EXPECT_EQ(portfolio["positions"][0]["deliverable"], json({{"shares", 150}, {"cash", "0.00"}}));
+  EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+  EXPECT_EQ(portfolio["positions"][0]["fresh"], true);
+  ASSERT_TRUE(portfolio["positions"][0]["mark"].is_string());
+  // Between 1.5 times the 340 and the 330 calls' mids.
+  const auto mark = Money::parse(portfolio["positions"][0]["mark"].get<std::string>());
+  EXPECT_GT(mark, Money::parse("12.15"));
+  EXPECT_LT(mark, Money::parse("21.15"));
+  EXPECT_TRUE(engine.trading_view()->snapshot->valuation_complete);
+  // A modelled mark never trades.
+  const auto refused = write(engine, "POST", "/api/orders",
+                             {{"client_order_id", "close"}, {"symbol", call.osi_symbol()}, {"side", "sell"}, {"type", "market"},
+                              {"quantity", 1}, {"time_in_force", "ioc"}});
+  EXPECT_TRUE(refused.status != 201 || json::parse(refused.body)["fills"].empty()) << refused.body;
+  // The next day rolls over on the modelled mark.
+  day({2026, 9, 24}, 1);
+  EXPECT_EQ(engine.trading_view()->snapshot->evaluation.days.size(), days + 1);
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["modelled_mark"], true);
+  engine.stop();
 }

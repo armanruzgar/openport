@@ -198,12 +198,21 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   can roll as four-leg orders. Rolls and adjustments retain one whole-trade review.
 - Stock and ETF shares can be opened, added to, closed or reversed, with buying
   power and dollar-delta previews, dividends, recovery and trade review. The chain
-  and Positions offer share tickets; shares execute synchronously in the stock
-  regular session, without working share orders.
+  and Positions offer share tickets that trade at once in the stock regular session
+  or place working market, limit, stop and stop-limit orders, DAY or GTC, with
+  extended-hours limits, brackets and OCO. Working opening orders reserve buying power
+  and every fill takes the share checks. Buy-writes at one net price are not offered.
+  [Working share orders](paper-trading.md#working-share-orders).
 - Covered-call and collar templates buy shares first, then submit options. These
   are separate orders: shares remain if the option step fails or fills partly.
   Automatic playbook stages remain option orders; share purchases are manual.
   [Strategies with shares](playbooks.md#practising-strategies-with-shares).
+- Stock splits from `--corporate-actions` apply on their ex-date: held shares split
+  with cash in lieu of a fraction, and their options keep symbol and strike while their
+  deliverable, settlement, exercise, margin and risk follow the split shares (cash only
+  below one share a contract). Adjusted series are quoted from the standard series that
+  pays the same, or valued by a labelled model mark that never trades when none is listed.
+  [Splits](paper-trading.md#splits-and-adjusted-series).
 - European index options settle in cash; American equity and ETF options deliver
   shares on exercise or assignment. In-the-money expiry exercise, requested early
   exercise and simulated partial overnight assignment are supported. Assignment
@@ -217,7 +226,10 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 - Settlement references and sources appear in Journal rows, settlement lists,
   account reads and exports. New demo/scenario and recorded replay runs use the
   expiry opening print for AM settlement, an approximation of the official special
-  opening quotation. Live providers require manual settlement imports.
+  opening quotation. Live providers require manual settlement imports, or with
+  `--am-settlement cboe` settle SPX, RUT, DJX and VIX AM options on the special opening
+  quotation in Cboe's daily history row for their expiry date, waiting until it appears
+  and keeping manual import as the fallback.
   [Settlement](paper-trading.md#expiry-and-explicit-settlement).
 
 ## Margin and buying power
@@ -512,6 +524,11 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   retained. Preset IDs accompany names. Copy limits/guardrails to accounts or replays,
   with notices when queued settings need a reset. Per-underlying limits are editable.
   [Accounts](paper-trading.md#accounts).
+- Account groups mirror one order to several named accounts, sized by fixed ratio or
+  split by marked equity (an unmarked member is skipped with its reason). Each account
+  receives its own submission, rule checks and journal, and the reply lists every
+  account's result.
+  [Copied orders](paper-trading.md#account-groups-and-copied-orders).
 - Practice deposits and withdrawals have retry-safe IDs and appear in Dashboard
   cash-flow history. Transfers stay out of P&L; evaluation, verification and funded
   accounts refuse them. [Cash transfers](paper-trading.md#cash-transfers-and-financing).

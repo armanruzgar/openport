@@ -140,6 +140,11 @@ struct TradingSession {
 /// day): stocks and ETFs print their close at 16:00 even where their options
 /// trade on until 16:15.
 [[nodiscard]] TradingSession stock_session(Timestamp ts);
+/// The stock market's regular session with the extended hours around it on its
+/// business days: premarket from 04:00 ET to the open and after hours from the close
+/// for four hours (20:00 ET, 17:00 on an early-close day), as the main US exchanges
+/// run them. Named "premarket", "regular" and "after_hours".
+[[nodiscard]] TradingSession stock_extended_session(Timestamp ts);
 
 /// The trading date a moment belongs to: a business day's own New York date
 /// until 17:00 ET, when its last session (curb) ends; after that, and on

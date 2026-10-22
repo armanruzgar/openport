@@ -37,6 +37,7 @@ std::string_view to_string(Reason reason) noexcept {
     CASE(NEWS_BLACKOUT); CASE(HOLD_RESTRICTED); CASE(RESET_LIMIT);
     CASE(GAMMA_LIMIT); CASE(THETA_LIMIT); CASE(GRID_LOSS_LIMIT); CASE(SHORT_VEGA_LIMIT);
     CASE(OPEN_LOSS_CAP); CASE(MINUTE_VOLUME); CASE(BEST_POSITION); CASE(LOSS_STREAK); CASE(SIZE_CREEP);
+    CASE(CORPORATE_ACTION);
   }
 #undef CASE
   return "UNKNOWN";
@@ -65,11 +66,56 @@ std::vector<std::string> chain_symbols(const OrderRequest& request) {
   append_chain_symbols(request, symbols);
   return symbols;
 }
-Decision eligible(const md::OptionContract& c) {
+void validate_stock_order(const StockOrderRequest& r) {
+  const auto refuse = [](const std::string& message) { throw TradingError(Reason::INVALID_ORDER, message); };
+  if (r.client_order_id.empty() || r.client_order_id.size() > 64) refuse("A share order needs a client_order_id of 1-64 bytes");
+  if (r.symbol.empty() || r.symbol.size() > 16 ||
+      !std::all_of(r.symbol.begin(), r.symbol.end(), [](char c) { return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.'; }))
+    refuse("Use an uppercase stock or ETF symbol");
+  if (r.shares <= 0 || r.shares > 10'000'000) refuse("Trade a positive number of shares, at most 10,000,000");
+  if (r.tif != TimeInForce::Day && r.tif != TimeInForce::Gtc) refuse("Share orders are DAY or GTC");
+  const bool limit = r.type == StockOrderType::Limit || r.type == StockOrderType::StopLimit;
+  const bool stop = r.type == StockOrderType::Stop || r.type == StockOrderType::StopLimit;
+  const auto price = [&](const std::optional<Money>& p, const char* name) {
+    if (p && (*p <= Money{} || p->micros() % 10'000 != 0)) refuse(std::string(name) + " must be a positive price in whole cents");
+  };
+  if (limit != r.limit_price.has_value()) refuse(limit ? "This order type needs a limit_price" : "Only limit and stop-limit orders take a limit_price");
+  if (stop != r.stop_price.has_value()) refuse(stop ? "This order type needs a stop_price" : "Only stop and stop-limit orders take a stop_price");
+  price(r.limit_price, "limit_price"); price(r.stop_price, "stop_price");
+  price(r.stop_loss, "stop_loss"); price(r.take_profit, "take_profit");
+  if (r.extended_hours && r.type != StockOrderType::Limit) refuse("Extended hours take limit orders only");
+  // A bracket's stop is on the losing side of the entry and its target on the winning side.
+  const bool buy = r.side == Side::Buy;
+  if (const auto entry = r.limit_price ? r.limit_price : r.stop_price) {
+    if (r.stop_loss && (buy ? *r.stop_loss >= *entry : *r.stop_loss <= *entry))
+      refuse(buy ? "A buy's stop_loss is below its entry price" : "A sell's stop_loss is above its entry price");
+    if (r.take_profit && (buy ? *r.take_profit <= *entry : *r.take_profit >= *entry))
+      refuse(buy ? "A buy's take_profit is above its entry price" : "A sell's take_profit is below its entry price");
+  }
+  if (r.stop_loss && r.take_profit && (buy ? *r.stop_loss >= *r.take_profit : *r.stop_loss <= *r.take_profit))
+    refuse("A bracket's stop_loss and take_profit are on either side of the entry");
+  if (r.oco.size() > 1) refuse("A share order takes at most one oco partner");
+  for (const auto& other : r.oco) {
+    if (!other.oco.empty() || other.stop_loss || other.take_profit) refuse("An oco partner takes no oco or bracket of its own");
+    if (other.symbol != r.symbol) refuse("An oco partner trades the same symbol");
+    auto named = other;
+    named.client_order_id = r.client_order_id + ":oco";
+    validate_stock_order(named);
+  }
+}
+Decision eligible(const md::OptionContract& c, const Deliverable* adjusted) {
   const auto conventions = md::conventions_for_root(c.root);
   if (c.style == pricing::ExerciseStyle::American && conventions.style != pricing::ExerciseStyle::American)
     return {Reason::AMERICAN_UNSUPPORTED, "American exercise is not listed on this European-style root", {}, {}, {}};
-  if (!c.standard) return {Reason::NONSTANDARD_UNSUPPORTED, "Adjusted deliverables are unsupported", {}, {}, {}};
+  // An adjusted series trades once its deliverable is known: shares, and any cash in
+  // lieu, of an underlying that delivers shares.
+  if (!c.standard && !adjusted)
+    return {Reason::NONSTANDARD_UNSUPPORTED, "An adjusted series needs its deliverable (shares and cash) to trade", {}, {}, {}};
+  // A deliverable may be cash alone, once a split leaves less than a whole share.
+  if (adjusted && (adjusted->shares < 0 || adjusted->shares > 100'000 || adjusted->cash < Money{} ||
+                   (adjusted->shares == 0 && adjusted->cash == Money{}) ||
+                   md::is_index_underlying(c.underlying) || c.style != pricing::ExerciseStyle::American))
+    return {Reason::NONSTANDARD_UNSUPPORTED, "Adjusted deliverables are modelled for share-settled American options only", {}, {}, {}};
   // American equity, ETF and OEX options trade too. Equity and ETF options deliver
   // shares when exercised or assigned; OEX settles in cash.
   constexpr std::string_view roots[] = {"SPX", "SPXW", "XSP", "NDX", "NDXP", "RUT", "RUTW", "XND", "MRUT", "DJX", "VIX", "VIXW"};
@@ -190,10 +236,11 @@ std::optional<WalkStep> next_walk(const Order& o) {
   return WalkStep{since + interval, price};
 }
 bool valid_quote(const QuoteObservation& q) {
-  return q.observation > 0 && q.bid && q.ask && *q.bid > Money{} && *q.ask >= *q.bid &&
+  return !q.modelled && q.observation > 0 && q.bid && q.ask && *q.bid > Money{} && *q.ask >= *q.bid &&
          q.bid_size > 0 && q.ask_size > 0;
 }
 bool markable_quote(const QuoteObservation& q) {
+  if (q.modelled) return q.observation > 0 && q.bid && q.ask && *q.bid >= Money{} && *q.ask == *q.bid;
   return valid_quote(q) ||
          (q.observation > 0 && !q.bid && q.bid_size == 0 && q.ask && *q.ask > Money{} && q.ask_size > 0);
 }

@@ -98,6 +98,86 @@ std::optional<Money> quote_price(double price) {
   try { return Money::from_double(price); }
   catch (const TradingError&) { return {}; }
 }
+/// A split-adjusted series' value and valuation, modelled from the listed data when
+/// no listed series pays the same (after a 3:2 or a reverse split, its effective
+/// strike is not listed): Black at its effective strike with the smile IV the
+/// expiry's nearest listed strikes interpolate, at the analytics' forward, scaled
+/// to the deliverable's shares. A deliverable of cash only is worth its intrinsic
+/// value, discounted for a European series and not for an American one, which can
+/// be exercised now, and moves with nothing. A European model of an American series:
+/// the value is labelled modelled and never trades, and is floored at what exercising
+/// the deliverable is worth now, as the American series is (a deep put's European
+/// value falls below it). There it moves one for one with the deliverable's shares.
+/// `mark` is the price in Money; a floored one is the exercise value worked in the
+/// session's own decimal arithmetic, so it never rounds below it.
+struct ModelledSeries {
+  double price = 0;
+  Money mark;
+  Valuation valuation;
+};
+std::optional<ModelledSeries> modelled_series(const std::string& symbol, const md::OptionContract& contract,
+                                              const Deliverable& d,
+                                              const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
+  if (!metrics || !std::isfinite(metrics->spot) || metrics->spot <= 0) return std::nullopt;
+  for (const auto& slice : metrics->slices) {
+    if (slice.expiry_time != contract.expiry_time() || slice.style != contract.style) continue;
+    const double forward = slice.forward.forward, discount = slice.forward.discount, years = slice.years;
+    if (!std::isfinite(forward) || forward <= 0 || !std::isfinite(discount) || discount <= 0 || !std::isfinite(years) || years < 0)
+      return std::nullopt;
+    const bool call = contract.type == pricing::OptionType::Call;
+    const double strike = d.shares == 0 ? contract.strike : (contract.strike * 100 - d.cash.dollars()) / static_cast<double>(d.shares);
+    // The smile at the effective strike: between the listed strikes either side of
+    // it, or the nearest one beyond the listed range.
+    const analytics::StrikeMetrics* below = nullptr;
+    const analytics::StrikeMetrics* above = nullptr;
+    for (const auto& row : slice.strikes) {
+      if (!std::isfinite(row.iv) || row.iv <= 0) continue;
+      if (row.strike <= strike && (!below || row.strike > below->strike)) below = &row;
+      if (row.strike >= strike && (!above || row.strike < above->strike)) above = &row;
+    }
+    if (!below && !above) return std::nullopt;
+    double iv = below ? below->iv : above->iv;
+    if (below && above && above->strike > below->strike)
+      iv = below->iv + (above->iv - below->iv) * (strike - below->strike) / (above->strike - below->strike);
+    ModelledSeries out;
+    out.valuation = {symbol, metrics->as_of, 0, 0, 0, 0, metrics->spot, forward, discount, years, iv, true};
+    out.valuation.spot_source = metrics->spot_source;
+    const bool american = contract.style == pricing::ExerciseStyle::American;
+    // What exercising one unit is worth now, as the session's unit_exercise_value works it.
+    const auto exercise = [&] {
+      const auto worth = (Money::from_double(metrics->spot) * d.shares + d.cash).prorate(1, 100);
+      const auto struck = Money::from_double(contract.strike);
+      return std::max(Money{}, call ? worth - struck : struck - worth);
+    }();
+    if (d.shares == 0 && american) {
+      out.mark = exercise;
+      out.price = exercise.dollars();
+    } else if (d.shares == 0) {
+      const double worth = d.cash.dollars() / 100;
+      out.price = discount * std::max(0.0, call ? worth - contract.strike : contract.strike - worth);
+      if (std::isfinite(out.price)) out.mark = Money::from_double(out.price);
+    } else {
+      const double scale = static_cast<double>(d.shares) / 100, carry = forward / metrics->spot;
+      const auto g = pricing::black_greeks(contract.type, forward, strike, years, iv, discount);
+      out.price = g.price * scale;
+      out.valuation.delta = g.delta * carry * scale;
+      out.valuation.gamma = g.gamma * carry * carry * scale;
+      out.valuation.vega = g.vega / 100.0 * scale;
+      out.valuation.theta = g.theta / 365.0 * scale;
+      if (std::isfinite(out.price)) out.mark = Money::from_double(out.price);
+      if (american && std::isfinite(out.price) && exercise > out.mark) {
+        out.mark = exercise;
+        out.price = exercise.dollars();
+        out.valuation.delta = call ? scale : -scale;
+        out.valuation.gamma = out.valuation.vega = out.valuation.theta = 0;
+      }
+    }
+    out.valuation.valid = valid_valuation(out.valuation);
+    if (!std::isfinite(out.price) || out.price < 0 || !out.valuation.valid) return std::nullopt;
+    return out;
+  }
+  return std::nullopt;
+}
 /// Opens a journal for writing, making each directory created on the way durable:
 /// an existing file is locked, then read for recovery; otherwise a new one is created.
 /// An empty journal, as a create that failed before its first record leaves, holds
@@ -407,6 +487,19 @@ std::optional<MarketHalt> circuit_breaker(double reference, double price, md::Ti
   return MarketHalt{level, time, time + 15 * md::kNanosPerMinute, reference, price};
 }
 
+/// When a share price was current. In the regular session a price from a current
+/// snapshot is current at the market time. Outside it a snapshot feed keeps the last
+/// regular close (Cboe does, its after- and premarket trades aside), so a current
+/// snapshot does not make the price current: it keeps its own print time, the close's
+/// at the latest, and an extended-hours order sees how old it is.
+static md::Timestamp share_price_time(md::Timestamp print, bool current, md::Timestamp market_time) {
+  if (!current) return print;
+  const auto session = md::stock_session(market_time);
+  if (session.open) return market_time;
+  if (session.market_time == md::kInvalidTimestamp) return print;
+  return std::clamp(session.market_time, print, market_time);
+}
+
 trading::Decision paper_acceptance(std::string_view underlying, md::Timestamp market_time,
     md::Timestamp wall_time, std::chrono::seconds delay, md::Timestamp max_quote_age,
     const std::vector<MarketHalt>& halts) {
@@ -666,6 +759,8 @@ void Desk::start_trading() {
   if (!options_.run_input.empty()) {
     nlohmann::json start{{"kind", "start"}, {"input", nlohmann::json::parse(options_.run_input)},
         {"calendar", md::scheduled_days()}, {"analytics", options_.analytics}, {"dividends", dividends_}, {"symbols", subscription_.underlyings}};
+    // Written only when a run has splits, so other runs keep their bytes.
+    if (!corporate_actions_.empty()) start["corporate_actions"] = corporate_actions_;
     if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? 6 : 5) : 4) : 3;
     if (options_.exact_margin) start["exact_margin"] = true;
     if (options_.run_start_at) start["start_at"] = *options_.run_start_at;
@@ -939,6 +1034,7 @@ void Desk::publish_trading() {
       view->valuations = session.valuations();
       view->run = run_;
       view->opening_settlement = !opening_source().empty();
+      if (!options_.replay && provider_ != "demo") view->published_opening_quotations = options_.published_opening_quotations;
       // Each underlying's own data time tells whether its feed has stalled. Until this
       // run has seen any (just after a restart), the account's last quotes stand in.
       for (const auto& [symbol, contract] : view->contracts) {
@@ -1282,7 +1378,8 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         if (!batch.empty() && day > session.trading_day() &&
             md::market_session(md::new_york_to_utc(day, 12, 0)).open &&
             session.snapshot()->valuation_complete)
-          session.roll_day(market_time_, trading::dividends_due(dividends_, session.trading_day(), day));
+          session.roll_day(market_time_, trading::dividends_due(dividends_, session.trading_day(), day),
+                           trading::corporate_actions_due(corporate_actions_, session.trading_day(), day));
       };
       // A new trading date's first batch closes the finished day on its own marks
       // before its quotes replace them, so the overnight move and any fill at the
@@ -1371,17 +1468,71 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
             throw TradingError(Reason::INVALID_CONTRACT, "INVALID_CONTRACT: listed terms conflict with registered definition");
         }
         const auto& underlying = definition->second.underlying;
+        // A series the account adjusted for a split trades as the standard series that
+        // pays the same: shares/100 contracts at its effective strike, whose listing,
+        // quote and valuation price it. Its own listing has pre-split terms.
+        // Without one listed (after a 3:2 or a reverse split, or for a deliverable of
+        // cash only), or with one listed that has never quoted, it is valued by model
+        // from the listed strikes around it (modelled_series): a mark labelled
+        // modelled that keeps it valued and the days rolling, and never fills.
+        const auto adjusted = session.deliverables().find(symbol);
+        double scale = 1;
+        auto priced = definition->second;
+        std::optional<ModelledSeries> model;
+        if (adjusted != session.deliverables().end()) {
+          const auto& d = adjusted->second;
+          scale = static_cast<double>(d.shares) / 100;
+          option = nullptr;
+          if (d.shares > 0) {
+            priced.strike = std::round((priced.strike * 100 - d.cash.dollars()) / static_cast<double>(d.shares) * 1000) / 1000;
+            priced.standard = true;
+            const auto listed = instruments_.find(priced.osi_symbol());
+            option = listed == instruments_.end() ? nullptr : book_.option(listed->second);
+          }
+          if (!option || !option->has_quote || option->quote_ts < 0)
+            model = modelled_series(symbol, definition->second, d, metrics(underlying));
+        }
         const bool quoted = option && option->has_quote && option->quote_ts >= 0;
         const bool fresh = current(underlying);
         if (quoted && (fresh || open(underlying, option->quote_ts))) {
           // A vouched quote offered later than the provider gave it keeps that first time.
           const auto time = fresh ? offered(underlying, option->quote_ts) : option->quote_ts;
-          const auto feed = quote_feeds_.find(symbol);
-          quotes.push_back({symbol, observations_[symbol], time, quote_price(option->bid), quote_price(option->ask),
-                            whole_size(option->bid_size), whole_size(option->ask_size), std::min(option->quote_ts, time),
+          // An adjusted series' observations advance as its standard series' do.
+          if (adjusted != session.deliverables().end()) {
+            auto& seen = equivalent_observations_[symbol];
+            if (seen != observations_[priced.osi_symbol()]) { seen = observations_[priced.osi_symbol()]; ++observations_[symbol]; }
+          }
+          // The feed of the listing that prices it: its standard equivalent's, when adjusted.
+          const auto feed = quote_feeds_.find(option->contract.osi_symbol());
+          quotes.push_back({symbol, observations_[symbol], time, quote_price(option->bid * scale), quote_price(option->ask * scale),
+                            whole_size(option->bid_size / scale), whole_size(option->ask_size / scale), std::min(option->quote_ts, time),
                             feed == quote_feeds_.end() ? std::string{} : feed->second});
         }
-        auto valuation = valuation_for(symbol, definition->second, metrics(underlying));
+        if (model) {
+          const auto as_of = model->valuation.time;
+          if (as_of > 0 && as_of <= market_time_ && (fresh || open(underlying, as_of))) {
+            // A new observation with each analytics version it is modelled from.
+            if (const auto version = metrics(underlying)->version + 1; modelled_versions_[symbol] != version) {
+              modelled_versions_[symbol] = version;
+              ++observations_[symbol];
+            }
+            const auto time = fresh ? offered(underlying, as_of) : as_of;
+            const auto value = model->mark;
+            QuoteObservation quote{symbol, observations_[symbol], time, value, value, 0, 0, std::min(as_of, time)};
+            quote.modelled = true;
+            quotes.push_back(std::move(quote));
+          }
+          auto valuation = std::move(model->valuation);
+          if (fresh && valuation.time > 0) valuation.time = market_time_;
+          if (valuation.time > 0 && valuation.time <= market_time_) valuations.push_back(std::move(valuation));
+          continue;
+        }
+        auto valuation = adjusted == session.deliverables().end() ? valuation_for(symbol, definition->second, metrics(underlying))
+                                                                  : valuation_for(priced.osi_symbol(), priced, metrics(underlying));
+        if (adjusted != session.deliverables().end()) {
+          valuation.symbol = symbol;
+          valuation.delta *= scale; valuation.gamma *= scale; valuation.vega *= scale; valuation.theta *= scale;
+        }
         if (fresh && valuation.time > 0) valuation.time = market_time_;
         // Missing live analytics after recovery must not overwrite a recorded frame, and
         // a valuation ahead of the market time the account runs on would fail it.
@@ -1394,11 +1545,13 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         if (c.style == pricing::ExerciseStyle::American && !md::is_index_underlying(c.underlying)) deliverable.insert(c.underlying);
       }
       for (const auto& stock : session.snapshot()->stocks) deliverable.insert(stock.position.symbol);
+      // Working share orders work on their stock's price.
+      for (const auto& order : session.snapshot()->stock_orders) if (order.open()) deliverable.insert(order.request.symbol);
       std::vector<StockPrice> stocks;
       for (const auto& symbol : deliverable) {
         const auto book = book_.underlyings().find(symbol);
         if (book == book_.underlyings().end() || book->second.spot_ts <= 0 || book->second.spot_ts > market_time_) continue;
-        const auto time = current(symbol) ? market_time_ : book->second.spot_ts;
+        const auto time = share_price_time(book->second.spot_ts, current(symbol), market_time_);
         if (const auto price = quote_price(book->second.spot)) stocks.push_back({symbol, time, *price});
       }
       // Conditional triggers watch other underlyings' prices and studies, read from
@@ -1497,6 +1650,17 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         const auto& contract = p.position.contract;
         if (market_time_ < contract.expiry_time()) continue;
         if (contract.settlement == md::Settlement::AM) {
+          // A live account settles on the published special opening quotation, the
+          // official AM reference, once its fetcher has it; manual import remains.
+          if (const auto soq = opening_quotations_.find({contract.underlying, contract.expiry});
+              soq != opening_quotations_.end()) {
+            const auto& q = soq->second;
+            SettlementSource source{{"kind", "published_soq"}, {"provider", q.provider}, {"symbol", contract.underlying},
+                {"index", q.index}, {"date", md::format_date(q.date)}, {"url", q.url}};
+            session.settle(contract.osi_symbol(), Money::from_double(q.value), market_time_, source);
+            sample_equity(account);
+            continue;
+          }
           const auto kind = opening_source();
           const auto opening = opening_prints_.find({contract.underlying, contract.expiry});
           if (kind.empty() || opening == opening_prints_.end() || opening->second.ts > market_time_) continue;
@@ -2016,6 +2180,27 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
           else result = session.trade_stock(c.symbol, c.quantity, market_time_, c.stock_price);
           break;
         }
+        case TradingCommand::Kind::SubmitStockOrder:
+        case TradingCommand::Kind::PreviewStockOrder: {
+          const auto& request = *c.stock_order;
+          auto gate = acceptance(request.symbol);
+          Quantity held = 0;
+          for (const auto& stock : before->stocks) if (stock.position.symbol == request.symbol) held = stock.position.shares;
+          const Quantity signed_shares = request.side == Side::Buy ? request.shares : -request.shares;
+          const bool reduces = held != 0 && (held > 0) != (signed_shares > 0) &&
+              (held > 0 ? -signed_shares <= held : signed_shares <= -held);
+          if (gate.ok() && !reduces && session.config().rules.no_counter_positions) {
+            const auto price = c.stock_price ? std::optional(c.stock_price->price)
+                : session.preview_trade_stock(request.symbol, signed_shares, market_time_).price;
+            if (price) gate = counter_position_gate(*account, {{request.symbol, static_cast<double>(signed_shares) * price->dollars()}}, market_time_);
+          }
+          if (c.kind == TradingCommand::Kind::PreviewStockOrder)
+            reply.stock_preview = session.preview_stock_order(request, market_time_, c.stock_price, gate);
+          else if (!gate.ok()) result.decision = gate;
+          else result = session.submit_stock_order(request, market_time_, c.stock_price);
+          break;
+        }
+        case TradingCommand::Kind::CancelStockOrder: result = session.cancel_stock_order(c.order_id, market_time_); break;
         case TradingCommand::Kind::Abandon: result = session.abandon(c.symbol, market_time_); break;
         case TradingCommand::Kind::ExerciseInstruction:
           result = session.instruct_exercise(c.symbol, c.do_not_exercise, market_time_);
@@ -2074,7 +2259,7 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
 
 Desk::Desk(std::string provider, md::Capabilities capabilities, md::Subscription subscription, Options options)
     : options_(std::move(options)), provider_(std::move(provider)), subscription_(std::move(subscription)),
-      capabilities_(capabilities), dividends_(options_.dividends) {
+      capabilities_(capabilities), dividends_(options_.dividends), corporate_actions_(options_.corporate_actions) {
   if (options_.resume) {
     const auto inputs = run_inputs(*options_.resume);
     if (!inputs.empty()) {
@@ -2100,6 +2285,26 @@ void Desk::set_dividends(std::vector<trading::Dividend> dividends) {
   if (!options_.run_input.empty() && !accounts_.empty()) {
     record_input(nlohmann::json{{"kind", "dividends"}, {"dividends", dividends_}}.dump());
     publish_trading();
+  }
+}
+void Desk::set_corporate_actions(std::vector<trading::CorporateAction> actions) {
+  corporate_actions_ = std::move(actions);
+  if (!options_.run_input.empty() && !accounts_.empty()) {
+    record_input(nlohmann::json{{"kind", "corporate_actions"}, {"corporate_actions", corporate_actions_}}.dump());
+    publish_trading();
+  }
+}
+void Desk::set_opening_quotations(std::vector<OpeningQuotation> quotations) {
+  // Recorded runs never read them: their AM positions keep their opening print.
+  if (options_.replay || provider_ == "demo") return;
+  // Each set replaces the last, so a revised row replaces its date's value until a
+  // position settles: settlement is journaled once. The first row of a date stands.
+  opening_quotations_.clear();
+  for (auto& q : quotations) {
+    if (std::find(options_.published_opening_quotations.begin(), options_.published_opening_quotations.end(), q.underlying) ==
+            options_.published_opening_quotations.end() || !std::isfinite(q.value) || q.value <= 0)
+      continue;
+    opening_quotations_.try_emplace({q.underlying, q.date}, std::move(q));
   }
 }
 std::shared_ptr<const analytics::UnderlyingMetrics> Desk::metrics(const std::string& symbol) const {
@@ -2191,6 +2396,8 @@ void Desk::replay_recorded() {
               input.at("driver_time").get<md::Timestamp>());
     } else if (kind == "dividends") {
       set_dividends(input.at("dividends").get<std::vector<trading::Dividend>>());
+    } else if (kind == "corporate_actions") {
+      set_corporate_actions(input.at("corporate_actions").get<std::vector<trading::CorporateAction>>());
     } else if (kind == "restart") {
       replay_restart(input.dump());
     } else {
@@ -2236,15 +2443,16 @@ void Desk::record_command(const TradingCommand& c, md::Timestamp driver_time) {
                c.actor, inputs_first());
 }
 void Desk::price_stock_command(TradingCommand& c, md::Timestamp driver_time) {
-  if ((c.kind != TradingCommand::Kind::TradeStock && c.kind != TradingCommand::Kind::PreviewStock) || c.stock_price) return;
+  if ((c.kind != TradingCommand::Kind::TradeStock && c.kind != TradingCommand::Kind::PreviewStock &&
+       c.kind != TradingCommand::Kind::SubmitStockOrder && c.kind != TradingCommand::Kind::PreviewStockOrder) || c.stock_price) return;
   const auto book = book_.underlyings().find(c.symbol);
   if (book == book_.underlyings().end() || book->second.spot_ts <= 0 || book->second.spot_ts > market_time_) return;
   const auto* account = find_account(c.account);
   if (!account || !account->session) return;
-  auto time = book->second.spot_ts;
   const auto complete = snapshots_.find(c.symbol);
-  if (complete != snapshots_.end() && paper_acceptance(c.symbol, complete->second, driver_time, capabilities_.delay,
-      account->session->config().limits.max_quote_age, breaker_.halts).ok()) time = market_time_;
+  const auto time = share_price_time(book->second.spot_ts, complete != snapshots_.end() &&
+      paper_acceptance(c.symbol, complete->second, driver_time, capabilities_.delay,
+                       account->session->config().limits.max_quote_age, breaker_.halts).ok(), market_time_);
   if (const auto price = quote_price(book->second.spot)) c.stock_price = StockPrice{c.symbol, time, *price};
 }
 void Desk::command(TradingCommand command, TradingCompletion completion, md::Timestamp time, md::Timestamp driver_time) {

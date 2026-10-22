@@ -233,11 +233,13 @@ inline void to_json(Json& j, const QuoteObservation& q) {
   // Only a quote first given before its time records that; others keep their bytes.
   if (q.quoted != 0) j["quoted"] = q.quoted;
   if (!q.feed.empty()) j["feed"] = q.feed;
+  if (q.modelled) j["modelled"] = true;
 }
 inline void from_json(const Json& j, QuoteObservation& q) {
   j.at("symbol").get_to(q.symbol); j.at("observation").get_to(q.observation); j.at("time").get_to(q.time);
   j.at("bid").get_to(q.bid); j.at("ask").get_to(q.ask); j.at("bid_size").get_to(q.bid_size);
   j.at("ask_size").get_to(q.ask_size); added_field(j, "quoted", q.quoted); added_field(j, "feed", q.feed);
+  added_field(j, "modelled", q.modelled);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_ONLY_SERIALIZE(Valuation, symbol, time, delta, gamma, vega, theta, spot, forward, discount, years, smile_iv, valid, spot_source)
 inline void from_json(const Json& j, Valuation& v) {
@@ -759,11 +761,67 @@ inline void to_json(Json& j, const StockFill& f) {
   j = Json{{"id", f.id}, {"symbol", f.symbol}, {"shares", f.shares}, {"price", f.price},
            {"time", f.time}, {"source", f.source}, {"option", f.option}};
   if (f.buying_power_after) j["buying_power_after"] = *f.buying_power_after;
+  // Only a working order's fill names it, so every other fill keeps its bytes.
+  if (f.stock_order != 0) j["stock_order"] = f.stock_order;
+  if (f.split_numerator != 0) {
+    j["split"] = Json{{"numerator", f.split_numerator}, {"denominator", f.split_denominator}, {"cash_in_lieu", f.cash_in_lieu}};
+  }
 }
 inline void from_json(const Json& j, StockFill& f) {
   j.at("id").get_to(f.id); j.at("symbol").get_to(f.symbol); j.at("shares").get_to(f.shares);
   j.at("price").get_to(f.price); j.at("time").get_to(f.time); j.at("source").get_to(f.source);
   j.at("option").get_to(f.option); added_field(j, "buying_power_after", f.buying_power_after);
+  added_field(j, "stock_order", f.stock_order);
+  if (const auto split = j.find("split"); split != j.end()) {
+    split->at("numerator").get_to(f.split_numerator); split->at("denominator").get_to(f.split_denominator);
+    split->at("cash_in_lieu").get_to(f.cash_in_lieu);
+  }
+}
+inline void to_json(Json& j, const Deliverable& d) {
+  j = Json{{"shares", d.shares}};
+  if (d.cash != Money{}) j["cash"] = d.cash;
+}
+inline void from_json(const Json& j, Deliverable& d) { j.at("shares").get_to(d.shares); added_field(j, "cash", d.cash); }
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CorporateActionRecord, symbol, ex_date, numerator, denominator, shares_before, shares_after,
+                                   cash_in_lieu, time, series)
+inline void to_json(Json& j, const StockOrderRequest& r) {
+  j = Json{{"client_order_id", r.client_order_id}, {"symbol", r.symbol}, {"side", r.side}, {"type", r.type},
+           {"tif", r.tif}, {"shares", r.shares}};
+  if (r.limit_price) j["limit_price"] = *r.limit_price;
+  if (r.stop_price) j["stop_price"] = *r.stop_price;
+  if (r.extended_hours) j["extended_hours"] = true;
+  if (r.stop_loss) j["stop_loss"] = *r.stop_loss;
+  if (r.take_profit) j["take_profit"] = *r.take_profit;
+  if (!r.oco.empty()) j["oco"] = r.oco;
+}
+inline void from_json(const Json& j, StockOrderRequest& r) {
+  j.at("client_order_id").get_to(r.client_order_id); j.at("symbol").get_to(r.symbol); j.at("side").get_to(r.side);
+  j.at("type").get_to(r.type); j.at("tif").get_to(r.tif); j.at("shares").get_to(r.shares);
+  added_field(j, "limit_price", r.limit_price); added_field(j, "stop_price", r.stop_price);
+  added_field(j, "extended_hours", r.extended_hours); added_field(j, "stop_loss", r.stop_loss);
+  added_field(j, "take_profit", r.take_profit); added_field(j, "oco", r.oco);
+}
+inline void to_json(Json& j, const StockOrder& o) {
+  j = Json{{"id", o.id}, {"request", o.request}, {"status", o.status}, {"accepted_at", o.accepted_at},
+           {"day_end", o.day_end}, {"reason", o.reason}, {"actor", o.actor}};
+  if (o.triggered_at) j["triggered_at"] = o.triggered_at;
+  if (o.ended_at) j["ended_at"] = o.ended_at;
+  if (o.role != OrderRole::Normal) j["role"] = o.role;
+  if (o.parent) j["parent"] = o.parent;
+  if (o.oco) j["oco"] = o.oco;
+  if (o.stop_loss) j["stop_loss"] = o.stop_loss;
+  if (o.take_profit) j["take_profit"] = o.take_profit;
+  if (o.stock_fill) j["stock_fill"] = o.stock_fill;
+  if (o.filled_shares) { j["filled_shares"] = o.filled_shares; j["fill_price"] = o.fill_price; }
+}
+inline void from_json(const Json& j, StockOrder& o) {
+  j.at("id").get_to(o.id); j.at("request").get_to(o.request); j.at("status").get_to(o.status);
+  j.at("accepted_at").get_to(o.accepted_at); j.at("day_end").get_to(o.day_end); j.at("reason").get_to(o.reason);
+  j.at("actor").get_to(o.actor);
+  added_field(j, "triggered_at", o.triggered_at); added_field(j, "ended_at", o.ended_at); added_field(j, "role", o.role);
+  added_field(j, "parent", o.parent); added_field(j, "oco", o.oco); added_field(j, "stop_loss", o.stop_loss);
+  added_field(j, "take_profit", o.take_profit); added_field(j, "stock_fill", o.stock_fill);
+  added_field(j, "filled_shares", o.filled_shares); added_field(j, "fill_price", o.fill_price);
 }
 inline void to_json(Json& j, const DividendPayment& d) {
   j = Json{{"symbol", d.symbol}, {"ex_date", d.ex_date}, {"per_share", d.per_share}, {"shares", d.shares},
@@ -808,12 +866,14 @@ inline void to_json(Json& j, const MarkedPosition& p) {
   // Older snapshots have neither; write them only when set.
   if (p.no_bid) j["no_bid"] = true;
   if (p.do_not_exercise) j["do_not_exercise"] = true;
+  if (p.modelled_mark) j["modelled_mark"] = true;
 }
 inline void from_json(const Json& j, MarkedPosition& p) {
   j.at("position").get_to(p.position); j.at("mark").get_to(p.mark); j.at("mark_time").get_to(p.mark_time);
   j.at("mark_age").get_to(p.mark_age); j.at("market_value").get_to(p.market_value); j.at("unrealised").get_to(p.unrealised);
   j.at("fresh").get_to(p.fresh); j.at("awaiting_settlement").get_to(p.awaiting_settlement);
   added_field(j, "no_bid", p.no_bid); added_field(j, "do_not_exercise", p.do_not_exercise);
+  added_field(j, "modelled_mark", p.modelled_mark);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(MarkedStock, position, mark, mark_time, market_value, unrealised, fresh)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(CashFlow, id, attempt, time, day, kind, symbol, amount, basis, rate_bps, days, client_id)
@@ -834,6 +894,9 @@ inline void to_json(Json& j, const TradingSnapshot& s) {
       {"group_reviews", s.group_reviews}};
   if (!s.alerts.empty()) j["alerts"] = s.alerts;
   if (!s.cash_flows.empty()) j["cash_flows"] = s.cash_flows;
+  if (!s.stock_orders.empty()) j["stock_orders"] = s.stock_orders;
+  if (!s.deliverables.empty()) j["deliverables"] = s.deliverables;
+  if (!s.corporate_actions.empty()) j["corporate_actions"] = s.corporate_actions;
   if (s.fee_charged.amount != Money{}) j["fee_charged"] = s.fee_charged;
 }
 inline void from_json(const Json& j, TradingSnapshot& s) {
@@ -850,6 +913,8 @@ inline void from_json(const Json& j, TradingSnapshot& s) {
   added_field(j, "attribution", s.attribution); added_field(j, "attributions", s.attributions);
   added_field(j, "stocks", s.stocks); added_field(j, "stock_fills", s.stock_fills);
   added_field(j, "cash_flows", s.cash_flows);
+  added_field(j, "stock_orders", s.stock_orders);
+  added_field(j, "deliverables", s.deliverables); added_field(j, "corporate_actions", s.corporate_actions);
   added_field(j, "dividends", s.dividends); added_field(j, "closing_prints", s.closing_prints);
   added_field(j, "day_notes", s.day_notes); added_field(j, "trade_reviews", s.trade_reviews);
   added_field(j, "strategy_reviews", s.strategy_reviews);
@@ -982,6 +1047,12 @@ struct State {
   /// Journaled once the account has created an alert, so other journals keep their bytes.
   AlertBook alerts;
   SharedVector<StockFill> stock_fills;
+  /// Working share orders and their history; journaled once the account has one.
+  SharedVector<StockOrder> stock_orders;
+  /// Adjusted series' deliverables by padded OSI, and the splits applied; both
+  /// journaled once the account has one.
+  SharedMap<std::string, Deliverable> deliverables;
+  SharedVector<CorporateActionRecord> corporate_actions;
   SharedMap<std::string, Timestamp> market_halts;
   SharedVector<CashFlow> cash_flows;
   SharedVector<DividendPayment> dividends;
@@ -1048,6 +1119,9 @@ inline void to_json(Json& j, const State& s) {
   if (s.alerts.created > 0) j["alerts"] = s.alerts;
   if (!s.market_halts.empty()) j["market_halts"] = s.market_halts;
   if (!s.cash_flows.empty()) j["cash_flows"] = s.cash_flows;
+  if (!s.stock_orders.empty()) j["stock_orders"] = s.stock_orders;
+  if (!s.deliverables.empty()) j["deliverables"] = s.deliverables;
+  if (!s.corporate_actions.empty()) j["corporate_actions"] = s.corporate_actions;
   if (s.fee_charged.amount != Money{}) j["fee_charged"] = s.fee_charged;
 }
 inline void from_json(const Json& j, State& s) {
@@ -1065,6 +1139,9 @@ inline void from_json(const Json& j, State& s) {
   added_field(j, "references", s.references); added_field(j, "explained", s.explained);
   added_field(j, "stock_marks", s.stock_marks); added_field(j, "stock_fills", s.stock_fills);
   added_field(j, "cash_flows", s.cash_flows);
+  added_field(j, "stock_orders", s.stock_orders);
+  added_field(j, "deliverables", s.deliverables);
+  added_field(j, "corporate_actions", s.corporate_actions);
   added_field(j, "dividends", s.dividends); added_field(j, "closing_prints", s.closing_prints);
   added_field(j, "day_notes", s.day_notes); added_field(j, "trade_reviews", s.trade_reviews);
   added_field(j, "strategy_reviews", s.strategy_reviews);

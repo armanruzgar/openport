@@ -172,6 +172,8 @@ TEST(DemoFeed, FactoryOptionsSymbolsAndDefaultRotation) {
   EXPECT_EQ(demo->capabilities().poll_interval, 15s);
   EXPECT_TRUE(demo->capabilities().open_interest);
   EXPECT_FALSE(demo->capabilities().realtime);
+  // The generated day prints only through the regular session.
+  EXPECT_FALSE(demo->capabilities().extended_hours_prints);
   EXPECT_EQ(demo->symbols(), (std::vector<std::string>{"SPX", "SPY", "QQQ", "XSP", "NDX", "RUT", "VIX"}));
   std::vector<std::string> expected, actual;
   for (const auto& day : providers::builtin_scenarios())

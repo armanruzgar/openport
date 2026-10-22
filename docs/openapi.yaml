@@ -7461,6 +7461,329 @@
           }
         }
       }
+    },
+    "/api/account-groups": {
+      "get": {
+        "summary": "GET /api/account-groups",
+        "description": "Paper trading only. Named groups of accounts that POST /api/orders/copy mirrors one order to. 404 NOT_FOUND when the server offers none (sandbox servers, servers without a journal). Sandbox tokens cannot read them.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountGroupsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/account-groups/{name}": {
+      "parameters": [
+        {
+          "name": "name",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          }
+        }
+      ],
+      "put": {
+        "summary": "PUT /api/account-groups/{name}",
+        "description": "Creates or replaces a group: one to sixteen distinct existing accounts (\"main\" for the main account) and its allocation. Requires admin scope. Kept in account-groups.json beside the main journal, at most 32 groups. 404 UNKNOWN_ACCOUNT for a member the server does not have.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountGroup"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountGroupInput"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "DELETE /api/account-groups/{name}",
+        "description": "Deletes a group; accounts and their orders are unchanged. Requires admin scope. 404 UNKNOWN_GROUP.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountGroupDeleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/orders/copy": {
+      "post": {
+        "summary": "POST /api/orders/copy",
+        "description": "Paper trading only. Mirrors one order to every account of a group as that account's own submission, with its own checks, journal and client_order_id namespace, sized by the group's allocation (ratio: quantity times the member's ratio, rounded down; equity: the quantity split in proportion to marked equity, largest remainders first). Members allocated no units are skipped. 200 when every member accepted, 207 when any was skipped or refused; each result carries that account's HTTP status and response. Requires trade:* (or admin). Chained (then/oco) and exits_only orders are refused. Equity allocation splits among the members whose positions are all marked; one that is not is skipped with code STALE_QUOTE and the others take the whole order.",
+        "x-scope": "trade",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "207": {
+            "description": "Some members skipped or refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyOrderRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orders/copy/preview": {
+      "post": {
+        "summary": "POST /api/orders/copy/preview",
+        "description": "The same fan-out as POST /api/orders/copy, previewing each member's order on a private copy of its account; nothing is recorded.",
+        "x-scope": "trade",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "207": {
+            "description": "Some members skipped or refused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopyOrderResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopyOrderRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stocks/orders": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "summary": "GET /api/stocks/orders",
+        "description": "Share orders, newest first; status=open lists only open ones.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockOrdersResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "open"
+              ],
+              "default": "all"
+            }
+          }
+        ]
+      },
+      "post": {
+        "summary": "POST /api/stocks/orders",
+        "description": "Paper trading only. A working share order for a stock or ETF: market, limit, stop or stop_limit, DAY or GTC, optional extended_hours for limits (premarket 04:00 to the open and after hours to 20:00 ET, 17:00 on early-close days), an optional bracket and an optional oco partner. Shares trade at the underlying's single price, so an order fills whole, at that price, once a print at or after its acceptance crosses its limit or reaches its stop; one the current fresh price crosses fills at once. Opening orders take account, plan, account-type (working sells included) and stop-requirement checks when accepted and reserve buying power at their limit (or the price, or a buy stop's level); each execution takes the checks POST /api/stocks/trade does, and a refusal then rejects the order. 201 when accepted, 200 for a retry of the same client_order_id and terms. Requires trade:ACCOUNT (or trade:*) live, replay scope in replay.",
+        "x-scope": "trade",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockOrderResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "200": {
+            "description": "A retry answered as first accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockOrderResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StockOrderRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stocks/orders/preview": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "post": {
+        "summary": "POST /api/stocks/orders/preview",
+        "description": "The share order on a private copy of the account: decision, the fresh price, cost at its limit or stop (or the price), and the account before and after, its reservation included. Nothing is journaled.",
+        "x-scope": "trade",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StockOrderRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stocks/orders/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "summary": "DELETE /api/stocks/orders/{id}",
+        "description": "Cancel an open share order. 404 UNKNOWN_ORDER, 409 ORDER_TERMINAL once it ended, 422 STOP_REQUIRED for a plan's required stop on shares still held.",
+        "x-scope": "trade",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockOrderResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7591,6 +7914,10 @@
               }
             ],
             "description": "The backup feed behind --fallback-provider: it supplies an underlying once the primary has been in Error, Stopped or silent for after_seconds, until the primary has been fresh again for after_seconds. Null without one; absent on older servers."
+          },
+          "extended_hours_prints": {
+            "type": "boolean",
+            "description": "The provider delivers the underlying's own premarket and after-hours prints, so an extended-hours share limit can fill on them. False for Cboe (which publishes only the close outside the session) and the demo market."
           }
         },
         "required": [
@@ -14352,6 +14679,13 @@
           "cash_transfers_allowed": {
             "type": "boolean",
             "description": "True only on practice accounts with no evaluation objectives, program fees or funded phase."
+          },
+          "corporate_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorporateActionApplied"
+            },
+            "description": "Splits applied to the account, oldest first."
           }
         },
         "required": [
@@ -15111,6 +15445,10 @@
           {
             "const": "reset",
             "type": "string"
+          },
+          {
+            "const": "split",
+            "type": "string"
           }
         ]
       },
@@ -15400,6 +15738,17 @@
             "$ref": "#/components/schemas/ShareSource"
           },
           "option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stock_order": {
+            "description": "The working share order it filled; null for an immediate trade, delivery or rule close.",
             "anyOf": [
               {
                 "type": "string"
@@ -17465,11 +17814,19 @@
             "type": "boolean",
             "description": "A long option instructed not to be exercised at expiry: it then expires worthless with no cash proceeds or shares delivered."
           },
+          "modelled_mark": {
+            "type": "boolean",
+            "description": "The mark is modelled, not quoted: a split-adjusted series that no listed series pays the same as is valued by Black at its effective strike, with the smile IV of the listed strikes around it, scaled to its deliverable (or at its discounted intrinsic value when it delivers cash only). It keeps the account valued and the days rolling, and never fills an order."
+          },
           "settle_by": {
-            "description": "How an expired position settles: opening_print for demo and driver-5 replay AM positions, closing_print for PM positions with a recorded or still awaited close, manual otherwise; null before expiry.",
+            "description": "How an expired position settles: opening_print for demo and driver-5 replay AM positions, soq for live AM positions whose underlying's published special opening quotation the server fetches (--am-settlement cboe) through the expiry date, closing_print for PM positions with a recorded or still awaited close, manual otherwise; null before expiry.",
             "anyOf": [
               {
                 "const": "closing_print",
+                "type": "string"
+              },
+              {
+                "const": "soq",
                 "type": "string"
               },
               {
@@ -17555,6 +17912,17 @@
               }
             ],
             "description": "The holding's round trips this attempt together. Absent from older servers."
+          },
+          "deliverable": {
+            "description": "An adjusted series' deliverable after a split; null for a standard series (100 shares).",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Deliverable"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -17777,6 +18145,13 @@
               "$ref": "#/components/schemas/HeldStrategy"
             },
             "description": "The open positions by the whole trade each is in. Absent from older servers."
+          },
+          "stock_orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StockOrder"
+            },
+            "description": "Open share orders, oldest first."
           }
         },
         "required": [
@@ -24633,7 +25008,8 @@
               "MINUTE_VOLUME",
               "BEST_POSITION",
               "LOSS_STREAK",
-              "SIZE_CREEP"
+              "SIZE_CREEP",
+              "CORPORATE_ACTION"
             ]
           },
           "message": {
@@ -35511,6 +35887,834 @@
           "atm_vol_change",
           "model"
         ]
+      },
+      "AccountGroupMember": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "ratio": {
+            "$ref": "#/components/schemas/Money",
+            "description": "Ratio allocation only: units per unit of the copied order, 0.0001 to 100."
+          }
+        },
+        "required": [
+          "account"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroup": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "allocation": {
+            "anyOf": [
+              {
+                "const": "ratio",
+                "type": "string"
+              },
+              {
+                "const": "equity",
+                "type": "string"
+              }
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountGroupMember"
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "name",
+          "allocation",
+          "members"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroupInput": {
+        "type": "object",
+        "properties": {
+          "allocation": {
+            "anyOf": [
+              {
+                "const": "ratio",
+                "type": "string"
+              },
+              {
+                "const": "equity",
+                "type": "string"
+              }
+            ]
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountGroupMember"
+            },
+            "minItems": 1,
+            "maxItems": 16
+          }
+        },
+        "required": [
+          "allocation",
+          "members"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroupsResponse": {
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccountGroup"
+            }
+          }
+        },
+        "required": [
+          "groups"
+        ],
+        "additionalProperties": false
+      },
+      "AccountGroupDeleted": {
+        "type": "object",
+        "properties": {
+          "deleted": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "additionalProperties": false
+      },
+      "CopyOrderRequest": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "order": {
+            "$ref": "#/components/schemas/NewOrder"
+          }
+        },
+        "required": [
+          "group",
+          "order"
+        ],
+        "additionalProperties": false
+      },
+      "CopyOrderResult": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          },
+          "code": {
+            "type": "string",
+            "description": "Why a skipped member was sent nothing: STALE_QUOTE when equity allocation found its positions not all marked."
+          },
+          "message": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "description": "The account's own HTTP status for its submission."
+          },
+          "response": {
+            "description": "The account's own response body: SubmitOrderResponse, OrderPreview or an error.",
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "account",
+          "quantity",
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "CopyOrderResponse": {
+        "type": "object",
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "allocation": {
+            "anyOf": [
+              {
+                "const": "ratio",
+                "type": "string"
+              },
+              {
+                "const": "equity",
+                "type": "string"
+              }
+            ]
+          },
+          "client_order_id": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "preview": {
+            "type": "boolean"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CopyOrderResult"
+            }
+          }
+        },
+        "required": [
+          "group",
+          "allocation",
+          "client_order_id",
+          "quantity",
+          "preview",
+          "results"
+        ],
+        "additionalProperties": false
+      },
+      "StockOrderPartner": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "side": {
+            "anyOf": [
+              {
+                "const": "buy",
+                "type": "string"
+              },
+              {
+                "const": "sell",
+                "type": "string"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "const": "market",
+                "type": "string"
+              },
+              {
+                "const": "limit",
+                "type": "string"
+              },
+              {
+                "const": "stop",
+                "type": "string"
+              },
+              {
+                "const": "stop_limit",
+                "type": "string"
+              }
+            ]
+          },
+          "shares": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000
+          },
+          "time_in_force": {
+            "anyOf": [
+              {
+                "const": "day",
+                "type": "string"
+              },
+              {
+                "const": "gtc",
+                "type": "string"
+              }
+            ]
+          },
+          "limit_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "stop_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "extended_hours": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "side",
+          "type",
+          "shares"
+        ]
+      },
+      "StockOrderRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client_order_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "symbol": {
+            "type": "string",
+            "pattern": "^[A-Z0-9.]{1,16}$"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "const": "buy",
+                "type": "string"
+              },
+              {
+                "const": "sell",
+                "type": "string"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "const": "market",
+                "type": "string"
+              },
+              {
+                "const": "limit",
+                "type": "string"
+              },
+              {
+                "const": "stop",
+                "type": "string"
+              },
+              {
+                "const": "stop_limit",
+                "type": "string"
+              }
+            ]
+          },
+          "shares": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000000
+          },
+          "time_in_force": {
+            "anyOf": [
+              {
+                "const": "day",
+                "type": "string"
+              },
+              {
+                "const": "gtc",
+                "type": "string"
+              }
+            ]
+          },
+          "limit_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "stop_price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "extended_hours": {
+            "type": "boolean"
+          },
+          "bracket": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "stop_loss": {
+                "$ref": "#/components/schemas/Money"
+              },
+              "take_profit": {
+                "$ref": "#/components/schemas/Money"
+              }
+            },
+            "description": "Exits created when the entry fills: a stop at stop_loss and a limit at take_profit for the shares it traded, one cancelling the other, GTC."
+          },
+          "oco": {
+            "$ref": "#/components/schemas/StockOrderPartner"
+          }
+        },
+        "required": [
+          "client_order_id",
+          "symbol",
+          "side",
+          "type",
+          "shares"
+        ],
+        "description": "A working share order. market and stop orders execute at the underlying's price; limit and stop_limit need limit_price, stop and stop_limit need stop_price, in whole cents. extended_hours takes limit orders only. day lasts the date's regular session (until after hours end with extended_hours); gtc until cancelled."
+      },
+      "StockOrder": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "client_order_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "side": {
+            "anyOf": [
+              {
+                "const": "buy",
+                "type": "string"
+              },
+              {
+                "const": "sell",
+                "type": "string"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "const": "market",
+                "type": "string"
+              },
+              {
+                "const": "limit",
+                "type": "string"
+              },
+              {
+                "const": "stop",
+                "type": "string"
+              },
+              {
+                "const": "stop_limit",
+                "type": "string"
+              }
+            ]
+          },
+          "time_in_force": {
+            "anyOf": [
+              {
+                "const": "day",
+                "type": "string"
+              },
+              {
+                "const": "gtc",
+                "type": "string"
+              }
+            ]
+          },
+          "shares": {
+            "type": "integer"
+          },
+          "limit_price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop_price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "extended_hours": {
+            "type": "boolean"
+          },
+          "bracket": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StockOrderBracket"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "role": {
+            "anyOf": [
+              {
+                "const": "entry",
+                "type": "string"
+              },
+              {
+                "const": "stop_loss",
+                "type": "string"
+              },
+              {
+                "const": "take_profit",
+                "type": "string"
+              }
+            ]
+          },
+          "parent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "oco": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stop_loss": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "take_profit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "const": "working",
+                "type": "string"
+              },
+              {
+                "const": "partially_filled",
+                "type": "string"
+              },
+              {
+                "const": "filled",
+                "type": "string"
+              },
+              {
+                "const": "cancelled",
+                "type": "string"
+              },
+              {
+                "const": "rejected",
+                "type": "string"
+              },
+              {
+                "const": "armed",
+                "type": "string"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Decision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "accepted_at": {
+            "type": "string"
+          },
+          "day_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "triggered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filled_shares": {
+            "type": "integer"
+          },
+          "fill_price": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "stock_fill": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "client_order_id",
+          "actor",
+          "symbol",
+          "side",
+          "type",
+          "time_in_force",
+          "shares",
+          "limit_price",
+          "stop_price",
+          "extended_hours",
+          "bracket",
+          "role",
+          "parent",
+          "oco",
+          "stop_loss",
+          "take_profit",
+          "status",
+          "reason",
+          "accepted_at",
+          "day_end",
+          "triggered_at",
+          "ended_at",
+          "filled_shares",
+          "fill_price",
+          "stock_fill"
+        ]
+      },
+      "StockOrdersResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "account_version": {
+            "type": "string"
+          },
+          "stock_orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StockOrder"
+            }
+          }
+        },
+        "required": [
+          "account_version",
+          "stock_orders"
+        ]
+      },
+      "StockOrderResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "account_version": {
+            "type": "string"
+          },
+          "stock_order": {
+            "$ref": "#/components/schemas/StockOrder"
+          },
+          "related_orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StockOrder"
+            },
+            "description": "Its OCO partner and bracket exits."
+          },
+          "stock_fills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StockFill"
+            }
+          }
+        },
+        "required": [
+          "account_version",
+          "stock_order",
+          "related_orders",
+          "stock_fills"
+        ]
+      },
+      "StockOrderBracket": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stop_loss": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "take_profit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "stop_loss",
+          "take_profit"
+        ]
+      },
+      "Deliverable": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "shares": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "shares",
+          "cash"
+        ],
+        "description": "What one contract of an adjusted series delivers for 100 times its strike: whole shares and cash in lieu. No shares, cash only, once a reverse split leaves a contract less than a whole share."
+      },
+      "AdjustedSeries": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "shares": {
+            "type": "integer"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "symbol",
+          "shares",
+          "cash"
+        ]
+      },
+      "CorporateActionApplied": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "symbol": {
+            "type": "string"
+          },
+          "ex_date": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "split",
+            "type": "string"
+          },
+          "numerator": {
+            "type": "integer"
+          },
+          "denominator": {
+            "type": "integer"
+          },
+          "shares_before": {
+            "type": "integer"
+          },
+          "shares_after": {
+            "type": "integer"
+          },
+          "cash_in_lieu": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "time": {
+            "type": "string"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdjustedSeries"
+            }
+          }
+        },
+        "required": [
+          "symbol",
+          "ex_date",
+          "kind",
+          "numerator",
+          "denominator",
+          "shares_before",
+          "shares_after",
+          "cash_in_lieu",
+          "time",
+          "series"
+        ],
+        "description": "A split applied on its ex-date: shares held before and after, cash paid for a fraction of a share, and each option series it adjusted."
       }
     }
   }

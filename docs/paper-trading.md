@@ -81,7 +81,12 @@ cash-settled index options: SPX/SPXW, XSP, NDX/NDXP, RUT/RUTW, XND, MRUT, DJX,
 VIX/VIXW. American equity, ETF and OEX options on any other root, e.g. SPY, QQQ, IWM, DIA,
 AAPL. The underlying and exercise style must match the root's conventions: American
 exercise on a European index root is `AMERICAN_UNSUPPORTED`, a European contract on any
-other root is `ROOT_UNSUPPORTED`. Adjusted deliverables are rejected.
+other root is `ROOT_UNSUPPORTED`. A listed adjusted series (`standard` false) is
+`NONSTANDARD_UNSUPPORTED` unless its deliverable is known: `define(contract, time,
+deliverable)` admits a share-settled American series with its whole shares and cash in
+lieu a contract, and the series a split adjusts keep theirs (see
+[Splits and adjusted series](#splits-and-adjusted-series)). The feed's own nonstandard
+listings carry no deliverable, so the desk still leaves them out.
 
 American equity and ETF options deliver shares; OEX, like the European index roots,
 settles in cash. By default, held into expiry, an equity or ETF option a cent or more in the money
@@ -192,6 +197,73 @@ is saved in the start record, so resume and verification use the same payments.
 The revision 4 demo feed uses its generated calendar when no `--dividends` source
 was supplied, including American analytics and dividend/assignment warnings. An
 explicit source replaces the demo account calendar, without changing its prices.
+### Splits and adjusted series
+
+`openportd --corporate-actions FILE` reads `SYMBOL,YYYY-MM-DD,split,NUMERATOR:DENOMINATOR`
+lines (`2:1` doubles the shares, `3:2` makes 100 shares 150, `1:10` is a reverse split;
+blank lines, `#` comments and a `symbol,...` header are skipped) with
+`parse_corporate_actions`. `roll_day(time, dividends, actions)` applies those going ex
+after the last trading date and on or before the new one, once each, after the night's
+assignments and before the day's dividends:
+
+- Held shares split toward zero, keeping their basis. A fraction of a share left over is
+  paid in cash at the split mark (the last mark times denominator over numerator; the
+  average cost without a mark), with the basis it carried released as realised P&L, as a
+  broker's cash in lieu is. The stock fill records the split (`source: "split"`, no price)
+  and the round trip continues.
+- The mark splits with the shares, so equity does not move.
+- Every share-settled series on the underlying that has not expired keeps its symbol,
+  strike, contract count and 100 premium multiplier, as OCC adjusts a series, and takes
+  the split deliverable: 100 shares a contract become 200 for 2:1, 150 for 3:2 and 10 for
+  1:10. A fraction of a share in the deliverable becomes cash in lieu at the split mark (a
+  simulated estimate of the amount OCC later fixes). Once a contract delivers less than
+  one whole share (100 shares after 1:200 or 1:1000), it delivers cash only, all of it in
+  lieu: such a series pays a fixed amount whatever the stock does, is margined at what
+  buying its shorts back costs, reprices with no move and delivers no shares when it
+  settles, is exercised or is assigned. OCC instead re-strikes whole-number
+  forward splits (twice the contracts at half the strike); the adjusted series pays
+  exactly the same.
+- Working share orders on the stock are cancelled with `CORPORATE_ACTION`; working option
+  orders stay, their premium being per contract either way.
+
+An adjusted series settles, is exercised and is assigned on its deliverable: one unit is
+worth its shares (and cash) over 100 against the strike, so a 2:1-adjusted 500 call with
+the stock at 260 is worth 200 × 260 / 100 − 500 = 20, and delivers 200 shares at the
+settlement price, together the $50,000 its strike was worth. Strategy margin takes each
+underlying's series of one deliverable as the standard series that pay the same (each
+contract shares/100 standard contracts at its effective strike, 100 × strike less the
+cash over the shares) and covers them with lots of their own deliverable; shares go to
+an adjusted group's shorts first. Cash accounts and IRAs cover an adjusted call with its
+deliverable's shares. Scenario grids, risk profiles, breach risk and historical stress
+reprice it the same way. Portfolio margin scans the standard series and shares and adds
+strategy margin for adjusted series, which its scan does not reprice. The desk quotes,
+values and fills an adjusted series from the standard series that pays the same (the 250
+call for a 2:1-adjusted 500 call): prices times shares/100, displayed sizes over it and
+Greeks scaled the same, once the feed lists that series. When none is listed (a 3:2 or a
+reverse split leaves an effective strike such as 333.33 no exchange lists), the listed
+one has never quoted, or the series delivers cash only, the desk values it by model: Black at its effective strike, at the
+expiry's forward and discount from the analytics, with the smile IV interpolated between
+the listed strikes either side of it (the nearest one beyond the listed range), scaled
+to its shares (a cash-only series is worth its intrinsic value, undiscounted for an
+American series, which can be exercised now, and discounted for a European one, the
+discounted value being what historical stress margins a short one at, whatever the
+shock). It is a
+European model of an American series, floored at the deliverable's exercise value at
+the analytics' spot (shares times its distance from the effective strike, over 100),
+worked in the same decimal arithmetic as the overnight assignment check so the floored
+mark never rounds below it, as the American series would be: a deep in-the-money put's European value falls below
+it, which would show a holder a false loss and give a short's holders a reason to
+exercise overnight. On the floor it moves one for one with the deliverable's shares
+(delta of shares/100, no gamma, vega or theta). The value marks the position as a quote with no
+size, `modelled_mark: true` on the position, so the account stays valued, rollovers
+continue and margin and risk see it; it never fills an order, so the series cannot be
+traded until a listed series quotes it (close it by exercise, or wait for expiry). An
+underlying without IVs around the strike leaves it unmarked, which holds the rollover
+as any missing mark does. Positions report `deliverable` (`{shares, cash}`, null for 100 shares) and
+`GET /api/account` the applied `corporate_actions`. Replays and scenario runs given a
+corporate-actions file keep it in their start record, so resume and verification apply
+the same splits; generated scenario prices do not split themselves.
+
 `roll_day(time, dividends)` takes those going ex after the last trading date and
 on or before the new one (`dividends_due`, so a server that was down
 across an ex-date still pays it), after the night's assignments: shares held into the
@@ -250,6 +322,73 @@ and tags, round trips and dividend accounting as delivered shares. Exercise and
 assignment add to or net against them. Long shares are paid in full under strategy
 margin; every 100 cover a short call, including in a collar with a long put. Portfolio
 margin instead scans the whole book.
+
+### Working share orders
+
+`submit_stock_order` (`POST /api/stocks/orders`) places a working order for a stock's or
+ETF's shares instead of trading at once: `market`, `limit`, `stop` or `stop_limit`, DAY
+or GTC, 1–10,000,000 shares, prices in whole cents. Shares trade at the underlying's
+single price, which has no displayed size, so a share order fills whole, at that price,
+or waits; partial share fills are not modelled. A limit buy fills on a print at or
+below its limit and a sell at or above it (at the print, so a better price improves
+it); a stop activates once a print reaches its level (at or above for a buy, at or below
+for a sell) and then executes at the print (`stop`, through any gap) or rests as a limit
+(`stop_limit`). One the current fresh price already crosses executes when accepted;
+otherwise it takes prints stamped at or after its acceptance. Market and stop orders
+work in the regular session; `extended_hours: true` lets a limit also work premarket
+(04:00 ET to the open) and after hours (to 20:00 ET, 17:00 on an early close), sessions
+`md::stock_extended_session` models on the stock market's business days. The prices
+are the feed's underlying prints in those hours; the simulator adds no extended-hours
+spread or liquidity of its own, so an extended-hours limit can fill only on a feed that
+delivers those prints. `/api/status` reports it per provider as
+`provider.extended_hours_prints`: false for Cboe, which outside the regular session
+publishes only the close, and for the demo market, which prints only through the
+regular session; no adapter reports it true yet, and replays report false. The
+terminal's share ticket disables its Extended hours box, with a caption saying why,
+while it is false; the API still accepts the flag. DAY ends at its date's regular close (after hours' end
+with extended hours) with `DAY_END`, and an order placed after it works the next
+business day; GTC works until it fills or is cancelled.
+
+An extended-hours limit fills only on a print fresh within the session it fills in
+(`max_quote_age` of the market time in premarket and after hours as in the regular
+session): at 18:30 neither the 16:00 close nor a 16:05 print fills it. Outside the
+regular session a share price keeps its own print time (the close's at the latest)
+even while its feed's snapshots are current, since a snapshot feed such as Cboe's
+goes on sending the last close then: after earnings, or premarket while SPX options
+trade overnight, the close is never taken for a fresh print.
+
+Opening orders take, when accepted, the account checks (kill switch, decided attempt,
+plan entry rules), buy-only, defined-risk and cash/IRA short-sale checks that count the
+working sells before them, and the plan's stop requirement. While they work they
+reserve buying power from acceptance: each, after those accepted before it, what filling
+it at its limit (a stop at least at its stop, a market order at the last price) would
+take; with buying power enforced, a market order is refused with `STALE_QUOTE` until
+the stock has a price to reserve against. So a cash account cannot rest
+two buys that together exceed its cash; an order that would leave buying power negative
+is refused with `BUYING_POWER`. Each execution then takes every check
+`POST /api/stocks/trade` does at its price, including `no_counter_positions` against the
+other accounts' held and working dollar delta as the server supplies it for that batch,
+as an option order's fill does; a refusal there rejects the order with its reason, while
+a stale price, a closed session, a halt or another account's missing valuation only
+makes it wait. Fills record
+the order on their stock fill (`stock_order`).
+
+`bracket: {stop_loss?, take_profit?}` places, once the entry fills, a GTC stop at
+`stop_loss` and a limit at `take_profit` for the shares it traded, each the other's
+one-cancels-other; they reserve nothing, only ever reduce, bypass the minimum hold as
+option exits do, shrink to the shares still held and end with `POSITION_CLOSED` once
+those are closed another way. A bracket stop satisfies `require_stop_loss`, so such
+plans can open shares through a bracketed working order, and the plan's trade-risk
+limit then measures the move to the stop rather than the shares' value; that stop
+cannot be cancelled while the shares are held (`STOP_REQUIRED`). `oco` places
+a partner order on the same symbol, as `<client_order_id>:oco`; the first fill of either
+cancels the other with `OCO_FILLED`. A retry with the same `client_order_id` and terms is
+answered as first accepted (200); other terms under it are 409 `DUPLICATE_CLIENT_ID`.
+`POST /api/stocks/orders/preview` runs the order on a private copy and reports the
+account after, its reservation included. Cancel-all (for all or the symbol) and
+account resets cancel share orders; flatten leaves them. A buy-write (shares and a short call at one net price) is
+not offered: the order book has no mixed share-and-option instrument, so the
+covered-call template still buys shares first and sells the call as a separate order.
 
 The `defined_risk` plan keeps its stricter option-coverage rule: a short call needs
 a long call expiring with it or later. Shares cover calls for margin but do not
@@ -1869,7 +2008,7 @@ side, no buying-power check. All rule money is exact.
 | `profit_target` | Pass when profit under `profit_basis` reaches the target and every objective below is met (zero disables) |
 | `max_drawdown` | Fail when equity touches peak − drawdown (zero disables) |
 | `drawdown_mode` | `Intraday`: the peak follows every fully marked equity high. `EndOfDay`: the peak moves only at rollover, from the last fully marked equity observed on the finished date. `Static` (API `static`): the floor stays at the starting balance − drawdown for the whole attempt and counts as locked from the start, while the peak still follows every high. The peak is the high-water mark the floor follows; an account without a target or drawdown (practice) keeps it the same way, although no rule reads it |
-| `buy_only` | A sell must close contracts already held, counting working and armed sells on the same contract; otherwise `BUY_ONLY`. A manual (untriggered) close that only the account's own armed stop sells keep from fitting supersedes them: it cancels them with `POSITION_CLOSED`, newest first and only as many as it needs, and keeps them if it is refused anyway. Preview shows the same. A requested long-put exercise that would sell more shares than the long shares held (after any working share sells) returns `BUY_ONLY`; exercising a protective put against held shares is allowed. Share trades currently execute synchronously, without working share orders. Expiry auto-exercise and assignment still deliver shares: `buy_only` governs trader orders and exercise requests, not expiry delivery |
+| `buy_only` | A sell must close contracts already held, counting working and armed sells on the same contract; otherwise `BUY_ONLY`. A manual (untriggered) close that only the account's own armed stop sells keep from fitting supersedes them: it cancels them with `POSITION_CLOSED`, newest first and only as many as it needs, and keeps them if it is refused anyway. Preview shows the same. A requested long-put exercise that would sell more shares than the long shares held (after any working share sells) returns `BUY_ONLY`; exercising a protective put against held shares is allowed. Working share sells count against the long shares held the same way, so an opening share sell is refused with `BUY_ONLY` at acceptance. Expiry auto-exercise and assignment still deliver shares: `buy_only` governs trader orders and exercise requests, not expiry delivery |
 | `defined_risk` | Each short option needs a long of the same type on the same underlying that expires with it or later, any strike (`naked_shorts` counts the rest). An order, single or multi-leg, that would leave more shorts uncovered than before rejects with `DEFINED_RISK`, so closing a short is always allowed. Open orders count as if every sell they offer filled and no buy did (a multi-leg order fills whole; a bracket's two exits sell its position once), so a working sell can never take the long a short needs. Bracket exits and exercise keep shorts covered too. Off in every preset; custom rules take it |
 | `max_contracts_held` | Option contracts held (sum of absolute position quantities), plus opening contracts of working orders and this order, may not exceed this cap (0 disables; 1–100000). Counts combo leg ratios and reserves closing capacity only once across working orders. Shares and managed exits do not count. Opening entries and quantity changes refuse with `MAX_CONTRACTS_HELD`, projected count and cap; reducing and system closes remain available |
 | `require_stop_loss` | Every opening order needs a bracket `stop_loss` trigger (default false); otherwise `STOP_REQUIRED`. An option stop triggers below for a long entry, above for a short; a combo stop triggers above on its closing signed net. Underlying triggers also qualify. A target or a limit alone is not a protective stop. User cancellation of that stop, including cancel-all, or reducing its protected size, refuses while its position is open; cancelling an unfilled entry leaves its filled part's stop intact. Closing, flattening, OCO fills, partial stop re-arming and automatic playbook exits keep their normal behavior |
@@ -4129,6 +4268,7 @@ opening orders and cancels working openings outside the plan window.
 | `SESSION_CLOSED`, `EXPIRED`, `AWAITING_SETTLEMENT` | Outside the product's sessions (or an AM-settled series after its last regular close), expiry or last-trade boundary, or pending settlement quality flag |
 | `LIMIT_ONLY` | Overnight/curb executions require limits. Plain market entry/flatten is refused. Only EXTO/GTC_EXTO simulator-managed stops and brackets work there; legacy protection waits for regular hours |
 | `GTD_END` | The order reached its explicit `good_till` timestamp |
+| `CORPORATE_ACTION` | A split went ex on the order's stock: working share orders on it are cancelled, as their prices no longer apply |
 | `FEED_STALLED` | Market data lags what a healthy feed would show by more than `max_quote_age` (a delayed feed: at least three minutes); message includes the lag behind the wall clock |
 | `REPLAY_FAST_FORWARD` | The replay is preparing its start state; wait before submitting orders or changing playback |
 | `REPLAY_STEPPING` | A lockstep step (`PUT /api/replay {"until"}`) is playing; orders wait for its response and then use the paused market time |
@@ -4240,6 +4380,51 @@ opening counts and cooldown state are not copied. The new account's first journa
 record includes the settings; replay verification and recovery never consult the
 source again. Unknown sources return 404 `UNKNOWN_ACCOUNT`; malformed IDs return
 400 `INVALID_REQUEST`. Copying is not offered when resuming an existing run.
+
+#### Account groups and copied orders
+
+An **account group** names up to sixteen live accounts (`main` for the main account)
+and how a copied order is sized across them. `PUT /api/account-groups/{name}` creates
+or replaces one with `{"allocation": "ratio" | "equity", "members": [{"account":
+"main", "ratio": "1"}, ...]}`; `DELETE` removes it and `GET /api/account-groups`
+lists them. Names follow the account ID rules. Writes need admin scope, every member
+must exist (404 `UNKNOWN_ACCOUNT` otherwise), and the server keeps at most 32 groups
+in `account-groups.json` beside the main journal, replaced atomically. Groups are
+configuration, not trading: no journal records them, and deleting one changes no
+account. Sandbox servers and visitors are not offered them.
+
+`POST /api/orders/copy` takes `{"group": name, "order": {...}}`, the order as
+`POST /api/orders` takes it, and mirrors it in the server layer: each member account
+receives its own submission of the order at its own size, through its own inbox,
+rule checks, journal and client order ID namespace, exactly as if it had been posted
+to `/api/orders?account=<id>`. Nothing is shared between the submissions; one account's
+refusal (a delta limit, a plan rule, a decided attempt) does not stop another's.
+
+- **Ratio**: each member trades the order's quantity times its ratio (0.0001 to 100),
+  rounded down: a 3-lot copied at ratios 1, 0.5 and 2.5 is 3, 1 and 7.
+- **Equity**: the order's quantity is split across the members in proportion to their
+  marked equity when the request arrives, each taking the floor of its share and the
+  largest remainders (earlier members first on ties) the units rounding leaves, so the
+  sizes add up to the order's. A member whose positions are not all marked is skipped,
+  sent nothing, with `code: "STALE_QUOTE"` in its result; the others share the whole
+  order.
+
+The sizes are computed once, before the submissions, and each journal records only its
+own order. A member allocated no units is skipped and sent nothing. The reply is 200
+when every member accepted and 207 when any was skipped or refused, with
+`results[]` giving each account, its `quantity`, `ok`, and its own HTTP `status` and
+`response` (the `SubmitOrderResponse` or error it would have answered alone).
+`POST /api/orders/copy/preview` previews every member's order on a private copy, as
+`/api/orders/preview` does. A retry with the same `client_order_id` is answered by each
+account as first submitted; under equity allocation a retry after equity moved may
+size an account differently and get `DUPLICATE_CLIENT_ID` from it. Copied orders take
+no `then`, `oco` or `exits_only` (each account sizes its own exits; brackets are
+allowed and size with each fill), nor a query parameter. They need `trade:*` (or
+admin) scope, since they trade every member.
+
+The terminal's **Manage accounts** dialog creates, edits and deletes groups, and the
+option ticket's **Copy to group** sends the order to a group instead of the active
+account, listing each account's outcome.
 
 Risk replies include `pending_requires_reset`. It is true when pending limits or
 guardrails exist and the replay's last complete batch does not reach a later plan
@@ -4481,6 +4666,10 @@ focus at the top of the ticket.
 | `POST /api/positions/instruction` | Canonical `symbol` of a long option and boolean `do_not_exercise`: true makes it expire worthless at settlement, false withdraws that; returns the portfolio, whose positions carry `do_not_exercise` and `no_bid` |
 | `POST /api/stocks/trade` | `symbol` (`SPY`), `side` (`buy` or `sell`), and integer `shares` (1–10,000,000); opens, adds, reduces or reverses at a fresh stock-session price, returns the portfolio. Not idempotent: inspect positions after an uncertain response before retrying |
 | `POST /api/stocks/trade/preview` | The same body; dry-run decision (`ok` or reason code), `reason`, `price`, signed `cost` (negative receives), `current` and `after` account buying power, exposure and risk; `simulated: true`. Refusals leave projected holdings unchanged; nothing recorded |
+| `POST /api/stocks/orders` | A working share order: `client_order_id`, `symbol`, `side`, `type` (`market`/`limit`/`stop`/`stop_limit`), integer `shares`, `time_in_force` (`day`/`gtc`, default day), `limit_price`, `stop_price`, `extended_hours` (limits only), `bracket` `{stop_loss?, take_profit?}` and an `oco` partner without a symbol or client ID of its own ([working share orders](#working-share-orders)); 201 returns `stock_order`, `related_orders` (partner and exits) and the `stock_fills` it made, 200 for a retry |
+| `POST /api/stocks/orders/preview` | The same body; the `StockPreview` dry run, with `cost` at the limit or stop (the price for market orders) |
+| `GET /api/stocks/orders` | Share orders, newest first; `status=open` restricts to working and armed ones. `GET /api/portfolio` lists the open ones as `stock_orders` |
+| `DELETE /api/stocks/orders/{id}` | Cancel an open share order: 404 `UNKNOWN_ORDER`, 409 `ORDER_TERMINAL`, 422 `STOP_REQUIRED` |
 | `POST /api/stocks/close` | `symbol` of shares held (`SPY`) and optional positive `shares`, all of them when left out; closes at the underlying's price in the regular session and returns the portfolio |
 | `GET /api/portfolio` | `time`: the market time the publication is as of, the feed's latest even while the account is idle (as in `GET /api/risk` and `GET /api/account`). Account cash, equity, daily baseline/P&L, realised/unrealised, fees, completeness/quality flags, marked positions and Greeks, opened or delivered `stocks` (symbol, shares, average price, basis, mark and its time, market value, unrealised and realised P&L, fees, freshness and today's attribution), and today's `attribution` (`delta`, `gamma`, `vega`, `theta`, `other`, `costs`, `total` in dollars) for the account and each position (null until the position's next fill or rollover), and `liquidity_used`: the current quotes whose displayed size the account's orders have taken some of, with each side's size and what is left (`bid_left`, `ask_left`) until a new quote |
 | `GET /api/orders?status=all` | All orders, newest first; `status=open` restricts to working, partially filled and armed orders |
@@ -4675,9 +4864,9 @@ for the last successful load, without names. Protect the file as a credential.
 | Scope | Permission |
 | --- | --- |
 | `read` | Every API GET, CSV export and WebSocket ticks |
-| `trade:ACCOUNT` / `trade:*` | Orders and previews, cancels, flatten, exercise, stock closure, notes and sending or dismissing playbook stages on the named account / all live accounts |
+| `trade:ACCOUNT` / `trade:*` | Orders and previews, cancels, flatten, exercise, stock closure, notes and sending or dismissing playbook stages on the named account / all live accounts; copied orders to account groups need `trade:*` |
 | `replay` | Start, control and stop replays; trade, reset, set limits/guardrails and operate the kill switch on their isolated accounts |
-| `admin` | Everything, including limits, guardrails, kill switch, resets, payouts, settlements, account creation/rename/archive/delete, playbook definitions and modes, replay history deletion and token reload |
+| `admin` | Everything, including limits, guardrails, kill switch, resets, payouts, settlements, account creation/rename/archive/delete, account groups, playbook definitions and modes, replay history deletion and token reload |
 
 `POST /api/replay/account/reset`, `PUT /api/replay/risk/limits`,
 `PUT /api/replay/risk/guardrails` and `POST /api/replay/risk/kill` accept `replay`
@@ -4809,15 +4998,45 @@ provider, underlying symbol and quote time. Waiting AM positions show
 `settle_by: "opening_print"`. If no qualifying print arrives they continue to wait, with `settle_by: "manual"`
 after 09:35 ET so the trader knows to import;
 a manual import after expiry but before the print still settles exactly once.
-Live real-provider AM positions retain `settle_by: "manual"` and the explicit
-`POST /api/settlements` import (the terminal's Settle button). Their feed does not
-supply the official special opening quotation. Its value must come from the
-authoritative source; PM imports are
+Live real-provider AM positions settle by the explicit `POST /api/settlements` import
+(the terminal's Settle button) with `settle_by: "manual"`, as their feed does not supply
+the official special opening quotation, unless the server is started with
+`--am-settlement cboe`. It then fetches the special opening quotations Cboe Global
+Indices publishes for SPX (index `SET`), RUT (`RLS`), DJX (`DJS`) and VIX (`VRO`) from
+their daily history
+`https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv`, at startup
+and every 15 minutes (Cboe's CDN caches it that long), so a date's row is found soon
+after Cboe publishes it and a restart still finds the last two weeks' values. The
+endpoint was reachable without an account on 2026-10-21; the tests use responses
+recorded then. NDX's quotation is Nasdaq's and is not fetched. A position settles only
+on the history row for its exact expiry date. The index's delayed quote is not used:
+its trade time cannot tell reliably whether the value it shows is the day's quotation,
+computed once every component has opened, so it could settle a position early on a
+wrong value or late. Settlement is journaled once: a row Cboe revises after a position
+settled on it does not change that settlement. Waiting AM positions on those
+underlyings show `settle_by: "soq"` while their expiry date is within the fetcher's
+14-day lookback (counted in trading dates, which end at 17:00 ET) and settle once their
+date's row arrives, with source `published_soq`, provider `cboe`, the `index`, `date`
+and `url`. Past the lookback without one, or when the server runs without
+`--am-settlement cboe`, they show
+`manual`, and an import before the fetch still settles exactly once: manual import
+remains the fallback for a fetch that fails or a value Cboe has not published. Demo and
+replay accounts keep their opening print.
+
+How long after the open Cboe posts a date's row in the history CSV has not been
+measured: the endpoint was only checked on 2026-10-21, and the documented 15-minute
+CDN cache adds to whatever the posting lag is. Treat the lag as unknown; a position can
+wait from the open until the row appears. While any position is `AWAITING_SETTLEMENT`
+it has no fresh mark, so the account's valuation is incomplete: new option and share
+orders that need complete marks are refused with `STALE_QUOTE` (reduce-only closes of
+other positions still run, see Flatten), and the trading-day rollover waits
+(`Rollover requires complete marked equity`) until the position settles, by the
+fetched value or a manual import. PM imports are
 accepted only while no closing print is recorded. The same journal transaction
 records the reference value, canonical definition and integration
 `settlement_source`: `provider_official_close`, `provider_closing_print` or
-`provider_last_print_before_close` with provider and time, `manual_am_import` or
-`manual_pm_import`. Preserve the official source used for an AM import
+`provider_last_print_before_close` with provider and time, `published_soq`,
+`manual_am_import` or `manual_pm_import`. Preserve the official source used for an AM import
 externally when an independent provenance audit is required. The first market
 batch on a later trading date rolls the daily baseline on the finished day's closing
 marks before its own quotes are applied. When a PM position of the finished day is

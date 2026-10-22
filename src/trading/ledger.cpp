@@ -50,9 +50,15 @@ void book(Money& lifecycle_realised, Money& lifecycle_fees, Quantity old_q, Quan
   lifecycle_realised = lifecycle_realised + realised;
   lifecycle_fees = lifecycle_fees + fee;
 }
+/// The terms a ledger holds: the session admits an adjusted series with its deliverable,
+/// so the ledger checks the rest of its terms.
+Decision ledger_terms(const md::OptionContract& contract) {
+  const Deliverable adjusted;
+  return eligible(contract, contract.standard ? nullptr : &adjusted);
+}
 }  // namespace
 void Ledger::fill(const md::OptionContract& contract, Quantity signed_quantity, Money price, Money fee) {
-  const auto decision = eligible(contract);
+  const auto decision = ledger_terms(contract);
   if (!decision.ok()) throw TradingError(decision.code, decision.message);
   if (signed_quantity == 0 || price < Money{} || fee < Money{})
     throw TradingError(Reason::INVALID_ORDER, "Fill requires nonzero quantity and nonnegative price/fee");
@@ -111,10 +117,33 @@ void Ledger::receive_dividend(const std::string& symbol, Money amount) {
   it->second.realised = it->second.realised + amount;
   account_ = next;
 }
+Quantity Ledger::split_stock(const std::string& symbol, std::int64_t numerator, std::int64_t denominator, Money cash_in_lieu) {
+  const auto it = stocks_.find(symbol);
+  if (it == stocks_.end() || numerator < 1 || denominator < 1)
+    throw TradingError(Reason::INVALID_ORDER, "A split needs held shares and positive terms");
+  using Wide = __int128;
+  const auto held = it->second.shares;
+  const Wide scaled = static_cast<Wide>(held) * numerator;  // the split shares, times the denominator
+  const auto after = static_cast<Quantity>(scaled / denominator);  // whole shares, toward zero
+  const Wide fraction = scaled - static_cast<Wide>(after) * denominator;
+  // The fraction leaves with its share of the basis, sold for the cash in lieu.
+  const Money released = after == 0 ? it->second.basis
+      : Money::from_micros(static_cast<std::int64_t>(static_cast<Wide>(it->second.basis.micros()) * fraction / scaled));
+  const Money realised = cash_in_lieu - released;
+  StockPosition next = it->second;
+  next.shares = after;
+  next.basis = next.basis - released;
+  next.realised = next.realised + realised;
+  const Account account{account_.cash + cash_in_lieu, account_.realised + realised, account_.fees};
+  if (after == 0) stocks_.erase(it);
+  else it->second = std::move(next);
+  account_ = account;
+  return after;
+}
 Ledger Ledger::restore(Account account, std::map<std::string, Position> positions,
                        std::map<std::string, StockPosition> stocks) {
   for (const auto& [symbol, p] : positions) {
-    if (!eligible(p.contract).ok() || p.contract.osi_symbol() != symbol || p.quantity == 0 ||
+    if (!ledger_terms(p.contract).ok() || p.contract.osi_symbol() != symbol || p.quantity == 0 ||
         p.quantity == std::numeric_limits<Quantity>::min() || p.fees < Money{} ||
         (p.quantity > 0 ? p.basis < Money{} : p.basis > Money{}))
       throw TradingError(Reason::JOURNAL_CORRUPT, "Invalid recorded ledger position");

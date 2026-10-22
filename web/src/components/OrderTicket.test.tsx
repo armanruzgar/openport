@@ -33,6 +33,7 @@ beforeEach(() => {
   vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
   vi.spyOn(api, "orders").mockResolvedValue({ account_version: "17", orders: [] })
   vi.spyOn(api, "submitOrder").mockResolvedValue({ account_version: "18", order, fills: [] })
+  vi.spyOn(api, "accountGroups").mockResolvedValue({ groups: [] })
   vi.spyOn(api, "account").mockResolvedValue({ ...account, rules: { ...account.rules, buy_only: false } })
   vi.spyOn(api, "portfolio").mockResolvedValue({ ...portfolio, positions: [] })
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scroll })
@@ -156,6 +157,24 @@ describe.each(["single", "strategy"] as const)("%s ticket joining a whole trade"
 })
 
 describe("order ticket interaction", () => {
+  it("copies an order to an account group and lists each account's outcome", async () => {
+    vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), accounts: [
+      { id: "main", name: "Main", trading }, { id: "swing", name: "Swing", trading }] } as ReturnType<typeof useLive>)
+    vi.mocked(api.accountGroups).mockResolvedValue({ groups: [{ name: "desk", allocation: "ratio", members: [{ account: "main", ratio: "1.00" }, { account: "swing", ratio: "0.50" }] }] })
+    const copy = vi.spyOn(api, "copyOrder").mockResolvedValue({ group: "desk", allocation: "ratio", client_order_id: "c", quantity: 2, preview: false, results: [
+      { account: "main", quantity: 2, ok: true, status: 201, response: { order: { id: "9", status: "working" } } },
+      { account: "swing", quantity: 1, ok: false, status: 422, response: { error: { code: "BUYING_POWER", message: "Not enough" } } }] })
+    await render()
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    await setField("Limit price", "15.00")
+    await setField("Copy to group", "desk")
+    expect(host.textContent).toContain("Each account of desk submits it as its own order")
+    await click("Submit order")
+    expect(api.submitOrder).not.toHaveBeenCalled()
+    expect(copy).toHaveBeenCalledWith("desk", expect.objectContaining({ limit_price: "15.00", quantity: 1 }), "open")
+    expect(host.textContent).toContain("1 of 2 accounts accepted")
+    expect(host.textContent).toContain("BUYING_POWER: Not enough")
+  })
   it("submits a walk", async () => {
     await render()
     await setField("Limit price", "15.00")

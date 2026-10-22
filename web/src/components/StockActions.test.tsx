@@ -202,6 +202,68 @@ describe("trading shares", () => {
     await type(host.querySelector("input")!, "101")
     expect([...host.querySelectorAll("button")].find((b) => b.textContent === "Sell 101 SPY")!.disabled).toBe(true)
   })
+  it("offers extended hours only on a feed with extended-hours prints", async () => {
+    vi.mocked(useLive).mockReturnValue({ ...liveState({ ...status, provider: { ...status.provider, name: "cboe", extended_hours_prints: false } }, null, "open"), underlyings: [
+      { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },
+    ] } as ReturnType<typeof useLive>)
+    vi.spyOn(api, "portfolio").mockResolvedValue({ ...portfolio, stocks: [] })
+    vi.spyOn(api, "account").mockResolvedValue(account)
+    const preview = vi.spyOn(api, "previewStockOrder").mockRejectedValue(new Error("fixture preview"))
+    vi.spyOn(api, "previewStock").mockRejectedValue(new Error("fixture preview"))
+    await act(async () => root.render(<QueryClientProvider client={new QueryClient()}>
+      <TradeSharesDialog trading={status.trading!} onClose={() => {}} /></QueryClientProvider>))
+    const kind = host.querySelector<HTMLSelectElement>('select[aria-label="Share order type"]')!
+    await act(async () => { kind.value = "limit"; kind.dispatchEvent(new Event("change", { bubbles: true })) })
+    const input = (label: string) => [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith(label))!.querySelector("input")!
+    await type(input("Limit price"), "505.00")
+    expect(input("Extended hours").disabled).toBe(true)
+    expect(host.textContent).toContain("cboe delivers no premarket or after-hours prints, so an extended-hours limit could not fill here.")
+    expect(host.textContent).not.toContain("04:00–20:00 ET")
+    await waitForRender(() => expect(preview).toHaveBeenCalled())
+    expect(preview).toHaveBeenLastCalledWith(expect.not.objectContaining({ extended_hours: true }), status.trading!.write)
+  })
+  it("places a working bracketed limit and cancels working share orders", async () => {
+    vi.mocked(useLive).mockReturnValue({ ...liveState({ ...status, provider: { ...status.provider, extended_hours_prints: true } }, null, "open"), underlyings: [
+      { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },
+    ] } as ReturnType<typeof useLive>)
+    const working = { id: "4", client_order_id: "x", actor: "web", symbol: "SPY", side: "sell" as const, type: "stop" as const, time_in_force: "gtc" as const,
+      shares: 50, limit_price: null, stop_price: "490.00", extended_hours: false, bracket: null, role: "stop_loss" as const, parent: "3", oco: null,
+      stop_loss: null, take_profit: null, status: "armed" as const, reason: null, accepted_at: portfolio.time, day_end: null, triggered_at: null,
+      ended_at: null, filled_shares: 0, fill_price: null, stock_fill: null }
+    vi.spyOn(api, "portfolio").mockResolvedValue({ ...portfolio, stocks: [], stock_orders: [working] })
+    vi.spyOn(api, "account").mockResolvedValue({ ...account, rules: { ...account.rules, require_stop_loss: true } })
+    const preview = vi.spyOn(api, "previewStockOrder").mockResolvedValue({ account_version: "17", simulated: true, decision: "ok", reason: null,
+      price: "510.00", cost: "50500.00", current: { buying_power: "100000.00" }, after: { buying_power: "49500.00" } } as never)
+    vi.spyOn(api, "previewStock").mockRejectedValue(new Error("fixture preview"))
+    const place = vi.spyOn(api, "placeStockOrder").mockResolvedValue({} as never)
+    const cancel = vi.spyOn(api, "cancelStockOrder").mockResolvedValue({} as never)
+    vi.stubGlobal("crypto", { randomUUID: () => "share-order-1" })
+    const closed = vi.fn()
+    await act(async () => root.render(<QueryClientProvider client={new QueryClient()}>
+      <TradeSharesDialog trading={status.trading!} onClose={closed} /></QueryClientProvider>))
+    await waitForRender(() => expect(host.textContent).toContain("Working share orders"))
+    expect(host.textContent).toContain("Sell 50 SPY · stop · stop $490.00 · GTC · stop-loss · waiting for its stop")
+    // A plan requiring a stop opens shares only with a bracket stop.
+    await waitForRender(() => expect(host.textContent).toContain("Stop-loss required by this plan"))
+    const kind = host.querySelector<HTMLSelectElement>('select[aria-label="Share order type"]')!
+    await act(async () => { kind.value = "limit"; kind.dispatchEvent(new Event("change", { bubbles: true })) })
+    const input = (label: string) => [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith(label))!.querySelector("input")!
+    await type(input("Limit price"), "505.00")
+    await type(input("Bracket stop-loss"), "495.00")
+    await type(input("Bracket take-profit"), "530.00")
+    await act(async () => input("Extended hours").click())
+    expect(host.textContent).not.toContain("Stop-loss required by this plan")
+    await waitForRender(() => expect(host.textContent).toContain("$100,000.00 → $49,500.00"))
+    expect(preview).toHaveBeenLastCalledWith(expect.objectContaining({ type: "limit", limit_price: "505.00", extended_hours: true,
+      bracket: { stop_loss: "495.00", take_profit: "530.00" } }), status.trading!.write)
+    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === "Buy 100 SPY · limit")!
+    await act(async () => button.click())
+    expect(place).toHaveBeenCalledWith({ client_order_id: "share-order-1", symbol: "SPY", side: "buy", type: "limit", shares: 100, time_in_force: "day",
+      limit_price: "505.00", extended_hours: true, bracket: { stop_loss: "495.00", take_profit: "530.00" } }, status.trading!.write)
+    expect(closed).toHaveBeenCalled()
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Cancel 4")!.click())
+    expect(cancel).toHaveBeenCalledWith("4", status.trading!.write)
+  })
   it("blocks invalid share counts and shows server refusals", async () => {
     vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), underlyings: [
       { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },

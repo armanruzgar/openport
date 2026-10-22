@@ -486,6 +486,8 @@ export interface CashFlow {
 
 export interface Account {
   cash_flows?: CashFlow[]
+  /** Splits applied to the account, oldest first; absent from older servers. */
+  corporate_actions?: CorporateActionApplied[]
   cash_transfers_allowed?: boolean
   damaged?: AccountDamage | null
   journal_size?: JournalSize
@@ -630,7 +632,7 @@ export interface TradeNoteResponse extends TradeNote {
   trade: string
 }
 /** How shares changed hands: an option's exercise or assignment, a trade that reduced them, the account closing them when an evaluation is decided, or a reset. */
-export type ShareSource = "expiry_exercise" | "assignment" | "early_exercise" | "trade" | "rule" | "reset"
+export type ShareSource = "expiry_exercise" | "assignment" | "early_exercise" | "trade" | "rule" | "reset" | "split"
 /** One round trip in an underlying's shares from exercise and assignment, flat to flat or still open. */
 export interface ShareTrade {
   kind: "shares"
@@ -675,7 +677,19 @@ export interface ShareTrade {
 }
 /** One change in shares held, and how it came about. */
 /** buying_power_after records automatic delivery with buying-power checks; null/absent for older records and other fills. */
-export interface StockFill { id: string; symbol: string; shares: number; price: Money; time: string; source: ShareSource; option: string | null; buying_power_after?: Money | null }
+export interface StockFill { id: string; symbol: string; shares: number; price: Money; time: string; source: ShareSource; option: string | null; buying_power_after?: Money | null; stock_order?: string | null }
+export type StockOrderType = "market" | "limit" | "stop" | "stop_limit"
+/** A working share order's terms, as POST /api/stocks/orders takes them. */
+export interface StockOrderRequest {
+  client_order_id: string; symbol: string; side: Side; type: StockOrderType; shares: number
+  time_in_force?: "day" | "gtc"; limit_price?: Money; stop_price?: Money; extended_hours?: boolean
+  bracket?: { stop_loss?: Money; take_profit?: Money }
+  oco?: { side: Side; type: StockOrderType; shares: number; time_in_force?: "day" | "gtc"; limit_price?: Money; stop_price?: Money; extended_hours?: boolean }
+}
+export interface StockOrderBracket { stop_loss: Money | null; take_profit: Money | null }
+export interface StockOrder { id: string; client_order_id: string; actor: string; symbol: string; side: "buy" | "sell"; type: "limit" | "market" | "stop" | "stop_limit"; time_in_force: "day" | "gtc"; shares: number; limit_price: Money | null; stop_price: Money | null; extended_hours: boolean; bracket: StockOrderBracket | null; role: "entry" | "stop_loss" | "take_profit"; parent: string | null; oco: string | null; stop_loss: string | null; take_profit: string | null; status: "armed" | "cancelled" | "filled" | "partially_filled" | "rejected" | "working"; reason: Decision | null; accepted_at: string; day_end: string | null; triggered_at: string | null; ended_at: string | null; filled_shares: number; fill_price: Money | null; stock_fill: string | null }
+export interface StockOrdersResponse { account_version: string; stock_orders: StockOrder[] }
+export interface StockOrderResponse { account_version: string; stock_order: StockOrder; related_orders: StockOrder[]; stock_fills: StockFill[] }
 /** A dividend paid on (negative: charged to short) shares held into its ex-date. */
 export interface DividendPaid { symbol: string; ex_date: string; per_share: Money; shares: number; amount: Money; time: string }
 /** A trade with more than one entry: a roll, an adjustment or round trips the account grouped. */
@@ -1194,7 +1208,14 @@ export interface CalibrationSearch {
   bytes: number
   stopped: "complete" | "all_matched" | "file_limit" | "byte_limit" | "time_limit"
 }
+/** What one contract of an adjusted series delivers for 100 times its strike. */
+export interface Deliverable { shares: number; cash: Money }
+export interface AdjustedSeries { symbol: string; shares: number; cash: Money }
+/** A split applied to the account on its ex-date. */
+export interface CorporateActionApplied { symbol: string; ex_date: string; kind: "split"; numerator: number; denominator: number; shares_before: number; shares_after: number; cash_in_lieu: Money; time: string; series: AdjustedSeries[] }
 export interface Position {
+  /** An adjusted series' deliverable after a split; null or absent for 100 shares. */
+  deliverable?: Deliverable | null
   symbol: string
   underlying: string
   expiry: string
@@ -1216,11 +1237,13 @@ export interface Position {
   fresh: boolean
   awaiting_settlement: boolean
   /** While awaiting settlement: on the recorded closing print, or by a value entered by hand (AM series, or no print arrived). */
-  settle_by?: "closing_print" | "opening_print" | "manual" | null
+  settle_by?: "closing_print" | "opening_print" | "soq" | "manual" | null
   /** It cannot be sold now (its quote shows only an ask, or it has expired), so a long can be abandoned; absent on older servers. */
   no_bid?: boolean
   /** A long option instructed not to be exercised at expiry; absent on older servers. */
   do_not_exercise?: boolean
+  /** The mark is modelled (a split-adjusted series no listed series pays the same as), not quoted: it never trades; absent on older servers. */
+  modelled_mark?: boolean
   greeks: { delta: Num; gamma: Num; vega: Num; theta: Num; dollar_delta: Num; dollar_gamma_1pct: Num; vega_dollars: Num; theta_dollars: Num }
   /** Today's P&L by Greek for this contract; null until its first fill or rollover on this server. */
   attribution?: Attribution | null
@@ -1262,6 +1285,8 @@ export interface Portfolio {
   positions: Position[]
   /** Absent from older servers. */
   stocks?: StockHolding[]
+  /** Open share orders, oldest first; absent from older servers. */
+  stock_orders?: StockOrder[]
   buying_power?: BuyingPower
   /** The requirement by underlying with what holds it; absent from older servers. */
   margin?: MarginUnderlying[]
@@ -1402,6 +1427,15 @@ export interface CancelAllResponse { account_version: string; cancelled_orders: 
 export type CancelRequest = { underlying?: string; orders?: never } | { orders: string[]; underlying?: never }
 export interface AccountListItem { damaged?: AccountDamage | null; journal_size?: JournalSize; id: string; name: string; archived?: boolean; sandbox_idle_seconds?: number; trading: TradingStatus; equity: Money | null }
 export interface AccountsResponse { accounts: AccountListItem[] }
+/** A named group of live accounts one order can be copied to. Ratio members carry their ratio. */
+export interface AccountGroupMember { account: string; ratio?: Money }
+export interface AccountGroup { name: string; allocation: "equity" | "ratio"; members: AccountGroupMember[] }
+export interface AccountGroupInput { allocation: "equity" | "ratio"; members: AccountGroupMember[] }
+export interface AccountGroupsResponse { groups: AccountGroup[] }
+export interface AccountGroupDeleted { deleted: string }
+/** One member's part of a copied order: its size, and its own HTTP status and response. */
+export interface CopyOrderResult { account: string; quantity: number; ok: boolean; skipped?: boolean; code?: string; message?: string; status?: number; response?: object | null }
+export interface CopyOrderResponse { group: string; allocation: "equity" | "ratio"; client_order_id: string; quantity: number; preview: boolean; results: CopyOrderResult[] }
 export type CreateAccountRequest = { name: string; copy_settings_from?: string; fill_model?: FillModel; fee_model?: FeeModel } & FillModelSettings & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
 export interface CreateAccountResponse { account: { id: string; name: string; account_version: string; plan: string | null; plan_id?: string | null; equity: Money } }
 /** Delivered shares a flatten could not close, as held after it, and why. */

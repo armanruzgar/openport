@@ -53,6 +53,9 @@ struct MarkedPosition {
   bool no_bid = false;
   /// A long option the trader instructed not to be exercised at expiry.
   bool do_not_exercise = false;
+  /// Its mark is modelled (QuoteObservation::modelled), not quoted: it cannot trade
+  /// until a listed series quotes it.
+  bool modelled_mark = false;
 };
 struct MarkedStock {
   StockPosition position;
@@ -121,6 +124,10 @@ struct TradingSnapshot {
   std::optional<Money> payouts_received; ///< Derived from payout events across all attempts; never serialized.
   std::vector<AttemptSummary> attempts;  ///< Earlier attempts, oldest first.
   SharedVector<StockFill> stock_fills;    ///< Every change in shares held, oldest first.
+  SharedVector<StockOrder> stock_orders;  ///< Every share order, in acceptance sequence.
+  /// Adjusted series' deliverables by padded OSI, and the splits applied, oldest first.
+  SharedMap<std::string, Deliverable> deliverables;
+  SharedVector<CorporateActionRecord> corporate_actions;
   SharedVector<CashFlow> cash_flows;
   SharedVector<DividendPayment> dividends;  ///< Dividends paid on held shares, oldest first.
   /// Notes and tags by trade, named by its opening fill's ID.
@@ -449,7 +456,9 @@ class TradingSession {
   TradingSession& operator=(const TradingSession&) = delete;
 
   /// Caller must resolve from a known definition. Conflicting OSI terms reject.
-  CommandResult define(const md::OptionContract& contract, Timestamp time);
+  /// An adjusted series (OptionContract::standard false) needs its `deliverable`;
+  /// one the account adjusted itself keeps the deliverable it was given.
+  CommandResult define(const md::OptionContract& contract, Timestamp time, std::optional<Deliverable> deliverable = {});
   /// The integration may reject a resolved but unsupported definition before
   /// registration; it still consumes the client ID and journals a rejected order.
   CommandResult submit(OrderRequest request, Timestamp time, Decision rejection = {});
@@ -576,7 +585,13 @@ class TradingSession {
   /// Kill latch persists across rollover.
   /// `dividends` are those going ex on the new trading date (and any skipped while
   /// the server was down): each pays the shares held into it, once.
-  CommandResult roll_day(Timestamp time, const std::vector<Dividend>& dividends = {});
+  /// `actions` are the splits going ex on the new trading date (and any skipped): each
+  /// applies once, before the dividends (see CorporateAction). Invalid terms throw
+  /// INVALID_ORDER.
+  CommandResult roll_day(Timestamp time, const std::vector<Dividend>& dividends = {},
+                         const std::vector<CorporateAction>& actions = {});
+  /// What each adjusted series delivers, by padded OSI; standard series are absent.
+  [[nodiscard]] const SharedMap<std::string, Deliverable>& deliverables() const;
   /// Practice only: positive deposits, negative withdrawals, whole cents. Retries
   /// of the same client ID and amount do nothing; transfers never count as P&L.
   CommandResult transfer_cash(std::string client_id, Money amount, Timestamp time);
@@ -641,6 +656,23 @@ class TradingSession {
   /// The same trade on a private copy, without recording anything.
   [[nodiscard]] StockPreview preview_trade_stock(const std::string& symbol, Quantity signed_shares, Timestamp time,
       std::optional<StockPrice> price = {}, Decision rejection = {}) const;
+  /// Accept a working share order (StockOrderRequest; invalid terms throw INVALID_ORDER)
+  /// and work it at once: a limit the fresh price crosses, a market order, or a stop
+  /// already reached executes now, in the session the order works in; the rest rest.
+  /// Opening orders take the account, plan, account-type and stop-requirement checks
+  /// at acceptance, seeing working sells, and reserve buying power at their limit (or
+  /// the price, or a buy stop's level) while they work; every execution takes the
+  /// checks trade_stock does at its price. A refusal at execution rejects the order; a
+  /// stale price, a closed session or a halt only makes it wait. A filled entry places
+  /// its bracket, and a fill cancels its OCO partner. A retry of the same
+  /// client_order_id and terms is answered as first accepted.
+  CommandResult submit_stock_order(StockOrderRequest request, Timestamp time, std::optional<StockPrice> price = {});
+  /// The same order on a private copy, without recording anything.
+  [[nodiscard]] StockPreview preview_stock_order(const StockOrderRequest& request, Timestamp time,
+      std::optional<StockPrice> price = {}, Decision rejection = {}) const;
+  /// Cancel an open share order: UNKNOWN_ORDER, ORDER_TERMINAL once it has ended, and
+  /// STOP_REQUIRED for the required stop of shares still held.
+  CommandResult cancel_stock_order(OrderId id, Timestamp time);
   /// Watch a value and announce, with an alert_fired event, when it reaches a
   /// level: see AlertSpec. Alerts are checked after each market batch and when
   /// created, so one whose condition already holds fires at once; a missing or

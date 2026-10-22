@@ -487,3 +487,24 @@ TEST(Time, RecordedCalendarScopeIsThreadLocalAndRestoresNestedScopes) {
   EXPECT_EQ(scheduled_days(), global);
   EXPECT_EQ(regular_close_hour(day), original);
 }
+
+namespace {
+TEST(Calendar, StockExtendedHoursRunPremarketAndAfterHoursOnBusinessDays) {
+  using namespace openport::md;
+  const Date day{2026, 9, 22};
+  EXPECT_FALSE(stock_extended_session(new_york_to_utc(day, 3, 59)).open);
+  const auto pre = stock_extended_session(new_york_to_utc(day, 4, 0));
+  EXPECT_EQ(pre.name, "premarket");
+  EXPECT_EQ(pre.end, new_york_to_utc(day, 9, 30));
+  EXPECT_EQ(stock_extended_session(new_york_to_utc(day, 12, 0)).name, "regular");
+  const auto after = stock_extended_session(new_york_to_utc(day, 16, 0));
+  EXPECT_EQ(after.name, "after_hours");
+  EXPECT_EQ(after.end, new_york_to_utc(day, 20, 0));
+  EXPECT_FALSE(stock_extended_session(new_york_to_utc(day, 20, 0)).open);
+  // An early close ends after hours at 17:00; weekends and holidays have none.
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 27}, 13, 30)).end, new_york_to_utc({2026, 11, 27}, 17, 0));
+  EXPECT_FALSE(stock_extended_session(new_york_to_utc({2026, 11, 27}, 17, 0)).open);
+  EXPECT_FALSE(stock_extended_session(new_york_to_utc({2026, 9, 26}, 8, 0)).open);
+  EXPECT_FALSE(stock_extended_session(new_york_to_utc({2026, 11, 26}, 8, 0)).open);
+}
+}  // namespace

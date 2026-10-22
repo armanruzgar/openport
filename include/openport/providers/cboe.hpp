@@ -245,4 +245,84 @@ class CboeHolidaySchedule {
   std::string error_;
 };
 
+/// Cboe's special opening quotation (SOQ) indices: the values AM-settled index options
+/// settle on, published by Cboe Global Indices under their own symbols (SET is SPX's,
+/// RLS RUT's, DJS DJX's and VRO VIX's). NDX's SOQ is Nasdaq's and is not listed.
+struct CboeSoqIndex {
+  std::string_view underlying;
+  std::string_view index;
+};
+inline constexpr CboeSoqIndex kCboeSoqIndices[] = {{"SPX", "SET"}, {"RUT", "RLS"}, {"DJX", "DJS"}, {"VIX", "VRO"}};
+/// The SOQ index of an underlying's AM-settled options, or empty.
+[[nodiscard]] std::string_view cboe_soq_index(std::string_view underlying);
+/// Cboe's daily history of an SOQ index ("DATE,SET" then "MM/DD/YYYY,value" rows).
+/// Its row for a date is the published record AM options settle on. The index's
+/// delayed quote is not used: when it shows the day's value cannot be told reliably
+/// from its trade time, which can come before every component has opened.
+[[nodiscard]] std::string cboe_soq_history_url(std::string_view index);
+
+/// One published special opening quotation: a history row, with its date.
+struct SettlementQuotation {
+  std::string underlying;
+  std::string index;
+  md::Date date;
+  double value = 0;
+  std::string url;
+  bool operator==(const SettlementQuotation&) const = default;
+};
+/// The rows of a history CSV dated on or after `since`, skipping any that are not a
+/// date and a positive finite value. Throws std::runtime_error for a document without
+/// the "DATE,<index>" header.
+[[nodiscard]] std::vector<SettlementQuotation> parse_cboe_soq_history(std::string_view csv, std::string_view underlying,
+                                                                      std::string_view index, md::Date since = {});
+/// How many days back CboeSettlementQuotations keeps looking for a date's row: an
+/// AM position awaiting its published value can still settle on it until then.
+inline constexpr std::int64_t kCboeSoqLookbackDays = 14;
+/// Fetches the special opening quotations of the AM-settled underlyings it is given:
+/// their daily history when started and every `interval` (Cboe's CDN caches it for 15
+/// minutes), so a date's row is found soon after Cboe publishes it and a restart still
+/// finds the values of the last `lookback_days`. `sink` receives every value it holds
+/// each time one is new or changed.
+class CboeSettlementQuotations {
+ public:
+  using Sink = std::function<void(std::vector<SettlementQuotation>)>;
+  struct Options {
+    std::chrono::seconds interval{15 * 60};
+    std::chrono::seconds retry{15 * 60};
+    std::chrono::seconds timeout{30};
+    std::int64_t lookback_days = kCboeSoqLookbackDays;
+    std::function<md::Timestamp()> clock = md::now;
+  };
+
+  CboeSettlementQuotations(std::vector<std::string> underlyings, Sink sink, Options options);
+  ~CboeSettlementQuotations() { stop(); }
+  CboeSettlementQuotations(const CboeSettlementQuotations&) = delete;
+  CboeSettlementQuotations& operator=(const CboeSettlementQuotations&) = delete;
+
+  /// The underlyings it fetches: those with a Cboe SOQ index, once each.
+  [[nodiscard]] const std::vector<std::string>& underlyings() const { return underlyings_; }
+  void start();
+  /// Interrupts a request in flight and joins.
+  void stop();
+  /// Fetches what is due, on the caller's thread; returns when it next is.
+  md::Timestamp poll_once(net::HttpClient& http);
+  /// The latest failures, one per line, or empty.
+  [[nodiscard]] std::string error() const;
+
+ private:
+  void run();
+
+  std::vector<std::string> underlyings_;
+  Sink sink_;
+  Options options_;
+  md::Timestamp due_ = 0;
+  std::map<std::pair<std::string, md::Date>, SettlementQuotation> known_;
+  std::thread thread_;
+  std::atomic<bool> stopping_{false};
+  std::mutex wake_mutex_;
+  std::condition_variable wake_;
+  mutable std::mutex error_mutex_;
+  std::string error_;
+};
+
 }  // namespace openport::providers

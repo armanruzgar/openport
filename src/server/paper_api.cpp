@@ -3,6 +3,7 @@
 #include "openport/server/sandboxes.hpp"
 #include "openport/server/strategy_search.hpp"
 #include "openport/server/hedges.hpp"
+#include "openport/server/account_groups.hpp"
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
 #include "metric_cache.hpp"
@@ -22,6 +23,7 @@
 #include "openport/server/series.hpp"
 #include "openport/trading/stress.hpp"
 #include "openport/server/plans.hpp"
+#include "openport/providers/cboe.hpp"
 #include "openport/trading/contracts.hpp"
 #include "openport/trading/fill_quality.hpp"
 #include "openport/trading/history.hpp"
@@ -31,6 +33,13 @@ std::string_view settle_by(const md::OptionContract& c, const trading::TradingSn
   // A replay records the first opening print at or after 9:30 however late it comes.
   if (c.settlement == md::Settlement::AM && view.opening_settlement && (view.run || s.time <= c.expiry_time() + kOpeningPrintWait))
     return "opening_print";
+  // A published special opening quotation is still fetched while its date is within
+  // the fetcher's lookback, however late Cboe posts the row.
+  if (c.settlement == md::Settlement::AM &&
+      std::find(view.published_opening_quotations.begin(), view.published_opening_quotations.end(), c.underlying) !=
+          view.published_opening_quotations.end() &&
+      md::days_since_epoch(md::trading_date(s.time)) - md::days_since_epoch(c.expiry) <= providers::kCboeSoqLookbackDays)
+    return "soq";
   if (c.settlement == md::Settlement::PM &&
       (s.closing_prints.contains(c.underlying + " " + md::format_date(c.expiry)) ||
        s.time < md::new_york_to_utc(c.expiry, md::regular_close_hour(c.expiry), 0) + kLastPrintWait))
@@ -499,6 +508,30 @@ json queue_json(const Order& o) {
           {"joined_at", md::format_timestamp(q.joined)}, {"updated_at", md::format_timestamp(q.updated)},
           {"source", q.source}, {"simulated", true}};
 }
+const char* stock_type_name(StockOrderType type) {
+  constexpr const char* names[] = {"market", "limit", "stop", "stop_limit"};
+  return names[static_cast<int>(type)];
+}
+json stock_order_json(const StockOrder& o) {
+  constexpr const char* statuses[] = {"working", "partially_filled", "filled", "cancelled", "rejected", "armed"};
+  constexpr const char* roles[] = {"entry", "stop_loss", "take_profit"};
+  const auto& r = o.request;
+  const auto id = [](OrderId value) { return value ? json(std::to_string(value)) : json(nullptr); };
+  return {{"id", std::to_string(o.id)}, {"client_order_id", r.client_order_id}, {"actor", o.actor}, {"symbol", r.symbol},
+          {"side", side_name(r.side)}, {"type", stock_type_name(r.type)}, {"time_in_force", r.tif == TimeInForce::Gtc ? "gtc" : "day"},
+          {"shares", r.shares}, {"limit_price", money(r.limit_price)}, {"stop_price", money(r.stop_price)},
+          {"extended_hours", r.extended_hours},
+          {"bracket", r.stop_loss || r.take_profit ? json{{"stop_loss", money(r.stop_loss)}, {"take_profit", money(r.take_profit)}} : json(nullptr)},
+          {"role", roles[static_cast<int>(o.role)]}, {"parent", id(o.parent)}, {"oco", id(o.oco)},
+          {"stop_loss", id(o.stop_loss)}, {"take_profit", id(o.take_profit)},
+          {"status", statuses[static_cast<int>(o.status)]}, {"reason", decision_json(o.reason)},
+          {"accepted_at", md::format_timestamp(o.accepted_at)},
+          {"day_end", o.day_end == std::numeric_limits<Timestamp>::max() ? json(nullptr) : json(md::format_timestamp(o.day_end))},
+          {"triggered_at", o.triggered_at ? json(md::format_timestamp(o.triggered_at)) : json(nullptr)},
+          {"ended_at", o.ended_at ? json(md::format_timestamp(o.ended_at)) : json(nullptr)},
+          {"filled_shares", o.filled_shares}, {"fill_price", o.filled_shares ? json(o.fill_price.str()) : json(nullptr)},
+          {"stock_fill", id(o.stock_fill)}};
+}
 json order_json(const Order& o, const TradingView& view) {
   constexpr const char* statuses[] = {"working", "partially_filled", "filled", "cancelled", "rejected", "armed"};
   constexpr const char* roles[] = {"", "stop_loss", "take_profit"};
@@ -828,10 +861,17 @@ json portfolio_json(const TradingView& view) {
         {"market_value", money(p.market_value)}, {"unrealised", money(p.unrealised)},
         {"realised", position.realised.str()}, {"fees", position.fees.str()}, {"fresh", p.fresh},
         {"awaiting_settlement", p.awaiting_settlement}, {"no_bid", p.no_bid}, {"do_not_exercise", p.do_not_exercise},
+        {"modelled_mark", p.modelled_mark},
         // How an expired position settles: on the closing print, recorded or still awaited
         // (with the last print before the close as the fallback) for half an hour after the
         // close, or by a value entered by hand once no automatic source remains.
         {"settle_by", !p.awaiting_settlement ? json(nullptr) : json(std::string(settle_by(c, s, view)))},
+        // An adjusted series: what one contract delivers now, or null for 100 shares.
+        {"deliverable", [&]() -> json {
+           const auto d = s.deliverables.find(c.osi_symbol());
+           if (d == s.deliverables.end()) return nullptr;
+           return {{"shares", d->second.shares}, {"cash", d->second.cash.str()}};
+         }()},
         {"greeks", position_greeks(p, view)},
         {"attribution", s.attributions.contains(c.osi_symbol()) ? attribution_json(s.attributions.at(c.osi_symbol())) : json(nullptr)},
         {"trade", trade_of(c.osi_symbol())}, {"lifetime", lifetime_of(c.osi_symbol())}});
@@ -897,7 +937,12 @@ json portfolio_json(const TradingView& view) {
           {"valuation_complete", s.valuation_complete}, {"quality_flags", flags}, {"positions", positions}, {"stocks", stocks},
           {"buying_power", buying_power_json(s.buying_power)}, {"margin", margin_json(s.margin)},
           {"attribution", attribution_json(s.attribution)},
-          {"liquidity_used", liquidity_used_json(view)}, {"closed", closed}, {"strategies", strategies}};
+          {"liquidity_used", liquidity_used_json(view)}, {"closed", closed}, {"strategies", strategies},
+          {"stock_orders", [&] {
+             json open = json::array();
+             for (const auto& o : s.stock_orders) if (o.open()) open.push_back(stock_order_json(o));
+             return open;
+           }()}};
 }
 json damage_json(const std::optional<AccountDamage>& damage) {
   if (!damage) return nullptr;
@@ -1081,6 +1126,18 @@ json account_json(const TradingView& view) {
                      {"payouts_received", costs.payouts_received.str()}, {"net", (costs.payouts_received - costs.total()).str()},
                      {"fee_charged", s.fee_charged.amount.str()}, {"fee_kind", nullable(s.fee_charged.kind)}}},
           {"cash_transfers_allowed", r.practice()}, {"cash_flows", cash_flows},
+          {"corporate_actions", [&] {
+             json list = json::array();
+             for (const auto& a : s.corporate_actions) {
+               json series = json::array();
+               for (const auto& [symbol, d] : a.series) series.push_back({{"symbol", symbol}, {"shares", d.shares}, {"cash", d.cash.str()}});
+               list.push_back({{"symbol", a.symbol}, {"ex_date", md::format_date(a.ex_date)}, {"kind", "split"},
+                               {"numerator", a.numerator}, {"denominator", a.denominator}, {"shares_before", a.shares_before},
+                               {"shares_after", a.shares_after}, {"cash_in_lieu", a.cash_in_lieu.str()},
+                               {"time", md::format_timestamp(a.time)}, {"series", series}});
+             }
+             return list;
+           }()},
           {"attempts", attempts}};
 }
 /// How a change in shares came about.
@@ -1097,13 +1154,15 @@ json share_source(const StockFill& fill) {
     case StockSource::Trade: return "trade";
     case StockSource::Rule: return "rule";
     case StockSource::Reset: return "reset";
+    case StockSource::Split: return "split";
   }
   return nullptr;
 }
 json stock_fill_json(const StockFill& fill) {
   return {{"id", std::to_string(fill.id)}, {"symbol", fill.symbol}, {"shares", fill.shares},
           {"price", fill.price.str()}, {"time", md::format_timestamp(fill.time)}, {"source", share_source(fill)},
-          {"option", nullable(fill.option)}, {"buying_power_after", money(fill.buying_power_after)}};
+          {"option", nullable(fill.option)}, {"buying_power_after", money(fill.buying_power_after)},
+          {"stock_order", fill.stock_order ? json(std::to_string(fill.stock_order)) : json(nullptr)}};
 }
 const char* closure_name(ClosureKind kind) {
   return kind == ClosureKind::Settlement ? "settlement" : kind == ClosureKind::Exercise ? "exercise"
@@ -1539,12 +1598,36 @@ ApiResponse command_response(const TradingCommand& command, const TradingReply& 
       break;
     }
     case TradingCommand::Kind::Playbook: body = json::parse(reply.playbook_result); break;
+    case TradingCommand::Kind::SubmitStockOrder:
+    case TradingCommand::Kind::CancelStockOrder: {
+      if (!reply.order_id || *reply.order_id == 0 || *reply.order_id > s.stock_orders.size())
+        return api_error(503, "TRADING_UNAVAILABLE", "Share order publication missing");
+      const auto& o = s.stock_orders.at(static_cast<std::size_t>(*reply.order_id - 1));
+      if (command.kind == TradingCommand::Kind::SubmitStockOrder && !reply.replayed) status = 201;
+      body["stock_order"] = stock_order_json(o);
+      // The orders it placed with it or by filling: its OCO partner and bracket exits.
+      body["related_orders"] = json::array();
+      for (const auto other : {o.oco, o.stop_loss, o.take_profit})
+        if (other) body["related_orders"].push_back(stock_order_json(s.stock_orders.at(static_cast<std::size_t>(other - 1))));
+      body["stock_fills"] = json::array();
+      for (const auto& fill : s.stock_fills)
+        if (fill.stock_order == o.id || (o.oco && fill.stock_order == o.oco)) body["stock_fills"].push_back(stock_fill_json(fill));
+      break;
+    }
+    case TradingCommand::Kind::PreviewStockOrder:
     case TradingCommand::Kind::PreviewStock: {
       if (!reply.stock_preview) return api_error(503, "TRADING_UNAVAILABLE", "No share preview available");
       const auto& p = *reply.stock_preview;
+      const auto shares = command.stock_order ? (command.stock_order->side == Side::Buy ? command.stock_order->shares : -command.stock_order->shares)
+                                              : command.quantity;
       body = {{"account_version", std::to_string(s.account_version)}, {"simulated", true},
               {"decision", p.decision.ok() ? "ok" : to_string(p.decision.code)}, {"reason", decision_json(p.decision)},
-              {"price", money(p.price)}, {"cost", p.price ? json((*p.price * command.quantity).str()) : json(nullptr)},
+              {"price", money(p.price)}, {"cost", [&]() -> json {
+                 // A share order costs its limit, or a stop's level, at most; a market order the price.
+                 const auto& o = command.stock_order;
+                 const auto bound = o && o->limit_price ? o->limit_price : o && o->stop_price ? o->stop_price : p.price;
+                 return bound ? json((*bound * shares).str()) : json(nullptr);
+               }()},
               {"current", what_if_account_json(p.current, view.config.scenarios)},
               {"after", what_if_account_json(p.after, view.config.scenarios)}};
       break;
@@ -2268,6 +2351,47 @@ OrderRequest parse_order(const json& body, std::size_t depth = 0) {
   if (!chained && chain_length(order) > kMaxChain) throw std::invalid_argument("A chain is at most four orders");
   return order;
 }
+/// A share order's body: POST /api/stocks/orders, its preview and its OCO partner.
+StockOrderRequest parse_stock_order(const json& body, bool partner = false) {
+  if (partner) fields(body, {"side", "type", "shares"}, {"time_in_force", "limit_price", "stop_price", "extended_hours"});
+  else fields(body, {"client_order_id", "symbol", "side", "type", "shares"},
+              {"time_in_force", "limit_price", "stop_price", "extended_hours", "bracket", "oco"});
+  StockOrderRequest r;
+  if (!partner) {
+    r.client_order_id = string_field(body, "client_order_id");
+    if (!valid_client_order_id(r.client_order_id)) throw std::invalid_argument("client_order_id must be 1-64 printable bytes");
+    r.symbol = string_field(body, "symbol");
+  }
+  const auto side = string_field(body, "side");
+  if (side != "buy" && side != "sell") throw std::invalid_argument("side must be buy or sell");
+  r.side = side == "buy" ? Side::Buy : Side::Sell;
+  const auto type = string_field(body, "type");
+  if (type == "market") r.type = StockOrderType::Market;
+  else if (type == "limit") r.type = StockOrderType::Limit;
+  else if (type == "stop") r.type = StockOrderType::Stop;
+  else if (type == "stop_limit") r.type = StockOrderType::StopLimit;
+  else throw std::invalid_argument("type must be market, limit, stop or stop_limit");
+  r.shares = integer_field(body, "shares");
+  const auto tif = body.contains("time_in_force") ? string_field(body, "time_in_force") : std::string("day");
+  if (tif != "day" && tif != "gtc") throw std::invalid_argument("time_in_force must be day or gtc for shares");
+  r.tif = tif == "gtc" ? TimeInForce::Gtc : TimeInForce::Day;
+  if (body.contains("limit_price")) r.limit_price = decimal_field(body, "limit_price");
+  if (body.contains("stop_price")) r.stop_price = decimal_field(body, "stop_price");
+  if (body.contains("extended_hours")) r.extended_hours = boolean_field(body, "extended_hours");
+  if (body.contains("bracket")) {
+    const auto& bracket = body.at("bracket");
+    fields(bracket, {}, {"stop_loss", "take_profit"});
+    if (bracket.contains("stop_loss")) r.stop_loss = decimal_field(bracket, "stop_loss");
+    if (bracket.contains("take_profit")) r.take_profit = decimal_field(bracket, "take_profit");
+    if (!r.stop_loss && !r.take_profit) throw std::invalid_argument("A bracket needs a stop_loss, a take_profit or both");
+  }
+  if (body.contains("oco")) {
+    auto other = parse_stock_order(body.at("oco"), true);
+    other.symbol = r.symbol;
+    r.oco.push_back(std::move(other));
+  }
+  return r;
+}
 TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   TradingCommand command;
   if (path.starts_with("/api/accounts/")) {
@@ -2296,6 +2420,12 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
     command.kind = TradingCommand::Kind::DeleteAlert;
     command.alert_id = identifier(path.substr(std::string_view("/api/alerts/").size()));
+    return command;
+  }
+  if (request.method == "DELETE" && path.starts_with("/api/stocks/orders/")) {
+    if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
+    command.kind = TradingCommand::Kind::CancelStockOrder;
+    command.order_id = identifier(path.substr(std::string_view("/api/stocks/orders/").size()));
     return command;
   }
   if (request.method == "DELETE") {
@@ -2483,6 +2613,13 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     if (command.quantity <= 0 || command.quantity > 10'000'000)
       throw std::invalid_argument("shares must be a positive whole number, at most 10,000,000");
     if (side == "sell") command.quantity = -command.quantity;
+    return command;
+  }
+  if (path == "/api/stocks/orders" || path == "/api/stocks/orders/preview") {
+    command.kind = path.ends_with("/preview") ? TradingCommand::Kind::PreviewStockOrder : TradingCommand::Kind::SubmitStockOrder;
+    command.stock_order = parse_stock_order(body);
+    command.symbol = command.stock_order->symbol;
+    validate_stock_order(*command.stock_order);
     return command;
   }
   if (path == "/api/stocks/close") {
@@ -2913,6 +3050,8 @@ json historical_risk_json(const TradingView& view, const MetricsSource& source) 
     if (stock.fresh && stock.mark) prices[stock.position.symbol] = stock.mark->dollars();
   }
   const auto ledger = Ledger::restore({}, positions, stocks);
+  // Adjusted series reprice as the standard series that pay the same.
+  const DeliverablesScope adjusted(&s.deliverables);
   std::optional<Money> floor = view.config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt;
   if (s.soft_floor) floor = floor ? std::max(*floor, *s.soft_floor) : s.soft_floor;
   json stress = json::array();
@@ -3719,7 +3858,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       path != "/api/trades.csv" && path != "/api/fills.csv" && path != "/api/account" && path != "/api/account/equity" &&
       path != "/api/trades" && path != "/api/settlements" && path != "/api/plans" && path != "/api/accounts" && path != "/api/risk/profile" &&
       path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history" && path != "/api/risk/hedges" &&
-      path != "/api/fills/quality") return {};
+      path != "/api/fills/quality" && path != "/api/stocks/orders") return {};
   if (path == "/api/risk/hedges") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
@@ -3766,7 +3905,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     } else if (key == "archived" && path == "/api/accounts" && (value == "true" || value == "false")) archived = value == "true";
     else if (key == "account" && path != "/api/accounts" && valid_account(value)) account = value;
     else if (key == "dynamics" && path == "/api/risk" && parse_smile_dynamics(value)) dynamics = *parse_smile_dynamics(value);
-    else if (key == "status" && path == "/api/orders" && (value == "open" || value == "all")) status = value;
+    else if (key == "status" && (path == "/api/orders" || path == "/api/stocks/orders") && (value == "open" || value == "all")) status = value;
     else if (key == "client_order_id" && path == "/api/orders" && valid_client_order_id(value)) client_order_id = value;
     else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "open" || value == "closed" || value == "all")) status = value;
     else if (key == "attempt" && (path == "/api/trades" || path == "/api/trades.csv" || path == "/api/fills/quality") &&
@@ -3839,6 +3978,12 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"settlements", records}}.dump()};
   }
   if (path == "/api/portfolio") return ApiResponse{200, portfolio_json(*view).dump()};
+  if (path == "/api/stocks/orders") {
+    json list = json::array();
+    for (auto it = view->snapshot->stock_orders.rbegin(); it != view->snapshot->stock_orders.rend(); ++it)
+      if (status != "open" || it->open()) list.push_back(stock_order_json(*it));
+    return ApiResponse{200, json{{"account_version", std::to_string(view->snapshot->account_version)}, {"stock_orders", list}}.dump()};
+  }
   if (path == "/api/risk") {
     if (dynamics == SmileDynamics::StickyStrike) return ApiResponse{200, risk_json(*view).dump()};
     std::set<std::string> held;
@@ -3939,6 +4084,183 @@ bool strategy_search(const ApiRequest& request, const MetricsSource& source, Api
   }
   return true;
 }
+json account_group_json(const AccountGroup& group) {
+  json members = json::array();
+  for (const auto& m : group.members) {
+    members.push_back({{"account", m.account}});
+    if (group.allocation == Allocation::Ratio) members.back()["ratio"] = m.ratio.str();
+  }
+  return {{"name", group.name}, {"allocation", group.allocation == Allocation::Equity ? "equity" : "ratio"}, {"members", members}};
+}
+AccountGroup parse_account_group(std::string name, const json& body) {
+  fields(body, {"allocation", "members"});
+  AccountGroup group;
+  group.name = std::move(name);
+  const auto allocation = string_field(body, "allocation");
+  if (allocation != "ratio" && allocation != "equity") throw std::invalid_argument("allocation must be ratio or equity");
+  group.allocation = allocation == "equity" ? Allocation::Equity : Allocation::Ratio;
+  const auto& members = body.at("members");
+  if (!members.is_array()) throw std::invalid_argument("members must be an array");
+  for (const auto& m : members) {
+    if (group.allocation == Allocation::Ratio) fields(m, {"account"}, {"ratio"});
+    else fields(m, {"account"});
+    GroupMember member{string_field(m, "account")};
+    if (m.contains("ratio")) member.ratio = decimal_field(m, "ratio");
+    group.members.push_back(std::move(member));
+  }
+  validate_group(group);
+  return group;
+}
+
+/// One copied order's progress: each member's command and quantity, and its answer
+/// once its account has replied. The last reply completes the request.
+struct CopyFanOut {
+  std::mutex mutex;
+  AccountGroup group;
+  OrderRequest order;
+  bool preview = false;
+  std::vector<Quantity> quantities;
+  std::vector<std::optional<json>> results;
+  std::size_t pending = 0;
+  ApiCompletion complete;
+  void finish() {
+    json list = json::array();
+    bool all = true;
+    for (std::size_t i = 0; i < results.size(); ++i) {
+      list.push_back(*results[i]);
+      if (!list.back().value("ok", false)) all = false;
+    }
+    json body{{"group", group.name}, {"allocation", group.allocation == Allocation::Equity ? "equity" : "ratio"},
+              {"client_order_id", order.client_order_id}, {"quantity", order.quantity}, {"preview", preview}, {"results", list}};
+    // 207: some members were skipped or refused; each result says which and why.
+    complete({all ? 200 : 207, body.dump()});
+  }
+};
+
+/// /api/account-groups and /api/orders/copy: named groups of accounts and one order
+/// mirrored to each of a group's accounts as its own submission.
+bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiCompletion& complete) {
+  const auto question = request.target.find('?');
+  const std::string path = request.target.substr(0, question);
+  constexpr std::string_view prefix = "/api/account-groups";
+  const bool groups_path = path == prefix || path.starts_with(std::string(prefix) + "/");
+  const bool copy_path = path == "/api/orders/copy" || path == "/api/orders/copy/preview";
+  if (!groups_path && !copy_path) return false;
+  auto* groups = source.account_groups();
+  if (!groups) { complete(api_error(404, "NOT_FOUND", "Account groups are not offered by this source")); return true; }
+  if (!request.access.sandbox.empty()) {
+    complete(api_error(403, "ACCOUNT_PROTECTED", "Sandbox visitors trade their own account only"));
+    return true;
+  }
+  if (question != std::string::npos) { complete(api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter")); return true; }
+  try {
+    if (groups_path) {
+      if (path == prefix) {
+        if (request.method != "GET") { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return true; }
+        json list = json::array();
+        for (const auto& group : groups->list()) list.push_back(account_group_json(group));
+        complete({200, json{{"groups", list}}.dump()});
+        return true;
+      }
+      const auto name = path.substr(prefix.size() + 1);
+      if (!valid_group_name(name)) throw std::invalid_argument("A group name is 1-40 lowercase letters, digits or single hyphens");
+      if (request.method == "PUT") {
+        if (request.body.size() > 64 * 1024) throw std::invalid_argument("Body exceeds 64 KiB");
+        auto group = parse_account_group(name, strict_json(request.body));
+        for (const auto& m : group.members)
+          if (!known_account(source, m.account == kMainAccount ? std::string() : m.account)) {
+            complete(api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + m.account));
+            return true;
+          }
+        groups->put(group);
+        complete({200, account_group_json(group).dump()});
+      } else if (request.method == "DELETE") {
+        if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
+        complete(groups->remove(name) ? ApiResponse{200, json{{"deleted", name}}.dump()} : api_error(404, "UNKNOWN_GROUP", "No account group " + name));
+      } else {
+        complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method"));
+      }
+      return true;
+    }
+    if (request.method != "POST") { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return true; }
+    if (request.body.size() > 64 * 1024) throw std::invalid_argument("Body exceeds 64 KiB");
+    const auto body = strict_json(request.body);
+    fields(body, {"group", "order"});
+    const auto name = string_field(body, "group");
+    const auto group = groups->find(name);
+    if (!group) { complete(api_error(404, "UNKNOWN_GROUP", "No account group " + name)); return true; }
+    auto order = parse_order(body.at("order"));
+    if (!order.then.empty() || !order.oco.empty() || order.exits_only)
+      throw std::invalid_argument("A copied order takes no then, oco or exits_only: each account sizes its own");
+    // Equity allocation splits among the members whose positions are all marked; one
+    // that is not is skipped with its reason, and the rest take the whole order.
+    std::vector<std::optional<Money>> equity;
+    std::vector<bool> unmarked(group->members.size(), false);
+    if (group->allocation == Allocation::Equity)
+      for (std::size_t i = 0; i < group->members.size(); ++i) {
+        const auto& m = group->members[i];
+        const auto view = source.trading_view(m.account == kMainAccount ? std::string() : m.account);
+        if (!view || !view->snapshot) {
+          complete(api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + m.account));
+          return true;
+        }
+        unmarked[i] = !view->snapshot->valuation_complete;
+        equity.push_back(unmarked[i] ? std::nullopt : std::optional(view->snapshot->equity));
+      }
+    auto fan = std::make_shared<CopyFanOut>();
+    fan->group = *group;
+    fan->order = order;
+    fan->preview = path.ends_with("/preview");
+    fan->quantities = allocate(*group, order.quantity, equity);
+    fan->results.resize(group->members.size());
+    fan->complete = std::move(complete);
+    std::vector<std::pair<std::size_t, TradingCommand>> commands;
+    for (std::size_t i = 0; i < group->members.size(); ++i) {
+      const auto& account = group->members[i].account;
+      if (unmarked[i]) {
+        fan->results[i] = json{{"account", account}, {"quantity", 0}, {"ok", false}, {"skipped", true}, {"code", "STALE_QUOTE"},
+                               {"message", "Equity allocation needs this account's positions all marked; they are not, so it was sent nothing"}};
+        continue;
+      }
+      if (fan->quantities[i] <= 0) {
+        fan->results[i] = json{{"account", account}, {"quantity", 0}, {"ok", false}, {"skipped", true},
+                               {"message", "The allocation gives this account no units"}};
+        continue;
+      }
+      TradingCommand command;
+      command.kind = fan->preview ? TradingCommand::Kind::Preview : TradingCommand::Kind::Submit;
+      command.account = account == kMainAccount ? std::string() : account;
+      command.actor = request.actor;
+      command.order = order;
+      command.order.quantity = fan->quantities[i];
+      commands.emplace_back(i, std::move(command));
+    }
+    fan->pending = commands.size();
+    if (commands.empty()) { fan->finish(); return true; }
+    for (auto& [index, command] : commands) {
+      const auto i = index;
+      const auto record = [fan, i](ApiResponse response) {
+        json result{{"account", fan->group.members[i].account}, {"quantity", fan->quantities[i]}, {"status", response.status},
+                    {"ok", response.status >= 200 && response.status < 300}};
+        try { result["response"] = json::parse(response.body); } catch (const std::exception&) { result["response"] = nullptr; }
+        const std::lock_guard lock(fan->mutex);
+        fan->results[i] = std::move(result);
+        if (--fan->pending == 0) fan->finish();
+      };
+      if (!source.post_trading(command, [command, record](TradingReply reply) { record(command_response(command, reply)); }))
+        record(api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable"));
+    }
+  } catch (const PlanRestrictionError& error) {
+    complete(api_error(422, "INVALID_RULES", error.what()));
+  } catch (const TradingError& error) {
+    complete(api_error(reason_status(error.code()), std::string(to_string(error.code())), error.what()));
+  } catch (const std::invalid_argument& error) {
+    complete(api_error(400, "INVALID_REQUEST", error.what()));
+  } catch (const std::exception& error) {
+    complete(api_error(503, "GROUPS_UNAVAILABLE", error.what()));
+  }
+  return true;
+}
 }  // namespace
 
 void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompletion complete) {
@@ -3948,6 +4270,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (auto rejection = sandbox_visibility(request, source)) { complete(std::move(*rejection)); return; }
+  if (account_group_api(request, source, complete)) return;
   if (request.method == "GET" && strategy_search(request, source, complete)) return;
   if (request.method == "GET") {
     // A Heston or SABR fit takes up to seconds: it runs on the fit worker, never here.
@@ -4028,13 +4351,14 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
       (path.starts_with("/api/orders/") && path.ends_with("/preview")) ||
       path == "/api/orders/cancel" || path == "/api/positions/close" || path == "/api/positions/close/preview" || path == "/api/accounts" ||
       path == "/api/positions/exercise" || path == "/api/stocks/close" || path == "/api/stocks/trade" || path == "/api/stocks/trade/preview" ||
+      path == "/api/stocks/orders" || path == "/api/stocks/orders/preview" ||
       path == "/api/positions/abandon" || path == "/api/positions/instruction" ||
       path == "/api/risk/kill" || path == "/api/settlements" ||
       path == "/api/account/reset" || path == "/api/account/payout" || path == "/api/account/cash-flows" || path == "/api/market/halt" ||
       path == "/api/trades/group" || path == "/api/trades/ungroup" || path == "/api/alerts")) ||
       (request.method == "PUT" && (path == "/api/risk/limits" || path == "/api/risk/guardrails" || path.starts_with("/api/orders/") ||
                                    ((path.starts_with("/api/trades/") || path.starts_with("/api/days/")) && path.ends_with("/note")))) ||
-      (request.method == "DELETE" && (path.starts_with("/api/orders/") || path.starts_with("/api/alerts/"))) ||
+      (request.method == "DELETE" && (path.starts_with("/api/orders/") || path.starts_with("/api/alerts/") || path.starts_with("/api/stocks/orders/"))) ||
       ((request.method == "PATCH" || request.method == "DELETE") && path.starts_with("/api/accounts/"));
   if (!route) { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return; }
   std::string account = request.access.sandbox;

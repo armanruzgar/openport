@@ -4,6 +4,7 @@ import { useActionApi } from "../api/action-client"
 import { useWalk } from "./WalkFields"
 import { FeeAmount } from "./FeeAmount"
 import { useJoinTrade } from "./JoinTradeField"
+import { CopyGroupField, CopyResults, useAccountGroups } from "./AccountGroups"
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { LiquidityWarning } from "./LiquidityWarning"
@@ -11,7 +12,7 @@ import { ApiError } from "../api/client"
 import { useLive } from "../api/live"
 import { useSmileSurface } from "../api/smiles"
 import { useAccount, usePortfolio, useRefreshTrading, useTradingSession } from "../api/trading"
-import type { Bracket, NewOrder, Order, Side, TimeInForce, TriggerRequest, TriggerStudy, TradingStatus } from "../api/trading-types"
+import type { Bracket, CopyOrderResponse, NewOrder, Order, Side, TimeInForce, TriggerRequest, TriggerStudy, TradingStatus } from "../api/trading-types"
 import type { Expiry, OptionQuote, Surface } from "../api/types"
 import { count, days, fixed, isNum, price } from "../lib/format"
 import { dayLockNotice, flatRuleNotice, planEntryNotice, planMarketTime } from "../lib/plan-rules"
@@ -21,7 +22,7 @@ import { whatIfOrderText } from "./WhatIfPanel"
 import { probabilityOfProfit, probabilitySource, singleLeg, smileDistribution } from "../lib/probability"
 import { crossDirection, describeTrigger, marketability, opposite, split, stopDirection, strategyName } from "../lib/ticket"
 import { deliversShares, extendedSession, formatMoney, limitOnlyNotice, limitPriceText, limitPriceTick, paperNotice, roundToTick, sideFromCell, stepLimitPrice, ticketEstimate, validMoney } from "../lib/trading"
-import { useWriteToken } from "../lib/write-token"
+import { isSandboxToken, useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
 import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
 import { useStopTrail } from "./TrailFields"
@@ -104,13 +105,18 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   surface?: Surface
 }) {
   const api = useActionApi()
-  const { accountScope, underlyings, source, replay, status: feedStatus } = useLive()
+  const { accountScope, underlyings, source, replay, status: feedStatus, accounts: liveAccounts } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()
   const account = useAccount().data
   const portfolio = usePortfolio().data
   const join = useJoinTrade(selection.underlying, portfolio?.strategies)
+  // Live only: a group copies this order to each of its accounts as their own submission.
+  // Groups need more than one account; sandbox visitors have only their own.
+  const groups = useAccountGroups(source === "live" && !selection.closing && !isSandboxToken(token) && liveAccounts.length > 1)
+  const [copyGroup, setCopyGroup] = useState("")
+  const [copied, setCopied] = useState<CopyOrderResponse>()
   const [side, setSide] = useState<Side>(sideFromCell(selection.cell))
   const underlying = underlyings.find((u) => u.symbol === selection.underlying)
   // Extended protection runs as simulator-managed limits overnight and in curb.
@@ -246,6 +252,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   function newOrder() {
     request.current = null
     setOrder(undefined)
+    setCopied(undefined)
     setError(undefined)
     setSubmitted(false)
   }
@@ -265,6 +272,11 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
         ...(tags ? { tags } : {}), ...(note ? { note } : {}),
       }
       setSubmitted(true)
+      if (copying) {
+        const response = await api.copyOrder(copyGroup, request.current, trading.write)
+        if (sameSession()) setCopied(response)
+        return
+      }
       const response = await api.submitOrder(request.current, trading.write)
       if (sameSession()) setOrder(response.order)
     } catch (failure) {
@@ -306,6 +318,8 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
     : !stopLimitOn ? `${side === "buy" ? "Sells" : "Buys"} at market when ${stopText}.`
     : !exitLevel(stopLimit) ? "Enter the stop-limit's price."
     : `When ${stopText}, rests as a ${formatMoney(stopLimit)} limit to ${exitSide}: it fills at that price or better, and keeps waiting if the market gaps through it.`
+  const copyUnavailable = Object.keys(chain.terms).length ? "Chained orders (then or OCO) are sized by each account; send them per account." : join.group ? "Joining a trade names this account's trade; send it per account." : undefined
+  const copying = !!copyGroup && !copyUnavailable && source === "live"
   const stepQuantity = (delta: number) => setQuantity(String(Math.max(1, (Number.isSafeInteger(q) ? q : 1) + delta)))
 
   return <>
@@ -468,9 +482,11 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
       </details>
       {(feedStatus?.provider.simulated || (source === "replay" && replay?.demo)) && <p className="text-xs text-warn">Demo market · simulated prices and volume</p>}
       <p className="text-[11px] text-muted">Estimates use the {type === "limit" ? "limit price" : "current executable quote"}. Fills and fees are determined by the server.{type === "market" ? " Market orders execute once when eligible." : ""}</p>
+      <CopyGroupField groups={groups.data ?? []} value={copyGroup} onChange={setCopyGroup} disabled={submitted || pending} unavailable={copyUnavailable} />
+      {copied && <><CopyResults result={copied} /><button type="button" className="trade-button" onClick={newOrder}>New order</button></>}
       {(!submitted || pending) && <button className={`w-full rounded-md px-3 py-2.5 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50 ${side === "buy" ? "bg-bullish" : "bg-bearish"}`}
         type="submit" aria-label="Submit order" disabled={!valid || blocked || pending}>
-        {pending ? "Submitting…" : `${trigger ? "Arm · " : ""}${side === "buy" ? "Buy" : "Sell"} ${valid ? q : ""} ${name}${type === "limit" && validMoney(limitPrice) ? ` @ ${formatMoney(limitPrice)}` : type === "market" ? " at market" : ""}${bracket?.stop_loss || bracket?.take_profit ? " · bracket" : ""}`}
+        {pending ? "Submitting…" : `${copying ? `Copy to ${copyGroup} · ` : ""}${trigger ? "Arm · " : ""}${side === "buy" ? "Buy" : "Sell"} ${valid ? q : ""} ${name}${type === "limit" && validMoney(limitPrice) ? ` @ ${formatMoney(limitPrice)}` : type === "market" ? " at market" : ""}${bracket?.stop_loss || bracket?.take_profit ? " · bracket" : ""}`}
       </button>}
     </form>
   </>

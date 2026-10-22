@@ -296,6 +296,7 @@ export function shareSourceLabel(source: ShareSource | null, option: string | nu
     case "trade": return (shares === "closed") === (direction === "long") ? "Sold" : "Bought"
     case "rule": return "Closed by the evaluation"
     case "reset": return "Account reset"
+    case "split": return "Stock split"
     default: return "—"
   }
 }
