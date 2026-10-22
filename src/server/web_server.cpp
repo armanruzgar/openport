@@ -211,7 +211,9 @@ std::vector<NamedToken> parse_token_file(std::string_view text, bool allow_empty
     if (!(fields >> scopes >> token.secret) || fields >> extra || !identifier(token.name) ||
         token.name == "system" || token.name == "loopback" || token.name == "unknown" || token.name == "legacy" ||
         !names.insert(token.name).second || !secrets.insert(token.secret).second) invalid();
-    if (!std::all_of(token.secret.begin(), token.secret.end(), [](unsigned char c) { return c > 32 && c < 127; })) invalid();
+    // At least 8 characters: a shorter secret could be guessed through the API.
+    if (token.secret.size() < kTokenSecretMin ||
+        !std::all_of(token.secret.begin(), token.secret.end(), [](unsigned char c) { return c > 32 && c < 127; })) invalid();
     std::set<std::string> seen;
     std::size_t offset = 0;
     do {

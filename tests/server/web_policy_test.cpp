@@ -593,10 +593,12 @@ TEST(WebPolicy, NamedTokenFilesAreStrictAndDiagnosticsHideSecrets) {
   const auto hashed = server::parse_token_file("ops admin x#Gk2-long-secret #comment\n");
   ASSERT_EQ(hashed.size(), 1U);
   EXPECT_EQ(hashed[0].secret, "x#Gk2-long-secret");
-  for (const std::string line : {"", "# empty", "a read", "a read secret extra", "a trade: secret", "a read, secret",
-      "a unknown secret", "a read,read secret", "system admin secret", "loopback admin secret", "a read secret\na admin other",
-      "a read secret\nb admin secret", "a trade:../main secret", "a trade:MAIN secret", "a trade:bad_id secret", "a trade:-main secret",
-      "a trade:main--two secret", "a read secret\nb ,read other"}) {
+  for (const std::string line : {"", "# empty", "a read", "a read secret-1 extra", "a trade: secret-1", "a read, secret-1",
+      "a unknown secret-1", "a read,read secret-1", "system admin secret-1", "loopback admin secret-1", "a read secret-1\na admin other-01",
+      "a read secret-1\nb admin secret-1", "a trade:../main secret-1", "a trade:MAIN secret-1", "a trade:bad_id secret-1", "a trade:-main secret-1",
+      "a trade:main--two secret-1", "a read secret-1\nb ,read other-01",
+      // Secrets shorter than eight characters could be guessed.
+      "a read secret1"}) {
     try { (void)server::parse_token_file(line); FAIL() << "Accepted malformed token file"; }
     catch (const std::invalid_argument& error) {
       EXPECT_EQ(std::string(error.what()).find("secret"), std::string::npos);
@@ -843,7 +845,7 @@ TEST(WebPolicy, WriteModeSaysWhetherAWriteWithoutCredentialsIsAccepted) {
 }
 
 TEST(WebPolicy, RequireTokenProtectsLoopbackReadsAndWritesAndAttributesActors) {
-  server::WritePolicy policy{"127.0.0.1", "", {}, server::parse_token_file("alice read,trade:main secret"), false};
+  server::WritePolicy policy{"127.0.0.1", "", {}, server::parse_token_file("alice read,trade:main secret-1"), false};
   server::ApiRequest request{"POST", "/api/orders"};
   request.content_type = "application/json";
   std::string actor;
@@ -851,7 +853,7 @@ TEST(WebPolicy, RequireTokenProtectsLoopbackReadsAndWritesAndAttributesActors) {
   EXPECT_EQ(actor, "loopback");
   policy.require_token = true;
   EXPECT_TRUE(server::check_api_write(request, policy));
-  request.authorization = "Bearer secret";
+  request.authorization = "Bearer secret-1";
   EXPECT_FALSE(server::check_api_write(request, policy, &actor));
   EXPECT_EQ(actor, "alice");
   request.method = "GET";
