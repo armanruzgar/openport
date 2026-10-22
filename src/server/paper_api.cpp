@@ -3195,19 +3195,43 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (playbook_write(request, source, complete)) return;
-  // Read-only analysis of an uploaded file: it never reaches an account.
+  // Read-only analysis of an uploaded file: it never reaches an account. The file
+  // is parsed here; the recorded days are searched on the calibration worker.
   if (request.method == "POST" && request.target == "/api/fills/calibration") {
+    trading::BrokerImport parsed;
+    md::Timestamp age = 0;
     try {
       const auto body = json::parse(request.body);
       fields(body, {"csv"}, {"format", "max_quote_age_seconds"});
       const auto format = body.contains("format") ? string_field(body, "format") : std::string("auto");
-      const auto age = body.contains("max_quote_age_seconds") ? integer_field(body, "max_quote_age_seconds") : 60;
-      if (age < 1 || age > 3600) throw std::invalid_argument("max_quote_age_seconds must be 1 to 3600");
-      const auto parsed = parse_broker_fills(string_field(body, "csv"), format);
-      const auto quotes = recorded_quotes(source.recordings_directory(), parsed.fills, age * md::kNanosPerSecond);
-      complete({200, calibration_json(calibrate(parsed, quotes)).dump()});
+      const auto seconds = body.contains("max_quote_age_seconds") ? integer_field(body, "max_quote_age_seconds") : 60;
+      if (seconds < 1 || seconds > 3600) throw std::invalid_argument("max_quote_age_seconds must be 1 to 3600");
+      age = seconds * md::kNanosPerSecond;
+      parsed = parse_broker_fills(string_field(body, "csv"), format);
+      check_calibration_span(parsed.fills);
     } catch (const std::exception& error) {
       complete(api_error(400, "INVALID_REQUEST", error.what()));
+      return;
+    }
+    static CalibrationWorker worker;
+    auto job = [parsed = std::move(parsed), age, directory = source.recordings_directory(), complete](const std::atomic_bool& cancel) {
+      try {
+        const auto recorded = recorded_quotes(directory, parsed.fills, age, {}, &cancel);
+        if (recorded.search.stopped == "cancelled") {
+          complete(api_error(503, "ENGINE_STOPPING", "The server is stopping"));
+          return;
+        }
+        auto body = calibration_json(calibrate(parsed, recorded.quotes));
+        body["search"] = {{"files", recorded.search.files}, {"bytes", recorded.search.bytes}, {"stopped", recorded.search.stopped}};
+        complete({200, body.dump()});
+      } catch (const std::exception& error) {
+        complete(api_error(400, "INVALID_REQUEST", error.what()));
+      }
+    };
+    if (!worker.start(std::move(job))) {
+      auto busy = api_error(503, "CALIBRATION_BUSY", "Another fill calibration is running; retry when it finishes");
+      busy.retry_after = kInboxRetrySeconds;
+      complete(std::move(busy));
     }
     return;
   }

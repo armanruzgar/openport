@@ -6273,7 +6273,7 @@
     "/api/fills/calibration": {
       "post": {
         "summary": "Compare real broker fills with the paper fill models",
-        "description": "Read-only analysis: reads the CSV, looks each timed fill's quote up in the recorded days the replay picker lists (--record-dir, else ~/.openport/recordings), and returns the comparison with suggested settings. Nothing is stored or traded. A read token may post it.",
+        "description": "Read-only analysis: reads the CSV, looks each timed fill's quote up in the recorded days the replay picker lists (--record-dir, else ~/.openport/recordings), and returns the comparison with suggested settings. Nothing is stored or traded. Needs a token with read scope (or admin), even where GET is public; only an open loopback server, where an anonymous caller may already trade, accepts it without one. Sandbox tokens are refused. Timed fills may span at most 31 days (400). One calibration runs at a time, off the web server's threads: another meanwhile is 503 CALIBRATION_BUSY with Retry-After. The search is bounded; search says how far it got.",
         "x-scope": "read",
         "requestBody": {
           "required": true,
@@ -15361,7 +15361,7 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 10,
-            "description": "Stop stress's extra adverse ticks, set when its trigger was reached in a fast market; zero otherwise."
+            "description": "Stop stress's extra adverse ticks for the first fill attempt after its trigger, set when the trigger was reached in a fast market; a stop-limit still resting after that attempt reports zero. Zero otherwise."
           }
         },
         "required": [
@@ -29862,6 +29862,50 @@
         ],
         "additionalProperties": false
       },
+      "CalibrationSearch": {
+        "type": "object",
+        "description": "How far the search of the recorded days got. Recordings of the fills' days are read newest first; stopped is complete (every one read), all_matched (every timed fill had a quote), file_limit (more than 10,000 recordings in the directory, or 32 read), byte_limit (4 GiB read) or time_limit (20 seconds). Fills the search did not reach are unmatched.",
+        "properties": {
+          "files": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stopped": {
+            "anyOf": [
+              {
+                "const": "complete",
+                "type": "string"
+              },
+              {
+                "const": "all_matched",
+                "type": "string"
+              },
+              {
+                "const": "file_limit",
+                "type": "string"
+              },
+              {
+                "const": "byte_limit",
+                "type": "string"
+              },
+              {
+                "const": "time_limit",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "files",
+          "bytes",
+          "stopped"
+        ],
+        "additionalProperties": false
+      },
       "Calibration": {
         "type": "object",
         "description": "Real broker fills against the same-time books and the paper fill models, with suggested settings. Read-only: nothing is stored, journaled or traded.",
@@ -29917,6 +29961,9 @@
           },
           "stored": {
             "const": false
+          },
+          "search": {
+            "$ref": "#/components/schemas/CalibrationSearch"
           }
         },
         "required": [
@@ -29928,7 +29975,8 @@
           "paper_fills",
           "suggestion",
           "skipped",
-          "stored"
+          "stored",
+          "search"
         ],
         "additionalProperties": false
       }

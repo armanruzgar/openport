@@ -38,7 +38,7 @@ export function OrderDetailDialog({ order, onClose }: { order: Order; onClose: (
         Simulated queue at {formatMoney(order.queue.price)}: about {order.queue.ahead} {order.queue.ahead === 1 ? "contract" : "contracts"} ahead
         {order.queue.earned > 0 && <>, {order.queue.earned} traded past it</>} · {queueSource[order.queue.source]}, updated {when(order.queue.updated_at)}.
       </p>}
-      {!!order.stress_ticks && <p className="text-sm">Triggered in a fast market: its fills slip {order.stress_ticks} extra {order.stress_ticks === 1 ? "tick" : "ticks"} (stop stress).</p>}
+      {!!order.stress_ticks && <p className="text-sm">Triggered in a fast market: its first fill attempt slips {order.stress_ticks} extra {order.stress_ticks === 1 ? "tick" : "ticks"}, never past a limit (stop stress).</p>}
       {order.reason && <div className="text-sm">
         <div className="text-xs uppercase tracking-wide text-muted">Reason</div>
         <div><Badge tone={order.status === "rejected" ? "negative" : "neutral"}>{order.reason.code}</Badge> {order.reason.message}</div>

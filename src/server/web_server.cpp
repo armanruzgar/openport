@@ -335,7 +335,8 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     return {};
   }
   const bool create_sandbox = request.method == "POST" && request.target.substr(0, request.target.find('?')) == "/api/sandboxes";
-  // Fill calibration posts a file to analyse and changes nothing: reading permits it.
+  // Fill calibration posts a file to analyse and changes nothing, but searches the
+  // recorded days: a token with read scope permits it, never an anonymous reader.
   const bool analysis = request.method == "POST" && request.target == "/api/fills/calibration";
   if (create_sandbox && !policy.sandboxes) return api_error(404, "NOT_FOUND", "Sandboxes are not offered");
   std::vector<std::string> scopes;
@@ -372,9 +373,9 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     }
     // Reads are public unless --require-token, so a stale token saved in a browser tab
     // cannot hide the market data; writes still reject it.
-    if (name.empty() && (!(read || analysis) || policy.require_token))
+    if (name.empty() && (!read || policy.require_token))
       return api_error(403, "WRITE_TOKEN_REQUIRED", "A valid bearer token is required");
-  } else if (create_sandbox || (!policy.require_token && (read || analysis)) || open_writes(policy)) {
+  } else if (create_sandbox || (!policy.require_token && read) || open_writes(policy)) {
     name = "loopback";
     scopes = {"admin"};
   } else {
@@ -391,15 +392,16 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   if (!addressed) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
   const auto& account = *addressed;
   if (!sandbox.empty()) {
+    if (analysis) return api_error(403, "SCOPE_REQUIRED", "Sandbox tokens cannot run fill calibration");
     if (path.starts_with("/api/underlyings/") && path.ends_with("/volatility") && account != sandbox)
       return api_error(403, "SCOPE_REQUIRED", "Event volatility may read only this sandbox's plan calendar");
     const bool market_read = read && (path == "/ws" || path == "/api/status" || path == "/api/accounts" ||
         path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" || path.starts_with("/api/underlyings/"));
-    const bool account_read = (read || analysis) && (path == "/ws/events" || path == "/api/fills/calibration" || path == "/api/account" || path == "/api/account/equity" ||
+    const bool account_read = read && (path == "/ws/events" || path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/fills/quality" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/trades" ||
         path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts");
-    if ((!market_read && account != sandbox) || ((read || analysis) && !market_read && !account_read) ||
+    if ((!market_read && account != sandbox) || (read && !market_read && !account_read) ||
         (!read && path.starts_with("/api/playbooks")))
       return api_error(403, "SCOPE_REQUIRED", "Sandbox tokens may access only their own account and the demo market");
   }
@@ -418,7 +420,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool replay_settings = replay &&
       ((request.method == "POST" && (path == "/account/reset" || path == "/risk/kill" || path == "/account/cash-flows" || path == "/market/halt")) ||
        (request.method == "PUT" && (path == "/risk/limits" || path == "/risk/guardrails")));
-  const bool permitted = (create_sandbox && sandbox.empty()) || has("admin") || ((read || analysis) ? has("read") || !policy.require_token :
+  const bool permitted = (create_sandbox && sandbox.empty()) || has("admin") || (read ? has("read") || !policy.require_token : analysis ? has("read") :
       ((path == "/replay" || (replay && path == "/packs") || history_control || path == "/backtests" || path.starts_with("/backtests/")) ? has("replay") :
        (replay_settings && has("replay")) || (trade && (replay ? has("replay") : has("trade:*") || has("trade:" + account)))));
   if (!permitted) return api_error(403, "SCOPE_REQUIRED", "Token does not permit this operation");

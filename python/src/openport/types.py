@@ -818,6 +818,7 @@ class Calibration(TypedDict):
     suggestion: FillCalibration
     skipped: list[JSON]
     stored: bool
+    search: JSON  # files, bytes and stopped: how far the bounded search of recorded days got
 
 
 class HistoricalRisk(TypedDict):

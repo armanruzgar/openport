@@ -83,6 +83,10 @@ export function FillQualityPanel({ scope }: { scope: "current" | "all" }) {
 
 const outcome = (o: PaperOutcome) => o.fills ? formatMoney(o.price) : "rests"
 
+const searchLimits: Partial<Record<Calibration["search"]["stopped"], string>> = {
+  file_limit: "limit on recordings", byte_limit: "limit on bytes read", time_limit: "time limit",
+}
+
 /** What a broker export compares with: its fills, the books and the paper models. */
 export function CalibrationResult({ result }: { result: Calibration }) {
   const rows = result.rows.slice(0, 100)
@@ -93,6 +97,10 @@ export function CalibrationResult({ result }: { result: Calibration }) {
       With a limit at each real price, as displayed would have filled {result.paper_fills.as_displayed}, Conservative {result.paper_fills.conservative} and
       inside at midpoint {result.paper_fills.midpoint} of the matched fills at once. Nothing was stored, and the account is unchanged.
     </p>
+    {result.search && result.search.stopped in searchLimits && <p className="text-xs text-warn" role="status">
+      The search of recorded days stopped at its {searchLimits[result.search.stopped]} after {result.search.files} {result.search.files === 1 ? "recording" : "recordings"};
+      fills it did not reach are unmatched. Import fewer days at a time.
+    </p>}
     {result.matched > 0 && <FillGroups label="Real fill quality" groups={[result.real]} />}
     <Suggestion title="Suggested from your real fills" suggestion={result.suggestion} />
     <div className="max-w-full overflow-x-auto" tabIndex={0} role="region" aria-label="Real fills">

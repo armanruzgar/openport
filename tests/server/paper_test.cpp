@@ -17,6 +17,7 @@
 #include "openport/server/web_policy.hpp"
 #include "server/paper_json.hpp"
 #include "server/event_calendar.hpp"
+#include "server/fill_calibration.hpp"
 #include "support/scripted_market.hpp"
 #include "support/recording.hpp"
 
@@ -365,6 +366,8 @@ TEST_F(PaperEngine, FillQualityAndRealFillCalibrationReadWithoutTrading) {
   EXPECT_EQ(result["skipped"].size(), 1U);
   EXPECT_EQ(result["suggestion"]["basis"], "real_fills");
   EXPECT_TRUE(result["suggestion"]["fill_latency_ms"].is_null());
+  EXPECT_EQ(result["search"]["files"], 1);
+  EXPECT_EQ(result["search"]["stopped"], "complete");
   EXPECT_EQ(read(*engine, "/api/account")["account_version"], version) << "Calibration never reaches the account";
   // Older than the age limit allows, the recorded quote is not used.
   const auto strict = json::parse(write(*engine, "POST", "/api/fills/calibration",
@@ -374,6 +377,76 @@ TEST_F(PaperEngine, FillQualityAndRealFillCalibrationReadWithoutTrading) {
   expect_error(write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"format", "robinhood"}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"max_quote_age_seconds", 0}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "POST", "/api/fills/calibration", {{"format", "generic"}}), 400, "INVALID_REQUEST");
+}
+
+TEST(FillCalibrationSearch, ReadsTheNewestDayFirstAndStopsOnceEveryFillHasAQuoteOrAtItsLimits) {
+  test::ScriptedMarket market;
+  test::RecordingFile recorded;
+  const auto record = [&](const std::string& name, md::Timestamp started, md::Timestamp quoted, double bid) {
+    auto header = test::recording_header();
+    header.started = started;
+    test::record_events(recorded.directory / name,
+        {md::ContractDefinition{4, market.contract}, md::OptionQuote{4, quoted, bid, bid + 0.2, 5, 5}}, header);
+  };
+  record("early.oprec", market.time - 60 * md::kNanosPerMinute, market.time - 30 * md::kNanosPerSecond, 3.0);
+  record("late.oprec", market.time - 10 * md::kNanosPerMinute, market.time - 2 * md::kNanosPerSecond, 3.9);
+  trading::BrokerFill fill;
+  fill.row = 2;
+  fill.time = market.time;
+  fill.symbol = market.symbol();
+  const auto age = 60 * md::kNanosPerSecond;
+  const auto found = server::recorded_quotes(recorded.directory, {fill}, age);
+  EXPECT_EQ(found.search.files, 1U);
+  EXPECT_EQ(found.search.stopped, "all_matched");
+  ASSERT_TRUE(found.quotes.contains(2));
+  EXPECT_EQ(found.quotes.at(2).bid, Money::parse("3.90"));
+  // A fill nothing records reads every candidate.
+  auto other = fill;
+  other.symbol = "SPXW  261022P05000000";
+  const auto searched = server::recorded_quotes(recorded.directory, {other}, age);
+  EXPECT_EQ(searched.search.files, 2U);
+  EXPECT_EQ(searched.search.stopped, "complete");
+  EXPECT_GT(searched.search.bytes, 0U);
+  EXPECT_TRUE(searched.quotes.empty());
+  const auto limited = [&](server::RecordingLimits limits, const std::atomic_bool* cancel = nullptr) {
+    return server::recorded_quotes(recorded.directory, {other}, age, limits, cancel).search;
+  };
+  EXPECT_EQ(limited({.files = 1}).stopped, "file_limit");
+  EXPECT_EQ(limited({.files = 1}).files, 1U);
+  EXPECT_EQ(limited({.headers = 1}).stopped, "file_limit");
+  EXPECT_EQ(limited({.bytes = 1}).stopped, "byte_limit");
+  EXPECT_EQ(limited({.time = std::chrono::seconds(0)}).stopped, "time_limit");
+  const std::atomic_bool cancel{true};
+  EXPECT_EQ(limited({}, &cancel).stopped, "cancelled");
+  // Timed fills more than a month apart are refused before any search.
+  auto later = fill;
+  later.time = fill.time + 31 * md::kNanosPerDay;
+  EXPECT_NO_THROW(server::check_calibration_span({fill, later}));
+  later.time += md::kNanosPerSecond;
+  EXPECT_THROW(server::check_calibration_span({fill, later}), std::invalid_argument);
+}
+
+TEST(FillCalibrationSearch, OneCalibrationRunsAtATimeAndStoppingCancelsIt) {
+  std::promise<void> release;
+  std::promise<void> finished;
+  auto worker = std::make_unique<server::CalibrationWorker>();
+  ASSERT_TRUE(worker->start([&, gate = release.get_future().share()](const std::atomic_bool&) {
+    gate.wait();
+    finished.set_value();
+  }));
+  EXPECT_FALSE(worker->start([](const std::atomic_bool&) {})) << "A second waits for the first";
+  release.set_value();
+  finished.get_future().wait();
+  ASSERT_TRUE(wait_for([&] { return worker->start([](const std::atomic_bool&) {}); }));
+  std::atomic_bool saw_cancel{false};
+  ASSERT_TRUE(wait_for([&] {
+    return worker->start([&](const std::atomic_bool& cancel) {
+      while (!cancel) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      saw_cancel = true;
+    });
+  }));
+  worker.reset();
+  EXPECT_TRUE(saw_cancel);
 }
 
 TEST_F(PaperEngine, AlertsWatchUntradedContractsAndUnderlyingStudiesAndKeepAccountScope) {

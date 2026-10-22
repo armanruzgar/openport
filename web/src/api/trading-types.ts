@@ -1056,6 +1056,13 @@ export interface Calibration {
   suggestion: FillCalibration
   skipped: CalibrationSkip[]
   stored: false
+  search: CalibrationSearch
+}
+/** How far the bounded search of the recorded days got; fills it did not reach are unmatched. */
+export interface CalibrationSearch {
+  files: number
+  bytes: number
+  stopped: "complete" | "all_matched" | "file_limit" | "byte_limit" | "time_limit"
 }
 export interface Position {
   symbol: string

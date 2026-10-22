@@ -53,7 +53,7 @@ describe("fill quality", () => {
       format: "tastytrade", matched: 1, unmatched: 1, real: group("real", "Real fills", 1, 0), paper_fills: { as_displayed: 0, conservative: 0, midpoint: 1 },
       suggestion: { ...suggestion, basis: "real_fills", fill_model: "midpoint", fill_latency_ms: null, slippage_ticks: 0, impact_ticks: 0, inside_fill_percent: 50,
         reasons: ["Broker exports carry no order-entry time, so fill latency is not measured; keep your current setting."] },
-      skipped: [{ row: 4, reason: "Not a trade" }], stored: false,
+      skipped: [{ row: 4, reason: "Not a trade" }], stored: false, search: { files: 1, bytes: 2048, stopped: "all_matched" },
       rows: [
         { row: 2, time: "2026-10-21T14:15:32Z", symbol: "SPXW  261022C05000000", side: "buy", quantity: 1, price: "4.10",
           quote: { bid: "4.00", ask: "4.20", bid_size: 5, ask_size: 5, time: "2026-10-21T14:15:30Z", source: "recording" }, place: "mid_or_better",
@@ -70,6 +70,9 @@ describe("fill quality", () => {
       "latency not measured", "inside fills at 50%", "SPXW Oct 22 5000C", "$4.00 / $4.20 · recording", "Mid or better", "-1.00", "rests", "date only",
       "no execution time"])
       expect(html).toContain(text)
+    expect(html).not.toContain("search of recorded days stopped")
+    const limited = renderToStaticMarkup(<CalibrationResult result={{ ...result, search: { files: 32, bytes: 1 << 30, stopped: "file_limit" } }} />)
+    expect(limited).toContain("The search of recorded days stopped at its limit on recordings after 32 recordings")
     expect(osiLabel("SPXW  261022P04900500")).toBe("SPXW Oct 22 4900.5P")
     expect(osiLabel("SPY")).toBe("SPY")
   })
@@ -110,7 +113,7 @@ describe("queue fills and stop stress", () => {
     const html = renderToStaticMarkup(<OrderDetailDialog order={resting} onClose={() => {}} />)
     expect(html).toContain("Simulated queue at $4.00: about 7 contracts ahead")
     expect(html).toContain("from trade prints")
-    expect(html).toContain("slip 2 extra ticks (stop stress)")
+    expect(html).toContain("first fill attempt slips 2 extra ticks, never past a limit (stop stress)")
     const rules = { ...account, rules: { ...account.rules, queue_fills: true, queue_seed: 3, stop_stress_ticks: 1, stop_stress_percent: 300 } }
     const fills = renderToStaticMarkup(<>{ruleText(rules, "0.65").find((r) => r.title === "Fills")!.body}</>)
     expect(fills).toContain("Queue fills are on (seed 3)")
