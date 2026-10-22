@@ -660,6 +660,8 @@ class Risk(RiskScopes):
 
 class RiskProfileOptions(TypedDict, total=False):
     term_scaled: bool
+    dynamics: str
+    surface_fallback: list[str]
 
 
 class RiskProfile(RiskProfileOptions):
@@ -793,7 +795,12 @@ class HistoricalRisk(TypedDict):
     model: str
 
 
-class ScenarioAnalysis(TypedDict):
+class ScenarioAnalysisOptions(TypedDict, total=False):
+    dynamics: str  # sticky_strike, sticky_moneyness or sticky_delta
+    surface_fallback: list[str]
+
+
+class ScenarioAnalysis(ScenarioAnalysisOptions):
     account_version: str
     time: str
     mode: str

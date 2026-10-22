@@ -13,3 +13,5 @@ def test_risk_analysis_wire_fields_and_optional_extensions():
     assert get_type_hints(RiskProfile)["term_scaled"] is bool
     assert "term_scaled" in RiskProfile.__optional_keys__
     assert "term_scaled" not in schemas["RiskProfile"]["required"]
+    for wire in (RiskProfile, ScenarioAnalysis):
+        assert {"dynamics", "surface_fallback"} <= wire.__optional_keys__

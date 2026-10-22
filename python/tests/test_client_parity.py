@@ -47,7 +47,7 @@ CALLS = [
     ("transfer_cash", "test", "1.00"), ("halt_underlying", "SPY", 5),
     ("risk_history",), ("risk_scenarios",),
     ("volatility_history", "{symbol}"), ("surface_history", "{symbol}"), ("volatility_scanner",),
-    ("flow", "{symbol}"), ("earnings",), ("import_earnings", ""), ("delete_imported_earnings",),
+    ("heston", "{symbol}"), ("flow", "{symbol}"), ("earnings",), ("import_earnings", ""), ("delete_imported_earnings",),
     ("analysis_portfolios",), ("import_portfolio", "test", ""), ("analysis_portfolio", "{id}"),
     ("delete_analysis_portfolio", "{id}"), ("analysis_risk", "{id}", "profile"), ("analysis_risk", "{id}", "grid"),
 ]
