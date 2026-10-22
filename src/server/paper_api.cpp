@@ -2658,6 +2658,33 @@ std::vector<std::string_view> split_list(std::string_view text) {
 }
 }  // namespace
 
+std::map<std::string, std::vector<HistoricalClose>> historical_closes(const MetricsSource& source,
+    const std::set<std::string>& underlyings, Timestamp now) {
+  std::map<std::string, std::vector<HistoricalClose>> history;
+  for (const auto& symbol : underlyings) {
+    std::map<md::Date, double> iv;
+    if (const auto* series = source.series())
+      for (const auto& row : series->rows(symbol, 0, now, true))
+        if (std::isfinite(row.values[8]) && row.values[8] > 0) iv[md::new_york_time(row.time).date] = row.values[8] / 100;
+    if (const auto* candles = source.candles())
+      for (const auto& row : candles->daily_history(symbol)) {
+        const auto date = md::new_york_time(row.start).date;
+        history[symbol].push_back({date, row.close, iv.contains(date) ? std::optional(iv.at(date)) : std::nullopt});
+      }
+  }
+  return history;
+}
+
+json tail_risk_json(const TailRisk& value) {
+  const auto num = [](const std::optional<double>& x) -> json { return x ? number(*x) : json(nullptr); };
+  return json{{"complete", value.complete}, {"observations", value.observations},
+    {"var95", num(value.var95)}, {"es95", num(value.es95)}, {"var99", num(value.var99)}, {"es99", num(value.es99)},
+    {"tail99_reason", value.var99 ? json(nullptr)
+        : json(value.tail99_reason.value_or("Needs fresh valuations and at least 100 aligned daily moves"))},
+    {"first", value.first ? json(md::format_date(*value.first)) : json(nullptr)},
+    {"last", value.last ? json(md::format_date(*value.last)) : json(nullptr)}};
+}
+
 /// The beta of `underlying` to `reference`, by the first source that has one.
 BetaEstimate profile_beta(const MetricsSource& source, const std::string& underlying, const std::string& reference,
                           const std::map<std::string, double>& given) {
@@ -2712,31 +2739,11 @@ json historical_risk_json(const TradingView& view, const MetricsSource& source) 
         {"floor_breach", complete && value.floor_breach ? json(*value.floor_breach) : json(nullptr)},
         {"margin", complete ? money(value.margin) : json(nullptr)}, {"clamped", value.clamped}});
   }
-  std::map<std::string, std::vector<HistoricalClose>> history;
-  for (const auto& symbol : held) {
-    std::map<md::Date, double> iv;
-    if (const auto* series = source.series())
-      for (const auto& row : series->rows(symbol, 0, s.time, true))
-        if (std::isfinite(row.values[8]) && row.values[8] > 0) iv[md::new_york_time(row.time).date] = row.values[8] / 100;
-    if (const auto* candles = source.candles())
-      for (const auto& row : candles->daily_history(symbol)) {
-        const auto date = md::new_york_time(row.start).date;
-        history[symbol].push_back({date, row.close, iv.contains(date) ? std::optional(iv.at(date)) : std::nullopt});
-      }
-  }
+  const auto history = historical_closes(source, held, s.time);
   const auto risk = s.valuation_complete ? historical_risk(ledger, view.valuations, history,
       s.time, view.config.limits.max_valuation_age, prices) : HistoricalRisk{};
-  const auto tail = [](const TailRisk& value) {
-    const auto num = [](const std::optional<double>& x) -> json { return x ? number(*x) : json(nullptr); };
-    return json{{"complete", value.complete}, {"observations", value.observations},
-      {"var95", num(value.var95)}, {"es95", num(value.es95)}, {"var99", num(value.var99)}, {"es99", num(value.es99)},
-      {"tail99_reason", value.var99 ? json(nullptr)
-          : json(value.tail99_reason.value_or("Needs fresh valuations and at least 100 aligned daily moves"))},
-      {"first", value.first ? json(md::format_date(*value.first)) : json(nullptr)},
-      {"last", value.last ? json(md::format_date(*value.last)) : json(nullptr)}};
-  };
   return {{"account_version", std::to_string(s.account_version)}, {"time", md::format_timestamp(s.time)},
-    {"stress", stress}, {"sticky_strike", tail(risk.sticky_strike)}, {"atm_vol_change", tail(risk.atm_vol_change)},
+    {"stress", stress}, {"sticky_strike", tail_risk_json(risk.sticky_strike)}, {"atm_vol_change", tail_risk_json(risk.atm_vol_change)},
     {"model", "Derived 1-day historical simulation, up to 252 completed closes per factor; at least 20 paired returns for 95% and 100 for 99%. Black-76 sticky strike with one calendar day of decay; ATM variant adds observed 30d ATM IV changes uniformly by tenor. Empirical inverse-CDF VaR and fractional upper-tail ES in dollars, floored at zero. No liquidity, path or settlement simulation. Stress margin is the held-book requirement after the instantaneous shock, excluding working orders."}};
 }
 

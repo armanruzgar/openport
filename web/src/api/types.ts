@@ -1,5 +1,5 @@
 // Shapes of openportd's JSON API. Numbers the engine could not compute are null.
-import type { Money, TradingStatus } from "./trading-types"
+import type { Money, TailRisk, TradingStatus } from "./trading-types"
 
 export type Num = number | null
 
@@ -1056,5 +1056,47 @@ export interface AnalysisGrid {
   vol_points: number[]
   pnl: Num[][]
   clamped: boolean[][]
+  model: string
+}
+/** GET /api/analysis/portfolios/{id}/risk/stress: no floor or paper margin, since this is not an account. */
+export interface AnalysisStressScenario {
+  id: string
+  name: string
+  from: string
+  to: string
+  label: string
+  source_note: string
+  sources: string[]
+  complete: boolean
+  missing_underlyings: string[]
+  pnl: number | null
+  clamped: boolean
+}
+export interface AnalysisStress {
+  portfolio: string
+  name: string
+  analysis_only: true
+  read_only: true
+  note: string
+  as_of: string | null
+  unpriced: string[]
+  complete: boolean
+  view: "stress"
+  stress: AnalysisStressScenario[]
+  model: string
+}
+/** GET /api/analysis/portfolios/{id}/risk/var: one-day historical VaR and ES. */
+export interface AnalysisVar {
+  portfolio: string
+  name: string
+  analysis_only: true
+  read_only: true
+  note: string
+  as_of: string | null
+  unpriced: string[]
+  complete: boolean
+  view: "var"
+  sticky_strike: TailRisk
+  atm_vol_change: TailRisk
   model: string
 }

@@ -39,7 +39,7 @@ halt reaches the regular close. See [stress scenarios](scenarios.md#events).
 | `DELETE /api/earnings/imported` | Remove every imported move; requires admin |
 | `GET /api/analysis/portfolios`, `GET /api/analysis/portfolios/{id}` | Analysis-only portfolios: holdings valued now, Greeks by underlying, the risk views available ([analysis](analysis.md)); require admin, like every analysis-portfolio route |
 | `POST /api/analysis/portfolios`, `DELETE /api/analysis/portfolios/{id}` | Import `{ "name", "csv", "format" }` or delete; require admin |
-| `GET /api/analysis/portfolios/{id}/risk/profile`, `.../risk/grid` | Risk profile and scenario grid of an analysis portfolio; require admin |
+| `GET /api/analysis/portfolios/{id}/risk/profile`, `.../risk/grid`, `.../risk/stress`, `.../risk/var` | Risk profile, scenario grid, historical stress tests and one-day historical VaR of an analysis portfolio; require admin |
 | `WS /ws` | A small tick each second with versions, so clients refetch only what changed; at most 256 open sessions, after which an upgrade gets 503 with `Retry-After: 5` |
 
 Exposure `convention` is `long_calls_short_puts` (the default), `short_all`, or

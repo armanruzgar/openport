@@ -243,9 +243,10 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(client, client.analysis_portfolios)
 
     @server.tool()
-    def analysis_risk(portfolio: str, view: Literal["holdings", "profile", "grid"] = "holdings",
+    def analysis_risk(portfolio: str, view: Literal["holdings", "profile", "grid", "stress", "var"] = "holdings",
                       underlying: str | None = None) -> dict:
-        """An imported portfolio's holdings and Greeks, risk profile or scenario grid. Read only."""
+        """An imported portfolio's holdings and Greeks, risk profile, scenario grid, historical stress tests
+        or one-day historical VaR/ES. Read only; no floor or paper margin, since it is not an account."""
         if view == "holdings":
             return result(client, lambda: client.analysis_portfolio(portfolio))
         params = {"underlying": underlying} if view == "profile" and underlying else {}

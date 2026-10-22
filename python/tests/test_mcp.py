@@ -244,3 +244,6 @@ def test_flow_earnings_and_analysis_tools_only_read(stub):
     result = call(server, "analysis_risk", portfolio="ira", view="grid")
     assert stub.requests[-1][:2] == ("GET", "/api/analysis/portfolios/ira/risk/grid")
     assert result["error"]["status"] == 404
+    for view in ["stress", "var"]:
+        call(server, "analysis_risk", portfolio="ira", view=view)
+        assert stub.requests[-1][:2] == ("GET", "/api/analysis/portfolios/ira/risk/" + view)

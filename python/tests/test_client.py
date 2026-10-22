@@ -560,6 +560,8 @@ def test_journal_practice_calls_preserve_explicit_targets_and_uint64_seeds(stub)
     ("import_portfolio", ("IRA", "symbol,quantity\nSPY,1\n"), "POST", "/api/analysis/portfolios", "AnalysisPortfolio"),
     ("analysis_portfolio", ("ira",), "GET", "/api/analysis/portfolios/ira", "AnalysisPortfolio"),
     ("analysis_risk", ("ira", "grid"), "GET", "/api/analysis/portfolios/ira/risk/grid", "AnalysisGrid"),
+    ("analysis_risk", ("ira", "stress"), "GET", "/api/analysis/portfolios/ira/risk/stress", "AnalysisStress"),
+    ("analysis_risk", ("ira", "var"), "GET", "/api/analysis/portfolios/ira/risk/var", "AnalysisVar"),
     ("delete_analysis_portfolio", ("ira",), "DELETE", "/api/analysis/portfolios/ira", "AnalysisDeleted"),
 ])
 def test_flow_earnings_and_analysis_routes_are_never_account_scoped(stub, method, arguments, verb, path, schema):

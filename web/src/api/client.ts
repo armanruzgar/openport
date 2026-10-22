@@ -4,7 +4,7 @@ import type { BacktestComparison, BacktestListing, BacktestState, BacktestStart 
 import type { Playbook, PlaybooksResponse, PassOdds } from "./playbook-types"
 import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
-import type { AnalysisFormat, AnalysisGrid, AnalysisPortfolio, AnalysisPortfolios, AnalysisProfile, EarningsHistory, EarningsImport, Flow, FlowQuery } from "./types"
+import type { AnalysisFormat, AnalysisGrid, AnalysisPortfolio, AnalysisPortfolios, AnalysisProfile, AnalysisStress, AnalysisVar, EarningsHistory, EarningsImport, Flow, FlowQuery } from "./types"
 import type { NotificationChannel, NotificationStatus, TokenReloadResponse } from "./types"
 import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, Summary, Surface, RunVerification } from "./types"
 import type { Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
@@ -314,6 +314,8 @@ export const api = {
     return get<AnalysisProfile>(`/api/analysis/portfolios/${encodeURIComponent(id)}/risk/profile${params.size ? `?${params}` : ""}`, signal)
   },
   analysisGrid: (id: string, signal?: AbortSignal) => get<AnalysisGrid>(`/api/analysis/portfolios/${encodeURIComponent(id)}/risk/grid`, signal),
+  analysisStress: (id: string, signal?: AbortSignal) => get<AnalysisStress>(`/api/analysis/portfolios/${encodeURIComponent(id)}/risk/stress`, signal),
+  analysisVar: (id: string, signal?: AbortSignal) => get<AnalysisVar>(`/api/analysis/portfolios/${encodeURIComponent(id)}/risk/var`, signal),
   candles: (symbol: string, interval: CandleInterval, limit: number, signal?: AbortSignal) =>
     get<Candles>(`${underlying(symbol)}/candles?interval=${interval}&limit=${limit}`, signal),
 }

@@ -50,6 +50,7 @@ CALLS = [
     ("heston", "{symbol}"), ("flow", "{symbol}"), ("earnings",), ("import_earnings", ""), ("delete_imported_earnings",),
     ("analysis_portfolios",), ("import_portfolio", "test", ""), ("analysis_portfolio", "{id}"),
     ("delete_analysis_portfolio", "{id}"), ("analysis_risk", "{id}", "profile"), ("analysis_risk", "{id}", "grid"),
+    ("analysis_risk", "{id}", "stress"), ("analysis_risk", "{id}", "var"),
 ]
 
 

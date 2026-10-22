@@ -5762,6 +5762,70 @@
         }
       }
     },
+    "/api/analysis/portfolios/{id}/risk/stress": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/analysis/portfolios/{id}/risk/stress",
+        "description": "Historical stress episodes applied at once to an analysis portfolio, sticky strike. Takes no query parameters.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisStress"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/analysis/portfolios/{id}/risk/var": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/analysis/portfolios/{id}/risk/var",
+        "description": "One-day historical VaR and expected shortfall of an analysis portfolio from its underlyings' daily closes. Takes no query parameters.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisVar"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/replay/packs": {
       "get": {
         "summary": "List and export scenario packs",
@@ -31586,6 +31650,200 @@
           "simulated",
           "provider",
           "units"
+        ]
+      },
+      "AnalysisStressScenario": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "source_note": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "missing_underlyings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pnl": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "clamped": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "from",
+          "to",
+          "label",
+          "source_note",
+          "sources",
+          "complete",
+          "missing_underlyings",
+          "pnl",
+          "clamped"
+        ],
+        "description": "One historical stress episode applied to the valued holdings. No floor or paper margin: an analysis portfolio is not an account."
+      },
+      "AnalysisStress": {
+        "type": "object",
+        "properties": {
+          "portfolio": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "analysis_only": {
+            "const": true
+          },
+          "read_only": {
+            "const": true
+          },
+          "note": {
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unpriced": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "view": {
+            "const": "stress"
+          },
+          "stress": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisStressScenario"
+            }
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "portfolio",
+          "name",
+          "analysis_only",
+          "read_only",
+          "note",
+          "as_of",
+          "unpriced",
+          "complete",
+          "view",
+          "stress",
+          "model"
+        ]
+      },
+      "AnalysisVar": {
+        "type": "object",
+        "properties": {
+          "portfolio": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "analysis_only": {
+            "const": true
+          },
+          "read_only": {
+            "const": true
+          },
+          "note": {
+            "type": "string"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unpriced": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "view": {
+            "const": "var"
+          },
+          "sticky_strike": {
+            "$ref": "#/components/schemas/TailRisk"
+          },
+          "atm_vol_change": {
+            "$ref": "#/components/schemas/TailRisk"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "portfolio",
+          "name",
+          "analysis_only",
+          "read_only",
+          "note",
+          "as_of",
+          "unpriced",
+          "complete",
+          "view",
+          "sticky_strike",
+          "atm_vol_change",
+          "model"
         ]
       }
     }

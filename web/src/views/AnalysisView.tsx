@@ -5,6 +5,7 @@ import { useLive } from "../api/live"
 import type { AnalysisFormat, AnalysisHolding, AnalysisProfile } from "../api/types"
 import { LineChart, type Series } from "../charts/LineChart"
 import { ScenarioGrid } from "../components/ScenarioGrid"
+import { StressResultPanel } from "../components/StressPanel"
 import { Badge, Empty, PageHeader, Panel, Segmented, Stat } from "../components/ui"
 import { count, fixed, money, price } from "../lib/format"
 import { useWriteToken } from "../lib/write-token"
@@ -101,6 +102,8 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
     enabled: data != null, refetchInterval: 15_000,
   })
   const grid = useQuery({ queryKey: ["analysis-grid", id], queryFn: ({ signal }) => api.analysisGrid(id, signal), enabled: data != null, refetchInterval: 15_000 })
+  const stress = useQuery({ queryKey: ["analysis-stress", id], queryFn: ({ signal }) => api.analysisStress(id, signal), enabled: data != null, refetchInterval: 60_000 })
+  const tail = useQuery({ queryKey: ["analysis-var", id], queryFn: ({ signal }) => api.analysisVar(id, signal), enabled: data != null, refetchInterval: 60_000 })
   if (detail.isError) return <Empty>{String(detail.error)}</Empty>
   if (!data) return <Empty>Loading the portfolio…</Empty>
   return (
@@ -166,6 +169,13 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
           <p className="mt-1 text-[11px] text-muted">{grid.data?.model}</p>
         </Panel>
       </div>
+      <Panel title="Stress tests and value at risk">
+        {stress.isError || tail.isError ? <Empty>{String(stress.error ?? tail.error)}</Empty> : !stress.data || !tail.data ? <Empty>Loading…</Empty> : <>
+          {!stress.data.complete && <p className="mb-2 text-xs text-warn">Leaves out {stress.data.unpriced.join(", ")}: no valuation from this feed.</p>}
+          <StressResultPanel account={false} data={{ stress: stress.data.stress, sticky_strike: tail.data.sticky_strike, atm_vol_change: tail.data.atm_vol_change }} />
+          <p className="mt-1 text-[11px] text-muted">{stress.data.model} {tail.data.model}</p>
+        </>}
+      </Panel>
     </div>
   )
 }

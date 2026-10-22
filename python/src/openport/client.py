@@ -228,7 +228,7 @@ class Client:
         return self._request("GET", "/analysis/portfolios/" + quote(portfolio, safe=""), control=True)
 
     def analysis_risk(self, portfolio: str, view: str = "profile", **params) -> JSON:
-        """Admin: a risk view of an analysis portfolio, profile or grid (the portfolio's views lists them)."""
+        """Admin: a risk view of an analysis portfolio: profile, grid, stress or var (the portfolio's views lists them)."""
         return self._request("GET", "/analysis/portfolios/" + quote(portfolio, safe="") + "/risk/" + quote(view, safe=""),
                              params=params, control=True)
 

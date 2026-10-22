@@ -7,6 +7,7 @@
 #include <set>
 
 #include "openport/trading/risk.hpp"
+#include "openport/trading/stress.hpp"
 #include "paper_json.hpp"
 
 namespace openport::server {
@@ -186,6 +187,50 @@ ApiResponse grid_view(const AnalysisBook& book, const std::map<std::string, std:
   return {200, body.dump()};
 }
 
+/// The risk branch's historical stress scenarios, applied to the valued holdings at
+/// once. There is no account here, so no floor and no paper margin are reported.
+ApiResponse stress_view(const AnalysisBook& book, const std::map<std::string, std::string>& query) {
+  if (!query.empty()) return api_error(400, "INVALID_REQUEST", "This view takes no query parameters");
+  const auto held = held_underlyings(book);
+  json stress = json::array();
+  for (const auto& scenario : trading::historical_stresses()) {
+    const auto value = trading::stress_book(book.ledger, book.valuations, scenario.factors, 0, Money{}, std::nullopt,
+        book.now, book.max_age, book.stock_prices);
+    const bool complete = value.complete && book.unpriced.empty();
+    json missing = json::array();
+    for (const auto& symbol : held) if (!scenario.factors.contains(symbol)) missing.push_back(symbol);
+    stress.push_back({{"id", scenario.id}, {"name", scenario.name}, {"from", scenario.from}, {"to", scenario.to},
+        {"label", scenario.label}, {"source_note", scenario.source_note}, {"sources", scenario.sources},
+        {"complete", complete}, {"missing_underlyings", missing},
+        {"pnl", value.complete ? dollars(value.pnl) : json(nullptr)}, {"clamped", value.clamped}});
+  }
+  auto body = base(book);
+  body.update({{"view", "stress"}, {"stress", stress}, {"complete", book.unpriced.empty()},
+               {"model", "Each historical episode's recorded underlying and IV moves, applied at once with Black-76 sticky "
+                         "strike as the paper account's stress tests. A held underlying the episode has no factor for "
+                         "leaves that scenario without a P&L. P&L is from the book's value now; unpriced holdings are left out."}});
+  return {200, body.dump()};
+}
+
+/// One-day historical VaR and expected shortfall of the valued holdings, as the
+/// paper account's: daily closes and recorded ATM IV changes of each held underlying.
+ApiResponse var_view(const AnalysisBook& book, const std::map<std::string, std::string>& query) {
+  if (!query.empty()) return api_error(400, "INVALID_REQUEST", "This view takes no query parameters");
+  const auto history = historical_closes(*book.source, held_underlyings(book), book.now);
+  const auto risk = trading::historical_risk(book.ledger, book.valuations, history, book.now, book.max_age, book.stock_prices);
+  auto body = base(book);
+  auto sticky = tail_risk_json(risk.sticky_strike), atm = tail_risk_json(risk.atm_vol_change);
+  // A book with unpriced holdings has no complete tail: the valued subset is not the portfolio.
+  if (!book.unpriced.empty()) sticky["complete"] = atm["complete"] = false;
+  body.update({{"view", "var"}, {"sticky_strike", sticky}, {"atm_vol_change", atm},
+               {"complete", book.unpriced.empty() && risk.sticky_strike.complete},
+               {"model", "Derived 1-day historical simulation over up to 252 completed closes per held underlying; at least "
+                         "20 paired returns for 95% and 100 for 99%. Black-76 sticky strike with one calendar day of decay; "
+                         "the ATM variant adds observed 30d ATM IV changes uniformly by tenor. Losses in dollars, floored at "
+                         "zero. Unpriced holdings are left out."}});
+  return {200, body.dump()};
+}
+
 json summary_json(const AnalysisPortfolio& p) {
   return {{"id", p.id}, {"name", p.name}, {"format", p.format}, {"imported", md::format_timestamp(p.imported)},
           {"holdings", p.holdings.size()}, {"analysis_only", true}, {"read_only", true}};
@@ -267,8 +312,8 @@ json detail_json(const AnalysisPortfolio& p, const AnalysisBook& book) {
 }  // namespace
 
 const std::map<std::string, AnalysisView, std::less<>>& analysis_views() {
-  // Stress tests and value at risk attach here as they arrive on main.
-  static const std::map<std::string, AnalysisView, std::less<>> views{{"profile", profile_view}, {"grid", grid_view}};
+  static const std::map<std::string, AnalysisView, std::less<>> views{
+      {"profile", profile_view}, {"grid", grid_view}, {"stress", stress_view}, {"var", var_view}};
   return views;
 }
 

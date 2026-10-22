@@ -47,10 +47,18 @@ by underlying. The risk views run on the valued holdings:
   same model as the paper account's [risk profile](paper-trading.md#risk-profile-and-probabilities).
   Underlyings without a beta yet are left out and named.
 - `risk/grid`: P&L across spot and volatility shocks, as the paper account's grid.
+- `risk/stress`: the paper account's historical stress episodes (recorded index and
+  IV moves, applied at once, sticky strike). An episode with no factor for a held
+  underlying has no P&L and names it. There is no floor and no paper margin: the
+  portfolio is not an account.
+- `risk/var`: one-day historical VaR and expected shortfall at 95% and 99%, sticky
+  strike and with observed ATM IV changes, from each held underlying's stored daily
+  closes, as the paper account's. Too little history leaves the figures null with
+  the reason.
 
 P&L is measured from the book's value now, not from its cost. Views are listed in
-the portfolio's `views`; stress tests and value at risk will attach there as they
-arrive.
+the portfolio's `views`; holdings without a valuation make every view incomplete.
+The Analysis page shows all four.
 
 ## Access
 

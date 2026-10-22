@@ -7,6 +7,8 @@
 #include <nlohmann/json.hpp>
 
 #include "openport/analytics/chain_analytics.hpp"
+#include "openport/server/candles.hpp"
+#include "openport/trading/stress.hpp"
 #include "support/synthetic_chain.hpp"
 
 namespace {
@@ -141,12 +143,14 @@ class AnalysisSource final : public server::MetricsSource {
     return symbol == "SPX" ? metrics_ : nullptr;
   }
   server::EngineStatus status() const override { return {}; }
+  const server::CandleStore* candles() const override { return &candles_; }
   md::Timestamp wall_time() const override { return md::new_york_to_utc({2026, 9, 22}, 15, 1); }
   bool post_trading(server::TradingCommand, server::TradingCompletion) override {
     ++orders;  // must never be reached
     return false;
   }
   int orders = 0;
+  server::CandleStore candles_;
 
  private:
   std::shared_ptr<const analytics::UnderlyingMetrics> metrics_;
@@ -180,7 +184,7 @@ TEST(AnalysisApi, ImportsValuesRunsRiskViewsAndNeverTrades) {
   EXPECT_EQ(body["holdings"][2]["status"], "no_market_data");  // SPY is not subscribed here
   EXPECT_EQ(body["unpriced"], json::array({"SPY"}));
   EXPECT_TRUE(body["value"].is_null());
-  EXPECT_EQ(body["views"], json::array({"grid", "profile"}));
+  EXPECT_EQ(body["views"], json::array({"grid", "profile", "stress", "var"}));
   EXPECT_FALSE(body["exposure"]["complete"]);
 
   response = call(store, source, "GET", "/api/analysis/portfolios/ira-at-schwab/risk/grid?spot=-5,0,5&vol=0");
@@ -206,7 +210,7 @@ TEST(AnalysisApi, ImportsValuesRunsRiskViewsAndNeverTrades) {
   EXPECT_EQ(body["reference"], "SPX");
   EXPECT_EQ(body["analysis_only"], true);
 
-  EXPECT_EQ(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/var").status, 404);
+  EXPECT_EQ(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/surface").status, 404);
   EXPECT_EQ(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/grid?spot=x").status, 400);
   EXPECT_EQ(call(store, source, "POST", "/api/analysis/portfolios/options-only/risk/grid", "{}").status, 405);
   EXPECT_EQ(call(store, source, "POST", "/api/analysis/portfolios", json{{"name", "x"}, {"csv", "nothing"}}.dump()).status, 400);
@@ -224,6 +228,71 @@ TEST(AnalysisApi, ImportsValuesRunsRiskViewsAndNeverTrades) {
   body = json::parse(call(reopened, source, "GET", "/api/analysis/portfolios").body);
   ASSERT_EQ(body["portfolios"].size(), 1u);
   EXPECT_EQ(body["portfolios"][0]["analysis_only"], true);
+  EXPECT_EQ(source.orders, 0);
+  std::filesystem::remove_all(directory);
+}
+
+// The risk branch's stress tests and historical VaR run on an imported book as
+// further views; with no account there is no floor or paper margin to report.
+TEST(AnalysisApi, StressTestsAndValueAtRiskRunOnTheValuedHoldings) {
+  const auto directory = std::filesystem::temp_directory_path() / ("openport-analysis-stress-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(directory);
+  AnalysisSource source;
+  server::AnalysisPortfolios store(directory);
+  ASSERT_EQ(call(store, source, "POST", "/api/analysis/portfolios",
+                 json{{"name", "Options only"}, {"csv", "symbol,quantity\nSPXW261022C05000000,2\nSPXW261022P04900000,-1\n"}}.dump()).status, 201);
+  auto response = call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/stress");
+  ASSERT_EQ(response.status, 200) << response.body;
+  auto body = json::parse(response.body);
+  EXPECT_EQ(body["view"], "stress");
+  EXPECT_EQ(body["analysis_only"], true);
+  EXPECT_TRUE(body["complete"]);
+  ASSERT_EQ(body["stress"].size(), trading::historical_stresses().size());
+  for (const auto& stress : body["stress"]) {
+    EXPECT_TRUE(stress["complete"]) << stress.dump();
+    EXPECT_TRUE(stress["pnl"].is_number());
+    EXPECT_EQ(stress["missing_underlyings"], json::array());
+    EXPECT_FALSE(stress.contains("margin"));
+    EXPECT_FALSE(stress.contains("floor_breach"));
+  }
+  const auto covid = std::find_if(body["stress"].begin(), body["stress"].end(), [](const json& s) { return s["id"] == "covid-2020"; });
+  ASSERT_NE(covid, body["stress"].end());
+  EXPECT_LT((*covid)["pnl"].get<double>(), 0);  // long calls and short puts lose in a crash
+  EXPECT_EQ(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/stress?days=1").status, 400);
+
+  // No daily history yet: VaR says it cannot be estimated rather than reading zero.
+  body = json::parse(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/var").body);
+  EXPECT_EQ(body["view"], "var");
+  EXPECT_FALSE(body["complete"]);
+  EXPECT_TRUE(body["sticky_strike"]["var95"].is_null());
+  EXPECT_TRUE(body["sticky_strike"]["tail99_reason"].is_string());
+  // Thirty completed sessions of SPX closes give the 95% figures; 99% needs 100.
+  std::vector<md::Bar> days;
+  double close = 5000;
+  for (auto day = md::days_since_epoch({2026, 7, 1}); days.size() < 30; ++day) {
+    const auto date = md::date_from_days(day);
+    if (!md::stock_session(md::new_york_to_utc(date, 12, 0)).open) continue;
+    close *= days.size() % 3 ? 1.004 : 0.99;
+    days.push_back({md::new_york_to_utc(date, 9, 30), close, close, close, close});
+  }
+  source.candles_.merge_days("SPX", days);
+  body = json::parse(call(store, source, "GET", "/api/analysis/portfolios/options-only/risk/var").body);
+  ASSERT_TRUE(body["complete"]) << body.dump();
+  EXPECT_EQ(body["sticky_strike"]["observations"], 29);
+  EXPECT_GT(body["sticky_strike"]["var95"].get<double>(), 0);
+  EXPECT_GE(body["sticky_strike"]["es95"].get<double>(), body["sticky_strike"]["var95"].get<double>());
+  EXPECT_TRUE(body["sticky_strike"]["var99"].is_null());
+  EXPECT_FALSE(body["atm_vol_change"]["complete"]);  // no recorded ATM IV series here
+
+  // Unpriced holdings make both views incomplete, as every analysis view is.
+  ASSERT_EQ(call(store, source, "POST", "/api/analysis/portfolios",
+                 json{{"name", "With shares"}, {"csv", "symbol,quantity\nSPXW261022C05000000,2\nSPY,100\n"}}.dump()).status, 201);
+  body = json::parse(call(store, source, "GET", "/api/analysis/portfolios/with-shares/risk/var").body);
+  EXPECT_FALSE(body["complete"]);
+  EXPECT_FALSE(body["sticky_strike"]["complete"]);
+  body = json::parse(call(store, source, "GET", "/api/analysis/portfolios/with-shares/risk/stress").body);
+  EXPECT_FALSE(body["complete"]);
+  EXPECT_FALSE(body["stress"][0]["complete"]);
   EXPECT_EQ(source.orders, 0);
   std::filesystem::remove_all(directory);
 }

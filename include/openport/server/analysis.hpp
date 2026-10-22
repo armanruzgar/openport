@@ -104,7 +104,7 @@ using AnalysisView = std::function<ApiResponse(const AnalysisBook&, const std::m
 ///   POST   /api/analysis/portfolios  {name, format: auto|generic|tastytrade|schwab|ibkr, csv}
 ///   GET    /api/analysis/portfolios/{id}   holdings valued now, with Greeks by underlying
 ///   DELETE /api/analysis/portfolios/{id}
-///   GET    /api/analysis/portfolios/{id}/risk/{view}   profile, grid, and any view added later
+///   GET    /api/analysis/portfolios/{id}/risk/{view}   profile, grid, stress, var, and any view added later
 /// Returns no response for other routes.
 [[nodiscard]] std::optional<ApiResponse> analysis_request(const ApiRequest& request,
     AnalysisPortfolios& portfolios, const MetricsSource& source);
