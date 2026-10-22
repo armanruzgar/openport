@@ -31,6 +31,8 @@ COPY cmake cmake
 COPY include include
 COPY src src
 COPY apps apps
+# Configure embeds the stress shocks and the built-in scenarios and objectives.
+COPY data data
 COPY scenarios scenarios
 COPY tests tests
 COPY bench bench
