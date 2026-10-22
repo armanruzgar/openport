@@ -1098,6 +1098,8 @@ export interface AnalysisVar {
   view: "var"
   sticky_strike: TailRisk
   atm_vol_change: TailRisk
+  model: string
+}
 
 export type SearchStructure = "vertical" | "condor" | "butterfly" | "calendar" | "single" | "covered"
 export type SearchRank = "expected" | "risk_neutral" | "pop" | "return_on_risk"
