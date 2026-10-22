@@ -247,6 +247,8 @@ bool same_program_rules(AccountRules left, const AccountRules& right) {
   execution.fill_latency_ms = right.fill_latency_ms;
   execution.impact_ticks = right.impact_ticks;
   execution.inside_fill_percent = right.inside_fill_percent;
+  // Queue fills and stop stress are program rules: they decide whether a resting
+  // order fills at all, or how far a stop slips, so overriding them leaves the preset.
   // Financing and pin risk change P&L without a trade, so they are program
   // rules: an account that overrides them no longer follows the preset.
   execution.fees = right.fees;
@@ -267,6 +269,10 @@ bool same_program_rules(AccountRules left, const AccountRules& right) {
 void validate_rules(const AccountRules& r) {
   if (r.pin_risk_seed < 0 || r.pin_risk_seed > 2147483647)
     throw TradingError(Reason::INVALID_RULES, "pin_risk_seed must be 0-2147483647");
+  if (r.queue_seed < 0 || r.queue_seed > 2147483647)
+    throw TradingError(Reason::INVALID_RULES, "queue_seed must be 0-2147483647");
+  if (r.stop_stress_ticks < 0 || r.stop_stress_ticks > 10 || r.stop_stress_percent < 101 || r.stop_stress_percent > 1000)
+    throw TradingError(Reason::INVALID_RULES, "stop_stress_ticks must be 0-10 and stop_stress_percent 101-1000");
   if (r.cash_credit_rate_bps < 0 || r.cash_credit_rate_bps > 100000 ||
       r.margin_debit_rate_bps < 0 || r.margin_debit_rate_bps > 100000 ||
       r.stock_borrow_rate_bps < 0 || r.stock_borrow_rate_bps > 100000)

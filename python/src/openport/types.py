@@ -404,6 +404,10 @@ class AccountRules(TypedDict, total=False):
     fill_latency_ms: int
     impact_ticks: int
     inside_fill_percent: int
+    queue_fills: bool
+    queue_seed: int
+    stop_stress_ticks: int
+    stop_stress_percent: int
     margin: str
     account_type: str
     house_margin_percent: int
@@ -943,6 +947,55 @@ class FlattenResult(CancelAllResult):
     stock_fills: list[JSON]
     kept_stocks: list[JSON]
     residuals: list[JSON]
+
+
+class FillQualityGroup(TypedDict):
+    key: str
+    label: str
+    fills: int
+    contracts: int
+    places: dict[str, int]
+    from_mid_ticks: float | None
+    vs_natural_ticks: float | None
+    cost_vs_mid: str
+
+
+class FillCalibration(TypedDict):
+    basis: Literal["heuristic", "real_fills"]
+    fill_model: Literal["as_displayed", "conservative", "midpoint", "custom"]
+    fill_latency_ms: int | None
+    slippage_ticks: int
+    impact_ticks: int
+    inside_fill_percent: int
+    reasons: list[str]
+
+
+class FillQuality(TypedDict):
+    """Paper fills by place on their book; simulated, with a heuristic suggestion."""
+    attempt: Literal["current", "all"]
+    fills: int
+    measured: int
+    unmeasured: int
+    overall: FillQualityGroup
+    time_of_day: list[FillQualityGroup]
+    spread: list[FillQualityGroup]
+    dte: list[FillQualityGroup]
+    suggestion: FillCalibration
+    simulated: bool
+
+
+class Calibration(TypedDict):
+    """Real broker fills against the same-time books; nothing is stored or traded."""
+    format: str
+    matched: int
+    unmatched: int
+    rows: list[JSON]
+    real: FillQualityGroup
+    paper_fills: dict[str, int]
+    suggestion: FillCalibration
+    skipped: list[JSON]
+    stored: bool
+    search: JSON  # files, bytes and stopped: how far the bounded search of recorded days got
 
 
 class HistoricalRisk(TypedDict):

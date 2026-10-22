@@ -265,6 +265,23 @@ struct OrderChangeRecord {
   std::optional<std::optional<Walk>> walk = {};
   std::optional<Walk> previous_walk = {};
 };
+/// The queue fill model's estimate for one resting single-leg limit (see
+/// AccountRules::queue_fills): contracts displayed ahead of it at its price,
+/// contracts that traded past that queue and it may still fill, and what the
+/// estimate last saw of its own side at its price. A simulation, not an
+/// exchange's queue position.
+struct QueueSpot {
+  Money price;                 ///< The limit the estimate is for; a new price joins again.
+  Quantity ahead = 0;          ///< Estimated contracts ahead; zero once exhausted.
+  Quantity earned = 0;         ///< Contracts that traded at or through the price past the queue, not yet filled.
+  Quantity displayed = 0;      ///< Own side's displayed size at the price when last seen there; zero away from it.
+  std::uint64_t observation = 0;  ///< The quote it last updated on.
+  Timestamp joined = 0;        ///< When it joined (market time).
+  Timestamp updated = 0;       ///< Market time of its last update; prints at or before it are already counted.
+  std::optional<std::int64_t> volume = {};  ///< Contract's cumulative day volume when last updated, if supplied.
+  std::string source;          ///< What consumed it last: "prints", "volume", "rate" or "joined".
+  bool operator==(const QueueSpot&) const = default;
+};
 struct Order {
   OrderId id = 0;  ///< Also the acceptance priority sequence; never reused.
   OrderRequest request;
@@ -303,6 +320,15 @@ struct Order {
   /// Last scheduled step or accepted manual change; zero before either.
   Timestamp walked_at = 0;
   bool opening_counted = false; ///< A partial opening execution counted this order, including before rollover.
+  /// Queue fills only: the estimated queue ahead of a resting limit at its price.
+  std::optional<QueueSpot> queue = {};
+  /// Queue fills only: when a change last sent it to the back of the queue at
+  /// its price (a new price, a larger size or other new terms); zero before any.
+  Timestamp rejoined_at = 0;
+  /// Stop stress only: extra adverse ticks its first fill attempt after its
+  /// trigger takes, set when the trigger was reached in a fast market (see
+  /// AccountRules::stop_stress_ticks) and cleared once a stop-limit rests after it.
+  std::int64_t stress_ticks = 0;
   [[nodiscard]] Quantity remaining() const { return request.quantity - filled_quantity; }
   /// The terms a retry must repeat to be answered with this order.
   [[nodiscard]] const OrderRequest& submission() const { return submitted ? *submitted : request; }
@@ -402,6 +428,10 @@ struct Fill {
   std::optional<FillFees> fees = std::nullopt;
   /// The feed whose quote priced the fill, when a failover named one; empty otherwise.
   std::string feed = {};
+  /// Extra adverse ticks of a stop that triggered in a fast market (stop stress).
+  std::int64_t stress_ticks = 0;
+  /// A resting limit filled by the queue model at its limit, without crossing.
+  bool queued = false;
 };
 
 /// Observation numbers strictly increase per OSI. Repeated/older observations
@@ -451,6 +481,27 @@ struct StockPrice {
   std::string symbol;
   Timestamp time = 0;
   Money price;
+};
+/// One reported trade in a contract, as the feed printed it. `venue` is the
+/// exchange code when the feed names one; the fill models never require it.
+struct TradePrint {
+  std::string symbol;
+  Timestamp time = 0;
+  Money price;
+  Quantity size = 0;
+  std::string venue = {};
+};
+/// What traded, for the queue fill model (AccountRules::queue_fills), supplied
+/// with a market batch. `prints` are this batch's trades, oldest first; `volumes`
+/// each contract's cumulative contracts traded on the current date. The flags say
+/// whether the feed supplies each at all: without prints a volume increase
+/// stands in, and without either the documented volume-rate heuristic does.
+/// Accounts without queue fills ignore all of it.
+struct MarketActivity {
+  std::vector<TradePrint> prints;
+  std::map<std::string, std::int64_t> volumes;
+  bool prints_supplied = false;
+  bool volumes_supplied = false;
 };
 /// A value a conditional trigger watches, supplied by the integration with the
 /// market data: an underlying's price (no study) or one of its studies.
@@ -723,6 +774,17 @@ struct AccountRules {
   std::int64_t fill_latency_ms = 0; ///< Market-time delay before execution, from 0 to 60,000 ms.
   std::int64_t impact_ticks = 0;    ///< Extra adverse ticks per displayed-size block, from 0 to 10.
   std::int64_t inside_fill_percent = 0; ///< 1-100% from own side to far side; zero disables inside fills.
+  /// Resting single-leg limits at the touch wait behind an estimated queue that
+  /// trade prints, volume increases or the volume-rate heuristic consume. A
+  /// program rule, unlike the settings above.
+  bool queue_fills = false;
+  std::int64_t queue_seed = 0;  ///< Nonnegative seed for the queue model's random rounding.
+  /// Extra adverse ticks, 0-10, for a price-triggered order reached in a fast
+  /// market; zero disables stop stress. A program rule.
+  std::int64_t stop_stress_ticks = 0;
+  /// Fast means the spread is at least this percent of its normal width, or quotes
+  /// change at least this percent of their normal rate; 101-1000.
+  std::int64_t stop_stress_percent = 200;
   std::int64_t cash_credit_rate_bps = 0;   ///< Annual simple rate, basis points, actual/365 at rollover.
   std::int64_t margin_debit_rate_bps = 0;  ///< Negative portfolio-margin cash only.
   std::int64_t stock_borrow_rate_bps = 0;  ///< Short shares' closing marked notional.

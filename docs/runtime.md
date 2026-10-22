@@ -1697,13 +1697,17 @@ use a generic webhook connected to a webhook-to-email service for email alerts.
 
 | Flag | New main-account value |
 | --- | --- |
-| `--paper-fill-model as_displayed\|conservative\|midpoint` | `as_displayed` by default; the same presets as account reset |
+| `--paper-fill-model as_displayed\|conservative\|midpoint\|queue` | `as_displayed` by default; the same presets as account reset |
+| `--paper-queue-seed N` | Queue fills' seed, integer 0–2147483647 (default 0) |
+| `--paper-stop-stress-ticks N` | Stop stress's extra adverse ticks, integer 0–10 (default 0, off) |
+| `--paper-stop-stress-percent N` | What counts as fast for stop stress, 101–1000% of normal (default 200) |
 | `--paper-slippage-ticks N` | Override the model's slippage, integer 0–10 |
 | `--paper-fill-latency-ms N` | Override the model's latency, integer 0–60000 ms |
 | `--paper-impact-ticks N` | Override the model's impact, integer 0–10 |
 
 `conservative` selects 1 slippage tick, 1000 ms latency and 1 impact tick;
-`midpoint` selects zero for those fields and 50% inside fills. `as_displayed`
+`midpoint` selects zero for those fields and 50% inside fills; `queue` selects zero
+for them and turns on [queue fills](paper-trading.md#queue-fills). `as_displayed`
 selects zero throughout. Numeric flags override the model regardless of argument
 order. Like `--plan`, these seed only a new main journal: recovery keeps all
 recorded settings even if startup flags differ. Named accounts and resets use

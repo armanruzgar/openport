@@ -106,6 +106,8 @@ class MetricsSource {
   /// False means unavailable or full. Completion runs on the engine thread;
   /// network callers must dispatch it onto their own executor.
   virtual bool post_trading(TradingCommand, TradingCompletion) { return false; }
+  /// Where recorded trading days are kept, which fill calibration reads; empty for none.
+  [[nodiscard]] virtual std::filesystem::path recordings_directory() const { return {}; }
 };
 
 /// Owns the provider's event stream: applies every event to the chain book on one
@@ -126,6 +128,8 @@ class Engine final : public MetricsSource {
     std::filesystem::path record_file;
     md::RecordingSink::Options recording;
     std::filesystem::path record_dir;
+    /// Recorded days fill calibration looks quotes up in (the replay picker's directory).
+    std::filesystem::path recordings;
     unsigned record_keep_days = 0;
     std::uint64_t record_max_bytes = 0;
     /// Volatility history written by the live engine only; replays and the demo reset it.
@@ -172,6 +176,7 @@ class Engine final : public MetricsSource {
   [[nodiscard]] const SeriesStore* series() const override { return options_.series.get(); }
   [[nodiscard]] const FlowTape* flow() const override { return options_.flow.get(); }
   bool post_trading(TradingCommand command, TradingCompletion completion) override;
+  [[nodiscard]] std::filesystem::path recordings_directory() const override { return options_.recordings; }
   [[nodiscard]] md::RecordingStats recording_stats() const;
   [[nodiscard]] std::string recording_error() const;
   /// Retention problems for --record-dir; recording continues.

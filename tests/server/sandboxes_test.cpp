@@ -300,6 +300,11 @@ TEST_F(Sandboxes, SandboxCannotUseAnyAdministrativeRoute) {
     ASSERT_TRUE(rejected) << path;
     EXPECT_EQ(rejected->status, 403) << path;
   }
+  // Fill calibration searches the server's recorded days, which a visitor has no part in.
+  const auto calibration = server::check_api_write(request("POST", "/api/fills/calibration", token(own)), policy);
+  ASSERT_TRUE(calibration);
+  EXPECT_EQ(calibration->status, 403);
+  EXPECT_EQ(json::parse(calibration->body)["error"]["code"], "SCOPE_REQUIRED");
 }
 TEST_F(Sandboxes, TradeScopeAllowsOwnOrdersPreviewsExitsAndNotes) {
   const auto own = create();

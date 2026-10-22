@@ -850,6 +850,12 @@ TEST(WebPolicy, NamedTokensEnforceEveryRouteFamilyAndAccount) {
     EXPECT_TRUE(check(method, path, "agent-secret"));
   }
   EXPECT_FALSE(check("GET", "/api/replay/history/run/verify?format=receipt", "reader-secret"));
+  // Fill calibration posts a file to analyse but changes nothing: a read token permits it.
+  EXPECT_FALSE(check("POST", "/api/fills/calibration", "reader-secret"));
+  EXPECT_FALSE(check("POST", "/api/fills/calibration", "owner-secret"));
+  EXPECT_TRUE(check("POST", "/api/fills/calibration", "agent-secret"));
+  EXPECT_TRUE(check("POST", "/api/fills/calibration?account=practice", "reader-secret"));
+  EXPECT_FALSE(check("GET", "/api/fills/quality?account=practice", "reader-secret"));
   for (const std::string method : {"POST", "PUT", "DELETE"}) {
     EXPECT_FALSE(check(method, "/api/replay", "replay-secret"));
     EXPECT_TRUE(check(method, "/api/replay", "agent-secret"));
@@ -984,6 +990,30 @@ TEST(WebPolicy, WriteModeSaysWhetherAWriteWithoutCredentialsIsAccepted) {
     // A terminal reading "open" writes without a token; any other mode needs one or refuses.
     EXPECT_EQ(!server::check_api_write(order, policy), mode == "open") << policy.address << " " << mode;
   }
+}
+
+TEST(WebPolicy, FillCalibrationNeedsAReadTokenEvenWhereReadsArePublic) {
+  const auto tokens = server::parse_token_file("reader read reader-secret\nagent trade:practice agent-secret");
+  const auto check = [](const server::WritePolicy& policy, const std::string& secret) {
+    server::ApiRequest request{"POST", "/api/fills/calibration"};
+    request.content_type = "application/json";
+    if (!secret.empty()) request.authorization = "Bearer " + secret;
+    return server::check_api_write(request, policy);
+  };
+  // Reads are public on this bind, but calibration searches the recorded days.
+  const server::WritePolicy shared{"0.0.0.0", "", {}, tokens};
+  ASSERT_TRUE(check(shared, ""));
+  EXPECT_EQ(check(shared, "")->status, 403);
+  EXPECT_TRUE(check(shared, "wrong"));
+  EXPECT_TRUE(check(shared, "agent-secret"));
+  EXPECT_FALSE(check(shared, "reader-secret"));
+  server::ApiRequest status{"GET", "/api/status"};
+  EXPECT_FALSE(server::check_api_write(status, shared)) << "Ordinary reads stay public";
+  // Loopback named tokens leave writes open; the anonymous caller may trade there, so may calibrate.
+  EXPECT_FALSE(check({"127.0.0.1", "", {}, tokens}, ""));
+  EXPECT_TRUE(check({"127.0.0.1", "", {}, tokens, true}, ""));
+  EXPECT_TRUE(check({"127.0.0.1", "legacy-secret", {}}, ""));
+  EXPECT_FALSE(check({"127.0.0.1", "legacy-secret", {}}, "legacy-secret"));
 }
 
 TEST(WebPolicy, RequireTokenProtectsLoopbackReadsAndWritesAndAttributesActors) {

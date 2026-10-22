@@ -18,6 +18,7 @@ import { formatMoney, signedMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 import { TradeCoach, ContextCard, ReviewMetrics, TradeChart, TripAttribution } from "./TradeReview"
 import { netLabel } from "./OrdersView"
+import { FillQualityPanel } from "./FillQualityPanel"
 
 const usd = (value: number) => signedMoney(value.toFixed(2))
 const monthName = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" })
@@ -96,6 +97,7 @@ function Journal({ trading }: { trading: TradingStatus }) {
       <CsvDownloads scope={scope} />
       <Calendar trades={entries} notes={trades.data.day_notes ?? {}} trading={trading} />
       <Reports trades={entries} />
+      <FillQualityPanel scope={scope} />
       <History trades={list} wholes={wholes ?? []} trading={trading} />
       {shareList.length > 0 && <Shares trades={shareList} trading={trading} />}
       <Panel title="Settlements · all attempts">

@@ -67,7 +67,8 @@ describe("checked API core types", () => {
     "ProfileLevel", "ProfileHorizon", "RiskCaps", "EquityRisk", "TailRisk", "StressResult", "HistoricalRisk", "Walk", "WalkStep", "Limits", "TokenStatus", "RunJournal", "RunInput", "VerificationRun", "RunVerification", "ForwardTestWindow", "ForwardTest", "PlaybookReport",
     "FlowPrint", "FlowTotals", "FlowExpiry", "FlowStrike", "Flow", "EarningsMove", "EarningsSummary", "EarningsHistory", "EarningsImport",
     "AnalysisPortfolioSummary", "AnalysisPortfolios", "AnalysisHolding", "AnalysisExposureRow", "AnalysisBeta", "AnalysisPortfolio", "AnalysisStressScenario", "AnalysisStress", "AnalysisVar",
-    "OpenLossCap", "PayoutReviewOutcome", "TiltFlag", "RuleReplayDay", "RuleReplaySet", "RulesCompareResponse", "RulePackValidation", "EconomicsStep", "ChallengeEconomics"])("%s matches OpenAPI fields, types and nullability", (name) => {
+    "OpenLossCap", "PayoutReviewOutcome", "TiltFlag", "RuleReplayDay", "RuleReplaySet", "RulesCompareResponse", "RulePackValidation", "EconomicsStep", "ChallengeEconomics",
+    "QueueEstimate", "FillPlaces", "FillQualityGroup", "FillCalibration", "FillQuality", "PaperOutcome", "PaperFills", "CalibrationQuote", "CalibrationSkip", "CalibrationRow", "CalibrationSearch", "Calibration"])("%s matches OpenAPI fields, types and nullability", (name) => {
     const body = new RegExp(`export interface ${name} \\{([^}]+)\\}`).exec(source)?.[1]
     expect(body).toBeDefined()
     const fields = [...body!.matchAll(/(\w+)(\?)?\s*:\s*([^;\n}]+)/g)]

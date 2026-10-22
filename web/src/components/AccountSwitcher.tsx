@@ -66,6 +66,7 @@ export function NewAccountDialog({ trading, onClose, onCreated }: { trading: Tra
   const [name, setName] = useState(`Account ${accounts.length + 1}`)
   const [choice, setChoice] = useState("")
   const [fillModel, setFillModel] = useState<FillModel>("as_displayed")
+  const [stress, setStress] = useState(0)
   const [copyFrom, setCopyFrom] = useState("")
   const [feeModel, setFeeModel] = useState<FeeModel>("flat")
   const [margin, setMargin] = useState<MarginChoice>()
@@ -88,6 +89,7 @@ export function NewAccountDialog({ trading, onClose, onCreated }: { trading: Tra
     try {
       const response = await api.createAccount({ name: trimmed, plan: selected.id,
         ...(fillModel !== "as_displayed" ? { fill_model: fillModel } : {}),
+        ...(stress > 0 ? { stop_stress_ticks: stress } : {}),
         ...(copyFrom ? { copy_settings_from: copyFrom } : {}),
         ...(feeModel === "itemized" ? { fee_model: feeModel } : {}),
         ...marginRequest(margin ?? planMargin(selected.rules), planMargin(selected.rules)) }, trading.write)
@@ -128,7 +130,7 @@ export function NewAccountDialog({ trading, onClose, onCreated }: { trading: Tra
             </label>
           ))}
         </fieldset>
-        <FillModelPicker value={fillModel} onChange={setFillModel} disabled={pending} />
+        <FillModelPicker value={fillModel} onChange={setFillModel} disabled={pending} stress={stress} onStress={setStress} />
         <CopySettingsPicker value={copyFrom} onChange={setCopyFrom} disabled={pending} />
         <FeeModelPicker value={feeModel} onChange={setFeeModel} disabled={pending} flat={trading.fee_per_contract} />
         <MarginSettings value={margin ?? planMargin(selected?.rules)} onChange={setMargin} disabled={pending} />

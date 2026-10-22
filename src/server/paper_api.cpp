@@ -6,6 +6,7 @@
 #include "playbook_api.hpp"
 #include "paper_csv.hpp"
 #include "metric_cache.hpp"
+#include "fill_calibration.hpp"
 
 #include <algorithm>
 #include <array>
@@ -22,6 +23,7 @@
 #include "openport/trading/stress.hpp"
 #include "openport/server/plans.hpp"
 #include "openport/trading/contracts.hpp"
+#include "openport/trading/fill_quality.hpp"
 #include "openport/trading/history.hpp"
 
 namespace openport::server {
@@ -152,6 +154,12 @@ json rules_json(const AccountRules& r, Money initial_cash, const std::optional<S
   if (r.fill_latency_ms != 0) result["fill_latency_ms"] = r.fill_latency_ms;
   if (r.impact_ticks != 0) result["impact_ticks"] = r.impact_ticks;
   if (r.inside_fill_percent != 0) result["inside_fill_percent"] = r.inside_fill_percent;
+  if (r.queue_fills) result["queue_fills"] = true;
+  if (r.queue_seed != 0) result["queue_seed"] = r.queue_seed;
+  if (r.stop_stress_ticks != 0) {
+    result["stop_stress_ticks"] = r.stop_stress_ticks;
+    result["stop_stress_percent"] = r.stop_stress_percent;
+  }
   if (r.cash_credit_rate_bps != 0) result["cash_credit_rate_bps"] = r.cash_credit_rate_bps;
   if (r.margin_debit_rate_bps != 0) result["margin_debit_rate_bps"] = r.margin_debit_rate_bps;
   if (r.stock_borrow_rate_bps != 0) result["stock_borrow_rate_bps"] = r.stock_borrow_rate_bps;
@@ -483,6 +491,14 @@ json chained_json(const OrderRequest& r) {
           {"then", r.then.empty() ? json(nullptr) : chained_json(r.then.front())},
           {"oco", r.oco.empty() ? json(nullptr) : chained_json(r.oco.front())}};
 }
+/// The queue model's estimate for a resting limit; null without queue fills.
+json queue_json(const Order& o) {
+  if (!o.queue) return nullptr;
+  const auto& q = *o.queue;
+  return {{"price", q.price.str()}, {"ahead", q.ahead}, {"earned", q.earned}, {"displayed", q.displayed},
+          {"joined_at", md::format_timestamp(q.joined)}, {"updated_at", md::format_timestamp(q.updated)},
+          {"source", q.source}, {"simulated", true}};
+}
 json order_json(const Order& o, const TradingView& view) {
   constexpr const char* statuses[] = {"working", "partially_filled", "filled", "cancelled", "rejected", "armed"};
   constexpr const char* roles[] = {"", "stop_loss", "take_profit"};
@@ -527,7 +543,8 @@ json order_json(const Order& o, const TradingView& view) {
           {"role", nullable(roles[static_cast<int>(o.role)])}, {"parent", id_or_null(o.parent)}, {"oco", id_or_null(o.oco)},
           {"stop_loss_order", id_or_null(o.stop_loss)}, {"take_profit_order", id_or_null(o.take_profit)},
           {"then", o.request.then.empty() ? json(nullptr) : chained_json(o.request.then.front())},
-          {"chained_order", id_or_null(o.chained)}, {"chained_from", id_or_null(o.chained_from)}};
+          {"chained_order", id_or_null(o.chained)}, {"chained_from", id_or_null(o.chained_from)},
+          {"queue", queue_json(o)}, {"stress_ticks", o.stress_ticks}};
 }
 json flatten_preview_json(const FlattenPreview& f, const TradingView& view) {
   constexpr const char* statuses[] = {"working", "partially_filled", "filled", "cancelled", "rejected", "armed"};
@@ -639,7 +656,64 @@ json fill_json(const Fill& f, const TradingView& view) {
           {"side", f.side == Side::Buy ? "buy" : "sell"}, {"quantity", f.quantity},
           {"price", f.price.str()}, {"fee", f.fee.str()}, {"fees", fill_fees_json(f.fees)}, {"context", context_json(f.context)},
           {"quote", fill_quote_json(f)}, {"feed", f.feed.empty() ? json(nullptr) : json(f.feed)},
+          {"stress_ticks", f.stress_ticks}, {"queued", f.queued},
           {"quote_time", md::format_timestamp(f.quote_time)}, {"time", md::format_timestamp(f.time)}};
+}
+json fill_group_json(const FillQualityGroup& g) {
+  json places = json::object();
+  for (std::size_t i = 0; i < kFillPlaces; ++i) places[std::string(to_string(static_cast<FillPlace>(i)))] = g.places[i];
+  const auto mean = [](const std::optional<double>& value) { return value ? number(*value) : json(nullptr); };
+  return {{"key", g.key}, {"label", g.label}, {"fills", g.fills}, {"contracts", g.contracts}, {"places", places},
+          {"from_mid_ticks", mean(g.from_mid_ticks)}, {"vs_natural_ticks", mean(g.vs_natural_ticks)},
+          {"cost_vs_mid", g.cost_vs_mid.str()}};
+}
+json fill_groups_json(const std::vector<FillQualityGroup>& groups) {
+  json out = json::array();
+  for (const auto& g : groups) out.push_back(fill_group_json(g));
+  return out;
+}
+json fill_calibration_json(const FillCalibration& c) {
+  return {{"basis", c.basis}, {"fill_model", c.fill_model},
+          {"fill_latency_ms", c.fill_latency_ms ? json(*c.fill_latency_ms) : json(nullptr)},
+          {"slippage_ticks", c.slippage_ticks}, {"impact_ticks", c.impact_ticks},
+          {"inside_fill_percent", c.inside_fill_percent}, {"reasons", c.reasons}};
+}
+/// The paper fills by place on their book (GET /api/fills/quality).
+json fill_quality_json(const TradingView& view, bool current) {
+  const auto& s = *view.snapshot;
+  const auto report = fill_quality(s.recent_fills, view.contracts, current ? s.evaluation.first_fill : 0);
+  return {{"attempt", current ? "current" : "all"}, {"fills", report.fills}, {"measured", report.fills - report.unmeasured},
+          {"unmeasured", report.unmeasured}, {"overall", fill_group_json(report.overall)},
+          {"time_of_day", fill_groups_json(report.time_of_day)}, {"spread", fill_groups_json(report.spread)},
+          {"dte", fill_groups_json(report.dte)}, {"suggestion", fill_calibration_json(report.suggestion)}, {"simulated", true}};
+}
+json paper_outcome_json(const PaperOutcome& outcome) {
+  return {{"fills", outcome.fills}, {"price", money(outcome.price)}};
+}
+/// Real broker fills against the same-time books and paper models
+/// (POST /api/fills/calibration). Nothing is stored or traded.
+json calibration_json(const CalibrationReport& report) {
+  json rows = json::array();
+  for (const auto& r : report.rows) {
+    const auto& f = r.fill;
+    json quote = nullptr;
+    if (r.quote)
+      quote = {{"bid", r.quote->bid.str()}, {"ask", r.quote->ask.str()}, {"bid_size", r.quote->bid_size},
+               {"ask_size", r.quote->ask_size}, {"time", time_or_null(r.quote->time)}, {"source", r.quote->source}};
+    rows.push_back({{"row", f.row}, {"time", time_or_null(f.time)}, {"symbol", f.symbol}, {"side", side_name(f.side)},
+                    {"quantity", f.quantity}, {"price", f.price.str()}, {"quote", quote},
+                    {"place", r.real ? json(std::string(to_string(r.real->place))) : json(nullptr)},
+                    {"from_mid_ticks", r.real ? number(r.real->from_mid_ticks) : json(nullptr)},
+                    {"vs_natural_ticks", r.real ? number(r.real->vs_natural_ticks) : json(nullptr)},
+                    {"as_displayed", paper_outcome_json(r.as_displayed)}, {"conservative", paper_outcome_json(r.conservative)},
+                    {"midpoint", paper_outcome_json(r.midpoint)}, {"note", nullable(r.note)}});
+  }
+  json skipped = json::array();
+  for (const auto& [row, reason] : report.skipped) skipped.push_back({{"row", row}, {"reason", reason}});
+  return {{"format", report.format}, {"matched", report.matched}, {"unmatched", report.unmatched}, {"rows", rows},
+          {"real", fill_group_json(report.real)},
+          {"paper_fills", {{"as_displayed", report.paper_fills[0]}, {"conservative", report.paper_fills[1]}, {"midpoint", report.paper_fills[2]}}},
+          {"suggestion", fill_calibration_json(report.suggestion)}, {"skipped", skipped}, {"stored", false}};
 }
 json position_greeks(const MarkedPosition& p, const TradingView& view) {
   json out = {{"delta", nullptr}, {"gamma", nullptr}, {"vega", nullptr}, {"theta", nullptr},
@@ -1833,6 +1907,12 @@ void margin_fields(const json& j, AccountRules& rules) try {
 } catch (const std::exception& error) {
   throw TradingError(Reason::INVALID_RULES, error.what());
 }
+/// The queue model's seed and stop stress, in custom rules or beside a plan.
+void fill_model_fields(const json& j, AccountRules& rules) {
+  if (j.contains("queue_seed")) rules.queue_seed = integer_field(j, "queue_seed");
+  if (j.contains("stop_stress_ticks")) rules.stop_stress_ticks = integer_field(j, "stop_stress_ticks");
+  if (j.contains("stop_stress_percent")) rules.stop_stress_percent = integer_field(j, "stop_stress_percent");
+}
 /// New restriction values use 422 without changing legacy rule error statuses.
 struct PlanRestrictionError : std::invalid_argument {
   using std::invalid_argument::invalid_argument;
@@ -1886,6 +1966,7 @@ AccountRules parse_rules(const json& j) {
           "lock_at_start", "profit_basis", "daily_loss_limit", "daily_loss_basis", "daily_loss_action", "consistency_percent",
           "consistency_basis", "min_trading_days", "min_profitable_days", "profitable_day_profit", "day_end", "fees",
           "account_type", "house_margin_percent", "pm_vol_shock", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "inside_fill_percent", "pin_risk", "pin_risk_seed",
+          "queue_fills", "queue_seed", "stop_stress_ticks", "stop_stress_percent",
           "min_hold_seconds", "microscalp_seconds", "microscalp_percent", "min_trades", "trade_consistency_percent", "max_volume_percent", "max_contracts_held", "no_hedging", "no_counter_positions", "require_stop_loss", "max_trade_risk", "max_trade_risk_percent",
           "time_limit_days", "inactivity_days", "underlyings", "trading_start", "trading_end", "flat_time", "no_overnight", "scaling", "size_scaling",
           "events", "news_before_minutes", "news_after_minutes", "news_action", "hold_restrictions", "hold_cutoff",
@@ -1971,6 +2052,8 @@ AccountRules parse_rules(const json& j) {
   if (j.contains("fill_latency_ms")) rules.fill_latency_ms = integer_field(j, "fill_latency_ms");
   if (j.contains("impact_ticks")) rules.impact_ticks = integer_field(j, "impact_ticks");
   if (j.contains("inside_fill_percent")) rules.inside_fill_percent = integer_field(j, "inside_fill_percent");
+  if (j.contains("queue_fills")) rules.queue_fills = boolean_field(j, "queue_fills");
+  fill_model_fields(j, rules);
   if (j.contains("fees") && !j.at("fees").is_null()) rules.fees = parse_fee_schedule(j.at("fees"));
   margin_fields(j, rules);
   program_cost_fields(j, rules);
@@ -2003,15 +2086,21 @@ void margin_model(const json& body, AccountRules& rules) {
   validate_rules(rules);
 }
 /// Presets override only execution settings; all evaluation rules stay intact.
+/// Queue fills, its seed and stop stress are program rules: an attempt that
+/// changes them no longer follows its preset plan.
 void fill_model(const json& body, AccountRules& rules) {
-  if (!body.contains("fill_model")) return;
-  const auto model = string_field(body, "fill_model");
-  if (model != "as_displayed" && model != "conservative" && model != "midpoint")
-    throw std::invalid_argument("fill_model must be as_displayed, conservative or midpoint");
-  rules.fill_latency_ms = model == "conservative" ? 1000 : 0;
-  rules.impact_ticks = model == "conservative" ? 1 : 0;
-  rules.slippage_ticks = model == "conservative" ? 1 : 0;
-  rules.inside_fill_percent = model == "midpoint" ? 50 : 0;
+  fill_model_fields(body, rules);
+  if (body.contains("fill_model")) {
+    const auto model = string_field(body, "fill_model");
+    if (model != "as_displayed" && model != "conservative" && model != "midpoint" && model != "queue")
+      throw std::invalid_argument("fill_model must be as_displayed, conservative, midpoint or queue");
+    rules.fill_latency_ms = model == "conservative" ? 1000 : 0;
+    rules.impact_ticks = model == "conservative" ? 1 : 0;
+    rules.slippage_ticks = model == "conservative" ? 1 : 0;
+    rules.inside_fill_percent = model == "midpoint" ? 50 : 0;
+    rules.queue_fills = model == "queue";
+  }
+  validate_rules(rules);
 }
 /// An illustrative broker schedule; custom rules can supply each amount instead.
 void fee_model(const json& body, AccountRules& rules) {
@@ -2446,7 +2535,8 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   if (path == "/api/accounts") {
     // A name, and either a preset plan or a starting balance and complete rules.
     fields(body, {"name"}, {"plan", "initial_cash", "rules", "fill_model", "fee_model", "margin", "account_type",
-                            "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "copy_settings_from", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
+                            "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "copy_settings_from",
+                            "queue_seed", "stop_stress_ticks", "stop_stress_percent", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
     command.kind = TradingCommand::Kind::CreateAccount;
     command.name = string_field(body, "name");
     if (body.contains("copy_settings_from")) {
@@ -2519,7 +2609,8 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   } else if (path == "/api/account/reset") {
     // Either a preset ID, or a custom starting balance and complete rules.
     fields(body, {"reason"}, {"plan", "initial_cash", "rules", "fill_model", "fee_model", "margin", "account_type",
-                              "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
+                              "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "evaluation_fee", "reset_fee", "activation_fee", "max_resets",
+                              "queue_seed", "stop_stress_ticks", "stop_stress_percent"});
     command.kind = TradingCommand::Kind::ResetAccount;
     command.program_costs = true;
     command.restore_scaled_rules = true;
@@ -3624,7 +3715,8 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   if (!order_detail && path != "/api/portfolio" && path != "/api/orders" && path != "/api/fills" && path != "/api/risk" &&
       path != "/api/trades.csv" && path != "/api/fills.csv" && path != "/api/account" && path != "/api/account/equity" &&
       path != "/api/trades" && path != "/api/settlements" && path != "/api/plans" && path != "/api/accounts" && path != "/api/risk/profile" &&
-      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history" && path != "/api/risk/hedges") return {};
+      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history" && path != "/api/risk/hedges" &&
+      path != "/api/fills/quality") return {};
   if (path == "/api/risk/hedges") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
@@ -3674,7 +3766,8 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     else if (key == "status" && path == "/api/orders" && (value == "open" || value == "all")) status = value;
     else if (key == "client_order_id" && path == "/api/orders" && valid_client_order_id(value)) client_order_id = value;
     else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "open" || value == "closed" || value == "all")) status = value;
-    else if (key == "attempt" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "current" || value == "all")) attempt = value;
+    else if (key == "attempt" && (path == "/api/trades" || path == "/api/trades.csv" || path == "/api/fills/quality") &&
+             (value == "current" || value == "all")) attempt = value;
     else if (csv && key == "from" && csv_date(value)) from = value;
     else if (csv && key == "to" && csv_date(value)) to = value;
     else valid_query = false;
@@ -3753,6 +3846,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   }
   if (path == "/api/account") return ApiResponse{200, account_json(*view).dump()};
   if (path == "/api/trades") return ApiResponse{200, trades_json(*view, status, attempt == "current").dump()};
+  if (path == "/api/fills/quality") return ApiResponse{200, fill_quality_json(*view, attempt == "current").dump()};
   if (path == "/api/alerts") {
     json alerts = json::array();
     for (const auto& alert : s.alerts) alerts.push_back(alert_json(alert));
@@ -3883,6 +3977,46 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (playbook_write(request, source, complete)) return;
+  // Read-only analysis of an uploaded file: it never reaches an account. The file
+  // is parsed here; the recorded days are searched on the calibration worker.
+  if (request.method == "POST" && request.target == "/api/fills/calibration") {
+    trading::BrokerImport parsed;
+    md::Timestamp age = 0;
+    try {
+      const auto body = json::parse(request.body);
+      fields(body, {"csv"}, {"format", "max_quote_age_seconds"});
+      const auto format = body.contains("format") ? string_field(body, "format") : std::string("auto");
+      const auto seconds = body.contains("max_quote_age_seconds") ? integer_field(body, "max_quote_age_seconds") : 60;
+      if (seconds < 1 || seconds > 3600) throw std::invalid_argument("max_quote_age_seconds must be 1 to 3600");
+      age = seconds * md::kNanosPerSecond;
+      parsed = parse_broker_fills(string_field(body, "csv"), format);
+      check_calibration_span(parsed.fills);
+    } catch (const std::exception& error) {
+      complete(api_error(400, "INVALID_REQUEST", error.what()));
+      return;
+    }
+    static CalibrationWorker worker;
+    auto job = [parsed = std::move(parsed), age, directory = source.recordings_directory(), complete](const std::atomic_bool& cancel) {
+      try {
+        const auto recorded = recorded_quotes(directory, parsed.fills, age, {}, &cancel);
+        if (recorded.search.stopped == "cancelled") {
+          complete(api_error(503, "ENGINE_STOPPING", "The server is stopping"));
+          return;
+        }
+        auto body = calibration_json(calibrate(parsed, recorded.quotes));
+        body["search"] = {{"files", recorded.search.files}, {"bytes", recorded.search.bytes}, {"stopped", recorded.search.stopped}};
+        complete({200, body.dump()});
+      } catch (const std::exception& error) {
+        complete(api_error(400, "INVALID_REQUEST", error.what()));
+      }
+    };
+    if (!worker.start(std::move(job))) {
+      auto busy = api_error(503, "CALIBRATION_BUSY", "Another fill calibration is running; retry when it finishes");
+      busy.retry_after = kInboxRetrySeconds;
+      complete(std::move(busy));
+    }
+    return;
+  }
   // Writes take one query parameter, account=ID; the route is the path alone.
   const auto question = request.target.find('?');
   const std::string path = request.target.substr(0, question);

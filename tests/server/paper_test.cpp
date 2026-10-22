@@ -18,7 +18,9 @@
 #include "openport/server/web_policy.hpp"
 #include "server/paper_json.hpp"
 #include "server/event_calendar.hpp"
+#include "server/fill_calibration.hpp"
 #include "support/scripted_market.hpp"
+#include "support/recording.hpp"
 
 namespace {
 using namespace openport;
@@ -297,6 +299,181 @@ TEST_F(PaperEngine, InsideFillRulesAndWalkingOrdersRoundTrip) {
   EXPECT_EQ(read(*engine, "/api/account?account=inside")["rules"]["inside_fill_percent"], 50);
   engine->stop();
   std::filesystem::remove_all(directory);
+}
+
+TEST_F(PaperEngine, QueueFillsAndStopStressRulesRoundTripAndLeaveThePreset) {
+  seed();
+  auto reset = write(*engine, "POST", "/api/account/reset", {{"reason", "queue"}, {"plan", "practice"}, {"fill_model", "queue"},
+      {"queue_seed", 9}, {"stop_stress_ticks", 2}});
+  ASSERT_EQ(reset.status, 200) << reset.body;
+  test::capture_contract("paper", "POST", "/api/account/reset", reset);
+  auto rules = read(*engine, "/api/account")["rules"];
+  EXPECT_EQ(rules["queue_fills"], true);
+  EXPECT_EQ(rules["queue_seed"], 9);
+  EXPECT_EQ(rules["stop_stress_ticks"], 2);
+  EXPECT_EQ(rules["stop_stress_percent"], 200);
+  EXPECT_TRUE(rules["plan_id"].is_null() || rules["plan_id"] == "") << "Queue fills and stop stress are program rules";
+  const auto placed = write(*engine, "POST", "/api/orders", order(market, "queued", "4.00"));
+  ASSERT_EQ(placed.status, 201) << placed.body;
+  const auto resting = json::parse(placed.body)["order"];
+  EXPECT_EQ(resting["queue"]["ahead"], 10);
+  EXPECT_EQ(resting["queue"]["price"], "4.00");
+  EXPECT_EQ(resting["queue"]["simulated"], true);
+  EXPECT_EQ(resting["waiting"]["code"], "QUEUE");
+  EXPECT_EQ(resting["stress_ticks"], 0);
+  const auto orders = server::handle_api({"GET", "/api/orders"}, *engine);
+  test::capture_contract("paper", "GET", "/api/orders", orders);
+  const auto filled = write(*engine, "POST", "/api/orders", order(market, "taker", "4.20"));
+  ASSERT_EQ(filled.status, 201) << filled.body;
+  const auto fill = json::parse(filled.body)["fills"].at(0);
+  EXPECT_EQ(fill["queued"], false);
+  EXPECT_EQ(fill["stress_ticks"], 0);
+  // Without the queue, the same plan names its preset again.
+  reset = write(*engine, "POST", "/api/account/reset", {{"reason", "plain"}, {"plan", "practice"}, {"fill_model", "as_displayed"}});
+  ASSERT_EQ(reset.status, 200) << reset.body;
+  rules = read(*engine, "/api/account")["rules"];
+  EXPECT_FALSE(rules.contains("queue_fills"));
+  EXPECT_EQ(rules["plan_id"], "practice");
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"plan", "practice"}, {"stop_stress_percent", 100}}),
+               400, "INVALID_RULES");
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"plan", "practice"}, {"queue_seed", -1}}),
+               400, "INVALID_RULES");
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"plan", "practice"}, {"fill_model", "queues"}}),
+               400, "INVALID_REQUEST");
+  rules["plan"] = "Custom queue";
+  rules["queue_fills"] = "yes";
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"reason", "bad"}, {"initial_cash", "100000.00"}, {"rules", rules}}),
+               400, "INVALID_REQUEST");
+  rules["queue_fills"] = true;
+  const auto custom = write(*engine, "POST", "/api/account/reset", {{"reason", "custom"}, {"initial_cash", "100000.00"}, {"rules", rules}});
+  ASSERT_EQ(custom.status, 200) << custom.body;
+  EXPECT_EQ(read(*engine, "/api/account")["rules"]["queue_fills"], true);
+}
+
+TEST_F(PaperEngine, FillQualityAndRealFillCalibrationReadWithoutTrading) {
+  // Calibration looks quotes up in the recorded days the replay picker lists.
+  test::RecordingFile recorded;
+  auto header = test::recording_header();
+  header.started = market.time - md::kNanosPerMinute;
+  test::record_events(recorded.directory / "day.oprec",
+      {md::ContractDefinition{4, market.contract}, md::OptionQuote{4, market.time - 2 * md::kNanosPerSecond, 3.9, 4.3, 5, 5}}, header);
+  engine->stop();
+  auto options = paper_options();
+  options.recordings = recorded.directory;
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "natural", "4.20")).status, 201);
+  const auto quality = server::handle_api({"GET", "/api/fills/quality"}, *engine);
+  ASSERT_EQ(quality.status, 200) << quality.body;
+  test::capture_contract("paper", "GET", "/api/fills/quality", quality);
+  const auto report = json::parse(quality.body);
+  EXPECT_EQ(report["fills"], 1);
+  EXPECT_EQ(report["overall"]["places"]["natural"], 1);
+  EXPECT_EQ(report["overall"]["cost_vs_mid"], "10.00");
+  EXPECT_EQ(report["suggestion"]["fill_model"], "conservative");
+  EXPECT_EQ(report["simulated"], true);
+  EXPECT_EQ(read(*engine, "/api/fills/quality?attempt=all")["attempt"], "all");
+  EXPECT_EQ(server::handle_api({"GET", "/api/fills/quality?attempt=some"}, *engine).status, 400);
+  const auto version = read(*engine, "/api/account")["account_version"];
+  const auto time = md::format_timestamp(market.time);
+  const std::string csv = "time,symbol,side,quantity,price,bid,ask\n" + time + "," + market.symbol() + ",buy,1,4.10,4.00,4.20\n" +
+      time + "," + market.symbol() + ",buy,1,4.10,,\n" + time + ",SPY,buy,1,1.00,,\n";
+  const auto calibrated = write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"format", "generic"}});
+  ASSERT_EQ(calibrated.status, 200) << calibrated.body;
+  test::capture_contract("paper", "POST", "/api/fills/calibration", calibrated);
+  const auto result = json::parse(calibrated.body);
+  EXPECT_EQ(result["matched"], 2);
+  EXPECT_EQ(result["stored"], false);
+  EXPECT_EQ(result["rows"][0]["quote"]["source"], "import");
+  EXPECT_EQ(result["rows"][1]["quote"]["source"], "recording");
+  EXPECT_EQ(result["rows"][1]["quote"]["bid"], "3.90");
+  EXPECT_EQ(result["rows"][1]["place"], "mid_or_better");
+  EXPECT_EQ(result["skipped"].size(), 1U);
+  EXPECT_EQ(result["suggestion"]["basis"], "real_fills");
+  EXPECT_TRUE(result["suggestion"]["fill_latency_ms"].is_null());
+  EXPECT_EQ(result["search"]["files"], 1);
+  EXPECT_EQ(result["search"]["stopped"], "complete");
+  EXPECT_EQ(read(*engine, "/api/account")["account_version"], version) << "Calibration never reaches the account";
+  // Older than the age limit allows, the recorded quote is not used.
+  const auto strict = json::parse(write(*engine, "POST", "/api/fills/calibration",
+      {{"csv", csv}, {"max_quote_age_seconds", 1}}).body);
+  EXPECT_EQ(strict["matched"], 1);
+  EXPECT_EQ(strict["format"], "generic");
+  expect_error(write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"format", "robinhood"}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/fills/calibration", {{"csv", csv}, {"max_quote_age_seconds", 0}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/fills/calibration", {{"format", "generic"}}), 400, "INVALID_REQUEST");
+}
+
+TEST(FillCalibrationSearch, ReadsTheNewestDayFirstAndStopsOnceEveryFillHasAQuoteOrAtItsLimits) {
+  test::ScriptedMarket market;
+  test::RecordingFile recorded;
+  const auto record = [&](const std::string& name, md::Timestamp started, md::Timestamp quoted, double bid) {
+    auto header = test::recording_header();
+    header.started = started;
+    test::record_events(recorded.directory / name,
+        {md::ContractDefinition{4, market.contract}, md::OptionQuote{4, quoted, bid, bid + 0.2, 5, 5}}, header);
+  };
+  record("early.oprec", market.time - 60 * md::kNanosPerMinute, market.time - 30 * md::kNanosPerSecond, 3.0);
+  record("late.oprec", market.time - 10 * md::kNanosPerMinute, market.time - 2 * md::kNanosPerSecond, 3.9);
+  trading::BrokerFill fill;
+  fill.row = 2;
+  fill.time = market.time;
+  fill.symbol = market.symbol();
+  const auto age = 60 * md::kNanosPerSecond;
+  const auto found = server::recorded_quotes(recorded.directory, {fill}, age);
+  EXPECT_EQ(found.search.files, 1U);
+  EXPECT_EQ(found.search.stopped, "all_matched");
+  ASSERT_TRUE(found.quotes.contains(2));
+  EXPECT_EQ(found.quotes.at(2).bid, Money::parse("3.90"));
+  // A fill nothing records reads every candidate.
+  auto other = fill;
+  other.symbol = "SPXW  261022P05000000";
+  const auto searched = server::recorded_quotes(recorded.directory, {other}, age);
+  EXPECT_EQ(searched.search.files, 2U);
+  EXPECT_EQ(searched.search.stopped, "complete");
+  EXPECT_GT(searched.search.bytes, 0U);
+  EXPECT_TRUE(searched.quotes.empty());
+  const auto limited = [&](server::RecordingLimits limits, const std::atomic_bool* cancel = nullptr) {
+    return server::recorded_quotes(recorded.directory, {other}, age, limits, cancel).search;
+  };
+  EXPECT_EQ(limited({.files = 1}).stopped, "file_limit");
+  EXPECT_EQ(limited({.files = 1}).files, 1U);
+  EXPECT_EQ(limited({.headers = 1}).stopped, "file_limit");
+  EXPECT_EQ(limited({.bytes = 1}).stopped, "byte_limit");
+  EXPECT_EQ(limited({.time = std::chrono::seconds(0)}).stopped, "time_limit");
+  const std::atomic_bool cancel{true};
+  EXPECT_EQ(limited({}, &cancel).stopped, "cancelled");
+  // Timed fills more than a month apart are refused before any search.
+  auto later = fill;
+  later.time = fill.time + 31 * md::kNanosPerDay;
+  EXPECT_NO_THROW(server::check_calibration_span({fill, later}));
+  later.time += md::kNanosPerSecond;
+  EXPECT_THROW(server::check_calibration_span({fill, later}), std::invalid_argument);
+}
+
+TEST(FillCalibrationSearch, OneCalibrationRunsAtATimeAndStoppingCancelsIt) {
+  std::promise<void> release;
+  std::promise<void> finished;
+  auto worker = std::make_unique<server::CalibrationWorker>();
+  ASSERT_TRUE(worker->start([&, gate = release.get_future().share()](const std::atomic_bool&) {
+    gate.wait();
+    finished.set_value();
+  }));
+  EXPECT_FALSE(worker->start([](const std::atomic_bool&) {})) << "A second waits for the first";
+  release.set_value();
+  finished.get_future().wait();
+  ASSERT_TRUE(wait_for([&] { return worker->start([](const std::atomic_bool&) {}); }));
+  std::atomic_bool saw_cancel{false};
+  ASSERT_TRUE(wait_for([&] {
+    return worker->start([&](const std::atomic_bool& cancel) {
+      while (!cancel) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      saw_cancel = true;
+    });
+  }));
+  worker.reset();
+  EXPECT_TRUE(saw_cancel);
 }
 
 TEST_F(PaperEngine, AlertsWatchUntradedContractsAndUnderlyingStudiesAndKeepAccountScope) {

@@ -23,6 +23,7 @@ CALLS = [
     ("status",), ("summary", "{symbol}"), ("chain", "{symbol}"), ("exposure", "{symbol}"),
     ("surface", "{symbol}"), ("volatility", "{symbol}"), ("candles", "{symbol}"), ("probability", "{symbol}"),
     ("account",), ("portfolio",), ("orders",), ("get_order", "{id}"), ("fills",), ("trades",), ("risk",),
+    ("fill_quality",), ("calibrate_fills", "time,symbol,side,quantity,price\n"),
     ("risk_profile",), ("plans",), ("accounts",), ("equity",), ("settlements",),
     ("export_csv", "fills"), ("export_csv", "trades"),
     ("place_order", {}), ("preview_order", {}), ("preview_change", "{id}"), ("what_if", []),

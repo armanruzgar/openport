@@ -58,8 +58,9 @@ inline std::vector<std::string> paper_csv_columns(bool fills) {
       columns.push_back(std::string("quote.") + field);
     for (const auto* field : {"commission", "clearing", "regulatory", "index"})
       columns.push_back(std::string("fees.") + field);
-    // Last, so earlier columns keep their positions: the feed a fallback named.
-    columns.push_back("feed");
+    // Added columns go last, so earlier columns keep their positions: the feed a
+    // fallback named, then the optional fill models' stop stress and queue fills.
+    for (const auto* field : {"feed", "stress_ticks", "queued"}) columns.push_back(field);
   }
   if (!fills) {
     for (const auto* prefix : {"review", "strategy_review"}) {

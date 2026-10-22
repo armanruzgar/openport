@@ -71,7 +71,8 @@ struct MarkedStock {
 /// REGULAR_SESSION (waits for the regular session), INVALID_QUOTE or STALE_QUOTE
 /// (no usable quote on a leg), FILL_LATENCY (held for a quote stamped after the
 /// account's delay), NEWER_QUOTE (resting orders take quotes newer than their
-/// acceptance), LIMIT (the far side is worse than the limit), DISPLAYED_SIZE (the
+/// acceptance), LIMIT (the far side is worse than the limit), QUEUE (queue fills:
+/// a resting limit waits behind an estimated queue at its price), DISPLAYED_SIZE (the
 /// quote's displayed size is used up until a new one), MARKET_HALTED (a simulated
 /// underlying pause) or STALE_DATA (held
 /// positions need fresh marks and valuations first).
@@ -551,10 +552,12 @@ class TradingSession {
   /// `stocks` prices the underlyings: the shares that exercise and assignment
   /// deliver are marked and traded at them. `indicators` are the prices and
   /// studies conditional triggers watch; older ones than those kept are ignored.
+  /// `activity` is what traded, read only by the queue fill model.
   CommandResult on_quotes(const std::vector<QuoteObservation>& quotes,
                           const std::vector<Valuation>& valuations, Timestamp time,
                           const std::vector<StockPrice>& stocks = {},
-                          const std::vector<Indicator>& indicators = {});
+                          const std::vector<Indicator>& indicators = {},
+                          const MarketActivity& activity = {});
   CommandResult set_limits(Limits limits, Timestamp time);
   CommandResult set_guardrails(Guardrails guardrails, Timestamp time);
   CommandResult trip_kill(std::string reason, Timestamp time);
