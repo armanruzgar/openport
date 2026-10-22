@@ -729,6 +729,7 @@ json portfolio_json(const TradingView& view) {
         {"market_value", money(p.market_value)}, {"unrealised", money(p.unrealised)},
         {"realised", position.realised.str()}, {"fees", position.fees.str()}, {"fresh", p.fresh},
         {"awaiting_settlement", p.awaiting_settlement}, {"no_bid", p.no_bid}, {"do_not_exercise", p.do_not_exercise},
+        {"modelled_mark", p.modelled_mark},
         // How an expired position settles: on the closing print, recorded or still awaited
         // (with the last print before the close as the fallback) for half an hour after the
         // close, or by a value entered by hand once no automatic source remains.
@@ -3328,19 +3329,20 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
     auto order = parse_order(body.at("order"));
     if (!order.then.empty() || !order.oco.empty() || order.exits_only)
       throw std::invalid_argument("A copied order takes no then, oco or exits_only: each account sizes its own");
+    // Equity allocation splits among the members whose positions are all marked; one
+    // that is not is skipped with its reason, and the rest take the whole order.
     std::vector<std::optional<Money>> equity;
+    std::vector<bool> unmarked(group->members.size(), false);
     if (group->allocation == Allocation::Equity)
-      for (const auto& m : group->members) {
+      for (std::size_t i = 0; i < group->members.size(); ++i) {
+        const auto& m = group->members[i];
         const auto view = source.trading_view(m.account == kMainAccount ? std::string() : m.account);
         if (!view || !view->snapshot) {
           complete(api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + m.account));
           return true;
         }
-        if (!view->snapshot->valuation_complete) {
-          complete(api_error(409, "STALE_QUOTE", "Equity allocation needs every member's positions marked; " + m.account + "'s are not"));
-          return true;
-        }
-        equity.push_back(view->snapshot->equity);
+        unmarked[i] = !view->snapshot->valuation_complete;
+        equity.push_back(unmarked[i] ? std::nullopt : std::optional(view->snapshot->equity));
       }
     auto fan = std::make_shared<CopyFanOut>();
     fan->group = *group;
@@ -3352,6 +3354,11 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
     std::vector<std::pair<std::size_t, TradingCommand>> commands;
     for (std::size_t i = 0; i < group->members.size(); ++i) {
       const auto& account = group->members[i].account;
+      if (unmarked[i]) {
+        fan->results[i] = json{{"account", account}, {"quantity", 0}, {"ok", false}, {"skipped", true}, {"code", "STALE_QUOTE"},
+                               {"message", "Equity allocation needs this account's positions all marked; they are not, so it was sent nothing"}};
+        continue;
+      }
       if (fan->quantities[i] <= 0) {
         fan->results[i] = json{{"account", account}, {"quantity", 0}, {"ok", false}, {"skipped", true},
                                {"message", "The allocation gives this account no units"}};

@@ -130,7 +130,9 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
               : position.settle_by === "closing_print" ? "Waiting for closing print" : "Manual settlement value required"}
           </div>}
           {position.deliverable && <div className="mt-1 text-[11px] text-muted" title="Adjusted for a split: priced and quoted as the standard series that pays the same">
-            Adjusted · delivers {position.deliverable.shares} shares{position.deliverable.cash !== "0.00" ? ` + ${formatMoney(position.deliverable.cash)}` : ""} a contract</div>}
+            Adjusted · delivers {position.deliverable.shares > 0 ? `${position.deliverable.shares} shares` : "cash only"}{position.deliverable.cash !== "0.00" ? `${position.deliverable.shares > 0 ? " + " : ": "}${formatMoney(position.deliverable.cash)}` : ""} a contract</div>}
+          {position.modelled_mark && <div className="mt-1 text-[10px] text-warn" title="No listed series pays the same: valued by model from the listed strikes around it. It does not trade until one is quoted.">
+            Modelled mark · not tradable</div>}
           {position.do_not_exercise && <span className="mt-1 ml-1 inline-block rounded-full border border-border px-2 py-0.5 text-[10px] text-muted">Not to be exercised</span>}
           {position.no_bid && !position.awaiting_settlement && <div className="mt-1 text-[10px] text-warn">Nobody bids for it</div>}
           {protection(position, orders) && <div className="mt-1 text-[10px] text-accent">{protection(position, orders)}</div>}

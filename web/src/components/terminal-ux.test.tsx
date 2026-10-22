@@ -150,3 +150,11 @@ it("labels watchlist IV rank as a percentage and derives change from the prior d
     expect(host.textContent).toContain(summary.as_of)
   } finally { client.clear() }
 })
+
+it("labels a modelled mark and a deliverable of cash only", () => {
+  const adjusted = { ...portfolio.positions[0]!, deliverable: { shares: 0, cash: "51000.00" }, modelled_mark: true }
+  const html = renderToStaticMarkup(<Positions positions={[adjusted]} selected={new Set()} onSelect={() => {}} />)
+  expect(html).toContain("delivers cash only")
+  expect(html).toContain("Modelled mark · not tradable")
+  expect(renderToStaticMarkup(<Positions positions={portfolio.positions} selected={new Set()} onSelect={() => {}} />)).not.toContain("Modelled mark")
+})

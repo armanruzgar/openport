@@ -240,6 +240,8 @@ class Desk {
   std::vector<trading::CorporateAction> corporate_actions_;
   /// Adjusted series: the standard series' observation each last quoted.
   std::map<std::string, std::uint64_t> equivalent_observations_;
+  /// Adjusted series valued by model: the analytics version each was last modelled from.
+  std::map<std::string, std::uint64_t> modelled_versions_;
   void check_circuit_breaker(const md::UnderlyingQuote& spot);
   void advance_circuit_breaker(md::Timestamp time);
   void publish_circuit_breaker();

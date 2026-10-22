@@ -130,6 +130,62 @@ Valuation valuation_for(const std::string& symbol, const md::OptionContract& con
   }
   return result;
 }
+/// A split-adjusted series' value and valuation, modelled from the listed data when
+/// no listed series pays the same (after a 3:2 or a reverse split, its effective
+/// strike is not listed): Black at its effective strike with the smile IV the
+/// expiry's nearest listed strikes interpolate, at the analytics' forward, scaled
+/// to the deliverable's shares. A deliverable of cash only is worth its discounted
+/// intrinsic value and moves with nothing. A European model of an American series:
+/// the value is labelled modelled and never trades.
+struct ModelledSeries {
+  double price = 0;
+  Valuation valuation;
+};
+std::optional<ModelledSeries> modelled_series(const std::string& symbol, const md::OptionContract& contract,
+                                              const Deliverable& d,
+                                              const std::shared_ptr<const analytics::UnderlyingMetrics>& metrics) {
+  if (!metrics || !std::isfinite(metrics->spot) || metrics->spot <= 0) return std::nullopt;
+  for (const auto& slice : metrics->slices) {
+    if (slice.expiry_time != contract.expiry_time() || slice.style != contract.style) continue;
+    const double forward = slice.forward.forward, discount = slice.forward.discount, years = slice.years;
+    if (!std::isfinite(forward) || forward <= 0 || !std::isfinite(discount) || discount <= 0 || !std::isfinite(years) || years < 0)
+      return std::nullopt;
+    const bool call = contract.type == pricing::OptionType::Call;
+    const double strike = d.shares == 0 ? contract.strike : (contract.strike * 100 - d.cash.dollars()) / static_cast<double>(d.shares);
+    // The smile at the effective strike: between the listed strikes either side of
+    // it, or the nearest one beyond the listed range.
+    const analytics::StrikeMetrics* below = nullptr;
+    const analytics::StrikeMetrics* above = nullptr;
+    for (const auto& row : slice.strikes) {
+      if (!std::isfinite(row.iv) || row.iv <= 0) continue;
+      if (row.strike <= strike && (!below || row.strike > below->strike)) below = &row;
+      if (row.strike >= strike && (!above || row.strike < above->strike)) above = &row;
+    }
+    if (!below && !above) return std::nullopt;
+    double iv = below ? below->iv : above->iv;
+    if (below && above && above->strike > below->strike)
+      iv = below->iv + (above->iv - below->iv) * (strike - below->strike) / (above->strike - below->strike);
+    ModelledSeries out;
+    out.valuation = {symbol, metrics->as_of, 0, 0, 0, 0, metrics->spot, forward, discount, years, iv, true};
+    out.valuation.spot_source = metrics->spot_source;
+    if (d.shares == 0) {
+      const double worth = d.cash.dollars() / 100;
+      out.price = discount * std::max(0.0, call ? worth - contract.strike : contract.strike - worth);
+    } else {
+      const double scale = static_cast<double>(d.shares) / 100, carry = forward / metrics->spot;
+      const auto g = pricing::black_greeks(contract.type, forward, strike, years, iv, discount);
+      out.price = g.price * scale;
+      out.valuation.delta = g.delta * carry * scale;
+      out.valuation.gamma = g.gamma * carry * carry * scale;
+      out.valuation.vega = g.vega / 100.0 * scale;
+      out.valuation.theta = g.theta / 365.0 * scale;
+    }
+    out.valuation.valid = valid_valuation(out.valuation);
+    if (!std::isfinite(out.price) || out.price < 0 || !out.valuation.valid) return std::nullopt;
+    return out;
+  }
+  return std::nullopt;
+}
 /// Opens a journal for writing, making each directory created on the way durable:
 /// an existing file is locked, then read for recovery; otherwise a new one is created.
 /// An empty journal, as a create that failed before its first record leaves, holds
@@ -1345,16 +1401,25 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         // A series the account adjusted for a split trades as the standard series that
         // pays the same: shares/100 contracts at its effective strike, whose listing,
         // quote and valuation price it. Its own listing has pre-split terms.
+        // Without one listed (after a 3:2 or a reverse split, or for a deliverable of
+        // cash only), it is valued by model from the listed strikes around it
+        // (modelled_series): a mark labelled modelled that keeps it valued and the
+        // days rolling, and never fills.
         const auto adjusted = session.deliverables().find(symbol);
         double scale = 1;
         auto priced = definition->second;
+        std::optional<ModelledSeries> model;
         if (adjusted != session.deliverables().end()) {
           const auto& d = adjusted->second;
           scale = static_cast<double>(d.shares) / 100;
-          priced.strike = std::round((priced.strike * 100 - d.cash.dollars()) / static_cast<double>(d.shares) * 1000) / 1000;
-          priced.standard = true;
-          const auto listed = instruments_.find(priced.osi_symbol());
-          option = listed == instruments_.end() ? nullptr : book_.option(listed->second);
+          option = nullptr;
+          if (d.shares > 0) {
+            priced.strike = std::round((priced.strike * 100 - d.cash.dollars()) / static_cast<double>(d.shares) * 1000) / 1000;
+            priced.standard = true;
+            const auto listed = instruments_.find(priced.osi_symbol());
+            option = listed == instruments_.end() ? nullptr : book_.option(listed->second);
+          }
+          if (!option) model = modelled_series(symbol, definition->second, d, metrics(underlying));
         }
         const bool quoted = option && option->has_quote && option->quote_ts >= 0;
         const bool fresh = current(underlying);
@@ -1368,6 +1433,25 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
           }
           quotes.push_back({symbol, observations_[symbol], time, quote_price(option->bid * scale), quote_price(option->ask * scale),
                             whole_size(option->bid_size / scale), whole_size(option->ask_size / scale), std::min(option->quote_ts, time)});
+        }
+        if (model) {
+          const auto as_of = model->valuation.time;
+          if (as_of > 0 && as_of <= market_time_ && (fresh || open(underlying, as_of))) {
+            // A new observation with each analytics version it is modelled from.
+            if (const auto version = metrics(underlying)->version + 1; modelled_versions_[symbol] != version) {
+              modelled_versions_[symbol] = version;
+              ++observations_[symbol];
+            }
+            const auto time = fresh ? offered(underlying, as_of) : as_of;
+            const auto value = Money::from_double(model->price);
+            QuoteObservation quote{symbol, observations_[symbol], time, value, value, 0, 0, std::min(as_of, time)};
+            quote.modelled = true;
+            quotes.push_back(std::move(quote));
+          }
+          auto valuation = std::move(model->valuation);
+          if (fresh && valuation.time > 0) valuation.time = market_time_;
+          if (valuation.time > 0 && valuation.time <= market_time_) valuations.push_back(std::move(valuation));
+          continue;
         }
         auto valuation = adjusted == session.deliverables().end() ? valuation_for(symbol, definition->second, metrics(underlying))
                                                                   : valuation_for(priced.osi_symbol(), priced, metrics(underlying));
@@ -2096,11 +2180,23 @@ void Desk::set_corporate_actions(std::vector<trading::CorporateAction> actions) 
 void Desk::set_opening_quotations(std::vector<OpeningQuotation> quotations) {
   // Recorded runs never read them: their AM positions keep their opening print.
   if (options_.replay || provider_ == "demo") return;
+  // Each set replaces the last, so a history row that differs from the delayed quote
+  // of its date replaces it, until a position settles: settlement is journaled once.
   opening_quotations_.clear();
-  for (auto& q : quotations)
-    if (std::find(options_.published_opening_quotations.begin(), options_.published_opening_quotations.end(), q.underlying) !=
-            options_.published_opening_quotations.end() && std::isfinite(q.value) && q.value > 0)
-      opening_quotations_[{q.underlying, q.date}] = std::move(q);
+  for (auto& q : quotations) {
+    if (std::find(options_.published_opening_quotations.begin(), options_.published_opening_quotations.end(), q.underlying) ==
+            options_.published_opening_quotations.end() || !std::isfinite(q.value) || q.value <= 0)
+      continue;
+    // A delayed quote counts only once it was computed past the opening prints.
+    if (q.quote_time != 0 && (md::trading_date(q.quote_time) != q.date ||
+                              q.quote_time < md::new_york_to_utc(q.date, 9, 30) + kOpeningQuotationAfter))
+      continue;
+    // The history row is the published record: a quote never displaces one.
+    const auto key = std::make_pair(q.underlying, q.date);
+    if (const auto held = opening_quotations_.find(key); held != opening_quotations_.end() && held->second.quote_time == 0 && q.quote_time != 0)
+      continue;
+    opening_quotations_[key] = std::move(q);
+  }
 }
 std::shared_ptr<const analytics::UnderlyingMetrics> Desk::metrics(const std::string& symbol) const {
   const auto it = metrics_.find(symbol);

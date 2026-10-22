@@ -216,7 +216,11 @@ assignments and before the day's dividends:
   strike, contract count and 100 premium multiplier, as OCC adjusts a series, and takes
   the split deliverable: 100 shares a contract become 200 for 2:1, 150 for 3:2 and 10 for
   1:10. A fraction of a share in the deliverable becomes cash in lieu at the split mark (a
-  simulated estimate of the amount OCC later fixes). OCC instead re-strikes whole-number
+  simulated estimate of the amount OCC later fixes). Once a contract delivers less than
+  one whole share (100 shares after 1:200 or 1:1000), it delivers cash only, all of it in
+  lieu: such a series pays a fixed amount whatever the stock does, is margined at what
+  buying its shorts back costs, reprices with no move and delivers no shares when it
+  settles, is exercised or is assigned. OCC instead re-strikes whole-number
   forward splits (twice the contracts at half the strike); the adjusted series pays
   exactly the same.
 - Working share orders on the stock are cancelled with `CORPORATE_ACTION`; working option
@@ -235,8 +239,18 @@ reprice it the same way. Portfolio margin scans the standard series and shares a
 strategy margin for adjusted series, which its scan does not reprice. The desk quotes,
 values and fills an adjusted series from the standard series that pays the same (the 250
 call for a 2:1-adjusted 500 call): prices times shares/100, displayed sizes over it and
-Greeks scaled the same, once the feed lists that series; until then the series has no
-mark. Positions report `deliverable` (`{shares, cash}`, null for 100 shares) and
+Greeks scaled the same, once the feed lists that series. When none is listed (a 3:2 or a
+reverse split leaves an effective strike such as 333.33 no exchange lists) or the series
+delivers cash only, the desk values it by model: Black at its effective strike, at the
+expiry's forward and discount from the analytics, with the smile IV interpolated between
+the listed strikes either side of it (the nearest one beyond the listed range), scaled
+to its shares (a cash-only series is worth its discounted intrinsic value). It is a
+European model of an American series. The value marks the position as a quote with no
+size, `modelled_mark: true` on the position, so the account stays valued, rollovers
+continue and margin and risk see it; it never fills an order, so the series cannot be
+traded until a listed series quotes it (close it by exercise, or wait for expiry). An
+underlying without IVs around the strike leaves it unmarked, which holds the rollover
+as any missing mark does. Positions report `deliverable` (`{shares, cash}`, null for 100 shares) and
 `GET /api/account` the applied `corporate_actions`. Replays and scenario runs given a
 corporate-actions file keep it in their start record, so resume and verification apply
 the same splits; generated scenario prices do not split themselves.
@@ -320,15 +334,24 @@ spread or liquidity of its own. DAY ends at its date's regular close (after hour
 with extended hours) with `DAY_END`, and an order placed after it works the next
 business day; GTC works until it fills or is cancelled.
 
+An extended-hours limit fills only on a print fresh within the session it fills in
+(`max_quote_age` of the market time in premarket and after hours as in the regular
+session): at 18:30 neither the 16:00 close nor a 16:05 print fills it.
+
 Opening orders take, when accepted, the account checks (kill switch, decided attempt,
 plan entry rules), buy-only, defined-risk and cash/IRA short-sale checks that count the
 working sells before them, and the plan's stop requirement. While they work they
-reserve buying power: each, after those accepted before it, what filling it at its
-limit (or the price, or a buy stop's level) would take, so a cash account cannot rest
+reserve buying power from acceptance: each, after those accepted before it, what filling
+it at its limit (a stop at least at its stop, a market order at the last price) would
+take; with buying power enforced, a market order is refused with `STALE_QUOTE` until
+the stock has a price to reserve against. So a cash account cannot rest
 two buys that together exceed its cash; an order that would leave buying power negative
 is refused with `BUYING_POWER`. Each execution then takes every check
-`POST /api/stocks/trade` does at its price; a refusal there rejects the order with its
-reason, while a stale price, a closed session or a halt only makes it wait. Fills record
+`POST /api/stocks/trade` does at its price, including `no_counter_positions` against the
+other accounts' held and working dollar delta as the server supplies it for that batch,
+as an option order's fill does; a refusal there rejects the order with its reason, while
+a stale price, a closed session, a halt or another account's missing valuation only
+makes it wait. Fills record
 the order on their stock fill (`stock_order`).
 
 `bracket: {stop_loss?, take_profit?}` places, once the entry fills, a GTC stop at
@@ -3762,7 +3785,9 @@ refusal (a delta limit, a plan rule, a decided attempt) does not stop another's.
 - **Equity**: the order's quantity is split across the members in proportion to their
   marked equity when the request arrives, each taking the floor of its share and the
   largest remainders (earlier members first on ties) the units rounding leaves, so the
-  sizes add up to the order's. Every member needs complete marks (409 `STALE_QUOTE`).
+  sizes add up to the order's. A member whose positions are not all marked is skipped,
+  sent nothing, with `code: "STALE_QUOTE"` in its result; the others share the whole
+  order.
 
 The sizes are computed once, before the submissions, and each journal records only its
 own order. A member allocated no units is skipped and sent nothing. The reply is 200
@@ -4363,8 +4388,16 @@ New York `last_trade_time` once every component has opened, and the daily histor
 `https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv` at startup and
 every six hours, so a restart still finds the last two weeks' values. Both endpoints
 were reachable without an account on 2026-10-21; the tests use responses recorded
-then. NDX's quotation is Nasdaq's and is not fetched. A history row replaces a quote of
-the same date only when its value differs. Waiting AM positions on those underlyings
+then. NDX's quotation is Nasdaq's and is not fetched. The history row is preferred: it
+replaces a quote of the same date whenever its value differs, and a quote never replaces
+it. A delayed quote counts only when it says the value was computed on its date at
+least 30 minutes after the 09:30 ET open (past the opening-print window; an earlier
+value may predate the components' opening prints), and the desk applies the same rule
+to what it is given. A later history row that differs from a quote the desk holds
+replaces it while no position has settled on it. Settlement is journaled once, though:
+a position settles on the first value that passes these checks, and a history row that
+arrives after that and differs does not change it (the settlement source keeps the
+quote's `quote_time`, so such a case can be audited). Waiting AM positions on those underlyings
 show `settle_by: "soq"` through their expiry date and settle once their date's value
 arrives, with source `published_soq`, provider `cboe`, the `index`, `date`, `url` and,
 from the delayed quote, `quote_time`. After the expiry date without one they show

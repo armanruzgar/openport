@@ -180,8 +180,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   [Strategies with shares](playbooks.md#practising-strategies-with-shares).
 - Stock splits from `--corporate-actions` apply on their ex-date: held shares split
   with cash in lieu of a fraction, and their options keep symbol and strike while their
-  deliverable, settlement, exercise, margin and risk follow the split shares. Adjusted
-  series are quoted from the standard series that pays the same.
+  deliverable, settlement, exercise, margin and risk follow the split shares (cash only
+  below one share a contract). Adjusted series are quoted from the standard series that
+  pays the same, or valued by a labelled model mark that never trades when none is listed.
   [Splits](paper-trading.md#splits-and-adjusted-series).
 - European index options settle in cash; American equity and ETF options deliver
   shares on exercise or assignment. In-the-money expiry exercise, requested early
@@ -443,8 +444,9 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   with notices when queued settings need a reset. Per-underlying limits are editable.
   [Accounts](paper-trading.md#accounts).
 - Account groups mirror one order to several named accounts, sized by fixed ratio or
-  split by marked equity. Each account receives its own submission, rule checks and
-  journal, and the reply lists every account's result.
+  split by marked equity (an unmarked member is skipped with its reason). Each account
+  receives its own submission, rule checks and journal, and the reply lists every
+  account's result.
   [Copied orders](paper-trading.md#account-groups-and-copied-orders).
 - Practice deposits and withdrawals have retry-safe IDs and appear in Dashboard
   cash-flow history. Transfers stay out of P&L; evaluation, verification and funded

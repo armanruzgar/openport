@@ -981,6 +981,8 @@ export interface Position {
   no_bid?: boolean
   /** A long option instructed not to be exercised at expiry; absent on older servers. */
   do_not_exercise?: boolean
+  /** The mark is modelled (a split-adjusted series no listed series pays the same as), not quoted: it never trades; absent on older servers. */
+  modelled_mark?: boolean
   greeks: { delta: Num; gamma: Num; vega: Num; theta: Num; dollar_delta: Num; dollar_gamma_1pct: Num; vega_dollars: Num; theta_dollars: Num }
   /** Today's P&L by Greek for this contract; null until its first fill or rollover on this server. */
   attribution?: Attribution | null
@@ -1165,7 +1167,7 @@ export interface AccountGroupInput { allocation: "equity" | "ratio"; members: Ac
 export interface AccountGroupsResponse { groups: AccountGroup[] }
 export interface AccountGroupDeleted { deleted: string }
 /** One member's part of a copied order: its size, and its own HTTP status and response. */
-export interface CopyOrderResult { account: string; quantity: number; ok: boolean; skipped?: boolean; message?: string; status?: number; response?: object | null }
+export interface CopyOrderResult { account: string; quantity: number; ok: boolean; skipped?: boolean; code?: string; message?: string; status?: number; response?: object | null }
 export interface CopyOrderResponse { group: string; allocation: "equity" | "ratio"; client_order_id: string; quantity: number; preview: boolean; results: CopyOrderResult[] }
 export type CreateAccountRequest = { name: string; copy_settings_from?: string; fill_model?: FillModel; fee_model?: FeeModel } & MarginModel & ProgramCostSettings & ({ plan: string } | { initial_cash: Money; rules: AccountRulesInput })
 export interface CreateAccountResponse { account: { id: string; name: string; account_version: string; plan: string | null; plan_id?: string | null; equity: Money } }

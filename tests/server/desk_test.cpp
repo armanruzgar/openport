@@ -631,6 +631,43 @@ TEST(Desk, CounterPositionsIncludeShareEntriesAndAllowShareReductions) {
   desk.stop();
 }
 
+TEST(Desk, RestingShareOrdersTakeTheCounterPositionGateWhenTheyFill) {
+  test::RecordingFile file;
+  test::ScriptedMarket market;
+  server::Desk::Options options;
+  options.paper_accounts = file.directory / "accounts";
+  options.paper.rules.no_counter_positions = true;
+  server::Desk desk("test", {}, {{"SPY"}}, options);
+  desk.start_trading();
+  server::TradingCommand create;
+  create.kind = server::TradingCommand::Kind::CreateAccount;
+  create.name = "Other"; create.initial_cash = Money::parse("100000");
+  ASSERT_EQ(command(desk, create, market.time, market.time).account, "other");
+  desk.replay_batch({md::UnderlyingQuote{"SPY", market.time, 500, 500, 500}, md::SnapshotComplete{"SPY", market.time}}, market.time);
+  // A rests a buy below the price; nothing opposes it yet.
+  server::TradingCommand rest;
+  rest.kind = server::TradingCommand::Kind::SubmitStockOrder;
+  trading::StockOrderRequest buy;
+  buy.client_order_id = "dip"; buy.symbol = "SPY"; buy.side = trading::Side::Buy;
+  buy.type = trading::StockOrderType::Limit; buy.shares = 10; buy.limit_price = Money::parse("495");
+  rest.stock_order = buy;
+  ASSERT_TRUE(command(desk, rest, market.time, market.time).decision.ok());
+  // B then sells SPY short.
+  server::TradingCommand shorts;
+  shorts.kind = server::TradingCommand::Kind::TradeStock;
+  shorts.account = "other"; shorts.symbol = "SPY"; shorts.quantity = -10;
+  ASSERT_TRUE(command(desk, shorts, market.time, market.time).decision.ok());
+  // When A's limit is reached, its fill would open against B's short: refused.
+  const auto later = market.time + md::kNanosPerMinute;
+  desk.replay_batch({md::UnderlyingQuote{"SPY", later, 494, 494, 494}, md::SnapshotComplete{"SPY", later}}, later);
+  const auto& orders = desk.trading_view()->snapshot->stock_orders;
+  ASSERT_EQ(orders.size(), 1U);
+  EXPECT_EQ(orders[0].status, trading::OrderStatus::Rejected);
+  EXPECT_EQ(orders[0].reason.code, trading::Reason::COUNTER_POSITION) << orders[0].reason.message;
+  EXPECT_TRUE(desk.trading_view()->snapshot->stocks.empty());
+  desk.stop();
+}
+
 TEST(Desk, DemoAmSettlementUsesFirstExpiryOpeningPrintAndLiveKeepsManualImport) {
   for (const auto* provider : {"demo", "live"}) {
     for (const bool manual : {false, true}) {

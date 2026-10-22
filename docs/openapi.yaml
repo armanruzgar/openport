@@ -1283,7 +1283,7 @@
     "/api/orders/copy": {
       "post": {
         "summary": "POST /api/orders/copy",
-        "description": "Paper trading only. Mirrors one order to every account of a group as that account's own submission, with its own checks, journal and client_order_id namespace, sized by the group's allocation (ratio: quantity times the member's ratio, rounded down; equity: the quantity split in proportion to marked equity, largest remainders first). Members allocated no units are skipped. 200 when every member accepted, 207 when any was skipped or refused; each result carries that account's HTTP status and response. Requires trade:* (or admin). Chained (then/oco) and exits_only orders are refused. Equity allocation needs every member fully marked (409 STALE_QUOTE).",
+        "description": "Paper trading only. Mirrors one order to every account of a group as that account's own submission, with its own checks, journal and client_order_id namespace, sized by the group's allocation (ratio: quantity times the member's ratio, rounded down; equity: the quantity split in proportion to marked equity, largest remainders first). Members allocated no units are skipped. 200 when every member accepted, 207 when any was skipped or refused; each result carries that account's HTTP status and response. Requires trade:* (or admin). Chained (then/oco) and exits_only orders are refused. Equity allocation splits among the members whose positions are all marked; one that is not is skipped with code STALE_QUOTE and the others take the whole order.",
         "x-scope": "trade",
         "responses": {
           "200": {
@@ -15799,6 +15799,10 @@
             "type": "boolean",
             "description": "A long option instructed not to be exercised at expiry: it then expires worthless with no cash proceeds or shares delivered."
           },
+          "modelled_mark": {
+            "type": "boolean",
+            "description": "The mark is modelled, not quoted: a split-adjusted series that no listed series pays the same as is valued by Black at its effective strike, with the smile IV of the listed strikes around it, scaled to its deliverable (or at its discounted intrinsic value when it delivers cash only). It keeps the account valued and the days rolling, and never fills an order."
+          },
           "settle_by": {
             "description": "How an expired position settles: opening_print for demo and driver-5 replay AM positions, soq for live AM positions whose underlying's published special opening quotation the server fetches (--am-settlement cboe) through the expiry date, closing_print for PM positions with a recorded or still awaited close, manual otherwise; null before expiry.",
             "anyOf": [
@@ -29464,6 +29468,10 @@
           "skipped": {
             "type": "boolean"
           },
+          "code": {
+            "type": "string",
+            "description": "Why a skipped member was sent nothing: STALE_QUOTE when equity allocation found its positions not all marked."
+          },
           "message": {
             "type": "string"
           },
@@ -30062,7 +30070,7 @@
         "properties": {
           "shares": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 0
           },
           "cash": {
             "$ref": "#/components/schemas/Money"
@@ -30072,7 +30080,7 @@
           "shares",
           "cash"
         ],
-        "description": "What one contract of an adjusted series delivers for 100 times its strike: whole shares and cash in lieu."
+        "description": "What one contract of an adjusted series delivers for 100 times its strike: whole shares and cash in lieu. No shares, cash only, once a reverse split leaves a contract less than a whole share."
       },
       "AdjustedSeries": {
         "type": "object",
