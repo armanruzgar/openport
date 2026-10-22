@@ -397,7 +397,7 @@ TEST(Cli, BrowserReceivesOneLiteralUrlAndFailureLeavesItPrintable) {
   EXPECT_EQ(result.status, 0) << result.output;
   std::ifstream in(output);
   const std::string actual(std::istreambuf_iterator<char>(in), {});
-  EXPECT_EQ(actual, "1\nhttp://localhost:8080/#token=literal%26%24%28echo%20bad%29\n");
+  EXPECT_EQ(actual, "1\nhttp://localhost:8080/#token=literal%26%24(echo%20bad)\n");
   { std::ofstream script(launcher); script << "#!/bin/sh\nexec /bin/sleep 5\n"; }
   const auto started = std::chrono::steady_clock::now();
   EXPECT_EQ(run_daemon(args, env).status, 0);
@@ -456,6 +456,17 @@ TEST(Cli, DaemonDefaultsToTheIndexAndFourEtfsAndAllowsAnOverride) {
               (flags.empty() ? symbols : std::vector<std::string>{"IWM", "DIA"}));
     EXPECT_EQ(reader.header().subscription.max_expiries, 0);
     EXPECT_DOUBLE_EQ(reader.header().subscription.strike_window, 0);
+  }
+  {
+    // Without --symbols a recording of fewer symbols plays those, not the live defaults.
+    test::RecordingFile spx, recorded;
+    auto only = test::recording_header();
+    only.subscription.underlyings = {"SPX"};
+    test::record_events(spx.path, {}, only);
+    const auto result = run_daemon("--provider replay --option file='" + spx.path.string() +
+        "' --option speed=max --no-paper --record '" + recorded.path.string() + "' --address invalid-address");
+    EXPECT_EQ(result.output.find("replay: unknown symbol"), std::string::npos) << result.output;
+    EXPECT_EQ(md::RecordingReader(recorded.path).header().subscription.underlyings, std::vector<std::string>{"SPX"});
   }
 }
 
@@ -673,6 +684,29 @@ TEST(Cli, RepairDryRunAndSingleFileModePreserveOtherJournals) {
   EXPECT_EQ(std::filesystem::file_size(second), size);
   EXPECT_EQ(run_daemon("--repair-journals --file '" + (directory.directory / "missing").string() + "'").status, 1);
   rejects("openportd", "--dry-run", "require --repair-journals");
+  // Compaction rewrites every journal and has no dry run: nothing is touched.
+  const auto journal = "--paper-journal '" + first.string() + "'";
+  const auto files = [&] { return std::distance(std::filesystem::directory_iterator(directory.directory), std::filesystem::directory_iterator{}); };
+  const auto before = files();
+  const auto repaired_size = std::filesystem::file_size(first);
+  rejects("openportd", "--compact-journals --dry-run " + journal, "require --repair-journals");
+  rejects("openportd", "--compact-journals --file '" + second.string() + "' " + journal, "require --repair-journals");
+  rejects("openportd", "--compact-journals --repair-journals --dry-run " + journal, "separate runs");
+  EXPECT_EQ(files(), before);
+  EXPECT_EQ(std::filesystem::file_size(first), repaired_size);
+}
+
+TEST(Cli, AnEmptyWriteTokenFileIsReplacedWithANewToken) {
+  openport::test::RecordingFile directory;
+  const auto token = directory.directory / "write-token";
+  { std::ofstream empty(token); empty << "  \n"; }
+  rejects("openportd", "--write-token-file '" + token.string() + "' --provider missing", "unknown provider");
+  std::ifstream in(token);
+  std::string line;
+  std::getline(in, line);
+  EXPECT_EQ(line.size(), 32U) << line;
+  // No temporary file is left beside it.
+  EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory.directory), std::filesystem::directory_iterator{}), 1);
 }
 
 TEST(Cli, RecordingRetentionRequiresDirectoryAndValidLimits) {

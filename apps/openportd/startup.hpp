@@ -11,6 +11,7 @@
 #include <thread>
 
 #include <boost/asio/ip/address.hpp>
+#include "openport/server/web_policy.hpp"
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/stat.h>
@@ -29,13 +30,8 @@ inline std::string terminal_url(const std::string& address, unsigned short port,
       : ip.is_v6() ? "[" + ip.to_string() + "]" : ip.to_string();
   std::string url = "http://" + host + ":" + std::to_string(port) + "/";
   if (!token.empty()) {
-    url += "#token=";
-    constexpr char hex[] = "0123456789ABCDEF";
-    for (const unsigned char c : token) {
-      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-          c == '-' || c == '_' || c == '.' || c == '~') url += static_cast<char>(c);
-      else { url += '%'; url += hex[c >> 4]; url += hex[c & 15]; }
-    }
+    // Encoded as encodeURIComponent does, which the terminal decodes.
+    url += "#token=" + server::url_component(token);
   }
   return url;
 }
