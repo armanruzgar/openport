@@ -321,8 +321,12 @@ struct Order {
   bool opening_counted = false; ///< A partial opening execution counted this order, including before rollover.
   /// Queue fills only: the estimated queue ahead of a resting limit at its price.
   std::optional<QueueSpot> queue = {};
-  /// Stop stress only: extra adverse ticks its fills take, set when its trigger
-  /// was reached in a fast market (see AccountRules::stop_stress_ticks).
+  /// Queue fills only: when a change last sent it to the back of the queue at
+  /// its price (a new price, a larger size or other new terms); zero before any.
+  Timestamp rejoined_at = 0;
+  /// Stop stress only: extra adverse ticks its first fill attempt after its
+  /// trigger takes, set when the trigger was reached in a fast market (see
+  /// AccountRules::stop_stress_ticks) and cleared once a stop-limit rests after it.
   std::int64_t stress_ticks = 0;
   [[nodiscard]] Quantity remaining() const { return request.quantity - filled_quantity; }
   /// The terms a retry must repeat to be answered with this order.

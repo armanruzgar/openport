@@ -173,6 +173,7 @@ inline void to_json(Json& j, const Order& o) {
   if (o.chained_from != 0) j["chained_from"] = o.chained_from;
   // The optional fill models' state, only while they use it.
   if (o.queue) j["queue"] = *o.queue;
+  if (o.rejoined_at != 0) j["rejoined_at"] = o.rejoined_at;
   if (o.stress_ticks != 0) j["stress_ticks"] = o.stress_ticks;
 }
 inline void from_json(const Json& j, Order& o) {
@@ -188,7 +189,8 @@ inline void from_json(const Json& j, Order& o) {
   added_field(j, "walked_at", o.walked_at);
   added_field(j, "opening_counted", o.opening_counted);
   added_field(j, "chained", o.chained); added_field(j, "chained_from", o.chained_from);
-  added_field(j, "queue", o.queue); added_field(j, "stress_ticks", o.stress_ticks);
+  added_field(j, "queue", o.queue); added_field(j, "rejoined_at", o.rejoined_at);
+  added_field(j, "stress_ticks", o.stress_ticks);
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(FillContext, spot, spot_source, iv, delta, years, equity, floor_room, buying_power)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(Excursion, pnl, time, spot)

@@ -115,6 +115,91 @@ TEST(QueueFills, OrdersBehindTheTouchJoinWhenItReachesThemAndOwnOrdersQueueInOrd
   EXPECT_EQ(order(session, 2).queue->ahead, 6);
 }
 
+TEST(QueueFills, OnlyASmallerSizeKeepsItsPlaceAndAnyOtherChangeGoesToTheBack) {
+  ScriptedMarket market;
+  TradingSession session(config(queued()), market.time);
+  market.seed(session);
+  ASSERT_TRUE(session.submit(market.limit("first", 5, "4.00"), market.time).decision.ok());
+  ASSERT_TRUE(session.submit(market.limit("second", 1, "4.00"), market.time).decision.ok());
+  EXPECT_EQ(order(session, 2).queue->ahead, 15);
+  prints(session, market, {{"4.00", 6}});
+  EXPECT_EQ(order(session).queue->ahead, 4);
+  ASSERT_TRUE(session.modify(1, {.quantity = 3}, market.time).decision.ok());
+  EXPECT_EQ(order(session).queue->ahead, 4) << "A smaller size keeps its place";
+  EXPECT_EQ(order(session).rejoined_at, 0);
+  // A larger size joins again behind what is displayed, and behind the newer order there.
+  ASSERT_TRUE(session.modify(1, {.quantity = 4}, market.time).decision.ok());
+  EXPECT_EQ(order(session).queue->ahead, 11);
+  EXPECT_EQ(order(session).queue->joined, market.time);
+  EXPECT_EQ(order(session).rejoined_at, market.time);
+  EXPECT_EQ(wait_code(session), "QUEUE");
+  // So does a new time in force at the same price.
+  prints(session, market, {{"4.00", 10}});
+  EXPECT_EQ(order(session, 2).status, OrderStatus::Filled) << "The newer order is now first";
+  EXPECT_EQ(order(session).filled_quantity, 0);
+  ASSERT_TRUE(session.modify(1, {.tif = TimeInForce::Gtc}, market.time).decision.ok());
+  EXPECT_EQ(order(session).queue->ahead, 10);
+}
+
+TEST(QueueFills, ARepricedOrderQueuesBehindOrdersAlreadyAtItsNewPrice) {
+  ScriptedMarket market;
+  TradingSession session(config(queued()), market.time);
+  market.seed(session);
+  ASSERT_TRUE(session.submit(market.limit("old", 1, "3.90"), market.time).decision.ok());
+  ASSERT_TRUE(session.submit(market.limit("resting", 1, "4.00"), market.time).decision.ok());
+  market.next();
+  ASSERT_TRUE(session.modify(1, {.limit_price = m("4.00")}, market.time).decision.ok());
+  EXPECT_EQ(order(session, 2).queue->ahead, 10);
+  EXPECT_EQ(order(session).queue->ahead, 11) << "The lower ID arrived at this price later";
+  // A print through the price goes to the order that reached it first.
+  prints(session, market, {{"3.95", 1}});
+  EXPECT_EQ(order(session, 2).status, OrderStatus::Filled);
+  EXPECT_EQ(order(session).filled_quantity, 0);
+}
+
+TEST(QueueFills, PrintsCountFromTheOrdersArrivalAfterItsLatency) {
+  ScriptedMarket market;
+  auto rules = queued();
+  rules.fill_latency_ms = 2000;
+  TradingSession session(config(rules), market.time);
+  market.seed(session);
+  ASSERT_TRUE(session.submit(market.limit("late", 1, "3.90"), market.time).decision.ok());
+  // Three seconds later it has rested behind the touch since two seconds in. A print
+  // through its price before then traded before the order could; one after fills it.
+  market.time += 3 * md::kNanosPerSecond;
+  ++market.observation;
+  MarketActivity activity;
+  activity.prints_supplied = true;
+  activity.prints.push_back({market.symbol(), market.time - 2 * md::kNanosPerSecond, m("3.85"), 5, "C"});
+  session.on_quotes({market.quote()}, {market.valuation()}, market.time, {}, {}, activity);
+  EXPECT_EQ(order(session).filled_quantity, 0) << "The print came before the order arrived";
+  market.next();
+  activity.prints = {{market.symbol(), market.time, m("3.85"), 5, "C"}};
+  session.on_quotes({market.quote("3.85", "4.05")}, {market.valuation()}, market.time, {}, {}, activity);
+  EXPECT_EQ(order(session).status, OrderStatus::Filled);
+}
+
+TEST(QueueFills, VolumeWhileTheTouchIsAwayFromThePriceIsNotCounted) {
+  ScriptedMarket market;
+  TradingSession session(config(queued()), market.time);
+  market.seed(session);
+  ASSERT_TRUE(session.submit(market.limit("join", 1, "4.00"), market.time).decision.ok());
+  const auto volume = [&](std::int64_t contracts, std::string_view bid) {
+    market.next();
+    MarketActivity activity;
+    activity.volumes_supplied = true;
+    activity.volumes[market.symbol()] = contracts;
+    session.on_quotes({market.quote(bid, "4.20")}, {market.valuation()}, market.time, {}, {}, activity);
+  };
+  volume(100, "4.00");
+  volume(200, "4.05");  // the bid moved above the order: nothing there traded with its queue
+  volume(300, "4.00");  // back at its price: the queue there starts at what is shown
+  EXPECT_EQ(order(session).queue->ahead, 10);
+  EXPECT_TRUE(session.snapshot()->recent_fills.empty());
+  volume(304, "4.00");
+  EXPECT_EQ(order(session).queue->ahead, 8) << "Only increases while the touch stays at its price count";
+}
+
 TEST(QueueFills, VolumeIncreasesStandInForPrintsHalfOnEachSide) {
   ScriptedMarket market;
   TradingSession session(config(queued()), market.time);
@@ -278,6 +363,41 @@ TEST(StopStress, AStopReachedOnAWideSpreadSlipsTheExtraTicks) {
   const auto& fill = session.snapshot()->recent_fills.back();
   EXPECT_EQ(fill.price, m("3.20"));
   EXPECT_EQ(fill.stress_ticks, 2);
+}
+
+TEST(StopStress, AStressedStopLimitNeverPassesItsLimitAndLaterFillsUnstressed) {
+  ScriptedMarket market;
+  AccountRules rules;
+  rules.stop_stress_ticks = 2;
+  rules.impact_ticks = 1;
+  TradingSession session(config(rules), market.time);
+  market.seed(session);
+  ASSERT_TRUE(session.submit(market.market("entry", 2), market.time).decision.ok());
+  auto stop = market.limit("stop", 1, "3.40", Side::Sell, TimeInForce::Gtc);
+  stop.trigger = Trigger{TriggerSource::Option, TriggerDirection::AtOrBelow, m("3.50")};
+  ASSERT_TRUE(session.submit(stop, market.time).decision.ok());
+  auto other = stop;
+  other.client_order_id = "other";
+  ASSERT_TRUE(session.submit(other, market.time).decision.ok());
+  for (int i = 0; i < 8; ++i) {
+    market.next();
+    session.on_quotes({market.quote()}, {market.valuation()}, market.time);
+  }
+  // Reached on a wide spread with the bid at its limit: two stress ticks would sell
+  // at 3.20, but a stop-limit's limit caps its price.
+  market.next();
+  session.on_quotes({market.quote("3.40", "3.80", 1)}, {market.valuation()}, market.time);
+  ASSERT_EQ(order(session, 2).status, OrderStatus::Filled);
+  EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("3.40"));
+  EXPECT_EQ(session.snapshot()->recent_fills.back().stress_ticks, 2);
+  // The other rested once the bid's size was used; its stress ended with that attempt.
+  EXPECT_EQ(order(session, 3).status, OrderStatus::Working);
+  EXPECT_EQ(order(session, 3).stress_ticks, 0);
+  market.next();
+  session.on_quotes({market.quote("3.45", "3.65")}, {market.valuation()}, market.time);
+  ASSERT_EQ(order(session, 3).status, OrderStatus::Filled);
+  EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("3.45"));
+  EXPECT_EQ(session.snapshot()->recent_fills.back().stress_ticks, 0);
 }
 
 TEST(StopStress, AStopReachedInAnOrdinaryMarketDoesNot) {

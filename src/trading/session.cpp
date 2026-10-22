@@ -1629,6 +1629,13 @@ void guardrail_fill(State& s, OrderId id, bool opening, Money realised_before, E
       (g.cooldown_loss > Money{} && s.ledger.account().realised - realised_before < -g.cooldown_loss))
     begin_cooldown(s, events);
 }
+/// The queue fill model sends a changed order to the back at its price, as an
+/// exchange does: it joins again behind what is displayed then (see join_queue).
+void send_to_back(const State& s, Order& o, Timestamp time) {
+  if (!s.config.rules.queue_fills) return;
+  o.queue.reset();
+  o.rejoined_at = time;
+}
 /// Catch up every elapsed interval, retaining each scheduled step in history.
 /// Execution uses the current observation, never an invented intermediate quote.
 void walk_limits(State& s, Events& events) {
@@ -1646,6 +1653,7 @@ void walk_limits(State& s, Events& events) {
       change.limit_price = next->price;
       o.request.limit_price = next->price;
       o.walked_at = next->time;
+      send_to_back(s, o, next->time);
       o.changes.push_back(change);
       event(events, "order_walked", Json{{"order_id", id}, {"change", change}});
       for (const auto& symbol : order_symbols(o.request)) s.walked.insert(symbol);
@@ -2434,12 +2442,24 @@ Touch touch_of(const QuoteObservation& q, Side side, Money limit) {
   if (own == limit) return Touch::At;
   return (side == Side::Buy ? own > limit : own < limit) ? Touch::Behind : Touch::Clear;
 }
-/// The account's own earlier orders resting at the same price, still unfilled.
+/// When the order arrived at its current price as the queue sees it: its acceptance
+/// (or trigger) once the fill latency has passed, or the later change that sent it
+/// to the back (see send_to_back).
+Timestamp queue_arrival(const State& s, const Order& o) {
+  const auto delay = s.config.rules.fill_latency_ms * (md::kNanosPerSecond / 1000);
+  return std::max(std::max(o.accepted_at, o.triggered_at) + delay, o.rejoined_at);
+}
+/// Time priority at one price: the earlier arrival there, then the lower ID.
+bool queued_before(const State& s, const Order& a, const Order& b) {
+  const auto x = queue_arrival(s, a), y = queue_arrival(s, b);
+  return x != y ? x < y : a.id < b.id;
+}
+/// The account's own orders that reached the same price earlier, still unfilled.
 Quantity own_ahead(const State& s, const Order& o) {
   Quantity total = 0;
   for (const auto id : open_ids(s)) {
-    if (id >= o.id) break;
     const auto& other = s.orders[id - 1];
+    if (id == o.id || !queued_before(s, other, o)) continue;
     if (other.queue && other.request.symbol == o.request.symbol && other.request.side == o.request.side &&
         other.queue->price == *o.request.limit_price && other.request.limit_price == o.request.limit_price)
       total += other.remaining() - other.queue->earned;
@@ -2494,7 +2514,8 @@ void queue_step(State& s, OrderId id, const MarketActivity& activity, const std:
   const auto limit = *o.request.limit_price;
   const auto side = o.request.side;
   auto spot = o.queue && o.queue->price == limit ? o.queue : std::nullopt;
-  const auto since = spot ? spot->updated : std::max(o.accepted_at, o.triggered_at);
+  // Prints count from when it reached this price: after its latency, or its last change.
+  const auto since = spot ? spot->updated : queue_arrival(s, o);
   Quantity at = 0;
   std::vector<const TradePrint*> through;
   for (const auto* print : prints) {
@@ -2568,7 +2589,7 @@ void update_queues(State& s, const MarketActivity& activity, std::set<std::strin
     const auto& y = s.orders[b - 1].request;
     if (x.symbol != y.symbol) return x.symbol < y.symbol;
     if (x.side != y.side) return x.side == Side::Buy;
-    if (x.limit_price == y.limit_price) return a < b;
+    if (x.limit_price == y.limit_price) return queued_before(s, s.orders[a - 1], s.orders[b - 1]);
     return x.side == Side::Buy ? *x.limit_price > *y.limit_price : *x.limit_price < *y.limit_price;
   });
   std::map<const TradePrint*, Quantity> unspent;
@@ -2600,8 +2621,10 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   const bool queued = !given && !inside && queue_eligible(s, o) && !marketable(o, s.books.at(o.request.symbol).quote) &&
                       o.queue && o.queue->price == *o.request.limit_price && o.queue->earned > 0;
   if (!given && !inside && !queued && !marketable(o, s.books.at(o.request.symbol).quote)) return;
+  // Stop stress worsens the price a stop-limit fills at, never past its limit, so
+  // the next block's unstressed price decides whether it may fill.
   if (s.config.rules.impact_ticks > 0 && o.request.limit_price && !given && !inside && !queued) {
-    const auto candidate = execution_price(s, o.request.symbol, o.request.side, {}, 0, o.stress_ticks);
+    const auto candidate = execution_price(s, o.request.symbol, o.request.side);
     if (o.request.side == Side::Buy ? candidate > *o.request.limit_price : candidate < *o.request.limit_price) return;
   }
   // System orders, bracket exits and reduce-only closes only ever reduce a position
@@ -2621,8 +2644,10 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   const auto side = o.request.side;
   const auto& book = s.books.at(symbol);
   if (!given && !inside && !queued && !marketable(o, book.quote)) return;
-  const Money price = given ? Money{} : queued ? *o.request.limit_price : order_price(s, o, symbol, side, o.request.limit_price);
   const auto stress = given || inside || queued || touch_stop(s, o) ? 0 : o.stress_ticks;
+  Money price = given ? Money{} : queued ? *o.request.limit_price : order_price(s, o, symbol, side, o.request.limit_price);
+  if (stress != 0 && o.request.limit_price)
+    price = side == Side::Buy ? std::min(price, *o.request.limit_price) : std::max(price, *o.request.limit_price);
   const auto remaining_depth = side == Side::Buy ? book.ask_left : book.bid_left;
   const auto size = side == Side::Buy ? book.quote.ask_size : book.quote.bid_size;
   const auto position = held(s, o.request.symbol);
@@ -2867,6 +2892,7 @@ bool reprice_close(State& s, OrderId id, Events& events) {
     auto& changed = s.orders.mut(id - 1);
     if (!changed.submitted) changed.submitted = changed.request;
     changed.request.limit_price = price;
+    send_to_back(s, changed, s.time);
     event(events, "order_repriced", changed);
   }
   return true;
@@ -2884,6 +2910,10 @@ void match_order(State& s, OrderId id, Events& events, std::optional<OrderId> in
     const auto& current = s.orders[id - 1];
     if (s.config.rules.impact_ticks == 0 || !current.open() || current.filled_quantity == before) break;
   }
+  // Stop stress belongs to the fast market its trigger met: a stop-limit still
+  // resting after that first attempt fills later like any other limit.
+  if (const auto& o = s.orders[id - 1]; o.open() && o.request.type == OrderType::Limit && o.stress_ticks != 0)
+    s.orders.mut(id - 1).stress_ticks = 0;
   if (s.config.rules.fill_latency_ms > 0) end_ioc(s, id, "IOC exhausted eligible liquidity", events);
 }
 void match_symbols(State& s, const std::set<std::string>& symbols, Events& events,
@@ -2984,6 +3014,7 @@ void attach_exits(State& s, OrderId entry_id, Events& events) {
     if (exit.open() && exit.filled_quantity == 0 && exit.request.quantity < entry.filled_quantity) {
       auto& resized = s.orders.mut(id - 1);
       resized.request.quantity = entry.filled_quantity;
+      send_to_back(s, resized, s.time);
       event(events, "order_resized", resized);
     }
   };
@@ -3704,7 +3735,7 @@ std::optional<OrderWait> waiting_for(const State& s, const Order& o, bool data_c
       return wait("LIMIT", std::string(buy ? "The ask " : "The bid ") + (buy ? *book.quote.ask : *book.quote.bid).str() +
                   (buy ? " is above" : " is below") + " the limit " + r.limit_price->str());
     if (impact && r.limit_price && !inside) {
-      const auto next = execution_price(s, r.symbol, r.side, {}, 0, o.stress_ticks);
+      const auto next = execution_price(s, r.symbol, r.side);
       if (buy ? next > *r.limit_price : next < *r.limit_price)
         return wait("LIMIT", "The next simulated block's price " + next.str() + " is beyond the limit " + r.limit_price->str());
     }
@@ -4159,9 +4190,18 @@ Decision change_check(const State& s, const Order& order, const Decision& reject
   auto decision = order_check(s, order);
   return decision.ok() ? open_orders_risk_check(s, order) : decision;
 }
+/// Whether a change keeps a resting order's place in the queue: only a smaller
+/// size does (or terms it already had); a larger size or any other new term
+/// sends it to the back.
+bool keeps_queue_place(const OrderRequest& before, const OrderRequest& after) {
+  const auto level = [](const OrderRequest& r) { return r.trigger ? std::optional(r.trigger->level) : std::nullopt; };
+  return after.quantity <= before.quantity && after.limit_price == before.limit_price && after.tif == before.tif &&
+         after.walk == before.walk && level(after) == level(before);
+}
 /// Order `id` with `change`'s terms in place, as change_order sets them, unchecked.
 void change_terms(State& s, OrderId id, const OrderChange& change) {
   auto& order = s.orders.mut(static_cast<std::size_t>(id - 1));
+  const auto before = order.request;
   if (change.quantity) order.request.quantity = *change.quantity;
   if (change.limit_price && order.request.type == OrderType::Limit) {
     order.request.limit_price = *change.limit_price;
@@ -4171,6 +4211,7 @@ void change_terms(State& s, OrderId id, const OrderChange& change) {
   if (change.tif) order.request.tif = *change.tif;
   if (change.walk) order.request.walk = *change.walk;
   if (order.request.walk || change.walk) order.walked_at = s.time;
+  if (!keeps_queue_place(before, order.request)) send_to_back(s, order, s.time);
 }
 /// The account a preview starts from: the current one with the integration's newer
 /// market for contracts it may not hold yet, at the market time, its daily loss checked.
@@ -4793,6 +4834,7 @@ CommandResult change_order(State& s, OrderId id, const OrderChange& change, cons
   if (change.tif && order.status != OrderStatus::Armed)
     order.day_end = order.request.tif == TimeInForce::Gtc ? order_expiry(s, order.request) : day_deadline(s, order.request, s.time);
   if (change.limit_price) order.limit_ticks.reset();
+  if (!keeps_queue_place(before.request, order.request)) send_to_back(s, order, s.time);
   order.changes.push_back(record);
   event(events, "order_modified", order);
   const auto symbols = order_symbols(order.request);
