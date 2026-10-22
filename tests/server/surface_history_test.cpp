@@ -20,13 +20,14 @@ std::shared_ptr<const analytics::UnderlyingMetrics> snapshot(md::Timestamp time)
 }
 class SurfaceSource final : public server::MetricsSource {
  public:
-  std::vector<std::string> symbols() const override { return {"SPX"}; }
+  std::vector<std::string> symbols() const override { return names; }
   std::shared_ptr<const analytics::UnderlyingMetrics> metrics(const std::string&) const override { return publication; }
   server::EngineStatus status() const override { return state; }
   const server::SeriesStore* series() const override { return &store; }
   std::shared_ptr<const analytics::UnderlyingMetrics> publication = snapshot(at({2026, 9, 22}, 16));
   server::SeriesStore store;
   server::EngineStatus state;
+  std::vector<std::string> names{"SPX"};
 };
 TEST(SurfaceHistory, SamplesActualTimesAndEarlyClosesAndRejectsSimulatedFeeds) {
   const md::Date early{2026, 11, 27};
@@ -106,7 +107,17 @@ TEST(SurfaceHistory, ComparisonsUseExactTargetSessionsAndNeverFutureCloses) {
   EXPECT_TRUE(missing["comparisons"][0]["snapshot"].is_null());
   for (const auto* query : {"compare=1", "from=bad", "to=2026-02-30", "from=2024-01-01", "from=2027-01-01", "unknown=1", "compare=true&compare=false"})
     EXPECT_EQ(server::handle_api({"GET", std::string("/api/underlyings/SPX/surface-history?") + query}, source).status, 400);
-  EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/NOPE/surface-history"}, source).status, 404);
+  // Errors take the shape every route uses, and a source without market data says so.
+  const auto invalid = server::handle_api({"GET", "/api/underlyings/SPX/surface-history?compare=1"}, source);
+  EXPECT_EQ(json::parse(invalid.body)["error"]["code"], "INVALID_REQUEST");
+  const auto unknown = server::handle_api({"GET", "/api/underlyings/NOPE/surface-history"}, source);
+  EXPECT_EQ(unknown.status, 404);
+  EXPECT_EQ(json::parse(unknown.body)["error"]["message"], "unknown underlying");
+  source.names.clear();
+  const auto empty = server::handle_api({"GET", "/api/underlyings/SPX/surface-history"}, source);
+  EXPECT_EQ(empty.status, 404);
+  EXPECT_EQ(json::parse(empty.body)["error"]["code"], "NOT_FOUND");
+  EXPECT_EQ(json::parse(empty.body)["error"]["message"], "This source has no market data or metric series");
 }
 TEST(SurfaceHistory, CloseRewritesKeepOtherSlotsAndOneLinePerSession) {
   test::RecordingFile temp;

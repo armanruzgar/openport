@@ -168,14 +168,19 @@ void add_volatility_history(json& response, const MetricsSource& source, const s
       {"convention", "Overlapping 21-session months; annualized demeaned close-return sample variance; vol points = IV minus RV"}};
 }
 
-ApiResponse series_response(const MetricsSource& source, const std::string& symbol,
-                            const std::map<std::string, std::string>& query) {
-  // Errors share every other route's {"error": {"code", "message"}} shape.
-  const auto bad = [](const std::string& message) { return api_error(400, "INVALID_REQUEST", message); };
+std::optional<ApiResponse> unknown_symbol_error(const MetricsSource& source, const std::string& symbol) {
   const auto symbols = source.symbols();
   // A finished replay's archive is its account alone: it keeps no market data.
   if (symbols.empty()) return api_error(404, "NOT_FOUND", "This source has no market data or metric series");
   if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return api_error(404, "NOT_FOUND", "unknown underlying");
+  return std::nullopt;
+}
+
+ApiResponse series_response(const MetricsSource& source, const std::string& symbol,
+                            const std::map<std::string, std::string>& query) {
+  // Errors share every other route's {"error": {"code", "message"}} shape.
+  const auto bad = [](const std::string& message) { return api_error(400, "INVALID_REQUEST", message); };
+  if (auto missing = unknown_symbol_error(source, symbol)) return std::move(*missing);
   for (const auto& [key, value] : query) {
     (void)value;
     if (key != "fields" && key != "interval" && key != "from" && key != "to") return bad("unknown series query parameter");
