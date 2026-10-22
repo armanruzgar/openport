@@ -45,6 +45,8 @@ inline std::vector<std::string> paper_csv_columns(bool fills) {
       columns.push_back(std::string("quote.") + field);
     for (const auto* field : {"commission", "clearing", "regulatory", "index"})
       columns.push_back(std::string("fees.") + field);
+    // The optional fill models' columns come last, so earlier columns keep their places.
+    for (const auto* field : {"stress_ticks", "queued"}) columns.push_back(field);
   }
   if (!fills) {
     for (const auto* prefix : {"review", "strategy_review"}) {
