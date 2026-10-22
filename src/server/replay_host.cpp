@@ -1619,15 +1619,17 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
         return options_.engine;
       }();
       session->durable = history_->writable();
-      // Simulated dividends replace the server's on the same symbol/date; explicit
-      // session entries already replace generated ones in this shared schedule.
+      // A simulated payment is its symbol's dividend for that quarter: it replaces the
+      // server's in the quarter, so a simulated ETF never pays two. Explicit session
+      // entries already replace generated ones in this shared schedule.
       if (demo) {
-        for (const auto& dividend : providers::scenario_dividends(*day, date)) {
-          std::erase_if(engine.dividends, [&](const auto& d) {
-            return d.symbol == dividend.symbol && d.ex_date == dividend.ex_date;
+        const auto scenario = providers::scenario_dividends(*day, date);
+        std::erase_if(engine.dividends, [&](const auto& d) {
+          return std::any_of(scenario.begin(), scenario.end(), [&](const auto& dividend) {
+            return d.symbol == dividend.symbol && providers::same_dividend_quarter(d.ex_date, dividend.ex_date);
           });
-          engine.dividends.push_back(dividend);
-        }
+        });
+        engine.dividends.insert(engine.dividends.end(), scenario.begin(), scenario.end());
       }
       engine.paper.rules = plan->rules;
       engine.paper.initial_cash = plan->initial_cash;

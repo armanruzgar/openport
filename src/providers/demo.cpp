@@ -388,6 +388,10 @@ std::vector<trading::Dividend> demo_dividends(md::Date first, md::Date last) {
   return out;
 }
 
+bool same_dividend_quarter(md::Date a, md::Date b) {
+  return a.year == b.year && (a.month - 1) / 3 == (b.month - 1) / 3;
+}
+
 std::vector<trading::Dividend> scenario_dividends(const Scenario& script, md::Date date, int revision) {
   const auto windows = scenario_windows(script, date);
   // ETF listings reach at most next month's third Friday. Include the known
@@ -397,13 +401,19 @@ std::vector<trading::Dividend> scenario_dividends(const Scenario& script, md::Da
   std::erase_if(out, [&](const auto& d) {
     return std::find(script.symbols.begin(), script.symbols.end(), d.symbol) == script.symbols.end();
   });
+  // Revision 9: an authored payment is that quarter's dividend, replacing the generated
+  // one on another date too; before, only one on the same date.
+  std::vector<trading::Dividend> authored;
   for (std::size_t i = 0; i < script.sessions.size(); ++i) {
     for (const auto& d : script.sessions[i].dividends) {
       const auto ex = windows[i].date;
-      std::erase_if(out, [&](const auto& generated) { return generated.symbol == d.symbol && generated.ex_date == ex; });
-      out.push_back({d.symbol, ex, trading::Money::from_double(d.per_share)});
+      std::erase_if(out, [&](const auto& generated) {
+        return generated.symbol == d.symbol && (generated.ex_date == ex || (revision >= 9 && same_dividend_quarter(generated.ex_date, ex)));
+      });
+      authored.push_back({d.symbol, ex, trading::Money::from_double(d.per_share)});
     }
   }
+  out.insert(out.end(), authored.begin(), authored.end());
   std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) {
     return std::tie(a.ex_date, a.symbol) < std::tie(b.ex_date, b.symbol);
   });
