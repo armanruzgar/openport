@@ -7512,7 +7512,7 @@ CommandResult TradingSession::exercise(const std::string& symbol, Quantity contr
       return CommandResult{failure(Reason::BUY_ONLY, "This plan is buy-only: put exercise would sell shares short; hold enough long shares first"), {}, 0};
     // As a share sale would be: defined risk allows no short shares.
     if (s.config.rules.defined_risk && contract.type == pricing::OptionType::Put &&
-        -delivered(contract, contracts) > std::max<Quantity>(0, shares_held(s, contract.underlying)))
+        -delivered(s, contract, contracts) > std::max<Quantity>(0, shares_held(s, contract.underlying)))
       return CommandResult{failure(Reason::DEFINED_RISK, "This plan allows defined risk only: put exercise would sell shares short, which can lose without limit"), {}, 0};
     if (const auto d = defined_risk_check(s, {{symbol, -contracts}},
                                           "Exercising this long would leave a short option uncovered; close the short first");
