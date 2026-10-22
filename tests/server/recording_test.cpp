@@ -1613,7 +1613,9 @@ TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs)
   ASSERT_EQ(call(restored, "POST", "/api/replay/history/" + completed_id + "/verify", "").status, 202);
   ASSERT_TRUE(test::recording_eventually([&] {
     return json::parse(call(restored, "GET", "/api/replay/history/" + completed_id + "/verify").body)["status"] != "running"; }));
-  for (const auto& run : json::parse(call(restored, "GET", "/api/replay").body)["history"])
+  // Hold the parsed body: a range-for over a member of a temporary dangles.
+  const auto replays = json::parse(call(restored, "GET", "/api/replay").body);
+  for (const auto& run : replays["history"])
     EXPECT_TRUE(run["personal_best_verified"].get<bool>()) << run["verification"];
   std::filesystem::remove(file.directory / "scenario-packs" / "test-challenge.json");
   const auto full = server::verify_run(file.directory / "replays" / (completed_id + ".jsonl"));
@@ -1689,7 +1691,8 @@ TEST(ReplayHost, ScenarioPacksCannotReplaceBuiltInsOrNameAPathOutsideTheirDirect
   escape["id"] = "../escaped";
   { std::ofstream out(packs / "escaped.pack"); out << json{{"version", 1}, {"scenario", escape}, {"seed", "1"}, {"plan", "practice"}}.dump(); }
   server::ReplayHost restored({file.directory, base});
-  for (const auto& pack : json::parse(call(restored, "GET", "/api/replay/packs").body)["packs"]) {
+  const auto listed = json::parse(call(restored, "GET", "/api/replay/packs").body);
+  for (const auto& pack : listed["packs"]) {
     EXPECT_NE(pack["scenario"]["id"], "escaped");
     EXPECT_NE(pack["scenario"]["id"], "../escaped");
     if (pack["scenario"]["id"] == builtin.id) { EXPECT_EQ(pack["seed"], std::to_string(builtin.seed)); }
