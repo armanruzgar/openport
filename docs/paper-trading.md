@@ -2364,24 +2364,30 @@ journal only when set, so plans without them keep their journal bytes, and each 
 becomes null) exactly as financing rates do.
 
 **Open-loss cap** (`open_loss_cap: {basis, amount, percent, action}`, null when off). On
-every fully marked observation of an active attempt, each option position (by OSI) and
-each underlying's shares is measured alone at its marks: its open loss is the negative
-of its unrealised P&L (fees excluded). The cap is `amount` with `basis: "amount"`;
+every fully marked observation of an active attempt, each open trade is measured at its
+marks: its open loss is the negative of its unrealised P&L summed across its legs (fees
+excluded), so a hedged spread's profitable leg offsets its losing one. A trade is the
+trades view's whole trade (an order's legs, and the round trips rolls and `group` join
+to it); each underlying's shares are a trade of their own. The cap is `amount` with `basis: "amount"`;
 `percent` (1–100) of the start-of-day profit balance with `day_profit` (the day's
 opening closed balance above the starting balance; while that is not above zero the same
 percentage of the drawdown room stands in, and without a drawdown rule there is no cap
 that day); or `percent` of the drawdown room with `drawdown_room` (the day's opening
 equity above the floor in force, which needs a drawdown rule). Percentages round down to
-whole cents. A position whose open loss reaches the cap is journaled once per breach as
-an `open_loss_cap` event (`symbol`, `loss`, `limit`, `action`), its round trip is
-remembered in `evaluation.open_loss_trades` for payout reviews, and its `action` applies:
-`flatten` has the account close that position (`system:open_loss:N`, retried on later
-quotes like any rule close; shares at their fresh price in the regular session),
-`block_adds` refuses orders and share trades that add to it with `OPEN_LOSS_CAP` until an
-observation finds it back within the cap (reductions always work), and `fail` fails the
-attempt with decision code `OPEN_LOSS_CAP` and liquidates as any decision does. A spread's
-legs are separate positions. Positions without a mark are not measured. The account view
-reports `evaluation.open_loss: {limit, positions, trades}` (null without the rule).
+whole cents. A trade whose open loss reaches the cap is journaled once per breach as
+an `open_loss_cap` event (`trade`, `symbols`, `symbol` (the first of them), `loss`,
+`limit`, `action`), its round trips are remembered in `evaluation.open_loss_trades` for
+payout reviews, and its `action` applies: `flatten` has the account close the whole
+trade (`system:open_loss:N`, retried on later quotes like any rule close; shares at their
+fresh price in the regular session) as Flatten closes positions, a short and the long
+that covers it as one two-leg order and other shorts before longs, so no leg is left
+naked, and refuses adding to its legs with `OPEN_LOSS_CAP` while that close is pending;
+`block_adds` refuses orders and share trades that add to its legs with `OPEN_LOSS_CAP`
+until an observation finds it back within the cap (reductions always work); and `fail`
+fails the attempt with decision code `OPEN_LOSS_CAP` and liquidates as any decision
+does. Trades with a leg without a mark are not measured. The account view reports
+`evaluation.open_loss: {limit, positions, trades}` (null without the rule), `positions`
+listing the legs of the trades over the cap.
 
 **Balance drawdown basis** (`drawdown_basis: "equity" | "balance"`). With `balance` the
 floor's peak follows, and the floor is checked against, the closed balance (cash plus the
@@ -2422,14 +2428,16 @@ and custom rule sets in `rules` (`{name, initial_cash, rules}` in the rules shap
 finished day as its open, its recorded low and high in timestamp order and its close,
 then the day in progress to the current marks, through the same `evaluate_plan` the
 reducer runs. Each set starts at its own starting balance and moves by the recorded
-dollar P&L, withdrawals added back; the closed balance moves by each day's realised P&L
+dollar P&L, everything payouts took out added back (the amounts, forfeited profit and
+reset removals); the closed balance moves by each day's realised P&L
 at its close, so a balance target counts only at a close. Days count as trading days with
 recorded executions or, where the account did not count them, realised P&L. The attempt's
 closed whole trades count toward trade objectives from when they closed. Nothing is
 re-executed: a lock ends that day at its level and later days move from there, and rules
 on orders, positions or the clock (open-loss and minute-volume caps, contract and trade
-risk caps, strategies, hold times, instruments and hours, flat time and holding rules)
-are listed per set in `not_replayed`. Each set reports `status`, `code`, `message`, the
+risk caps, strategies, hold times, instruments and hours, flat time and holding rules,
+and the payout rules `payout_review`, `after_payout` and `reset_percent`) are listed per
+set in `not_replayed`. Each set reports `status`, `code`, `message`, the
 `decided_day`, `decided_at` (a recorded extreme's time, null when the decision came at a
 day's open or close, whose times are not recorded), `decided_equity`, `locked_days`,
 `closest_floor` and per-day `{day, outcome, close, floor}`, where `outcome` is `active`,
@@ -2445,7 +2453,7 @@ summary?, initial_cash, rules, unlocked_by?}]}`. `verify` says how and when the 
 checked against `source`. `POST /api/rule-packs/validate` (read access; nothing is stored)
 checks it: the format and version, a lowercase ID, an http(s) source, a date, 1–16 plans
 with unique IDs and names, no built-in preset's ID or name, `unlocked_by` naming another
-plan in the pack, and each plan's rules through the same parser and `validate_rules` as a
+plan in the pack without a cycle (`where: "plans"`), and each plan's rules through the same parser and `validate_rules` as a
 reset. It returns `{valid, errors: [{where, message}], warnings, pack}`, the pack
 normalized with every plan's rules as the server reads them (a normalized pack validates
 to itself), and warns when `effective_from` is after today. The terminal keeps imported
@@ -2797,8 +2805,10 @@ compares closes net of it; a locked floor stays where it is.
 
 **Payout reviews** (`payouts.review: {min_hold_seconds, max_trade_percent, open_loss,
 ladder, cap}`, funded only, null when off). At each payout request the account reviews the
-cycle's positive closed whole trades (closed since the last payout or the start, net of
-fees): one held under `min_hold_seconds` from its first opening fill to its last close
+cycle's positive closed whole trades (closed since the start or strictly after the last
+payout, so one closed at a payout's own timestamp is reviewed by that payout only, net of
+fees; share round trips, from exercise, assignment or share trades, are trades of their
+own, net of dividends, with IDs `s` and their opening stock fill): one held under `min_hold_seconds` from its first opening fill to its last close
 offends as `short_hold`, one whose profit exceeds `max_trade_percent` of the cycle's net
 realised profit (exactly, `pnl × 100 > percent × cycle profit`) as `oversized`, and, with
 `open_loss` (which needs an open-loss cap), one whose positions breached it as
@@ -3729,7 +3739,7 @@ opening orders and cancels working openings outside the plan window.
 | `INVALID_ALERT`, `UNKNOWN_ALERT` | Alert terms that do not fit their scope, or a 101st alert; an alert ID the account does not have |
 | `INVALID_GROUP` | An order's `group` names no open round trip or whole trade holding one on its underlying; grouping names a fully closed trade, mixed underlyings or too few round trips; or ungrouping names a closed round trip |
 | `DEFINED_RISK` | A defined-risk plan's order, bracket exit or exercise would leave a short option uncovered, now or once the open orders fill |
-| `OPEN_LOSS_CAP` | A position's open loss reached the plan's open-loss cap: adding to it is refused (`block_adds`), or the attempt failed (`fail`); `system:open_loss:N` closes it under `flatten` |
+| `OPEN_LOSS_CAP` | A trade's open loss, net across its legs, reached the plan's open-loss cap: adding to it is refused (`block_adds`, and under `flatten` while its close is pending), or the attempt failed (`fail`); `system:open_loss:N` closes the whole trade under `flatten` |
 | `MINUTE_VOLUME` | An opening order's contracts exceed the plan's percentage of the last minute's volume, or that volume is unknown so the cap cannot be checked; evidence as for `MAX_VOLUME_SHARE` |
 | `BEST_POSITION` | Objective: profit above the best-position cap does not count toward the target |
 | `LOSS_STREAK`, `SIZE_CREEP` | Tilt flags from the discipline guardrails; `SIZE_CREEP` also refuses an oversized opening order with `size_creep_block` |

@@ -29491,7 +29491,7 @@
                 "type": "string"
               }
             ],
-            "description": "flatten: the account closes the position (system:open_loss:N); block_adds: OPEN_LOSS_CAP refuses adding to it until it is back within the cap; fail: the attempt fails with OPEN_LOSS_CAP."
+            "description": "Applies to a trade whose open loss, net across its legs, reaches the cap. flatten: the account closes the whole trade (system:open_loss:N), spreads as one order and shorts first, refusing adds with OPEN_LOSS_CAP while the close is pending; block_adds: OPEN_LOSS_CAP refuses adding to its legs until it is back within the cap; fail: the attempt fails with OPEN_LOSS_CAP."
           }
         },
         "required": [
@@ -29933,7 +29933,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Rules in this set that decide orders, positions or the clock, which a replay of recorded equity cannot evaluate."
+            "description": "Rules in this set that decide orders, positions or the clock, or payouts (payout_review, after_payout, reset_percent), which a replay of recorded equity cannot evaluate."
           }
         },
         "required": [

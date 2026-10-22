@@ -1741,7 +1741,8 @@ void start_flat_time(State& s, Events& events) {
     }
   }
 }
-void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope = {});
+void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope = {},
+                       const std::vector<std::string>* only = nullptr);
 void advance(State& s, Timestamp time, Events& events) {
   if (time < 0 || time < s.time) throw TradingError(Reason::INVALID_TIME, "Market time must be nonnegative and monotone");
   const auto previous_time = s.time;
@@ -2272,12 +2273,13 @@ Decision min_hold_check(const State& s, const Order& o) {
   return {};
 }
 std::string decimal(double value, int places);
-/// Adding to a position over the open-loss cap, under a BlockAdds action: refused
-/// until an observation finds it back within the cap. Reductions always work.
+/// Adding to a leg of a trade over the open-loss cap: under BlockAdds refused until
+/// an observation finds the trade back within the cap, and under Flatten while its
+/// close is pending. Reductions always work.
 Decision open_loss_check(const State& s, const Order& o) {
   const auto& cap = s.config.rules.open_loss_cap;
   const auto& over = s.evaluation.open_loss_symbols;
-  if (!cap || cap->action != OpenLossAction::BlockAdds || over.empty() || o.system || kept_within(o)) return {};
+  if (!cap || cap->action == OpenLossAction::Fail || over.empty() || o.system || kept_within(o)) return {};
   const auto adds = [&](const std::string& symbol, Side side) {
     const auto q = held(s, symbol);
     return q != 0 && (q > 0) == (side == Side::Buy) && std::find(over.begin(), over.end(), symbol) != over.end();
@@ -2287,8 +2289,10 @@ Decision open_loss_check(const State& s, const Order& o) {
   else legs.emplace_back(o.request.symbol, o.request.side);
   for (const auto& [symbol, side] : legs)
     if (adds(symbol, side))
-      return {Reason::OPEN_LOSS_CAP, "This position's open loss is at the plan's open-loss cap; it can be reduced or closed, "
-              "but not added to, until it is back within the cap", {}, {}, symbol};
+      return {Reason::OPEN_LOSS_CAP, cap->action == OpenLossAction::Flatten
+              ? "This position's trade reached the plan's open-loss cap and is being closed; it cannot be added to"
+              : "This position's open loss is at the plan's open-loss cap; it can be reduced or closed, "
+                "but not added to, until it is back within the cap", {}, {}, symbol};
   return {};
 }
 /// The median of the recent opening sizes the size-creep guardrail compares with,
@@ -3211,13 +3215,20 @@ void close_shares(State& s, const std::string& symbol, Quantity shares, StockSou
 }
 /// All scheduled closes and position-rule liquidations share the manual flatten planner. Only executable
 /// liquidity creates system IOCs; later transactions retry the remaining holdings.
-void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope) {
+void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope,
+                       const std::vector<std::string>* only) {
+  const auto named = [&](const std::string& symbol) {
+    return !only || std::find(only->begin(), only->end(), symbol) != only->end();
+  };
   std::vector<std::string> symbols;
   for (const auto& [symbol, position] : s.ledger.positions())
     if (scope.empty() || s.contracts.at(symbol).underlying == scope) symbols.push_back(symbol);
   std::map<std::string, Quantity> held_back;
+  // Planned across every position in scope, so a named long that covers a short
+  // closes with it; `only` then keeps the closes that touch a named position.
   const auto closes = plan_closes(s, symbols, held_back);
   for (const auto& close : closes) {
+    if (std::none_of(close.legs.begin(), close.legs.end(), [&](const Leg& leg) { return named(leg.symbol); })) continue;
     // A delayed system IOC already owns these legs until it fills or ends.
     bool pending = false;
     for (const auto id : open_ids(s)) {
@@ -3268,7 +3279,7 @@ void flatten_positions(State& s, std::string_view label, Events& events, const s
   }
   std::vector<std::pair<std::string, Quantity>> stocks;
   for (const auto& [symbol, stock] : s.ledger.stocks())
-    if (scope.empty() || symbol == scope) stocks.emplace_back(symbol, stock.shares);
+    if ((scope.empty() || symbol == scope) && named(symbol)) stocks.emplace_back(symbol, stock.shares);
   for (const auto& [symbol, shares] : stocks) close_shares(s, symbol, shares, StockSource::Rule, events);
   if (!holds_scope(s, {}, s.time)) s.evaluation.flat_pending = false;
 }
@@ -3420,7 +3431,7 @@ void refresh_trade_objectives(State& s) {
   };
   for (const auto& [id, trade] : trades) {
     if (!trade.closed) continue;
-    if (review && trade.pnl > Money{} && trade.last >= e.cycle_started)
+    if (review && trade.pnl > Money{} && in_payout_cycle(e, trade.last))
       e.cycle_trades.push_back({id, trade.pnl, trade.last - trade.opened, trade.last, trade.open_loss});
     if (!objectives) continue;
     if (rules.min_trades > 0) ++e.closed_trades;
@@ -3438,44 +3449,83 @@ void refresh_trade_objectives(State& s) {
       best_first = trade.first;
     }
   }
+  // Share round trips (exercise and assignment deliveries, and share trades) are
+  // trades of their own, net of dividends; they carry no fees.
+  if (review)
+    for (const auto& life : share_lifecycles(s.stock_fills, s.dividends)) {
+      const auto pnl = life.gross + life.dividends;
+      if (!life.closed || pnl <= Money{} || !in_payout_cycle(e, *life.closed)) continue;
+      const auto id = "s" + std::to_string(life.fills.front());
+      e.cycle_trades.push_back({id, pnl, *life.closed - life.opened, *life.closed,
+          std::find(e.open_loss_trades.begin(), e.open_loss_trades.end(), id) != e.open_loss_trades.end()});
+    }
   // The review reads them in the order they closed.
   std::stable_sort(e.cycle_trades.begin(), e.cycle_trades.end(), [](const auto& a, const auto& b) { return a.closed < b.closed; });
   s.trade_objectives = inputs;
 }
-/// The open-loss cap (OpenLossCap) on each position's marked open P&L: a position
-/// whose open loss reaches the cap is journaled once (`open_loss_cap`) and its round
-/// trip remembered for payout reviews; a Fail action fails the attempt, a Flatten
-/// action has monitor_rules close it, and BlockAdds refuses adding to it while it
-/// stays there. Positions without a mark are not measured.
+/// The trade each held contract or stock is in, by the trades view's ID: an
+/// option's trade_group, else its round trip; shares, which never join a trade, are
+/// a trade of their own ("s" and the opening stock fill).
+std::map<std::string, std::string> held_trades(const State& s) {
+  std::map<std::string, std::string> out;
+  if (s.reviewing.ready) {
+    for (const auto& [symbol, open] : s.reviewing.builder.open) out[symbol] = trade_group(open.life, s.groups);
+  } else {
+    for (const auto& life : lifecycles(s.fills, s.closures, s.contracts))
+      if (!life.closed) out[life.symbol] = trade_group(life, s.groups);
+  }
+  for (const auto& [symbol, trip] : s.trips) out.try_emplace(symbol, trip);
+  return out;
+}
+/// The open-loss cap (OpenLossCap) on each trade's marked open P&L, net across its
+/// legs, so a hedged spread is measured as one: a trade whose open loss reaches the
+/// cap is journaled once (`open_loss_cap`) and its round trips remembered for payout
+/// reviews; a Fail action fails the attempt, a Flatten action has monitor_rules close
+/// the whole trade, and BlockAdds refuses adding to its legs while it stays there.
+/// Trades with a leg without a mark are not measured.
 void check_open_loss(State& s, const PlanInputs& inputs, Events& events) {
   auto& e = s.evaluation;
   const auto& rules = s.config.rules;
   if (!rules.open_loss_cap) return;
   const auto limit = open_loss_limit(e, rules, inputs);
-  std::vector<std::pair<std::string, Money>> over;
+  struct Trade { std::vector<std::string> symbols; Money pnl; bool marked = true; };
+  std::map<std::string, Trade> trades;
   if (limit) {
     const auto m = measure(s);
+    const auto of = held_trades(s);
     const auto add = [&](const std::string& symbol, const std::optional<Money>& unrealised) {
-      if (unrealised && *unrealised < Money{} && -*unrealised >= *limit) over.emplace_back(symbol, -*unrealised);
+      const auto it = of.find(symbol);
+      auto& trade = trades[it == of.end() ? symbol : it->second];
+      trade.symbols.push_back(symbol);
+      if (unrealised) trade.pnl = trade.pnl + *unrealised;
+      else trade.marked = false;
     };
     for (const auto& p : m.positions) add(p.position.contract.osi_symbol(), p.unrealised);
     for (const auto& p : m.stocks) add(p.position.symbol, p.unrealised);
   }
   std::vector<std::string> symbols;
+  std::optional<std::pair<std::string, Money>> first;
   constexpr const char* actions[] = {"flatten", "block_adds", "fail"};
-  for (const auto& [symbol, loss] : over) {
-    symbols.push_back(symbol);
-    if (std::find(e.open_loss_symbols.begin(), e.open_loss_symbols.end(), symbol) != e.open_loss_symbols.end()) continue;
-    if (const auto trip = s.trips.find(symbol); trip != s.trips.end() &&
-        std::find(e.open_loss_trades.begin(), e.open_loss_trades.end(), trip->second) == e.open_loss_trades.end())
-      e.open_loss_trades.push_back(trip->second);
-    event(events, "open_loss_cap", Json{{"symbol", symbol}, {"loss", loss}, {"limit", *limit},
-        {"action", actions[static_cast<int>(rules.open_loss_cap->action)]}});
+  for (const auto& [id, trade] : trades) {
+    if (!trade.marked || trade.pnl >= Money{} || -trade.pnl < *limit) continue;
+    const auto loss = -trade.pnl;
+    if (!first) first.emplace(id, loss);
+    const bool known = std::any_of(trade.symbols.begin(), trade.symbols.end(), [&](const std::string& symbol) {
+      return std::find(e.open_loss_symbols.begin(), e.open_loss_symbols.end(), symbol) != e.open_loss_symbols.end();
+    });
+    symbols.insert(symbols.end(), trade.symbols.begin(), trade.symbols.end());
+    if (known) continue;
+    for (const auto& symbol : trade.symbols)
+      if (const auto trip = s.trips.find(symbol); trip != s.trips.end() &&
+          std::find(e.open_loss_trades.begin(), e.open_loss_trades.end(), trip->second) == e.open_loss_trades.end())
+        e.open_loss_trades.push_back(trip->second);
+    event(events, "open_loss_cap", Json{{"trade", id}, {"symbols", trade.symbols}, {"symbol", trade.symbols.front()},
+        {"loss", loss}, {"limit", *limit}, {"action", actions[static_cast<int>(rules.open_loss_cap->action)]}});
   }
   e.open_loss_symbols = std::move(symbols);
-  if (!over.empty() && rules.open_loss_cap->action == OpenLossAction::Fail)
+  if (first && rules.open_loss_cap->action == OpenLossAction::Fail)
     decide(s, {EvaluationStatus::Failed, false, Reason::OPEN_LOSS_CAP, *limit,
-        "The open loss of " + over.front().first + ", " + dollars(over.front().second) + ", reached the open-loss cap of " +
+        "The open loss of trade " + first->first + ", " + dollars(first->second) + ", reached the open-loss cap of " +
         dollars(*limit)}, inputs.equity, events);
 }
 void observe_equity(State& s, Events& events) {
@@ -3549,14 +3599,15 @@ void monitor_rules(State& s, Events& events) {
     flatten_positions(s, "flat_time", events);
     return;
   }
-  const bool open_loss = rules.open_loss_cap && rules.open_loss_cap->action == OpenLossAction::Flatten && !e.open_loss_symbols.empty();
-  if (soft || decided || locked || open_loss) {
+  if (soft || decided || locked) {
     std::vector<std::pair<std::string, Quantity>> stocks;
-    for (const auto& [symbol, stock] : s.ledger.stocks())
-      if (soft || decided || locked ||
-          std::find(e.open_loss_symbols.begin(), e.open_loss_symbols.end(), symbol) != e.open_loss_symbols.end())
-        stocks.emplace_back(symbol, stock.shares);
+    for (const auto& [symbol, stock] : s.ledger.stocks()) stocks.emplace_back(symbol, stock.shares);
     for (const auto& [symbol, shares] : stocks) close_shares(s, symbol, shares, StockSource::Rule, events);
+  } else if (rules.open_loss_cap && rules.open_loss_cap->action == OpenLossAction::Flatten && !e.open_loss_symbols.empty()) {
+    // The whole trade closes as Flatten closes positions: a spread as one order and
+    // shorts before the longs that cover them, so no leg is left naked.
+    const auto over = e.open_loss_symbols;
+    flatten_positions(s, "open_loss", events, {}, &over);
   }
   std::vector<std::string> symbols;
   for (const auto& [symbol, position] : s.ledger.positions()) symbols.push_back(symbol);
@@ -3568,10 +3619,6 @@ void monitor_rules(State& s, Events& events) {
       // The plan's decision names the liquidation, then a locked day, even when the
       // soft floor latched with it.
       flatten(s, symbol, decided || locked ? liquidation_label(e, decided) : "soft_floor", events);
-      continue;
-    }
-    if (open_loss && std::find(e.open_loss_symbols.begin(), e.open_loss_symbols.end(), symbol) != e.open_loss_symbols.end()) {
-      flatten(s, symbol, "open_loss", events);
       continue;
     }
     // The cutoff counts back from the last trade: 15:55 for SPXW, 16:10 for SPY,
@@ -5104,7 +5151,7 @@ std::vector<ReviewTrade> review_offences(const Evaluation& e, const AccountRules
   if (!review) return out;
   __extension__ using Wide = __int128;
   for (auto trade : e.cycle_trades) {
-    if (trade.closed < e.cycle_started || trade.pnl <= Money{}) continue;
+    if (!in_payout_cycle(e, trade.closed) || trade.pnl <= Money{}) continue;
     if (review->min_hold_seconds > 0 && trade.held < review->min_hold_seconds * md::kNanosPerSecond)
       trade.offences.push_back("short_hold");
     // Exactly: pnl × 100 > percent × cycle profit.
@@ -6991,7 +7038,7 @@ CommandResult TradingSession::trade_stock(const std::string& symbol, Quantity si
     if (const auto d = account_check(s, reduces); !d.ok()) return CommandResult{d, {}, 0};
     if (!reduces)
       if (const auto d = plan_entry_check(s.config.rules, symbol, s.time); !d.ok()) return CommandResult{d, {}, 0};
-    if (const auto& cap = s.config.rules.open_loss_cap; cap && cap->action == OpenLossAction::BlockAdds && shares != 0 &&
+    if (const auto& cap = s.config.rules.open_loss_cap; cap && cap->action != OpenLossAction::Fail && shares != 0 &&
         (shares > 0) == (signed_shares > 0) &&
         std::find(s.evaluation.open_loss_symbols.begin(), s.evaluation.open_loss_symbols.end(), symbol) != s.evaluation.open_loss_symbols.end())
       return CommandResult{{Reason::OPEN_LOSS_CAP, "These shares' open loss is at the plan's open-loss cap; they can be reduced, "

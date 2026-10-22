@@ -192,6 +192,99 @@ TEST(PropRules, AnOpenLossCapFlattensThePositionAndJournalsTheBreach) {
   EXPECT_EQ(TradingSession::recover(FileJournal::read(file.path)).snapshot_json(), s.snapshot_json());
 }
 
+/// A 5000 call and a 5010 call on one expiry, quoted together.
+struct Vertical {
+  ScriptedMarket a, b;
+  Vertical() { b.contract.strike += 10; }
+  void seed(TradingSession& s) { a.seed(s); b.seed(s, "2.00", "2.20"); }
+  void quote(TradingSession& s, std::string_view a_bid, std::string_view b_bid) {
+    a.next();
+    b.next();
+    b.time = a.time;
+    const auto ask = [](std::string_view bid) { return (Money::parse(bid) + Money::parse("0.20")).str(); };
+    s.on_quotes({a.quote(a_bid, ask(a_bid)), b.quote(b_bid, ask(b_bid))}, {a.valuation(), b.valuation()}, a.time);
+  }
+  /// Buys five 5000 calls and sells five 5010 calls as one debit vertical.
+  OrderRequest open() const {
+    OrderRequest r;
+    r.client_order_id = "vertical";
+    r.type = OrderType::Market;
+    r.tif = TimeInForce::Ioc;
+    r.quantity = 5;
+    r.legs = {{a.symbol(), Side::Buy, 1}, {b.symbol(), Side::Sell, 1}};
+    return r;
+  }
+};
+
+TEST(PropRules, AnOpenLossCapMeasuresASpreadNetAndClosesItWhole) {
+  Vertical v;
+  JournalFile file;
+  TradingSession s(config(open_loss(OpenLossAction::Flatten)), v.a.time, FileJournal::create(file.path));
+  v.seed(s);
+  const auto opened = s.submit(v.open(), v.a.time);
+  ASSERT_TRUE(opened.decision.ok()) << opened.decision.message;
+  // The long leg is $350 under its 4.20 cost at the 3.50 mid, but the short leg is
+  // $250 over its 2.00 credit at 1.50: the trade is down $100, inside the cap.
+  v.quote(s, "3.40", "1.40");
+  EXPECT_TRUE(s.snapshot()->evaluation.open_loss_symbols.empty());
+  EXPECT_EQ(s.snapshot()->positions.size(), 2U);
+  // Down $550 and up $100: $450 net reaches the cap, and the whole vertical closes
+  // as one order, the short bought back with the long sold.
+  v.quote(s, "3.00", "1.70");
+  const auto& snapshot = *s.snapshot();
+  EXPECT_TRUE(snapshot.positions.empty());
+  const auto close = snapshot.recent_orders.back();
+  EXPECT_TRUE(close.system);
+  EXPECT_TRUE(close.request.client_order_id.starts_with("system:open_loss:"));
+  ASSERT_EQ(close.request.legs.size(), 2U);
+  EXPECT_EQ(close.request.legs[0].symbol, v.b.symbol());
+  EXPECT_EQ(close.request.legs[0].side, Side::Buy);
+  EXPECT_EQ(snapshot.evaluation.open_loss_trades.size(), 2U);
+  const auto breaches = events_of(file.path, "open_loss_cap");
+  ASSERT_EQ(breaches.size(), 1U);
+  EXPECT_EQ(breaches[0].at("trade"), "1");
+  EXPECT_EQ(breaches[0].at("symbols").size(), 2U);
+  EXPECT_EQ(breaches[0].at("loss"), m("450").micros());
+  EXPECT_EQ(TradingSession::recover(FileJournal::read(file.path)).snapshot_json(), s.snapshot_json());
+}
+
+TEST(PropRules, ABuyOnlyTradeIsMeasuredAcrossItsLegs) {
+  Vertical v;
+  auto rules = open_loss(OpenLossAction::Flatten);
+  rules.buy_only = true;
+  TradingSession s(config(rules), v.a.time);
+  v.seed(s);
+  ASSERT_TRUE(s.submit(v.a.market("long", 5), v.a.time).decision.ok());
+  auto second = v.b.market("joined", 5);
+  second.group = "1";
+  const auto joined = s.submit(second, v.a.time);
+  ASSERT_TRUE(joined.decision.ok()) << joined.decision.message;
+  // $350 down on the 5000 calls, $150 up on the 5010 calls bought at 2.20.
+  v.quote(s, "3.40", "2.40");
+  EXPECT_TRUE(s.snapshot()->evaluation.open_loss_symbols.empty());
+  EXPECT_EQ(s.snapshot()->positions.size(), 2U);
+  // $350 and $50 down: $400 net, so both legs are sold.
+  v.quote(s, "3.40", "2.00");
+  EXPECT_TRUE(s.snapshot()->positions.empty());
+  EXPECT_EQ(s.snapshot()->evaluation.open_loss_trades.size(), 2U);
+}
+
+TEST(PropRules, AFlattenPendingForAnOpenLossBlocksAddingToTheTrade) {
+  ScriptedMarket f;
+  auto rules = open_loss(OpenLossAction::Flatten);
+  rules.fill_latency_ms = 500;
+  TradingSession s(config(rules), f.time);
+  f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
+  quote(s, f, "4.00", "4.20");
+  ASSERT_EQ(s.snapshot()->positions.size(), 1U);
+  // The delayed close is pending, so the position is still held but cannot grow.
+  quote(s, f, "3.40", "3.60");
+  ASSERT_EQ(s.snapshot()->positions.size(), 1U);
+  ASSERT_EQ(s.snapshot()->evaluation.open_loss_symbols, std::vector<std::string>{f.symbol()});
+  EXPECT_EQ(s.submit(f.market("add"), f.time).decision.code, Reason::OPEN_LOSS_CAP);
+}
+
 TEST(PropRules, BlockAddsRefusesAddingUntilThePositionRecovers) {
   ScriptedMarket f;
   TradingSession s(config(open_loss(OpenLossAction::BlockAdds)), f.time);
@@ -390,6 +483,43 @@ TEST(PropRules, ATradeHeldLongEnoughAndSmallEnoughIsNotReviewed) {
   // Held a second each, so not short; each under 90% of the $193.50 cycle.
   EXPECT_FALSE(q.review);
   EXPECT_EQ(q.forfeit, Money{});
+}
+
+TEST(PropRules, ATradeClosedAtAPayoutsTimestampIsReviewedOnce) {
+  ScriptedMarket f;
+  TradingSession s(config(reviewed()), f.time);
+  f.seed(s);
+  quick_win(s, f);
+  next_day(s, f, {2026, 9, 23});
+  // Closed and paid out at the same instant: this payout reviews it.
+  quick_win(s, f);
+  auto q = payout_quote(*s.snapshot(), s.config().rules);
+  ASSERT_TRUE(q.review);
+  ASSERT_EQ(q.review->trades.size(), 2U);
+  ASSERT_TRUE(s.request_payout(m("40"), f.time).decision.ok());
+  quick_win(s, f);
+  next_day(s, f, {2026, 9, 24});
+  q = payout_quote(*s.snapshot(), s.config().rules);
+  ASSERT_TRUE(q.review);
+  // Only the trade closed after the payout; the one closed with it is not reviewed again.
+  ASSERT_EQ(q.review->trades.size(), 1U);
+  EXPECT_GT(q.review->trades[0].closed, s.snapshot()->evaluation.payouts.back().time);
+}
+
+TEST(PropRules, PayoutReviewsReadShareRoundTrips) {
+  ScriptedMarket f;
+  TradingSession s(config(reviewed()), f.time);
+  f.seed(s);
+  ASSERT_TRUE(s.trade_stock("SPY", 100, f.time, StockPrice{"SPY", f.time, m("500")}).decision.ok());
+  f.time += md::kNanosPerSecond;
+  ASSERT_TRUE(s.trade_stock("SPY", -100, f.time, StockPrice{"SPY", f.time, m("501")}).decision.ok());
+  next_day(s, f, {2026, 9, 23});
+  const auto q = payout_quote(*s.snapshot(), s.config().rules);
+  ASSERT_TRUE(q.review);
+  ASSERT_EQ(q.review->trades.size(), 1U);
+  EXPECT_EQ(q.review->trades[0].id, "s1");
+  EXPECT_EQ(q.review->trades[0].pnl, m("100"));
+  EXPECT_EQ(q.review->trades[0].offences, std::vector<std::string>{"short_hold"});
 }
 
 AccountRules floor_after(PayoutFloor after) {
@@ -596,6 +726,31 @@ TEST(PropRules, ARulesReplayShowsWhereEachRuleSetPassesFailsOrLocks) {
   replay = replay_rules(e, now, {{"7", md::new_york_to_utc(e.day, 11, 30), m("50"), md::kNanosPerMinute}}, m("10000"), target);
   EXPECT_EQ(replay.status, EvaluationStatus::Passed);
   EXPECT_EQ(replay.decided_day, e.day);
+}
+
+TEST(PropRules, ARulesReplayAddsBackEverythingAPayoutTookOut) {
+  auto e = recorded_attempt();
+  // A $100 payout today forfeited $50 of profit and a reset removed $200 more:
+  // the recorded equity since is $350 lower.
+  Payout payout;
+  payout.number = 1;
+  payout.time = md::new_york_to_utc(e.day, 10, 30);
+  payout.day = e.day;
+  payout.amount = m("100");
+  payout.review = PayoutReviewOutcome{};
+  payout.review->forfeited = m("50");
+  payout.removed = m("200");
+  e.payouts = {payout};
+  e.day_open_equity = m("10350");
+  e.day_low_equity = m("10250");
+  e.day_high_equity = m("10400");
+  PlanInputs now{m("10370"), m("10370"), m("700"), true, md::new_york_to_utc(e.day, 12, 0)};
+  AccountRules rules;
+  rules.max_drawdown = m("1000");
+  const auto replay = replay_rules(e, now, {}, m("10000"), rules);
+  ASSERT_EQ(replay.days.size(), 3U);
+  EXPECT_EQ(replay.days.back().close, m("10720"));
+  EXPECT_EQ(replay.status, EvaluationStatus::Active);
 }
 
 TEST(PropRules, ChallengeEconomicsWeighsPassOddsCostsAndThePayout) {

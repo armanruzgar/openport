@@ -3001,6 +3001,9 @@ json not_replayed(const AccountRules& r) {
   add(r.buy_only || r.defined_risk || r.no_hedging || r.no_counter_positions, "strategies");
   add(r.min_hold_seconds > 0, "min_hold_seconds"); add(!r.underlyings.empty() || r.trading_start.has_value(), "instruments_and_hours");
   add(r.flat_time.has_value() || r.no_overnight || !r.hold_restrictions.empty() || !r.events.empty(), "holding_and_events");
+  // Payouts are replayed as the recorded withdrawals; their own rules are not.
+  add(r.payouts.review.has_value(), "payout_review"); add(r.payouts.after_payout != PayoutFloor::Keep, "after_payout");
+  add(r.payouts.reset_percent != 100, "reset_percent");
   return out;
 }
 /// POST /api/account/rules-compare: the account's recorded attempt replayed
@@ -3131,6 +3134,7 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
     std::set<std::string> ids, names;
     for (const auto& plan : list) if (plan.is_object() && plan.contains("id") && plan.at("id").is_string()) ids.insert(plan.at("id").get<std::string>());
     std::set<std::string> seen;
+    std::map<std::string, std::string> unlocks;  // Each plan's unlocked_by, by plan ID.
     for (std::size_t i = 0; i < list.size(); ++i) {
       const auto where = "plans[" + std::to_string(i) + "]";
       try {
@@ -3157,6 +3161,7 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
           const auto prior = string_field(plan, "unlocked_by");
           if (!ids.contains(prior) || prior == plan_id) throw std::invalid_argument("unlocked_by must name another plan in this pack");
           unlocked = prior;
+          unlocks[plan_id] = prior;
         }
         const auto summary = plan.contains("summary") ? string_field(plan, "summary") : std::string();
         if (summary.size() > 500) throw std::invalid_argument("summary is at most 500 bytes");
@@ -3166,6 +3171,24 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
                          {"rules", read_back}, {"unlocked_by", unlocked}});
       } catch (const TradingError& error) { fail(where, error.what()); }
       catch (const std::exception& error) { fail(where, error.what()); }
+    }
+    // A plan unlocked only by a plan it unlocks could never be started.
+    std::set<std::string> cyclic;
+    for (const auto& entry : unlocks) {
+      const auto& start = entry.first;
+      std::vector<std::string> chain{start};
+      for (auto at = unlocks.find(start); at != unlocks.end(); at = unlocks.find(at->second)) {
+        if (at->second == start) {
+          if (cyclic.insert(*std::min_element(chain.begin(), chain.end())).second) {
+            std::string path;
+            for (const auto& link : chain) path += link + " -> ";
+            fail("plans", "unlocked_by forms a cycle: " + path + start);
+          }
+          break;
+        }
+        if (std::find(chain.begin(), chain.end(), at->second) != chain.end()) break;
+        chain.push_back(at->second);
+      }
     }
     normalized = {{"format", "openport.rule-pack"}, {"version", 1}, {"id", id}, {"name", name}, {"effective_from", effective},
                   {"source", url}, {"verify", verify}, {"plans", plans}};

@@ -386,6 +386,9 @@ Decision plan_entry_check(const AccountRules& rules, std::string_view underlying
   }
   return {};
 }
+bool in_payout_cycle(const Evaluation& e, Timestamp closed) {
+  return closed >= e.cycle_started && (e.payouts.empty() || closed > e.payouts.back().time);
+}
 std::optional<Money> open_loss_limit(const Evaluation& e, const AccountRules& rules, const PlanInputs& now) {
   if (!rules.open_loss_cap) return std::nullopt;
   const auto& cap = *rules.open_loss_cap;
@@ -562,9 +565,13 @@ RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const
                     recorded.day_low_at, recorded.day_high_at,
                     recorded.day_executions > 0 ? recorded.day_executions : realised != Money{} ? 1u : 0u, true, now.time});
   }
+  // Everything a payout took out of the equity: the amount, the profit a review
+  // forfeited with it and what a reset removed.
   const auto withdrawn = [&](md::Date day) {
     Money total;
-    for (const auto& payout : recorded.payouts) if (payout.day <= day) total = total + payout.amount;
+    for (const auto& payout : recorded.payouts)
+      if (payout.day <= day)
+        total = total + payout.amount + (payout.review ? payout.review->forfeited : Money{}) + payout.removed;
     return total;
   };
   std::optional<md::Date> decided;

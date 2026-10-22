@@ -5446,6 +5446,17 @@ TEST_F(PaperEngine, RulesCompareReplaysTheAttemptAgainstPresetsAndCustomRules) {
   EXPECT_EQ(result["sets"][2]["code"], "DRAWDOWN_FLOOR");
   EXPECT_EQ(result["sets"][2]["days"][0]["outcome"], "failed");
   EXPECT_EQ(result["sets"][2]["decided_day"], result["days"][0]);
+  // Payout rules are not replayed; only the recorded withdrawals are.
+  auto funded = tight;
+  funded.update({{"plan", "Funded reset"}, {"phase", "funded"}, {"profit_target", nullptr}, {"max_drawdown", "3000"},
+                 {"payouts", {{"qualifying_profit", "100"}, {"qualifying_days", 5}, {"withdrawal_percent", 50},
+                              {"split_percent", 80}, {"minimum", "100"}, {"caps", json::array()},
+                              {"review", {{"min_hold_seconds", 60}, {"ladder", {"warning"}}}},
+                              {"after_payout", "reset"}, {"reset_percent", 90}}}});
+  const auto payout_rules = write(*engine, "POST", "/api/account/rules-compare",
+      {{"include_current", false}, {"rules", {{{"name", "Funded reset"}, {"initial_cash", "100000"}, {"rules", funded}}}}});
+  ASSERT_EQ(payout_rules.status, 200) << payout_rules.body;
+  EXPECT_EQ(json::parse(payout_rules.body)["sets"][0]["not_replayed"], json::array({"payout_review", "after_payout", "reset_percent"}));
   // Read access suffices and nothing changes.
   const auto before = read(*engine, "/api/account");
   EXPECT_EQ(write(*engine, "POST", "/api/account/rules-compare", {{"include_current", false}, {"plans", {"eod-50k"}}}).status, 200);
@@ -5506,6 +5517,14 @@ TEST_F(PaperEngine, RulePacksValidateNormalizeAndStaySeparateFromPresets) {
   std::set<std::string> where;
   for (const auto& error : result["errors"]) where.insert(error["where"].get<std::string>());
   EXPECT_EQ(where, (std::set<std::string>{"source", "plans[0]", "plans[1]"}));
+  // Plans that unlock each other could never be started.
+  auto cycle = pack;
+  cycle["plans"][0]["unlocked_by"] = "funded-100";
+  result = json::parse(write(*engine, "POST", "/api/rule-packs/validate", cycle).body);
+  EXPECT_EQ(result["valid"], false);
+  ASSERT_EQ(result["errors"].size(), 1U) << result.dump();
+  EXPECT_EQ(result["errors"][0]["where"], "plans");
+  EXPECT_EQ(result["errors"][0]["message"], "unlocked_by forms a cycle: eval-100 -> funded-100 -> eval-100");
   expect_error(write(*engine, "POST", "/api/rule-packs/validate?account=default", pack), 400, "INVALID_REQUEST");
   // A read token may validate and compare; nothing it sends changes an account.
   server::WritePolicy policy{"0.0.0.0", "", {}, server::parse_token_file("reader read reader-secret"), true};

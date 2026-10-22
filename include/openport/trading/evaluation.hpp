@@ -272,6 +272,10 @@ struct TimeRuleProgress {
 [[nodiscard]] Decision plan_entry_check(const AccountRules& rules, std::string_view underlying, Timestamp time);
 /// Why opening orders are refused while the day is locked.
 [[nodiscard]] std::string day_lock_message(Reason lock);
+/// Whether a trade closed at `closed` belongs to the payout cycle in progress: from
+/// the cycle's start, but strictly after the last payout, so a trade closed at the
+/// payout's own timestamp stays with the cycle that payout reviewed.
+[[nodiscard]] bool in_payout_cycle(const Evaluation& evaluation, Timestamp closed);
 /// The open-loss cap in dollars now (see OpenLossCap), whole cents rounded down;
 /// absent without the rule, or while a day-profit basis has neither profit nor a floor.
 [[nodiscard]] std::optional<Money> open_loss_limit(const Evaluation& evaluation, const AccountRules& rules,
