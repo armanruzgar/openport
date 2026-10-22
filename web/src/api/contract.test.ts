@@ -227,7 +227,7 @@ it("includes nullable account size scaling in rules, backtest rules and funded s
       "flat_time", "no_overnight", "scaling", "size_scaling",
     ]))
   expect(Object.keys(spec.components.schemas.Evaluation!.properties!)).toEqual(expect.arrayContaining([
-    "flat_time", "flat_now", "scaling", "size_scaling",
+    "flat_time", "flat_now", "flat_today", "scaling", "size_scaling",
   ]))
 })
 

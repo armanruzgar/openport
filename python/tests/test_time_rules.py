@@ -136,6 +136,7 @@ def test_flat_rule_types_and_schemas():
     progress = get_type_hints(Evaluation)
     assert progress["flat_time"] == str | None
     assert progress["flat_now"] is bool
+    assert progress["flat_today"] is bool
     contract = Contract("", None, SPEC)
     for path in ("AccountRulesInput", "BacktestRequest/properties/plan/oneOf/1/properties/rules"):
         validator = jsonschema.Draft202012Validator(
@@ -153,4 +154,5 @@ def test_flat_rule_types_and_schemas():
     props = SPEC["components"]["schemas"]["Evaluation"]["properties"]
     assert "OVERNIGHT_HOLD" in props["decision_code"]["description"]
     jsonschema.validate(False, props["flat_now"])
+    jsonschema.validate(True, props["flat_today"])
     jsonschema.validate("15:45", props["flat_time"])

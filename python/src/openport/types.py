@@ -415,6 +415,7 @@ class EvaluationProgress(TypedDict, total=False):
     inactivity_deadline: str | None
     flat_time: str | None
     flat_now: bool
+    flat_today: bool
     scaling: ScalingStatus | None
     size_scaling: SizeScalingStatus | None
 

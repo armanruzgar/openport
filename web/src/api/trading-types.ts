@@ -296,6 +296,8 @@ export interface Evaluation {
   inactivity_deadline?: string | null
   flat_time?: string | null
   flat_now?: boolean
+  /** Flat time applies today: a market day by the server's holiday calendar. Absent from older servers. */
+  flat_today?: boolean
   enabled: boolean
   attempt: number
   status: EvaluationStatus
