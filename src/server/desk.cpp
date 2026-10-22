@@ -1360,6 +1360,8 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         if (c.style == pricing::ExerciseStyle::American && !md::is_index_underlying(c.underlying)) deliverable.insert(c.underlying);
       }
       for (const auto& stock : session.snapshot()->stocks) deliverable.insert(stock.position.symbol);
+      // Working share orders work on their stock's price.
+      for (const auto& order : session.snapshot()->stock_orders) if (order.open()) deliverable.insert(order.request.symbol);
       std::vector<StockPrice> stocks;
       for (const auto& symbol : deliverable) {
         const auto book = book_.underlyings().find(symbol);
@@ -1950,6 +1952,27 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
           else result = session.trade_stock(c.symbol, c.quantity, market_time_, c.stock_price);
           break;
         }
+        case TradingCommand::Kind::SubmitStockOrder:
+        case TradingCommand::Kind::PreviewStockOrder: {
+          const auto& request = *c.stock_order;
+          auto gate = acceptance(request.symbol);
+          Quantity held = 0;
+          for (const auto& stock : before->stocks) if (stock.position.symbol == request.symbol) held = stock.position.shares;
+          const Quantity signed_shares = request.side == Side::Buy ? request.shares : -request.shares;
+          const bool reduces = held != 0 && (held > 0) != (signed_shares > 0) &&
+              (held > 0 ? -signed_shares <= held : signed_shares <= -held);
+          if (gate.ok() && !reduces && session.config().rules.no_counter_positions) {
+            const auto price = c.stock_price ? std::optional(c.stock_price->price)
+                : session.preview_trade_stock(request.symbol, signed_shares, market_time_).price;
+            if (price) gate = counter_position_gate(*account, {{request.symbol, static_cast<double>(signed_shares) * price->dollars()}}, market_time_);
+          }
+          if (c.kind == TradingCommand::Kind::PreviewStockOrder)
+            reply.stock_preview = session.preview_stock_order(request, market_time_, c.stock_price, gate);
+          else if (!gate.ok()) result.decision = gate;
+          else result = session.submit_stock_order(request, market_time_, c.stock_price);
+          break;
+        }
+        case TradingCommand::Kind::CancelStockOrder: result = session.cancel_stock_order(c.order_id, market_time_); break;
         case TradingCommand::Kind::Abandon: result = session.abandon(c.symbol, market_time_); break;
         case TradingCommand::Kind::ExerciseInstruction:
           result = session.instruct_exercise(c.symbol, c.do_not_exercise, market_time_);
@@ -2158,7 +2181,8 @@ void Desk::record_command(const TradingCommand& c, md::Timestamp driver_time) {
                c.actor, inputs_first());
 }
 void Desk::price_stock_command(TradingCommand& c, md::Timestamp driver_time) {
-  if ((c.kind != TradingCommand::Kind::TradeStock && c.kind != TradingCommand::Kind::PreviewStock) || c.stock_price) return;
+  if ((c.kind != TradingCommand::Kind::TradeStock && c.kind != TradingCommand::Kind::PreviewStock &&
+       c.kind != TradingCommand::Kind::SubmitStockOrder && c.kind != TradingCommand::Kind::PreviewStockOrder) || c.stock_price) return;
   const auto book = book_.underlyings().find(c.symbol);
   if (book == book_.underlyings().end() || book->second.spot_ts <= 0 || book->second.spot_ts > market_time_) return;
   const auto* account = find_account(c.account);

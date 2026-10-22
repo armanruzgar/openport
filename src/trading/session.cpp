@@ -975,6 +975,8 @@ Money average_unit_price(const Position& p) {
   if (size == 0) return {};
   return (p.basis < Money{} ? -p.basis : p.basis).prorate(1, size * 100);
 }
+Money stock_orders_reserved(const State& s);
+void expire_stock_orders(State& s, Events& events);
 struct PowerDetail {
   BuyingPower total;
   Money focus_reservation;
@@ -1068,6 +1070,8 @@ PowerDetail buying_power(const State& s, OrderId focus = 0) {
     reserved = reserved + use.reservation;
     if (o.id == focus) { out.focus_reservation = use.reservation; out.focus_opening = opening; out.focus_uses = use.uses; }
   }
+  // Working share orders reserve what filling them at their bound would take.
+  reserved = reserved + stock_orders_reserved(s);
   out.total.reserved = reserved;
   out.total.short_requirement = margin.requirement;
   out.total.available = s.ledger.account().cash - margin.held - reserved;
@@ -1308,6 +1312,7 @@ TradingSnapshot snapshot_of(const State& s) {
   out.fee_charged = s.fee_charged;
   out.payouts_received = s.payouts_received;
   out.stock_fills = s.stock_fills;
+  out.stock_orders = s.stock_orders;
   out.dividends = s.dividends;
   out.cash_flows = s.cash_flows;
   out.closing_prints = s.closing_prints;
@@ -1744,6 +1749,7 @@ void advance(State& s, Timestamp time, Events& events) {
           : failure(Reason::DAY_END, "The order's session ended"), events);
   }
   walk_limits(s, events);
+  expire_stock_orders(s, events);
 }
 /// Short contracts no long covers, after the account's positions take `extra`
 /// (a projected order's signed contracts).
@@ -4733,6 +4739,8 @@ Json state_change(const State& before, const State& after) {
   else if (auto change = field_change(before.indicators, after.indicators)) changes["indicators"] = std::move(*change);
   if (before.cash_flows.empty() && !after.cash_flows.empty()) changes["cash_flows"] = Json{{"v", after.cash_flows}};
   else if (auto change = field_change(before.cash_flows, after.cash_flows)) changes["cash_flows"] = std::move(*change);
+  if (before.stock_orders.empty() && !after.stock_orders.empty()) changes["stock_orders"] = Json{{"v", after.stock_orders}};
+  else if (auto change = field_change(before.stock_orders, after.stock_orders)) changes["stock_orders"] = std::move(*change);
   if (before.market_halts.empty() && !after.market_halts.empty()) changes["market_halts"] = Json{{"v", after.market_halts}};
   else if (auto change = field_change(before.market_halts, after.market_halts)) changes["market_halts"] = std::move(*change);
   // Alerts likewise, once the account has created one.
@@ -4873,6 +4881,7 @@ Json walk_states(const std::vector<JournalRecord>& records, Visit&& visit,
   }
   return state;
 }
+#include "stock_orders.inc"
 }  // namespace
 
 PlanInputs plan_inputs(const TradingSnapshot& s) {
@@ -5006,7 +5015,8 @@ struct TradingSession::Impl {
            !evaluate_time_rules(s.evaluation, s.config.rules, time).decided() &&
            s.config.rules.events.empty() && s.config.rules.hold_restrictions.empty() &&
            s.guardrails.cooldown_until <= s.time &&
-           open_ids(s).empty() && s.alerts.items.empty();
+           open_ids(s).empty() && s.alerts.items.empty() &&
+           std::none_of(s.stock_orders.begin(), s.stock_orders.end(), [](const StockOrder& o) { return o.open(); });
   }
 
   CommandResult transact(Timestamp time, std::string_view type,
@@ -5552,9 +5562,16 @@ CommandResult TradingSession::cancel_all(std::optional<std::string> underlying, 
         if (o.role == OrderRole::StopLoss && (!underlying || underlying_of(s, o) == *underlying) && exit_capacity(s, o.request) > 0)
           return CommandResult{failure(Reason::STOP_REQUIRED, "Close protected positions before cancelling their required stops"), id, 0};
       }
+    if (s.config.rules.require_stop_loss)
+      for (const auto& o : s.stock_orders)
+        if (o.open() && o.role == OrderRole::StopLoss && (!underlying || o.request.symbol == *underlying) && shares_held(s, o.request.symbol) != 0)
+          return CommandResult{failure(Reason::STOP_REQUIRED, "Close protected shares before cancelling their required stops"), {}, 0};
     for (const auto id : open_ids(s))
       if (const auto& o = s.orders[id - 1]; o.open() && (!underlying || underlying_of(s, o) == *underlying))
         cancel_order(s, id, failure(Reason::USER_CANCEL, "Cancelled by caller"), events);
+    for (std::size_t i = 0; i < s.stock_orders.size(); ++i)
+      if (const auto& o = s.stock_orders[i]; o.open() && (!underlying || o.request.symbol == *underlying))
+        end_stock_order(s, o.id, OrderStatus::Cancelled, failure(Reason::USER_CANCEL, "Cancelled by caller"), events);
     return CommandResult{};
   });
 }
@@ -5839,6 +5856,8 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
     match_symbols(s, changed, events);
     // Triggers read the batch's books and valuations after resting orders match.
     check_triggers(s, events);
+    // Share orders work on the underlyings' prices.
+    work_stock_orders(s, events);
     check_alerts(s, events);
     return CommandResult{};
   });
@@ -6361,6 +6380,9 @@ CommandResult TradingSession::reset_account(Money initial_cash, AccountRules rul
     // Check aggregate overflow before changing anything, even though the fees never touch paper cash.
     static_cast<void>(costs.total() + fee);
     for (const auto id : open_ids(s)) cancel_order(s, id, failure(Reason::ACCOUNT_RESET, reason), events);
+    for (std::size_t i = 0; i < s.stock_orders.size(); ++i)
+      if (s.stock_orders[i].open())
+        end_stock_order(s, s.stock_orders[i].id, OrderStatus::Cancelled, failure(Reason::ACCOUNT_RESET, reason), events);
     for (const auto& p : snapshot.positions) {
       const auto& position = p.position;
       s.closures.push_back({position.contract.osi_symbol(), position.quantity,
@@ -6714,79 +6736,82 @@ CommandResult TradingSession::trade_stock(const std::string& symbol, Quantity si
   if (feed_price && (feed_price->symbol != symbol || feed_price->price <= Money{} || feed_price->time < 0 || feed_price->time > time))
     throw TradingError(Reason::INVALID_QUOTE, "A stock price needs the traded symbol, a positive price and no later time");
   return impl_->transact(time, "stock_trade", [&](State& s, Events& events) {
-    if (const auto d = account_type_check(s, {}, {{symbol, signed_shares}}); !d.ok()) return CommandResult{d, {}, 0};
-    const auto shares = shares_held(s, symbol);
-    if (s.config.rules.min_hold_seconds > 0 && shares != 0 && (shares > 0) != (signed_shares > 0)) {
-      for (const auto& life : share_lifecycles(s.stock_fills, s.dividends))
-        if (life.symbol == symbol && !life.closed)
-          if (const auto d = hold_age_check(s, life.opened, symbol); !d.ok()) return CommandResult{d, {}, 0};
-    }
-    const bool reduces = shares != 0 && (shares > 0) != (signed_shares > 0) &&
-                         (shares > 0 ? -signed_shares <= shares : signed_shares <= -shares);
-    if (reduce_only && !reduces)
-      return CommandResult{failure(Reason::INVALID_ORDER, "Stock trades only reduce the shares exercise and assignment delivered"), {}, 0};
-    if (const auto d = account_check(s, reduces); !d.ok()) return CommandResult{d, {}, 0};
-    if (!reduces)
-      if (const auto d = plan_entry_check(s.config.rules, symbol, s.time); !d.ok()) return CommandResult{d, {}, 0};
-    if (!reduces) {
-      if (md::is_index_underlying(symbol))
-        return CommandResult{failure(Reason::INVALID_ORDER, "Index underlyings settle in cash and have no shares to trade"), {}, 0};
-      if (signed_shares < 0 && s.config.rules.buy_only)
-        return CommandResult{failure(Reason::BUY_ONLY, "This plan is buy-only: share sales may only reduce long shares"), {}, 0};
-      if (signed_shares < 0 && s.config.rules.defined_risk)
-        return CommandResult{failure(Reason::DEFINED_RISK, "This plan allows defined risk only: short shares can lose without limit"), {}, 0};
-    }
+    ShareTerms terms;
+    terms.reduce_only = reduce_only;
+    // The trade's own terms and the account refuse before the market does, and before
+    // the feed price is kept, as recorded runs did.
+    if (const auto d = share_entry_checks(s, symbol, signed_shares, terms); !d.ok()) return CommandResult{d, {}, 0};
     if (feed_price) {
       const auto prior = s.stock_marks.find(symbol);
       if (prior == s.stock_marks.end() || prior->second.time <= feed_price->time)
         s.stock_marks[symbol] = {feed_price->price, feed_price->time};
     }
     if (const auto d = share_close_check(s, symbol); !d.ok()) return CommandResult{d, {}, 0};
-    const auto price = stock_price(s, symbol);
-    if (!reduces) {
-      if (s.config.rules.require_stop_loss)
-        return CommandResult{failure(Reason::STOP_REQUIRED, "This plan requires a stop-loss; share entries do not support brackets"), {}, 0};
-      if (const auto d = hedging_direction_check(s, symbol, static_cast<double>(signed_shares) * price->dollars()); !d.ok())
-        return CommandResult{d, {}, 0};
-      const auto before = measure(s);
-      if (!before.valuation_complete)
-        return CommandResult{failure(Reason::STALE_QUOTE, "All held positions need fresh marks before opening shares"), {}, 0};
-      if (const auto d = loss_check(s, before); !d.ok()) return CommandResult{d, {}, 0};
-      if (const auto limit = trade_risk_limit(s, before.equity)) {
-        const auto loss = signed_shares > 0 ? std::optional(*price * signed_shares) : std::nullopt;
-        if (!loss || *loss > *limit)
-          return CommandResult{{Reason::MAX_TRADE_RISK, "Share entry risk before fees exceeds the plan limit",
-                                loss ? std::optional(loss->dollars()) : std::nullopt, limit->dollars(), "trade"}, {}, 0};
-      }
-      State projected = s;
-      trade_shares(projected, symbol, signed_shares, *price, StockSource::Trade);
-      if (const auto d = check_exposure(measure(projected).risk, before.risk); !d.ok()) return CommandResult{d, {}, 0};
+    const auto d = trade_shares_checked(s, symbol, signed_shares, *stock_price(s, symbol), terms, events);
+    return CommandResult{d, {}, 0};
+  });
+}
+CommandResult TradingSession::submit_stock_order(StockOrderRequest request, Timestamp time, std::optional<StockPrice> feed_price) {
+  validate_stock_order(request);
+  if (feed_price && (feed_price->symbol != request.symbol || feed_price->price <= Money{} || feed_price->time < 0 || feed_price->time > time))
+    throw TradingError(Reason::INVALID_QUOTE, "A stock price needs the traded symbol, a positive price and no later time");
+  const auto& current = impl_->state;
+  // A retry finds the order its client ID first named, partner included.
+  for (const auto& o : current.stock_orders) {
+    if (o.exit() || o.request.client_order_id != request.client_order_id) continue;
+    auto terms = request;
+    terms.oco.clear();
+    bool same = o.request == terms && (o.oco != 0) == !request.oco.empty();
+    if (same && o.oco != 0) {
+      auto partner = request.oco.front();
+      partner.client_order_id = request.client_order_id + ":oco";
+      same = current.stock_orders.at(static_cast<std::size_t>(o.oco - 1)).request == partner;
     }
-    // Shares can cover options: selling the ones a short call is written against
-    // leaves it naked, which may need more than the sale frees.
-    if (s.config.rules.buying_power) {
-      State projected = s;
-      trade_shares(projected, symbol, signed_shares, *price, StockSource::Trade);
-      if (free_power(projected) < free_power(s) && buying_power(projected).total.available < Money{}) {
-        if (!reduces)
-          return CommandResult{{Reason::BUYING_POWER, "These shares need more buying power than the account has available",
-                                (-buying_power(projected).total.available).dollars(), 0.0, symbol}, {}, 0};
-        return CommandResult{{Reason::BUYING_POWER, "These shares cover a short option that would need more buying power "
-                              "than the account has available; buy the option back first", std::nullopt, std::nullopt, symbol}, {}, 0};
-      }
+    CommandResult replay{same ? Decision{} : failure(Reason::DUPLICATE_CLIENT_ID, "Client order ID already used with other terms"),
+                         o.id, current.version};
+    replay.replayed = same;
+    return replay;
+  }
+  return impl_->transact(time, "stock_order", [&](State& s, Events& events) {
+    if (feed_price) {
+      const auto prior = s.stock_marks.find(request.symbol);
+      if (prior == s.stock_marks.end() || prior->second.time <= feed_price->time)
+        s.stock_marks[request.symbol] = {feed_price->price, feed_price->time};
     }
-    const auto realised_before = s.ledger.account().realised;
-    trade_shares(s, symbol, signed_shares, *price, StockSource::Trade);
-    count_trade(s);
-    if (!reduces) {
-      ++s.guardrails.opening_trades;
-      const auto limit = s.config.guardrails.max_opening_trades;
-      if (limit > 0 && s.guardrails.opening_trades >= limit) latch_guardrail(s, Reason::TRADE_LIMIT, events);
-    }
-    if (s.config.guardrails.cooldown_loss > Money{} && s.ledger.account().realised - realised_before < -s.config.guardrails.cooldown_loss)
-      begin_cooldown(s, events);
-    event(events, "stock_trade", Json{{"symbol", symbol}, {"shares", signed_shares}, {"price", *price}});
-    return CommandResult{};
+    auto [d, id] = accept_stock_order(s, std::move(request), OrderRole::Normal, 0, events);
+    if (!d.ok()) return CommandResult{d, id ? std::optional<OrderId>(id) : std::nullopt, 0};
+    const auto partner = s.stock_orders.at(static_cast<std::size_t>(id - 1)).oco;
+    work_stock_orders(s, events, id);
+    if (partner && s.stock_orders.at(static_cast<std::size_t>(partner - 1)).open()) work_stock_orders(s, events, partner);
+    const auto& accepted = s.stock_orders.at(static_cast<std::size_t>(id - 1));
+    return CommandResult{accepted.status == OrderStatus::Rejected ? accepted.reason : Decision{}, id, 0};
+  });
+}
+StockPreview TradingSession::preview_stock_order(const StockOrderRequest& request, Timestamp time,
+    std::optional<StockPrice> price, Decision rejection) const {
+  if (impl_->stopped) throw TradingError(Reason::JOURNAL_IO, "Trading stopped after journal failure; recover first");
+  auto copy = std::make_unique<Impl>();
+  copy->state = prepared(impl_->state, time, {});
+  copy->actor = impl_->actor;
+  copy->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(copy->state));
+  const auto base = measure(copy->state).equity;
+  StockPreview result;
+  result.current = what_if_account(copy->state, base, {});
+  TradingSession trial(std::move(copy));
+  result.decision = rejection.ok() ? trial.submit_stock_order(request, time, price).decision : rejection;
+  result.price = stock_price(trial.impl_->state, request.symbol);
+  result.after = what_if_account(trial.impl_->state, base, {});
+  return result;
+}
+CommandResult TradingSession::cancel_stock_order(OrderId id, Timestamp time) {
+  return impl_->transact(time, "stock_cancel", [&](State& s, Events& events) {
+    if (id == 0 || id > s.stock_orders.size()) return CommandResult{failure(Reason::UNKNOWN_ORDER, "No such share order"), id, 0};
+    const auto& o = s.stock_orders.at(static_cast<std::size_t>(id - 1));
+    if (!o.open()) return CommandResult{failure(Reason::ORDER_TERMINAL, "The share order has already ended"), id, 0};
+    if (s.config.rules.require_stop_loss && o.role == OrderRole::StopLoss && shares_held(s, o.request.symbol) != 0)
+      return CommandResult{failure(Reason::STOP_REQUIRED, "Close the protected shares before cancelling their required stop"), id, 0};
+    end_stock_order(s, id, OrderStatus::Cancelled, failure(Reason::USER_CANCEL, "Cancelled by caller"), events);
+    return CommandResult{{}, id, 0};
   });
 }
 StockPreview TradingSession::preview_trade_stock(const std::string& symbol, Quantity signed_shares, Timestamp time,

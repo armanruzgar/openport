@@ -64,6 +64,43 @@ std::vector<std::string> chain_symbols(const OrderRequest& request) {
   append_chain_symbols(request, symbols);
   return symbols;
 }
+void validate_stock_order(const StockOrderRequest& r) {
+  const auto refuse = [](const std::string& message) { throw TradingError(Reason::INVALID_ORDER, message); };
+  if (r.client_order_id.empty() || r.client_order_id.size() > 64) refuse("A share order needs a client_order_id of 1-64 bytes");
+  if (r.symbol.empty() || r.symbol.size() > 16 ||
+      !std::all_of(r.symbol.begin(), r.symbol.end(), [](char c) { return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.'; }))
+    refuse("Use an uppercase stock or ETF symbol");
+  if (r.shares <= 0 || r.shares > 10'000'000) refuse("Trade a positive number of shares, at most 10,000,000");
+  if (r.tif != TimeInForce::Day && r.tif != TimeInForce::Gtc) refuse("Share orders are DAY or GTC");
+  const bool limit = r.type == StockOrderType::Limit || r.type == StockOrderType::StopLimit;
+  const bool stop = r.type == StockOrderType::Stop || r.type == StockOrderType::StopLimit;
+  const auto price = [&](const std::optional<Money>& p, const char* name) {
+    if (p && (*p <= Money{} || p->micros() % 10'000 != 0)) refuse(std::string(name) + " must be a positive price in whole cents");
+  };
+  if (limit != r.limit_price.has_value()) refuse(limit ? "This order type needs a limit_price" : "Only limit and stop-limit orders take a limit_price");
+  if (stop != r.stop_price.has_value()) refuse(stop ? "This order type needs a stop_price" : "Only stop and stop-limit orders take a stop_price");
+  price(r.limit_price, "limit_price"); price(r.stop_price, "stop_price");
+  price(r.stop_loss, "stop_loss"); price(r.take_profit, "take_profit");
+  if (r.extended_hours && r.type != StockOrderType::Limit) refuse("Extended hours take limit orders only");
+  // A bracket's stop is on the losing side of the entry and its target on the winning side.
+  const bool buy = r.side == Side::Buy;
+  if (const auto entry = r.limit_price ? r.limit_price : r.stop_price) {
+    if (r.stop_loss && (buy ? *r.stop_loss >= *entry : *r.stop_loss <= *entry))
+      refuse(buy ? "A buy's stop_loss is below its entry price" : "A sell's stop_loss is above its entry price");
+    if (r.take_profit && (buy ? *r.take_profit <= *entry : *r.take_profit >= *entry))
+      refuse(buy ? "A buy's take_profit is above its entry price" : "A sell's take_profit is below its entry price");
+  }
+  if (r.stop_loss && r.take_profit && (buy ? *r.stop_loss >= *r.take_profit : *r.stop_loss <= *r.take_profit))
+    refuse("A bracket's stop_loss and take_profit are on either side of the entry");
+  if (r.oco.size() > 1) refuse("A share order takes at most one oco partner");
+  for (const auto& other : r.oco) {
+    if (!other.oco.empty() || other.stop_loss || other.take_profit) refuse("An oco partner takes no oco or bracket of its own");
+    if (other.symbol != r.symbol) refuse("An oco partner trades the same symbol");
+    auto named = other;
+    named.client_order_id = r.client_order_id + ":oco";
+    validate_stock_order(named);
+  }
+}
 Decision eligible(const md::OptionContract& c) {
   const auto conventions = md::conventions_for_root(c.root);
   if (c.style == pricing::ExerciseStyle::American && conventions.style != pricing::ExerciseStyle::American)

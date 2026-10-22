@@ -171,7 +171,7 @@ def test_real_share_trade_and_preview_responses(tmp_path):
     binary = ROOT / "build/tests/openport_tests"
     if not binary.exists():
         pytest.skip("Build the C++ test executable for share response contracts")
-    result = subprocess.run([str(binary), "--gtest_filter=PaperStocks.SharesOpenThroughTheApiAtTheUnderlyingsPrice"],
+    result = subprocess.run([str(binary), "--gtest_filter=PaperStocks.SharesOpenThroughTheApiAtTheUnderlyingsPrice:PaperStocks.WorkingShareOrdersRestAndFillOnLaterPrices"],
                             env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout + result.stderr

@@ -412,6 +412,22 @@ class Client:
         """Preview share cost, buying power and dollar delta without trading."""
         return self._request("POST", "/stocks/trade/preview", {"symbol": symbol, "side": side, "shares": shares}, scoped=True)
 
+    def stock_orders(self, status: str = "all") -> JSON:
+        """Share orders, newest first; status="open" for the working ones."""
+        return self._request("GET", "/stocks/orders", params={"status": status}, scoped=True)
+
+    def place_stock_order(self, order: JSON | None = None, **fields) -> JSON:
+        """A working share order: type market, limit, stop or stop_limit; time_in_force day or gtc;
+        optional extended_hours (limits), bracket {"stop_loss", "take_profit"} and oco partner.
+        Retries with the same client_order_id and terms are answered as first accepted."""
+        return self._request("POST", "/stocks/orders", self._order(order, fields), scoped=True)
+
+    def preview_stock_order(self, order: JSON | None = None, **fields) -> StockPreview:
+        return self._request("POST", "/stocks/orders/preview", self._order(order, fields), scoped=True)
+
+    def cancel_stock_order(self, order_id: str) -> JSON:
+        return self._request("DELETE", "/stocks/orders/" + quote(str(order_id), safe=""), scoped=True)
+
     def close_stock(self, symbol: str, shares: int | None = None) -> Portfolio:
         return self._request("POST", "/stocks/close", {"symbol": symbol, **({"shares": shares} if shares is not None else {})}, scoped=True)
 

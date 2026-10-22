@@ -338,6 +338,7 @@ struct StockFill {
   StockSource source = StockSource::Trade;
   std::string option;  ///< The OSI that delivered them, for Delivery and Exercise.
   std::optional<Money> buying_power_after = {};  ///< Automatic delivery with buying-power checks; absent in old journals.
+  std::uint64_t stock_order = 0;  ///< The working share order it filled, by its ID; zero for an immediate trade.
 };
 
 /// Buying power. Under strategy margin it is cash: long premium is paid in full and

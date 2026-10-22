@@ -120,6 +120,7 @@ struct TradingSnapshot {
   std::optional<Money> payouts_received; ///< Derived from payout events across all attempts; never serialized.
   std::vector<AttemptSummary> attempts;  ///< Earlier attempts, oldest first.
   SharedVector<StockFill> stock_fills;    ///< Every change in shares held, oldest first.
+  SharedVector<StockOrder> stock_orders;  ///< Every share order, in acceptance sequence.
   SharedVector<CashFlow> cash_flows;
   SharedVector<DividendPayment> dividends;  ///< Dividends paid on held shares, oldest first.
   /// Notes and tags by trade, named by its opening fill's ID.
@@ -619,6 +620,23 @@ class TradingSession {
   /// The same trade on a private copy, without recording anything.
   [[nodiscard]] StockPreview preview_trade_stock(const std::string& symbol, Quantity signed_shares, Timestamp time,
       std::optional<StockPrice> price = {}, Decision rejection = {}) const;
+  /// Accept a working share order (StockOrderRequest; invalid terms throw INVALID_ORDER)
+  /// and work it at once: a limit the fresh price crosses, a market order, or a stop
+  /// already reached executes now, in the session the order works in; the rest rest.
+  /// Opening orders take the account, plan, account-type and stop-requirement checks
+  /// at acceptance, seeing working sells, and reserve buying power at their limit (or
+  /// the price, or a buy stop's level) while they work; every execution takes the
+  /// checks trade_stock does at its price. A refusal at execution rejects the order; a
+  /// stale price, a closed session or a halt only makes it wait. A filled entry places
+  /// its bracket, and a fill cancels its OCO partner. A retry of the same
+  /// client_order_id and terms is answered as first accepted.
+  CommandResult submit_stock_order(StockOrderRequest request, Timestamp time, std::optional<StockPrice> price = {});
+  /// The same order on a private copy, without recording anything.
+  [[nodiscard]] StockPreview preview_stock_order(const StockOrderRequest& request, Timestamp time,
+      std::optional<StockPrice> price = {}, Decision rejection = {}) const;
+  /// Cancel an open share order: UNKNOWN_ORDER, ORDER_TERMINAL once it has ended, and
+  /// STOP_REQUIRED for the required stop of shares still held.
+  CommandResult cancel_stock_order(OrderId id, Timestamp time);
   /// Watch a value and announce, with an alert_fired event, when it reaches a
   /// level: see AlertSpec. Alerts are checked after each market batch and when
   /// created, so one whose condition already holds fires at once; a missing or

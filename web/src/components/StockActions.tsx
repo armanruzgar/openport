@@ -1,12 +1,12 @@
 import { useActionApi } from "../api/action-client"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useWriteToken } from "../lib/write-token"
 import { flatRuleNotice, planEntryNotice, planMarketTime } from "../lib/plan-rules"
 import { useAccount, usePortfolio } from "../api/trading"
 
 import { useLive } from "../api/live"
-import type { Position, Side, StockHolding, TradingStatus } from "../api/trading-types"
+import type { Position, Side, StockHolding, StockOrder, StockOrderRequest, StockOrderType, TradingStatus } from "../api/trading-types"
 import { describeAttribution } from "../lib/attribution"
 import { fixed, isNum } from "../lib/format"
 import { contractLabel } from "../lib/journal"
@@ -96,34 +96,64 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
   const write = useWrite(trading)
   const { underlyings, accountScope, source, replay } = useLive()
   const token = useWriteToken()
-  const stocks = usePortfolio().data?.stocks ?? []
+  const portfolio = usePortfolio().data
+  const stocks = portfolio?.stocks ?? []
   const account = useAccount().data
   const rules = account?.rules
   const symbols = [...new Set([...underlyings.map((u) => u.symbol), ...stocks.map((s) => s.symbol)])].filter(deliversShares).sort()
   const [symbol, setSymbol] = useState(initial ?? symbols[0] ?? "")
   const [side, setSide] = useState<Side>("buy")
   const [shares, setShares] = useState("100")
+  // "now" trades at the price at once; the others place a working order.
+  const [kind, setKind] = useState<"now" | StockOrderType>("now")
+  const [limit, setLimit] = useState("")
+  const [stop, setStop] = useState("")
+  const [tif, setTif] = useState<"day" | "gtc">("day")
+  const [extended, setExtended] = useState(false)
+  const [stopLoss, setStopLoss] = useState("")
+  const [takeProfit, setTakeProfit] = useState("")
+  const clientId = useRef<string | undefined>(undefined)
   const n = Number(shares)
-  const valid = symbols.includes(symbol) && /^\d+$/.test(shares) && Number.isSafeInteger(n) && n > 0 && n <= 10_000_000
+  const working = kind !== "now"
+  const cents = (value: string) => /^\d+(\.\d{1,2})?$/.test(value.trim()) && Number(value) > 0
+  const needsLimit = kind === "limit" || kind === "stop_limit"
+  const needsStop = kind === "stop" || kind === "stop_limit"
+  const pricesValid = (!needsLimit || cents(limit)) && (!needsStop || cents(stop)) &&
+    (!stopLoss.trim() || cents(stopLoss)) && (!takeProfit.trim() || cents(takeProfit))
+  const valid = symbols.includes(symbol) && /^\d+$/.test(shares) && Number.isSafeInteger(n) && n > 0 && n <= 10_000_000 && (!working || pricesValid)
   const held = stocks.find((s) => s.symbol === symbol)?.shares ?? 0
   const spot = underlyings.find((u) => u.symbol === symbol)?.spot
   const effect = valid ? shareEffect(held, side, n) : null
   const reduces = effect === "reduces" || effect === "closes"
   const shortSale = side === "sell" && valid && held - n < 0
   const decided = account?.evaluation.enabled && account.evaluation.status !== "active"
+  const bracketed = working && !!stopLoss.trim()
   const planNotice = planEntryNotice(rules, symbol, planMarketTime(account?.time, underlyings.find((u) => u.symbol === symbol)?.as_of, source !== "live" ? replay?.time : null), reduces, account)
   const refused = planNotice ?? (decided && !reduces ? "The evaluation is decided. Only trades that reduce shares toward zero are allowed; opening requires a new attempt."
     : trading.kill_latched && !reduces ? "Kill switch latched · reduce-only: only trades that reduce shares toward zero are allowed."
-    : rules?.require_stop_loss && !reduces ? "Stop-loss required by this plan. Share entries cannot attach a protective stop."
+    : rules?.require_stop_loss && !reduces && !bracketed ? "Stop-loss required by this plan. Place a working order with a bracket stop-loss to open shares."
     : rules?.buy_only && shortSale ? `${rules.plan ?? "This plan"} is buy-only: share sales may only close shares you hold.`
     : rules?.defined_risk && shortSale ? "This plan allows defined risk only, and short shares can lose without limit."
     : null)
+  const order: StockOrderRequest | null = working && valid ? {
+    client_order_id: clientId.current ?? "", symbol, side, type: kind, shares: n, time_in_force: tif,
+    ...(needsLimit ? { limit_price: limit.trim() } : {}), ...(needsStop ? { stop_price: stop.trim() } : {}),
+    ...(kind === "limit" && extended ? { extended_hours: true } : {}),
+    ...(stopLoss.trim() || takeProfit.trim() ? { bracket: { ...(stopLoss.trim() ? { stop_loss: stopLoss.trim() } : {}), ...(takeProfit.trim() ? { take_profit: takeProfit.trim() } : {}) } } : {}),
+  } : null
   const preview = useQuery({
-    queryKey: ["trading", accountScope, "stock-preview", trading.account_version, symbol, side, n, token],
-    queryFn: () => api.previewStock(symbol, side, n, trading.write),
+    queryKey: ["trading", accountScope, "stock-preview", trading.account_version, symbol, side, n, token, order && { ...order, client_order_id: "" }],
+    queryFn: () => order ? api.previewStockOrder({ ...order, client_order_id: "preview" }, trading.write) : api.previewStock(symbol, side, n, trading.write),
     enabled: valid && trading.enabled && !write.blocked,
     retry: false,
   })
+  const submit = () => {
+    if (!order) return void write.run(() => api.tradeStock(symbol, side, n, trading.write), onClose)
+    // A retry after an interrupted response keeps the same client order ID.
+    clientId.current ??= crypto.randomUUID()
+    void write.run(() => api.placeStockOrder({ ...order, client_order_id: clientId.current! }, trading.write), onClose)
+  }
+  const kindLabel = { now: "Now", market: "Market", limit: "Limit", stop: "Stop", stop_limit: "Stop-limit" } as const
   return <Dialog title="Trade shares" onClose={onClose}>
     {symbols.length === 0 ? <p className="text-sm text-muted">No stock or ETF underlying is in the feed.</p> : <>
       <label className="trade-label">Stock or ETF
@@ -133,15 +163,35 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
         <Segmented label="Side" value={side} onChange={setSide} options={[{ value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }]} /></div>
       <label className="trade-label">Shares
         <input className="trade-input" type="number" min="1" step="1" value={shares} onChange={(e) => setShares(e.target.value)} /></label>
+      <label className="trade-label">Order
+        <select className="trade-input" aria-label="Share order type" value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
+          {(Object.keys(kindLabel) as (keyof typeof kindLabel)[]).map((k) => <option key={k} value={k}>{k === "now" ? "Now · at the price" : `${kindLabel[k]} · working order`}</option>)}
+        </select></label>
+      {working && <div className="grid grid-cols-2 gap-2">
+        {needsStop && <label className="trade-label">Stop price ($)
+          <input className="trade-input" inputMode="decimal" value={stop} onChange={(e) => setStop(e.target.value)} /></label>}
+        {needsLimit && <label className="trade-label">Limit price ($)
+          <input className="trade-input" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} /></label>}
+        <label className="trade-label">Time in force
+          <select className="trade-input" value={tif} onChange={(e) => setTif(e.target.value as "day" | "gtc")}>
+            <option value="day">DAY</option><option value="gtc">GTC</option></select></label>
+        {kind === "limit" && <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={extended} onChange={(e) => setExtended(e.target.checked)} />Extended hours</label>}
+        <label className="trade-label">Bracket stop-loss ($)
+          <input className="trade-input" inputMode="decimal" value={stopLoss} onChange={(e) => setStopLoss(e.target.value)} placeholder="Optional" /></label>
+        <label className="trade-label">Bracket take-profit ($)
+          <input className="trade-input" inputMode="decimal" value={takeProfit} onChange={(e) => setTakeProfit(e.target.value)} placeholder="Optional" /></label>
+      </div>}
       <p className="text-sm">{held !== 0 ? `You hold ${held > 0 ? `${held} long` : `${-held} short`}. ` : ""}
         {effect ? `${side === "buy" ? "Buying" : "Selling"} ${n} ${effect} the position` : "Enter a whole number of shares"}
         {isNum(spot) && valid ? `, about ${dollars(spot * n)} at ${symbol}'s price of ${fixed(spot, 2)}` : ""}, without a fee.</p>
-      <p className="text-xs text-muted">Shares trade at the underlying's price in the stock market's regular session. Long shares are paid for in
+      <p className="text-xs text-muted">{working
+        ? `A working order fills whole at the underlying's price once a later print ${needsStop ? "reaches its stop" : ""}${needsStop && needsLimit ? " and then " : ""}${needsLimit ? "crosses its limit" : ""}${!needsStop && !needsLimit ? "arrives in the session" : ""}, in the regular session${extended && kind === "limit" ? " or premarket and after hours (04:00–20:00 ET)" : ""}. Opening orders reserve buying power while they work. A bracket places a stop and a target for the filled shares, one cancelling the other.`
+        : "Shares trade at the underlying's price in the stock market's regular session."} Long shares are paid for in
         full under strategy margin, where unprotected short shares hold 150% of their value. Portfolio margin scans the book. Opening takes the account's checks, including exposure limits.</p>
       <section aria-label="Share preview" className="rounded-md border border-border p-3 text-xs space-y-1">
         <p>Simulated share preview</p>
         {preview.isFetching ? <p>Checking shares…</p> : preview.data ? <>
-          <p>Cash cost (negative receives): {formatMoney(preview.data.cost)}</p>
+          <p>{working ? "Cash cost at most (negative receives)" : "Cash cost (negative receives)"}: {formatMoney(preview.data.cost)}</p>
           <p>Buying power: {formatMoney(preview.data.current.buying_power)} → {formatMoney(preview.data.after.buying_power)}</p>
           <p>Dollar delta: {fixed(preview.data.current.exposure?.dollar_delta, 2)} → {fixed(preview.data.after.exposure?.dollar_delta, 2)}</p>
           <p>Share delta change: {side === "buy" ? "+" : "−"}{valid ? n : "…"}</p>
@@ -152,11 +202,29 @@ export function TradeSharesDialog({ initial, trading, onClose }: { initial?: str
       {refused && <p role="status" className="text-sm text-warn">{refused}</p>}
       <WriteAccess trading={trading} />
       <TradingError error={write.error} />
-      <button type="button" className="trade-button" disabled={!valid || !!refused || write.pending || write.blocked}
-        onClick={() => void write.run(() => api.tradeStock(symbol, side, n, trading.write), onClose)}>
-        {write.pending ? "Trading…" : `${side === "buy" ? "Buy" : "Sell"} ${valid ? n : ""} ${symbol}`}</button>
+      <button type="button" className="trade-button" disabled={!valid || !!refused || write.pending || write.blocked} onClick={submit}>
+        {write.pending ? (working ? "Placing…" : "Trading…") : `${side === "buy" ? "Buy" : "Sell"} ${valid ? n : ""} ${symbol}${working ? ` · ${kindLabel[kind].toLowerCase()}` : ""}`}</button>
+      <WorkingShareOrders orders={portfolio?.stock_orders ?? []} trading={trading} />
     </>}
   </Dialog>
+}
+
+/** The account's open share orders, each cancellable. */
+export function WorkingShareOrders({ orders, trading }: { orders: StockOrder[]; trading: TradingStatus }) {
+  const api = useActionApi()
+  const write = useWrite(trading)
+  if (!orders.length) return null
+  const terms = (o: StockOrder) => [o.type.replace("_", "-"), o.stop_price && `stop ${formatMoney(o.stop_price)}`, o.limit_price && `limit ${formatMoney(o.limit_price)}`,
+    o.time_in_force.toUpperCase(), o.extended_hours && "extended hours", o.role !== "entry" && o.role.replace("_", "-")].filter(Boolean).join(" · ")
+  return <section aria-label="Working share orders" className="space-y-1 text-xs">
+    <h3 className="font-medium text-muted">Working share orders</h3>
+    <TradingError error={write.error} />
+    {orders.map((o) => <div key={o.id} className="flex items-center justify-between gap-2 rounded-md border border-border p-2">
+      <span>{o.side === "buy" ? "Buy" : "Sell"} {o.shares} {o.symbol} · {terms(o)}{o.status === "armed" ? " · waiting for its stop" : ""}</span>
+      <button type="button" className="trade-button" disabled={write.pending || write.blocked}
+        onClick={() => void write.run(() => api.cancelStockOrder(o.id, trading.write), () => {})}>Cancel {o.id}</button>
+    </div>)}
+  </section>
 }
 
 /** Close some or all shares at the underlying's price. */

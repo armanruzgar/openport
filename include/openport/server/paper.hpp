@@ -205,7 +205,7 @@ struct TradingCommand {
   enum class Kind { Submit, Cancel, Limits, Trip, Reset, Settle, ResetAccount, Payout, Modify, CancelAll, ClosePositions, CreateAccount, Annotate,
                     Exercise, CloseStock, DayNote, Preview, Guardrails, Playbook, CreateSandbox, PreviewChange, WhatIf, PreviewClose,
                     Abandon, ExerciseInstruction, Group, Ungroup, TradeStock, PreviewStock, CreateAlert, DeleteAlert,
-                    UpdateAccount, DeleteAccount, CashTransfer, Halt };
+                    UpdateAccount, DeleteAccount, CashTransfer, Halt, SubmitStockOrder, PreviewStockOrder, CancelStockOrder };
   Kind kind = Kind::Submit;
   std::string actor = "unknown";
   trading::OrderRequest order;
@@ -247,8 +247,12 @@ struct TradingCommand {
   std::vector<std::uint64_t> trades = {};
   /// Exercise: contracts of `symbol`; CloseStock: shares of `symbol` to close, 0 for all.
   trading::Quantity quantity = 0;
-  /// TradeStock/PreviewStock: the feed price, captured before recording the command.
+  /// TradeStock/PreviewStock and the share order kinds: the feed price, captured
+  /// before recording the command.
   std::optional<trading::StockPrice> stock_price;
+  /// SubmitStockOrder/PreviewStockOrder: the share order (`symbol` names its symbol).
+  /// CancelStockOrder names it by `order_id`.
+  std::optional<trading::StockOrderRequest> stock_order = {};
   /// WhatIf: each candidate's orders, and its name. Never recorded.
   std::vector<std::vector<trading::OrderRequest>> candidates = {};
   std::vector<std::string> candidate_names = {};
@@ -262,7 +266,8 @@ struct TradingCommand {
 /// Previews and dry runs: answered from a private copy of the account, never recorded.
 [[nodiscard]] inline bool dry_run(TradingCommand::Kind kind) {
   return kind == TradingCommand::Kind::Preview || kind == TradingCommand::Kind::PreviewChange || kind == TradingCommand::Kind::WhatIf ||
-         kind == TradingCommand::Kind::PreviewClose || kind == TradingCommand::Kind::PreviewStock;
+         kind == TradingCommand::Kind::PreviewClose || kind == TradingCommand::Kind::PreviewStock ||
+         kind == TradingCommand::Kind::PreviewStockOrder;
 }
 
 struct TradingReply {

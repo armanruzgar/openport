@@ -434,6 +434,30 @@ json chained_json(const OrderRequest& r) {
           {"then", r.then.empty() ? json(nullptr) : chained_json(r.then.front())},
           {"oco", r.oco.empty() ? json(nullptr) : chained_json(r.oco.front())}};
 }
+const char* stock_type_name(StockOrderType type) {
+  constexpr const char* names[] = {"market", "limit", "stop", "stop_limit"};
+  return names[static_cast<int>(type)];
+}
+json stock_order_json(const StockOrder& o) {
+  constexpr const char* statuses[] = {"working", "partially_filled", "filled", "cancelled", "rejected", "armed"};
+  constexpr const char* roles[] = {"entry", "stop_loss", "take_profit"};
+  const auto& r = o.request;
+  const auto id = [](OrderId value) { return value ? json(std::to_string(value)) : json(nullptr); };
+  return {{"id", std::to_string(o.id)}, {"client_order_id", r.client_order_id}, {"actor", o.actor}, {"symbol", r.symbol},
+          {"side", side_name(r.side)}, {"type", stock_type_name(r.type)}, {"time_in_force", r.tif == TimeInForce::Gtc ? "gtc" : "day"},
+          {"shares", r.shares}, {"limit_price", money(r.limit_price)}, {"stop_price", money(r.stop_price)},
+          {"extended_hours", r.extended_hours},
+          {"bracket", r.stop_loss || r.take_profit ? json{{"stop_loss", money(r.stop_loss)}, {"take_profit", money(r.take_profit)}} : json(nullptr)},
+          {"role", roles[static_cast<int>(o.role)]}, {"parent", id(o.parent)}, {"oco", id(o.oco)},
+          {"stop_loss", id(o.stop_loss)}, {"take_profit", id(o.take_profit)},
+          {"status", statuses[static_cast<int>(o.status)]}, {"reason", decision_json(o.reason)},
+          {"accepted_at", md::format_timestamp(o.accepted_at)},
+          {"day_end", o.day_end == std::numeric_limits<Timestamp>::max() ? json(nullptr) : json(md::format_timestamp(o.day_end))},
+          {"triggered_at", o.triggered_at ? json(md::format_timestamp(o.triggered_at)) : json(nullptr)},
+          {"ended_at", o.ended_at ? json(md::format_timestamp(o.ended_at)) : json(nullptr)},
+          {"filled_shares", o.filled_shares}, {"fill_price", o.filled_shares ? json(o.fill_price.str()) : json(nullptr)},
+          {"stock_fill", id(o.stock_fill)}};
+}
 json order_json(const Order& o, const TradingView& view) {
   constexpr const char* statuses[] = {"working", "partially_filled", "filled", "cancelled", "rejected", "armed"};
   constexpr const char* roles[] = {"", "stop_loss", "take_profit"};
@@ -785,7 +809,12 @@ json portfolio_json(const TradingView& view) {
           {"valuation_complete", s.valuation_complete}, {"quality_flags", flags}, {"positions", positions}, {"stocks", stocks},
           {"buying_power", buying_power_json(s.buying_power)}, {"margin", margin_json(s.margin)},
           {"attribution", attribution_json(s.attribution)},
-          {"liquidity_used", liquidity_used_json(view)}, {"closed", closed}, {"strategies", strategies}};
+          {"liquidity_used", liquidity_used_json(view)}, {"closed", closed}, {"strategies", strategies},
+          {"stock_orders", [&] {
+             json open = json::array();
+             for (const auto& o : s.stock_orders) if (o.open()) open.push_back(stock_order_json(o));
+             return open;
+           }()}};
 }
 json damage_json(const std::optional<AccountDamage>& damage) {
   if (!damage) return nullptr;
@@ -976,7 +1005,8 @@ json share_source(const StockFill& fill) {
 json stock_fill_json(const StockFill& fill) {
   return {{"id", std::to_string(fill.id)}, {"symbol", fill.symbol}, {"shares", fill.shares},
           {"price", fill.price.str()}, {"time", md::format_timestamp(fill.time)}, {"source", share_source(fill)},
-          {"option", nullable(fill.option)}, {"buying_power_after", money(fill.buying_power_after)}};
+          {"option", nullable(fill.option)}, {"buying_power_after", money(fill.buying_power_after)},
+          {"stock_order", fill.stock_order ? json(std::to_string(fill.stock_order)) : json(nullptr)}};
 }
 const char* closure_name(ClosureKind kind) {
   return kind == ClosureKind::Settlement ? "settlement" : kind == ClosureKind::Exercise ? "exercise"
@@ -1379,12 +1409,36 @@ ApiResponse command_response(const TradingCommand& command, const TradingReply& 
       break;
     }
     case TradingCommand::Kind::Playbook: body = json::parse(reply.playbook_result); break;
+    case TradingCommand::Kind::SubmitStockOrder:
+    case TradingCommand::Kind::CancelStockOrder: {
+      if (!reply.order_id || *reply.order_id == 0 || *reply.order_id > s.stock_orders.size())
+        return api_error(503, "TRADING_UNAVAILABLE", "Share order publication missing");
+      const auto& o = s.stock_orders.at(static_cast<std::size_t>(*reply.order_id - 1));
+      if (command.kind == TradingCommand::Kind::SubmitStockOrder && !reply.replayed) status = 201;
+      body["stock_order"] = stock_order_json(o);
+      // The orders it placed with it or by filling: its OCO partner and bracket exits.
+      body["related_orders"] = json::array();
+      for (const auto other : {o.oco, o.stop_loss, o.take_profit})
+        if (other) body["related_orders"].push_back(stock_order_json(s.stock_orders.at(static_cast<std::size_t>(other - 1))));
+      body["stock_fills"] = json::array();
+      for (const auto& fill : s.stock_fills)
+        if (fill.stock_order == o.id || (o.oco && fill.stock_order == o.oco)) body["stock_fills"].push_back(stock_fill_json(fill));
+      break;
+    }
+    case TradingCommand::Kind::PreviewStockOrder:
     case TradingCommand::Kind::PreviewStock: {
       if (!reply.stock_preview) return api_error(503, "TRADING_UNAVAILABLE", "No share preview available");
       const auto& p = *reply.stock_preview;
+      const auto shares = command.stock_order ? (command.stock_order->side == Side::Buy ? command.stock_order->shares : -command.stock_order->shares)
+                                              : command.quantity;
       body = {{"account_version", std::to_string(s.account_version)}, {"simulated", true},
               {"decision", p.decision.ok() ? "ok" : to_string(p.decision.code)}, {"reason", decision_json(p.decision)},
-              {"price", money(p.price)}, {"cost", p.price ? json((*p.price * command.quantity).str()) : json(nullptr)},
+              {"price", money(p.price)}, {"cost", [&]() -> json {
+                 // A share order costs its limit, or a stop's level, at most; a market order the price.
+                 const auto& o = command.stock_order;
+                 const auto bound = o && o->limit_price ? o->limit_price : o && o->stop_price ? o->stop_price : p.price;
+                 return bound ? json((*bound * shares).str()) : json(nullptr);
+               }()},
               {"current", what_if_account_json(p.current, view.config.scenarios)},
               {"after", what_if_account_json(p.after, view.config.scenarios)}};
       break;
@@ -2061,6 +2115,47 @@ OrderRequest parse_order(const json& body, std::size_t depth = 0) {
   if (!chained && chain_length(order) > kMaxChain) throw std::invalid_argument("A chain is at most four orders");
   return order;
 }
+/// A share order's body: POST /api/stocks/orders, its preview and its OCO partner.
+StockOrderRequest parse_stock_order(const json& body, bool partner = false) {
+  if (partner) fields(body, {"side", "type", "shares"}, {"time_in_force", "limit_price", "stop_price", "extended_hours"});
+  else fields(body, {"client_order_id", "symbol", "side", "type", "shares"},
+              {"time_in_force", "limit_price", "stop_price", "extended_hours", "bracket", "oco"});
+  StockOrderRequest r;
+  if (!partner) {
+    r.client_order_id = string_field(body, "client_order_id");
+    if (!valid_client_order_id(r.client_order_id)) throw std::invalid_argument("client_order_id must be 1-64 printable bytes");
+    r.symbol = string_field(body, "symbol");
+  }
+  const auto side = string_field(body, "side");
+  if (side != "buy" && side != "sell") throw std::invalid_argument("side must be buy or sell");
+  r.side = side == "buy" ? Side::Buy : Side::Sell;
+  const auto type = string_field(body, "type");
+  if (type == "market") r.type = StockOrderType::Market;
+  else if (type == "limit") r.type = StockOrderType::Limit;
+  else if (type == "stop") r.type = StockOrderType::Stop;
+  else if (type == "stop_limit") r.type = StockOrderType::StopLimit;
+  else throw std::invalid_argument("type must be market, limit, stop or stop_limit");
+  r.shares = integer_field(body, "shares");
+  const auto tif = body.contains("time_in_force") ? string_field(body, "time_in_force") : std::string("day");
+  if (tif != "day" && tif != "gtc") throw std::invalid_argument("time_in_force must be day or gtc for shares");
+  r.tif = tif == "gtc" ? TimeInForce::Gtc : TimeInForce::Day;
+  if (body.contains("limit_price")) r.limit_price = decimal_field(body, "limit_price");
+  if (body.contains("stop_price")) r.stop_price = decimal_field(body, "stop_price");
+  if (body.contains("extended_hours")) r.extended_hours = boolean_field(body, "extended_hours");
+  if (body.contains("bracket")) {
+    const auto& bracket = body.at("bracket");
+    fields(bracket, {}, {"stop_loss", "take_profit"});
+    if (bracket.contains("stop_loss")) r.stop_loss = decimal_field(bracket, "stop_loss");
+    if (bracket.contains("take_profit")) r.take_profit = decimal_field(bracket, "take_profit");
+    if (!r.stop_loss && !r.take_profit) throw std::invalid_argument("A bracket needs a stop_loss, a take_profit or both");
+  }
+  if (body.contains("oco")) {
+    auto other = parse_stock_order(body.at("oco"), true);
+    other.symbol = r.symbol;
+    r.oco.push_back(std::move(other));
+  }
+  return r;
+}
 TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   TradingCommand command;
   if (path.starts_with("/api/accounts/")) {
@@ -2089,6 +2184,12 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
     command.kind = TradingCommand::Kind::DeleteAlert;
     command.alert_id = identifier(path.substr(std::string_view("/api/alerts/").size()));
+    return command;
+  }
+  if (request.method == "DELETE" && path.starts_with("/api/stocks/orders/")) {
+    if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
+    command.kind = TradingCommand::Kind::CancelStockOrder;
+    command.order_id = identifier(path.substr(std::string_view("/api/stocks/orders/").size()));
     return command;
   }
   if (request.method == "DELETE") {
@@ -2276,6 +2377,13 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     if (command.quantity <= 0 || command.quantity > 10'000'000)
       throw std::invalid_argument("shares must be a positive whole number, at most 10,000,000");
     if (side == "sell") command.quantity = -command.quantity;
+    return command;
+  }
+  if (path == "/api/stocks/orders" || path == "/api/stocks/orders/preview") {
+    command.kind = path.ends_with("/preview") ? TradingCommand::Kind::PreviewStockOrder : TradingCommand::Kind::SubmitStockOrder;
+    command.stock_order = parse_stock_order(body);
+    command.symbol = command.stock_order->symbol;
+    validate_stock_order(*command.stock_order);
     return command;
   }
   if (path == "/api/stocks/close") {
@@ -2915,7 +3023,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   if (!order_detail && path != "/api/portfolio" && path != "/api/orders" && path != "/api/fills" && path != "/api/risk" &&
       path != "/api/trades.csv" && path != "/api/fills.csv" && path != "/api/account" && path != "/api/account/equity" &&
       path != "/api/trades" && path != "/api/settlements" && path != "/api/plans" && path != "/api/accounts" && path != "/api/risk/profile" &&
-      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history") return {};
+      path != "/api/alerts" && path != "/api/risk/scenarios" && path != "/api/risk/history" && path != "/api/stocks/orders") return {};
   if (path == "/api/risk/profile" || path == "/api/risk/scenarios") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
@@ -2955,7 +3063,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       else if (key == "from") since = parsed; else until = parsed;
     } else if (key == "archived" && path == "/api/accounts" && (value == "true" || value == "false")) archived = value == "true";
     else if (key == "account" && path != "/api/accounts" && valid_account(value)) account = value;
-    else if (key == "status" && path == "/api/orders" && (value == "open" || value == "all")) status = value;
+    else if (key == "status" && (path == "/api/orders" || path == "/api/stocks/orders") && (value == "open" || value == "all")) status = value;
     else if (key == "client_order_id" && path == "/api/orders" && valid_client_order_id(value)) client_order_id = value;
     else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "open" || value == "closed" || value == "all")) status = value;
     else if (key == "attempt" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "current" || value == "all")) attempt = value;
@@ -3027,6 +3135,12 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     return ApiResponse{200, json{{"account_version", std::to_string(s.account_version)}, {"settlements", records}}.dump()};
   }
   if (path == "/api/portfolio") return ApiResponse{200, portfolio_json(*view).dump()};
+  if (path == "/api/stocks/orders") {
+    json list = json::array();
+    for (auto it = view->snapshot->stock_orders.rbegin(); it != view->snapshot->stock_orders.rend(); ++it)
+      if (status != "open" || it->open()) list.push_back(stock_order_json(*it));
+    return ApiResponse{200, json{{"account_version", std::to_string(view->snapshot->account_version)}, {"stock_orders", list}}.dump()};
+  }
   if (path == "/api/risk") return ApiResponse{200, risk_json(*view).dump()};
   if (path == "/api/account") return ApiResponse{200, account_json(*view).dump()};
   if (path == "/api/trades") return ApiResponse{200, trades_json(*view, status, attempt == "current").dump()};
@@ -3292,13 +3406,14 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
       (path.starts_with("/api/orders/") && path.ends_with("/preview")) ||
       path == "/api/orders/cancel" || path == "/api/positions/close" || path == "/api/positions/close/preview" || path == "/api/accounts" ||
       path == "/api/positions/exercise" || path == "/api/stocks/close" || path == "/api/stocks/trade" || path == "/api/stocks/trade/preview" ||
+      path == "/api/stocks/orders" || path == "/api/stocks/orders/preview" ||
       path == "/api/positions/abandon" || path == "/api/positions/instruction" ||
       path == "/api/risk/kill" || path == "/api/settlements" ||
       path == "/api/account/reset" || path == "/api/account/payout" || path == "/api/account/cash-flows" || path == "/api/market/halt" ||
       path == "/api/trades/group" || path == "/api/trades/ungroup" || path == "/api/alerts")) ||
       (request.method == "PUT" && (path == "/api/risk/limits" || path == "/api/risk/guardrails" || path.starts_with("/api/orders/") ||
                                    ((path.starts_with("/api/trades/") || path.starts_with("/api/days/")) && path.ends_with("/note")))) ||
-      (request.method == "DELETE" && (path.starts_with("/api/orders/") || path.starts_with("/api/alerts/"))) ||
+      (request.method == "DELETE" && (path.starts_with("/api/orders/") || path.starts_with("/api/alerts/") || path.starts_with("/api/stocks/orders/"))) ||
       ((request.method == "PATCH" || request.method == "DELETE") && path.starts_with("/api/accounts/"));
   if (!route) { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return; }
   std::string account = request.access.sandbox;

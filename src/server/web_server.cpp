@@ -396,7 +396,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     const bool account_read = read && (path == "/ws/events" || path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/trades" ||
-        path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts");
+        path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts" || path == "/api/stocks/orders");
     if ((!market_read && account != sandbox) || (read && !market_read && !account_read) ||
         (!read && path.starts_with("/api/playbooks")))
       return api_error(403, "SCOPE_REQUIRED", "Sandbox tokens may access only their own account and the demo market");
@@ -406,6 +406,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   else if (path.starts_with("/api/")) path.remove_prefix(4);
   const bool trade = path == "/orders" || path == "/orders/preview" || path == "/orders/cancel" ||
       path.starts_with("/orders/") || path == "/positions/close" || path == "/positions/close/preview" || path == "/positions/exercise" || path == "/stocks/close" || path == "/stocks/trade" || path == "/stocks/trade/preview" ||
+      path == "/stocks/orders" || path.starts_with("/stocks/orders/") ||
       path == "/positions/abandon" || path == "/positions/instruction" ||
       path.starts_with("/playbooks/staged/") || (path.starts_with("/playbooks/") && path.ends_with("/evaluate")) || path == "/alerts" || path.starts_with("/alerts/") ||
       path == "/trades/group" || path == "/trades/ungroup" ||
@@ -440,7 +441,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool counted_order = (path == "/orders" || (path.starts_with("/orders/") && path != "/orders/cancel")) &&
       request.method != "DELETE";
   const bool counted_stock_trade = request.method == "POST" &&
-      (path == "/stocks/trade" || path == "/stocks/trade/preview");
+      (path == "/stocks/trade" || path == "/stocks/trade/preview" || path == "/stocks/orders" || path == "/stocks/orders/preview");
   if (sandbox_account && (counted_order || counted_stock_trade)) {
     if (auto rejected = policy.sandboxes->check_order(account)) return rejected;
   }

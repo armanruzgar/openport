@@ -2490,7 +2490,8 @@ TEST(PaperRecovery, EtfOptionsSettleAtTheQuarterHourOnTheClosingPrint) {
   const auto fills = read(engine, "/api/trades?status=all")["stock_fills"];
   ASSERT_EQ(fills.size(), 1);
   EXPECT_EQ(fills[0], json({{"id", "1"}, {"symbol", "SPY"}, {"shares", 100}, {"price", "501.00"},
-      {"time", md::format_timestamp(market.contract.expiry_time())}, {"source", "expiry_exercise"}, {"option", market.symbol()}, {"buying_power_after", snapshot->buying_power.available.str()}}));
+      {"time", md::format_timestamp(market.contract.expiry_time())}, {"source", "expiry_exercise"}, {"option", market.symbol()}, {"buying_power_after", snapshot->buying_power.available.str()},
+                    {"stock_order", nullptr}}));
   EXPECT_EQ(shares["opened_by"], "expiry_exercise");
   EXPECT_EQ(shares["option"], market.symbol());
   EXPECT_EQ(shares["closed_by"], nullptr);
@@ -5564,4 +5565,55 @@ TEST_F(PaperEngine, CopiedOrdersFanOutAsEachAccountsOwnSubmission) {
 
 TEST_F(PaperEngine, AccountGroupsAreNotOfferedWithoutAStore) {
   expect_error(write(*engine, "GET", "/api/account-groups"), 404, "NOT_FOUND");
+}
+
+TEST(PaperStocks, WorkingShareOrdersRestAndFillOnLaterPrices) {
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, paper_options());
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", time, 519.9, 520.1, 520});
+  ASSERT_TRUE(wait_for([&] { const auto view = engine.trading_view(); return view && view->market_times.contains("SPY") && view->market_times.at("SPY") == time; }));
+  const json entry = {{"client_order_id", "dip"}, {"symbol", "SPY"}, {"side", "buy"}, {"type", "limit"}, {"shares", 10},
+                      {"limit_price", "515.00"}, {"time_in_force", "gtc"}, {"bracket", {{"stop_loss", "505.00"}, {"take_profit", "530.00"}}}};
+  // Terms the type does not fit are refused before anything is recorded.
+  EXPECT_EQ(write(engine, "POST", "/api/stocks/orders", {{"client_order_id", "x"}, {"symbol", "SPY"}, {"side", "buy"},
+                                                         {"type", "limit"}, {"shares", 1}}).status, 422);
+  EXPECT_EQ(write(engine, "POST", "/api/stocks/orders", {{"client_order_id", "x"}, {"symbol", "SPY"}, {"side", "buy"},
+                                                         {"type", "market"}, {"shares", 1}, {"time_in_force", "ioc"}}).status, 400);
+  const auto preview = write(engine, "POST", "/api/stocks/orders/preview", entry);
+  ASSERT_EQ(preview.status, 200) << preview.body;
+  test::capture_contract("stocks", "POST", "/api/stocks/orders/preview", preview);
+  EXPECT_EQ(json::parse(preview.body)["cost"], "5150.00");
+  EXPECT_TRUE(read(engine, "/api/stocks/orders")["stock_orders"].empty());
+  const auto placed = write(engine, "POST", "/api/stocks/orders", entry);
+  ASSERT_EQ(placed.status, 201) << placed.body;
+  test::capture_contract("stocks", "POST", "/api/stocks/orders", placed);
+  auto body = json::parse(placed.body);
+  EXPECT_EQ(body["stock_order"]["status"], "working");
+  EXPECT_EQ(body["stock_order"]["bracket"]["stop_loss"], "505.00");
+  EXPECT_EQ(write(engine, "POST", "/api/stocks/orders", entry).status, 200);  // the retry
+  EXPECT_EQ(read(engine, "/api/portfolio")["stock_orders"].size(), 1);
+  // A later print through the limit fills it and places its exits.
+  const auto later = time + md::kNanosPerMinute;
+  provider.sink->publish(md::UnderlyingQuote{"SPY", later, 514.4, 514.6, 514.5});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->stock_orders.size() == 3; }));
+  const auto listed = server::handle_api({"GET", "/api/stocks/orders?status=all"}, engine);
+  ASSERT_EQ(listed.status, 200);
+  test::capture_contract("stocks", "GET", "/api/stocks/orders", listed);
+  const auto orders = json::parse(listed.body)["stock_orders"];
+  EXPECT_EQ(orders[2]["status"], "filled");  // newest first: the entry is last
+  EXPECT_EQ(orders[2]["fill_price"], "514.50");
+  EXPECT_EQ(orders[0]["role"], "take_profit");
+  EXPECT_EQ(orders[1]["status"], "armed");
+  const auto fills = read(engine, "/api/trades")["stock_fills"];
+  EXPECT_EQ(fills[0]["stock_order"], "1");
+  const auto cancelled = write(engine, "DELETE", "/api/stocks/orders/3");
+  ASSERT_EQ(cancelled.status, 200) << cancelled.body;
+  test::capture_contract("stocks", "DELETE", "/api/stocks/orders/{id}", cancelled);
+  EXPECT_EQ(json::parse(cancelled.body)["stock_order"]["reason"]["code"], "USER_CANCEL");
+  EXPECT_EQ(write(engine, "DELETE", "/api/stocks/orders/3").status, 409);
+  EXPECT_EQ(write(engine, "DELETE", "/api/stocks/orders/99").status, 404);
+  engine.stop();
 }

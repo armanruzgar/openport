@@ -6,7 +6,7 @@ import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
 import type { NotificationChannel, NotificationStatus, TokenReloadResponse } from "./types"
 import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, Summary, Surface, RunVerification } from "./types"
-import type { Account, AccountGroupDeleted, AccountGroupInput, AccountGroup, AccountGroupsResponse, AccountsResponse, CopyOrderResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
+import type { Account, StockOrderRequest, StockOrderResponse, StockOrdersResponse, AccountGroupDeleted, AccountGroupInput, AccountGroup, AccountGroupsResponse, AccountsResponse, CopyOrderResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode } from "./trading-types"
 import { activeAccount, MAIN_ACCOUNT } from "../lib/active-account"
 import { dataSource } from "../lib/data-source"
 import { isSandboxToken, writeToken } from "../lib/write-token"
@@ -226,6 +226,10 @@ export const api = {
     accountWrite<Portfolio>(scoped("/api/stocks/trade"), "POST", mode, { symbol, side, shares }),
   previewStock: (symbol: string, side: Side, shares: number, mode: WriteMode) =>
     previewWrite<StockPreview>(scoped("/api/stocks/trade/preview"), "POST", mode, { symbol, side, shares }),
+  stockOrders: (signal?: AbortSignal) => get<StockOrdersResponse>(scoped("/api/stocks/orders?status=all"), signal),
+  placeStockOrder: (order: StockOrderRequest, mode: WriteMode) => accountWrite<StockOrderResponse>(scoped("/api/stocks/orders"), "POST", mode, order),
+  previewStockOrder: (order: StockOrderRequest, mode: WriteMode) => previewWrite<StockPreview>(scoped("/api/stocks/orders/preview"), "POST", mode, order),
+  cancelStockOrder: (id: string, mode: WriteMode) => accountWrite<StockOrderResponse>(scoped(`/api/stocks/orders/${encodeURIComponent(id)}`), "DELETE", mode),
   closeStock: (symbol: string, shares: number | null, mode: WriteMode) =>
     accountWrite<Portfolio>(scoped("/api/stocks/close"), "POST", mode, shares == null ? { symbol } : { symbol, shares }),
   reloadTokens: (mode: WriteMode) => write<TokenReloadResponse>("/api/tokens/reload", "POST", mode, {}),

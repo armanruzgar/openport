@@ -169,8 +169,11 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   can roll as four-leg orders. Rolls and adjustments retain one whole-trade review.
 - Stock and ETF shares can be opened, added to, closed or reversed, with buying
   power and dollar-delta previews, dividends, recovery and trade review. The chain
-  and Positions offer share tickets; shares execute synchronously in the stock
-  regular session, without working share orders.
+  and Positions offer share tickets that trade at once in the stock regular session
+  or place working market, limit, stop and stop-limit orders, DAY or GTC, with
+  extended-hours limits, brackets and OCO. Working opening orders reserve buying power
+  and every fill takes the share checks. Buy-writes at one net price are not offered.
+  [Working share orders](paper-trading.md#working-share-orders).
 - Covered-call and collar templates buy shares first, then submit options. These
   are separate orders: shares remain if the option step fails or fills partly.
   Automatic playbook stages remain option orders; share purchases are manual.

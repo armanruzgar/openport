@@ -518,6 +518,26 @@ TradingSession trading_session(std::string_view root, Timestamp ts) {
 
 TradingSession stock_session(Timestamp ts) { return session_at(false, false, false, ts); }
 
+TradingSession stock_extended_session(Timestamp ts) {
+  auto regular = stock_session(ts);
+  if (regular.open) return regular;
+  const auto local = local_time(ts);
+  if (!Memo::current().day(local.date).business) return regular;
+  const int close = regular_close_hour(local.date);
+  const auto premarket = new_york_to_utc(local.date, 4, 0), open = new_york_to_utc(local.date, 9, 30);
+  const auto close_at = new_york_to_utc(local.date, close, 0), evening = new_york_to_utc(local.date, close + 4, 0);
+  TradingSession result;
+  if (premarket <= ts && ts < open) {
+    result = {"premarket", true, "premarket session", ts, open};
+  } else if (close_at <= ts && ts < evening) {
+    result = {"after_hours", true, "after-hours session", ts, evening};
+  } else {
+    result = regular;
+    result.market_time = ts >= evening ? evening : regular.market_time;
+  }
+  return result;
+}
+
 Date trading_date(Timestamp ts) noexcept { return trading_date(ts, 17 * 60); }
 Date trading_date(Timestamp ts, int day_end_minutes) noexcept {
   auto& memo = Memo::current();

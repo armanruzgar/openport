@@ -309,6 +309,63 @@ struct Order {
     return status == OrderStatus::Working || status == OrderStatus::PartiallyFilled || status == OrderStatus::Armed;
   }
 };
+/// A share order's price terms. Market and stop orders take the underlying's price
+/// when they execute; a limit caps a buy's price and floors a sell's. A stop activates
+/// once the price reaches its level (at or above it for a buy, at or below for a sell)
+/// and then executes at market (Stop) or rests as a limit (StopLimit).
+enum class StockOrderType { Market, Limit, Stop, StopLimit };
+/// A working order for a stock's or ETF's shares. Shares trade at the underlying's
+/// single price, which has no displayed size, so an order fills whole or waits.
+struct StockOrderRequest {
+  std::string client_order_id;
+  std::string symbol;  ///< An uppercase stock or ETF symbol, such as SPY.
+  Side side = Side::Buy;
+  StockOrderType type = StockOrderType::Limit;
+  TimeInForce tif = TimeInForce::Day;  ///< Day or Gtc.
+  Quantity shares = 0;
+  std::optional<Money> limit_price;  ///< Limit and StopLimit.
+  std::optional<Money> stop_price;   ///< Stop and StopLimit.
+  /// Limit orders only: also work in the premarket and after-hours sessions
+  /// (md::stock_extended_session); Day then lasts until after hours end.
+  bool extended_hours = false;
+  /// A bracket: exits for the shares the entry trades, created when it fills, one
+  /// cancelling the other: a stop at `stop_loss` and a limit at `take_profit`.
+  std::optional<Money> stop_loss;
+  std::optional<Money> take_profit;
+  /// One-cancels-other: the order accepted with this one, as `<client_order_id>:oco`;
+  /// the first fill of either cancels the other. At most one, without its own.
+  std::vector<StockOrderRequest> oco = {};
+  bool operator==(const StockOrderRequest&) const = default;
+};
+/// Throws INVALID_ORDER unless the terms fit their type: a symbol, 1 to 10,000,000
+/// shares, positive prices on the cent where the type takes them and none where it
+/// does not, Day or GTC, extended hours only on a limit, a bracket's stop and target
+/// on either side of the entry's limit or stop, and at most one OCO partner of the
+/// same symbol without a bracket or partner of its own.
+void validate_stock_order(const StockOrderRequest& request);
+struct StockOrder {
+  OrderId id = 0;  ///< Its place among the account's share orders; never reused.
+  StockOrderRequest request;
+  OrderStatus status = OrderStatus::Working;  ///< Armed: a stop waiting for its level.
+  Timestamp accepted_at = 0;
+  Timestamp day_end = 0;     ///< When it ends unfilled; the largest timestamp for GTC.
+  Timestamp triggered_at = 0;
+  Timestamp ended_at = 0;
+  Decision reason;
+  OrderRole role = OrderRole::Normal;
+  OrderId parent = 0;        ///< Bracket exits: the entry that created them.
+  OrderId oco = 0;           ///< The order its fill cancels: a bracket's other exit or an OCO partner.
+  OrderId stop_loss = 0;     ///< Bracket entries: their exits, once created.
+  OrderId take_profit = 0;
+  std::uint64_t stock_fill = 0;  ///< Its fill's StockFill ID, once filled.
+  Quantity filled_shares = 0;
+  Money fill_price;
+  std::string actor = "unknown";
+  [[nodiscard]] bool open() const {
+    return status == OrderStatus::Working || status == OrderStatus::PartiallyFilled || status == OrderStatus::Armed;
+  }
+  [[nodiscard]] bool exit() const { return role != OrderRole::Normal; }
+};
 struct WalkStep {
   Timestamp time = 0;
   Money price;

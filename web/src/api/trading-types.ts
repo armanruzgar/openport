@@ -611,7 +611,19 @@ export interface ShareTrade {
 }
 /** One change in shares held, and how it came about. */
 /** buying_power_after records automatic delivery with buying-power checks; null/absent for older records and other fills. */
-export interface StockFill { id: string; symbol: string; shares: number; price: Money; time: string; source: ShareSource; option: string | null; buying_power_after?: Money | null }
+export interface StockFill { id: string; symbol: string; shares: number; price: Money; time: string; source: ShareSource; option: string | null; buying_power_after?: Money | null; stock_order?: string | null }
+export type StockOrderType = "market" | "limit" | "stop" | "stop_limit"
+/** A working share order's terms, as POST /api/stocks/orders takes them. */
+export interface StockOrderRequest {
+  client_order_id: string; symbol: string; side: Side; type: StockOrderType; shares: number
+  time_in_force?: "day" | "gtc"; limit_price?: Money; stop_price?: Money; extended_hours?: boolean
+  bracket?: { stop_loss?: Money; take_profit?: Money }
+  oco?: { side: Side; type: StockOrderType; shares: number; time_in_force?: "day" | "gtc"; limit_price?: Money; stop_price?: Money; extended_hours?: boolean }
+}
+export interface StockOrderBracket { stop_loss: Money | null; take_profit: Money | null }
+export interface StockOrder { id: string; client_order_id: string; actor: string; symbol: string; side: "buy" | "sell"; type: "limit" | "market" | "stop" | "stop_limit"; time_in_force: "day" | "gtc"; shares: number; limit_price: Money | null; stop_price: Money | null; extended_hours: boolean; bracket: StockOrderBracket | null; role: "entry" | "stop_loss" | "take_profit"; parent: string | null; oco: string | null; stop_loss: string | null; take_profit: string | null; status: "armed" | "cancelled" | "filled" | "partially_filled" | "rejected" | "working"; reason: Decision | null; accepted_at: string; day_end: string | null; triggered_at: string | null; ended_at: string | null; filled_shares: number; fill_price: Money | null; stock_fill: string | null }
+export interface StockOrdersResponse { account_version: string; stock_orders: StockOrder[] }
+export interface StockOrderResponse { account_version: string; stock_order: StockOrder; related_orders: StockOrder[]; stock_fills: StockFill[] }
 /** A dividend paid on (negative: charged to short) shares held into its ex-date. */
 export interface DividendPaid { symbol: string; ex_date: string; per_share: Money; shares: number; amount: Money; time: string }
 /** A trade with more than one entry: a roll, an adjustment or round trips the account grouped. */
@@ -1001,6 +1013,8 @@ export interface Portfolio {
   positions: Position[]
   /** Absent from older servers. */
   stocks?: StockHolding[]
+  /** Open share orders, oldest first; absent from older servers. */
+  stock_orders?: StockOrder[]
   buying_power?: BuyingPower
   /** The requirement by underlying with what holds it; absent from older servers. */
   margin?: MarginUnderlying[]
