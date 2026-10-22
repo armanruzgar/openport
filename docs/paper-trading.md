@@ -3349,7 +3349,7 @@ stopping; one still queued at shutdown is dropped unrun and answers 503
 
 ### Hedge suggestions
 
-`GET /api/risk/hedges?target=delta|vega|grid&scope=aggregate|SYMBOL&utilisation=1`
+`GET /api/risk/hedges?target=delta|vega|grid&scope=aggregate|SYMBOL&utilisation=1&betas=`
 proposes, for one risk bucket, the smallest trade of each candidate hedge that
 brings it back within its limit (times `utilisation`, 0 to 1). `delta` and `vega`
 keep the bucket's dollar delta or vega within its limit at both ends of what its open
@@ -3358,9 +3358,23 @@ held book at or above the worst loss allowed, the larger of `-worst_grid_loss` (
 that limit is set) and the floor (the higher of the plan and soft floors, as equity
 minus floor). A bucket for one underlying offers its shares (none for an index) and
 the at-the-money call and put in the expiry nearest 30 days; the aggregate offers SPY
-shares and SPY and SPX at-the-money options as beta hedges, and shows the book's
-beta-weighted dollar delta to SPY beside its dollar delta (the aggregate limit counts
-every underlying one for one). It has replay and saved-run mirrors.
+shares and SPY and SPX at-the-money options as beta hedges. It has replay and
+saved-run mirrors.
+
+For a `delta` target the beta hedges are sized on the beta-weighted dollar delta to
+SPY rather than one for one: each underlying's reachable dollar delta is multiplied
+by its beta (a negative beta swaps the ends) and summed, the hedge's unit delta by its
+own underlying's beta (SPY 1, SPX 1 as SPY's index family), and the smallest size
+brings that range within the limit. Betas come from the risk profile's sources:
+`betas=SYMBOL:BETA,...` overrides (within 10 of zero), the reference, the index
+family, then 252 daily closes (at least 20 paired returns) or 2,000 five-minute bars
+(at least 30). `betas` lists each underlying's beta and source. When any underlying
+has none, `betas_missing` names it, `beta_note` says so, no beta-weighted delta is
+reported, and beta hedges fall back to one-for-one dollar delta (`sizing`:
+`dollar_delta`). The risk limit itself still counts every underlying one for one, so
+each hedge's residual shows both `delta_utilisation` and, when known,
+`beta_weighted_delta_utilisation`; a beta-sized hedge can leave the one-for-one delta
+over its limit. `vega` and `grid` targets are sized on vega and the grid as before.
 
 ```text
 exposure after q units = exposure + q * unit exposure          (delta, vega)
@@ -3371,7 +3385,8 @@ Each constraint is linear in q, so the smallest whole size, buying or selling, i
 exact: zero when the bucket is already within the target, none when no size up to the
 cap meets it (shares 10,000,000, contracts 100,000). Each hedge lists its side,
 quantity, price at the far side, premium, spread cost against the mid, the residual
-exposure, worst cell and utilisations, and `exceeds_order_limit` when it is larger than
+exposure (beta-weighted too, with `instrument_beta`), worst cell and utilisations, what
+it was sized on (`sizing`), and `exceeds_order_limit` when it is larger than
 one order may be. Feasible hedges come first, then by spread cost, then by residual
 risk. Fees are not included, and pending orders' grid reservations are not modelled;
 the what-if and the ticket preview price both. An option hedge carries `order`, ready

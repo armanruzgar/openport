@@ -4401,7 +4401,43 @@ TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
   EXPECT_EQ(hedges["hedges"][0]["quantity"], 0);
   EXPECT_EQ(hedges["hedges"][0]["reason"], "Already within the target");
   EXPECT_LT(hedges["current"]["grid_floor"].get<double>(), 0);
-  for (const auto* bad : {"", "?target=gamma", "?target=delta&scope=spx", "?target=delta&utilisation=0", "?target=delta&other=1"})
+  EXPECT_EQ(hedges["hedges"][0]["sizing"], "grid");
+  // A delta target sizes beta hedges on the beta-weighted dollar delta to SPY; SPX
+  // is in SPY's index family, so one for one here.
+  risk = read(*engine, "/api/risk");
+  limits = risk["limits"];
+  limits["aggregate"]["dollar_delta"] = 100000;
+  ASSERT_EQ(write(*engine, "PUT", "/api/risk/limits", {{"expected_revision", risk["limits_revision"]}, {"limits", limits}}).status, 200);
+  hedges = read(*engine, "/api/risk/hedges?target=delta");
+  test::capture_contract("paper", "GET", "/api/risk/hedges?target=delta", server::handle_api({"GET", "/api/risk/hedges?target=delta"}, *engine));
+  ASSERT_EQ(hedges["betas"].size(), 1U);
+  EXPECT_EQ(hedges["betas"][0]["source"], "index");
+  EXPECT_TRUE(hedges["betas_missing"].empty());
+  EXPECT_TRUE(hedges["beta_note"].is_null());
+  const auto raw_high = hedges["current"]["dollar_delta_high"].get<double>();
+  EXPECT_NEAR(hedges["current"]["beta_weighted_dollar_delta_high"].get<double>(), raw_high, 1e-6);
+  const auto spx_call = [](const json& body) {
+    for (const auto& hedge : body["hedges"]) if (hedge["name"] == "Beta hedge: SPX ATM call") return hedge;
+    return json();
+  };
+  auto call = spx_call(hedges);
+  ASSERT_TRUE(call.is_object());
+  EXPECT_TRUE(call["feasible"]);
+  EXPECT_EQ(call["sizing"], "beta_weighted_dollar_delta");
+  EXPECT_EQ(call["instrument_beta"], 1);
+  EXPECT_EQ(call["side"], "sell");
+  EXPECT_LE(call["residual"]["beta_weighted_delta_utilisation"].get<double>(), 1);
+  EXPECT_NEAR(call["residual"]["beta_weighted_dollar_delta_high"].get<double>(), call["residual"]["dollar_delta_high"].get<double>(), 1e-6);
+  // A given beta of 2 doubles the book's weight and the SPX hedge's alike.
+  hedges = read(*engine, "/api/risk/hedges?target=delta&betas=SPX:2");
+  EXPECT_EQ(hedges["betas"][0]["source"], "given");
+  EXPECT_NEAR(hedges["current"]["beta_weighted_dollar_delta_high"].get<double>(), 2 * raw_high, 1e-6);
+  const auto doubled_call = spx_call(hedges);
+  EXPECT_EQ(doubled_call["instrument_beta"], 2);
+  EXPECT_NEAR(doubled_call["residual"]["beta_weighted_dollar_delta_high"].get<double>(),
+              2 * doubled_call["residual"]["dollar_delta_high"].get<double>(), 1e-6);
+  for (const auto* bad : {"", "?target=gamma", "?target=delta&scope=spx", "?target=delta&utilisation=0", "?target=delta&other=1",
+                          "?target=delta&betas=SPX", "?target=delta&betas=SPX:11", "?target=delta&betas=SPX:1,SPX:2"})
     EXPECT_EQ(server::handle_api({"GET", std::string("/api/risk/hedges") + bad}, *engine).status, 400) << bad;
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/hedges?target=delta&scope=QQQ"}, *engine).status, 404);
 }

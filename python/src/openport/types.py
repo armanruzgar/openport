@@ -746,6 +746,8 @@ class Hedge(TypedDict):
     order: JSON | None
     stock_trade: JSON | None
     exceeds_order_limit: bool
+    sizing: Literal["beta_weighted_dollar_delta", "dollar_delta", "vega", "grid"]
+    instrument_beta: float | None
 
 
 class HedgeSuggestions(TypedDict):
@@ -755,6 +757,9 @@ class HedgeSuggestions(TypedDict):
     target: Literal["delta", "vega", "grid"]
     utilisation: float
     current: JSON
+    betas: list[JSON]
+    betas_missing: list[str]
+    beta_note: str | None
     hedges: list[Hedge]
     simulated: bool
     model: str

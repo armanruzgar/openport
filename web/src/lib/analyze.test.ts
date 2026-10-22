@@ -112,7 +112,7 @@ describe("analyze requests", () => {
     const base = { name: "SPX ATM call", kind: "option", underlying: "SPX", instrument: "SPXW  261016C07000000", beta_hedge: false,
       expiry: "2026-10-16PM", strike: 7000, type: "call", feasible: true, reason: null, side: "sell", quantity: 3, price: 4.5, premium: -1350,
       spread_cost: 15, residual: null, order: { symbol: "SPXW  261016C07000000", side: "sell", type: "limit", time_in_force: "day", quantity: 3, limit_price: "4.50" },
-      stock_trade: null, exceeds_order_limit: false } as const
+      stock_trade: null, exceeds_order_limit: false, sizing: "dollar_delta", instrument_beta: 1 } as const
     expect(hedgeText(base)).toBe("Sell 3 SPX 7000 call (2026-10-16PM)")
     expect(hedgeOrder(base)).toEqual({ client_order_id: "", symbol: "SPXW  261016C07000000", side: "sell", type: "limit", time_in_force: "day", quantity: 3, limit_price: "4.50" })
     expect(hedgeText({ ...base, kind: "shares", quantity: 1500, side: "buy", underlying: "SPY", order: null })).toBe("Buy 1,500 SPY shares")

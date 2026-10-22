@@ -1270,6 +1270,10 @@ export interface HedgeResidual {
   vega_utilisation: number | null
   grid_utilisation: number | null
   beta_weighted_dollar_delta: number | null
+  /** Beta-weighted to SPY across what open orders can reach; null without every beta. */
+  beta_weighted_dollar_delta_low: number | null
+  beta_weighted_dollar_delta_high: number | null
+  beta_weighted_delta_utilisation: number | null
 }
 export interface HedgeOrder { symbol: string; side: Side; type: "limit"; time_in_force: "day"; quantity: number; limit_price: Money }
 /** One candidate hedge at the smallest whole size that meets the target, or why it cannot. */
@@ -1295,6 +1299,10 @@ export interface Hedge {
   order: HedgeOrder | null
   stock_trade: { symbol: string; side: Side; shares: number } | null
   exceeds_order_limit: boolean
+  /** What the size was solved on: beta hedges for a delta target use the beta-weighted delta when every beta is known. */
+  sizing: "beta_weighted_dollar_delta" | "dollar_delta" | "vega" | "grid"
+  /** The hedge's underlying's beta to SPY; null when unknown. */
+  instrument_beta: number | null
 }
 export interface HedgeSuggestions {
   account_version: string
@@ -1304,8 +1312,15 @@ export interface HedgeSuggestions {
   utilisation: number
   current: {
     dollar_delta_low: number | null; dollar_delta_high: number | null; vega_low: number | null; vega_high: number | null
-    worst_cell: number | null; beta_weighted_dollar_delta: number | null; delta_limit: number | null; vega_limit: number | null; grid_floor: number | null
+    worst_cell: number | null; beta_weighted_dollar_delta: number | null
+    beta_weighted_dollar_delta_low: number | null; beta_weighted_dollar_delta_high: number | null
+    delta_limit: number | null; vega_limit: number | null; grid_floor: number | null
   }
+  /** Each underlying in scope's beta to SPY and where it came from. */
+  betas: { underlying: string; beta: number | null; source: "reference" | "given" | "index" | "daily" | "intraday" | null; observations: number }[]
+  betas_missing: string[]
+  /** Why there is no beta-weighted delta, and that beta hedges fell back to one-for-one dollar delta. */
+  beta_note: string | null
   hedges: Hedge[]
   simulated: true
   model: string

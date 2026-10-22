@@ -46,7 +46,7 @@ with zero. It does not coerce monetary strings into floats.
 | `chain`, `exposure`, `surface`, `volatility`, `candles`, `probability` | The corresponding underlying views |
 | `optimize_strategies(symbol, target, budget, ...)` | `/api/underlyings/{symbol}/optimizer`: ranked candidate strategies within a loss budget |
 | `account`, `portfolio`, `orders`, `fills`, `trades`, `risk`, `risk_profile`, `risk_scenarios`, `risk_history`, `plans`, `accounts`, `equity` | The terminal's paper reads; `risk_profile(legs={osi: qty}, held=False)` profiles hypothetical legs |
-| `hedges(target, scope)` | `/api/risk/hedges`: the smallest share, ATM option or SPX/SPY beta hedge back inside a limit |
+| `hedges(target, scope, betas=)` | `/api/risk/hedges`: the smallest share, ATM option or SPX/SPY beta hedge back inside a limit, beta hedges sized on beta-weighted delta |
 | `place_order`, `preview_order`, `modify_order`, `cancel_order`, `cancel_all`, `cancel_orders`, `flatten` | Paper orders and position closure |
 | `settlements` | Settlement references, proceeds and provenance, newest first (live, replay or history) |
 | `note`, `day_note`, `export_csv` | Trade/day annotations and fills/trades exports |

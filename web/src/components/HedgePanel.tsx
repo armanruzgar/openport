@@ -67,7 +67,10 @@ export function HedgePanel({ risk, trading }: { risk: Risk; trading: TradingStat
       {target === "delta" ? `Dollar delta ${dollars(current.dollar_delta_low)} to ${dollars(current.dollar_delta_high)} against ±${dollars(current.delta_limit)}`
         : target === "vega" ? `Vega ${fixed(current.vega_low, 0)} to ${fixed(current.vega_high, 0)} against ±${fixed(current.vega_limit, 0)}`
         : `Worst grid cell ${dollars(current.worst_cell)} against ${dollars(current.grid_floor)}`}
-      {current.beta_weighted_dollar_delta != null ? ` · beta-weighted to SPY ${dollars(current.beta_weighted_dollar_delta)}` : ""}</p>}
+      {target === "delta" && current.beta_weighted_dollar_delta_low != null && current.beta_weighted_dollar_delta_high != null
+        ? ` · beta-weighted to SPY ${dollars(current.beta_weighted_dollar_delta_low)} to ${dollars(current.beta_weighted_dollar_delta_high)}`
+        : current.beta_weighted_dollar_delta != null ? ` · beta-weighted to SPY ${dollars(current.beta_weighted_dollar_delta)}` : ""}</p>}
+    {data?.beta_note && <p role="note" className="text-xs text-warn">{data.beta_note}</p>}
     {data && <div className="relative max-w-full overflow-x-auto" tabIndex={0} role="region" aria-label="Hedges">
       <table className="w-full text-right text-xs tabular whitespace-nowrap">
         <thead className="text-muted"><tr>
@@ -82,9 +85,13 @@ export function HedgePanel({ risk, trading }: { risk: Risk; trading: TradingStat
           const trade = hedge.feasible && hedge.side != null && (hedge.quantity ?? 0) > 0
           return <tr key={hedge.name} className={`border-t border-border/40 ${hedge.feasible ? "" : "text-muted"}`}>
             <td className="py-1 pr-2 text-left">{hedge.name}</td>
-            <td className="pr-2 text-left">{hedgeText(hedge)}{hedge.exceeds_order_limit ? " · above the order size limit; split it" : ""}</td>
+            <td className="pr-2 text-left">{hedgeText(hedge)}{hedge.exceeds_order_limit ? " · above the order size limit; split it" : ""}
+              {hedge.beta_hedge && hedge.sizing === "beta_weighted_dollar_delta" ? ` · sized on beta-weighted delta (β ${fixed(hedge.instrument_beta, 2)})` : ""}
+              {hedge.beta_hedge && hedge.sizing === "dollar_delta" ? " · sized one for one: a beta is missing" : ""}</td>
             <td className="pr-2">{dollars(hedge.premium)}</td><td className="pr-2">{dollars(hedge.spread_cost)}</td>
-            <td className="pr-2">{residual ? `${dollars(residual.dollar_delta_low)}…${dollars(residual.dollar_delta_high)} · ${pct(residual.delta_utilisation, 0)}` : "—"}</td>
+            <td className="pr-2">{residual ? `${dollars(residual.dollar_delta_low)}…${dollars(residual.dollar_delta_high)} · ${pct(residual.delta_utilisation, 0)}` : "—"}
+              {residual && hedge.sizing === "beta_weighted_dollar_delta" && residual.beta_weighted_dollar_delta_low != null
+                ? <span className="block text-muted">β-weighted {dollars(residual.beta_weighted_dollar_delta_low)}…{dollars(residual.beta_weighted_dollar_delta_high)} · {pct(residual.beta_weighted_delta_utilisation, 0)}</span> : null}</td>
             <td className="pr-2">{residual ? `${fixed(residual.vega_high, 0)} · ${pct(residual.vega_utilisation, 0)}` : "—"}</td>
             <td className="pr-2">{residual ? dollars(residual.worst_cell) : "—"}</td>
             <td className="space-x-1">{trade && <>

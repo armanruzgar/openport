@@ -253,10 +253,15 @@ class Client:
             "legs": ",".join(f"{symbol}:{quantity}" for symbol, quantity in legs.items()) if legs else None,
             "held": None if held else "false"})
 
-    def hedges(self, target: str, scope: str = "aggregate", utilisation: float | None = None) -> HedgeSuggestions:
+    def hedges(self, target: str, scope: str = "aggregate", utilisation: float | None = None,
+               betas: dict[str, float] | None = None) -> HedgeSuggestions:
         """The smallest share, ATM option or SPX/SPY beta hedge bringing a bucket's delta, vega or worst grid cell
-        (target) inside its limit or above the floor, ranked by spread cost then residual risk. Nothing is traded."""
-        return self._request("GET", "/risk/hedges", scoped=True, params={"target": target, "scope": scope, "utilisation": utilisation})
+        (target) inside its limit or above the floor, ranked by spread cost then residual risk. For a delta target,
+        beta hedges are sized on the beta-weighted dollar delta to SPY; betas overrides each underlying's beta.
+        Nothing is traded."""
+        return self._request("GET", "/risk/hedges", scoped=True, params={
+            "target": target, "scope": scope, "utilisation": utilisation,
+            "betas": ",".join(f"{symbol}:{beta}" for symbol, beta in betas.items()) if betas else None})
 
     def equity(self, start: str | None = None, end: str | None = None, *,
                limit: int | None = None, cursor: str | None = None) -> EquityHistory:

@@ -1006,11 +1006,20 @@
             "maximum": 1,
             "default": 1
           }
+        },
+        {
+          "name": "betas",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated SYMBOL:BETA overrides of betas to SPY (each within 10 of zero), as the risk profile's.",
+          "schema": {
+            "type": "string"
+          }
         }
       ],
       "get": {
         "summary": "GET /api/risk/hedges",
-        "description": "For each candidate hedge (underlying shares, an ATM option, or an SPX/SPY beta hedge for the aggregate), the smallest whole size that meets the target, ranked by spread cost and then residual risk, with an order to try in the what-if and the ticket. Analytical; nothing is recorded.",
+        "description": "For each candidate hedge (underlying shares, an ATM option, or an SPX/SPY beta hedge for the aggregate, sized for a delta target on the beta-weighted dollar delta to SPY when every beta is known), the smallest whole size that meets the target, ranked by spread cost and then residual risk, with an order to try in the what-if and the ticket. Analytical; nothing is recorded.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -29747,6 +29756,38 @@
                 "type": "null"
               }
             ]
+          },
+          "beta_weighted_dollar_delta_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The beta-weighted dollar delta to SPY across what open orders can reach, after the hedge; null without every beta."
+          },
+          "beta_weighted_dollar_delta_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beta_weighted_delta_utilisation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The larger end of the beta-weighted range over the delta limit; a beta-sized hedge keeps it at or below the target share."
           }
         },
         "required": [
@@ -29758,7 +29799,10 @@
           "delta_utilisation",
           "vega_utilisation",
           "grid_utilisation",
-          "beta_weighted_dollar_delta"
+          "beta_weighted_dollar_delta",
+          "beta_weighted_dollar_delta_low",
+          "beta_weighted_dollar_delta_high",
+          "beta_weighted_delta_utilisation"
         ]
       },
       "HedgeOrder": {
@@ -29985,6 +30029,27 @@
           },
           "exceeds_order_limit": {
             "type": "boolean"
+          },
+          "sizing": {
+            "type": "string",
+            "enum": [
+              "beta_weighted_dollar_delta",
+              "dollar_delta",
+              "vega",
+              "grid"
+            ],
+            "description": "What the size was solved on. A delta target sizes beta hedges on the beta-weighted dollar delta to SPY when every underlying in scope and the hedge have a beta, else on dollar delta one for one (see beta_note)."
+          },
+          "instrument_beta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The hedge's underlying's beta to SPY, by the same sources as the book's; null when unknown."
           }
         },
         "required": [
@@ -30006,7 +30071,9 @@
           "residual",
           "order",
           "stock_trade",
-          "exceeds_order_limit"
+          "exceeds_order_limit",
+          "sizing",
+          "instrument_beta"
         ]
       },
       "HedgeSuggestions": {
@@ -30095,6 +30162,26 @@
                   }
                 ]
               },
+              "beta_weighted_dollar_delta_low": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "beta_weighted_dollar_delta_high": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "delta_limit": {
                 "anyOf": [
                   {
@@ -30133,10 +30220,78 @@
               "vega_high",
               "worst_cell",
               "beta_weighted_dollar_delta",
+              "beta_weighted_dollar_delta_low",
+              "beta_weighted_dollar_delta_high",
               "delta_limit",
               "vega_limit",
               "grid_floor"
             ]
+          },
+          "betas": {
+            "type": "array",
+            "description": "Each underlying in scope's beta to SPY: given (betas=), reference, index family, or estimated from daily then intraday history as in the risk profile.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "underlying": {
+                  "type": "string"
+                },
+                "beta": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "reference",
+                        "given",
+                        "index",
+                        "daily",
+                        "intraday"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observations": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "underlying",
+                "beta",
+                "source",
+                "observations"
+              ]
+            }
+          },
+          "betas_missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Underlyings with no beta to SPY."
+          },
+          "beta_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why there is no beta-weighted delta and, for a delta target, that beta hedges fell back to one-for-one dollar delta."
           },
           "hedges": {
             "type": "array",
@@ -30158,6 +30313,9 @@
           "target",
           "utilisation",
           "current",
+          "betas",
+          "betas_missing",
+          "beta_note",
           "hedges",
           "simulated",
           "model"

@@ -36,6 +36,8 @@ def test_optimizer_and_profile_legs_encode_their_queries(stub):
     target = urlsplit(stub.requests[-1][1])
     assert target.path == "/api/risk/hedges"
     assert parse_qs(target.query) == {"target": ["grid"], "scope": ["SPX"], "utilisation": ["0.9"], "account": ["practice"]}
+    client.hedges("delta", betas={"AAPL": 1.2, "SPX": 1})
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query)["betas"] == ["AAPL:1.2,SPX:1"]
 
 
 def test_mcp_tools_forward_to_the_market_and_the_account(stub):

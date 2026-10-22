@@ -301,12 +301,14 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
 
     @server.tool()
     def hedges(target: Literal["delta", "vega", "grid"], account: str | None = None, scope: str = "aggregate",
-               utilisation: float | None = None, replay: bool = False) -> dict:
+               utilisation: float | None = None, betas: dict[str, float] | None = None, replay: bool = False) -> dict:
         """The smallest hedge (shares, an ATM option, or an SPY/SPX beta hedge for the aggregate) bringing a risk
         bucket's delta, vega or worst grid cell inside its limit or above the floor, ranked by spread cost then
-        residual risk. Nothing is traded; try an option hedge's order with what_if or preview_order."""
+        residual risk. A delta target sizes beta hedges on the beta-weighted dollar delta to SPY (betas overrides
+        an underlying's beta); beta_note says when one is missing and sizing fell back to one for one. Nothing is
+        traded; try an option hedge's order with what_if or preview_order."""
         client = selected(account, replay)
-        return result(client, lambda: client.hedges(target, scope, utilisation))
+        return result(client, lambda: client.hedges(target, scope, utilisation, betas))
 
     def order_body(order):
         body = _body(asdict(order))

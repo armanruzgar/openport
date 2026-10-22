@@ -353,7 +353,8 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
 - **Hedge suggestions** (Positions): the smallest share, ATM option or SPX/SPY beta
   hedge bringing a bucket's delta, vega or worst grid cell back inside its limit or
   above the floor, ranked by spread cost and residual risk, sent to the what-if and
-  then the ticket. [Hedges](paper-trading.md#hedge-suggestions).
+  then the ticket. Beta hedges size on the beta-weighted dollar delta to SPY, and say
+  so when a missing beta leaves them one for one. [Hedges](paper-trading.md#hedge-suggestions).
 
 ## Journal and review
 

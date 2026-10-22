@@ -2993,12 +2993,24 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
 ApiResponse hedge_response(const std::map<std::string, std::string>& query, const MetricsSource& source, std::string account) {
   std::string scope = "aggregate", target;
   double share = 1;
+  std::map<std::string, double> given;
   for (const auto& [key, value] : query) {
     if (key == "account" && valid_account(value)) account = value;
     else if (key == "scope" && (value == "aggregate" || underlying_symbol(value))) scope = value;
     else if (key == "target" && (value == "delta" || value == "vega" || value == "grid")) target = value;
     else if (key == "utilisation" && query_decimal(value, share) && share > 0 && share <= 1) {}
-    else return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+    else if (key == "betas") {
+      // As the risk profile's: SYMBOL:BETA overrides, to SPY.
+      for (const auto item : split_list(value)) {
+        const auto colon = item.find(':');
+        double beta = 0;
+        const std::string symbol(item.substr(0, colon));
+        if (colon == std::string_view::npos || !underlying_symbol(symbol) || given.contains(symbol) ||
+            !query_decimal(std::string(item.substr(colon + 1)), beta) || std::abs(beta) > 10)
+          return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+        given[symbol] = beta;
+      }
+    } else return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
   }
   if (target.empty()) return api_error(400, "INVALID_REQUEST", "target must be delta, vega or grid");
   if (!known_account(source, account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + account);
@@ -3041,13 +3053,30 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
   HedgeBook book{bucket.reachable.delta_low, bucket.reachable.delta_high, bucket.reachable.vega_low, bucket.reachable.vega_high, {}};
   for (const auto& cell : book_grid.cells) book.cells.push_back(cell.pnl);
   const auto worst = [](const std::vector<double>& cells) { return cells.empty() ? json(nullptr) : number(*std::min_element(cells.begin(), cells.end())); };
-  // The beta-weighted dollar delta to SPY, where every held underlying has a beta.
+  // Each underlying in scope's beta to SPY, by the risk profile's sources; the
+  // beta-weighted dollar delta, held and reachable, needs every one of them.
+  json betas = json::array();
+  std::vector<std::string> missing;
+  std::vector<BetaExposure> exposures;
   std::optional<double> weighted = 0.0;
   for (const auto& [symbol, held] : s.risk.underlyings) {
     if (!aggregate && symbol != scope) continue;
-    const auto beta = profile_beta(source, symbol, "SPY", {});
-    if (beta.source.empty()) { weighted.reset(); break; }
-    *weighted += held.position.dollar_delta * beta.beta;
+    const auto beta = profile_beta(source, symbol, "SPY", given);
+    const bool known = !beta.source.empty();
+    betas.push_back({{"underlying", symbol}, {"beta", known ? number(beta.beta) : json(nullptr)}, {"source", nullable(beta.source)},
+                     {"observations", beta.observations}});
+    exposures.push_back({held.reachable.delta_low, held.reachable.delta_high, known ? std::optional(beta.beta) : std::nullopt});
+    if (!known) { missing.push_back(symbol); weighted.reset(); }
+    else if (weighted) *weighted += held.position.dollar_delta * beta.beta;
+  }
+  const auto weighted_book = beta_weighted(book, exposures);
+  std::string beta_note;
+  if (!missing.empty()) {
+    beta_note = "No beta to SPY for";
+    for (std::size_t i = 0; i < missing.size(); ++i) beta_note += (i ? ", " : " ") + missing[i];
+    // No betas= value, index family, or 20 daily or 30 intraday paired returns.
+    beta_note += aggregate && target == "delta" ? ": beta hedges are sized on dollar delta one for one, with no beta-weighted delta"
+                                                : ": no beta-weighted delta";
   }
   struct Choice {
     std::string name, kind, instrument, underlying, reason;
@@ -3055,7 +3084,8 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
     std::string expiry = {};
     HedgeUnit unit;
     const analytics::OptionMetrics* option = nullptr;
-    double price = 0, mid = 0, instrument_beta = 1;
+    double price = 0, mid = 0;
+    std::optional<double> instrument_beta = {};  ///< To SPY, by the same sources as the book's.
   };
   std::vector<Choice> choices;
   const auto option_choice = [&](const std::string& underlying, pricing::OptionType type, bool beta) {
@@ -3111,6 +3141,8 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
     share_choice(scope, false);
     for (const auto type : {pricing::OptionType::Put, pricing::OptionType::Call}) option_choice(scope, type, false);
   }
+  for (auto& choice : choices)
+    if (const auto beta = profile_beta(source, choice.underlying, "SPY", given); !beta.source.empty()) choice.instrument_beta = beta.beta;
   const auto ratio = [](double value, std::optional<double> limit) -> json {
     if (!limit) return nullptr;
     return *limit == 0 ? (value == 0 ? json(0) : json(nullptr)) : number(value / *limit);
@@ -3123,7 +3155,9 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
     json body{{"name", choice.name}, {"kind", choice.kind}, {"underlying", choice.underlying}, {"instrument", nullable(choice.instrument)},
               {"beta_hedge", choice.beta}, {"expiry", nullable(choice.expiry)},
               {"strike", choice.option ? json(choice.option->contract.strike) : json(nullptr)},
-              {"type", choice.option ? json(choice.option->contract.type == pricing::OptionType::Call ? "call" : "put") : json(nullptr)}};
+              {"type", choice.option ? json(choice.option->contract.type == pricing::OptionType::Call ? "call" : "put") : json(nullptr)},
+              {"sizing", target != "delta" ? target : choice.beta && weighted_book && choice.instrument_beta ? "beta_weighted_dollar_delta" : "dollar_delta"},
+              {"instrument_beta", choice.instrument_beta ? number(*choice.instrument_beta) : json(nullptr)}};
     if (!choice.reason.empty()) {
       body.update(json{{"feasible", false}, {"reason", choice.reason}, {"side", nullptr}, {"quantity", nullptr}, {"price", nullptr},
                        {"premium", nullptr}, {"spread_cost", nullptr}, {"residual", nullptr}, {"order", nullptr}, {"stock_trade", nullptr},
@@ -3131,8 +3165,13 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
       ranked.push_back({body, false, 0, 0});
       continue;
     }
+    // A beta hedge brings the beta-weighted dollar delta within the limit, when
+    // every underlying and the hedge have a beta; otherwise the one-for-one delta.
+    const bool beta_sized = target == "delta" && choice.beta && weighted_book && choice.instrument_beta;
+    auto sized_unit = choice.unit;
+    if (beta_sized) sized_unit.delta *= *choice.instrument_beta;
     const long long most = choice.kind == "shares" ? 10'000'000 : 100'000;
-    const auto units = smallest_hedge(hedge_constraints(book, choice.unit, goal), most);
+    const auto units = smallest_hedge(hedge_constraints(beta_sized ? *weighted_book : book, sized_unit, goal), most);
     if (!units) {
       body.update(json{{"feasible", false}, {"reason", "No size of this hedge meets the target"}, {"side", nullptr}, {"quantity", nullptr},
                        {"price", nullptr}, {"premium", nullptr}, {"spread_cost", nullptr}, {"residual", nullptr}, {"order", nullptr},
@@ -3151,8 +3190,16 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
     const double delta = std::max(std::abs(after.delta_low), std::abs(after.delta_high));
     const double vega = std::max(std::abs(after.vega_low), std::abs(after.vega_high));
     const double loss = after.worst_cell ? std::max(0.0, -*after.worst_cell) : 0;
-    double residual = target == "delta" ? delta / std::max(1e-9, *delta_limit) : target == "vega" ? vega / std::max(1e-9, *vega_limit)
-        : grid_limit ? loss / std::max(1e-9, *grid_limit) : loss;
+    // The beta-weighted residual, where the book and the hedge both have betas.
+    std::optional<HedgeResidual> weighted_after;
+    if (weighted_book && choice.instrument_beta) {
+      auto unit = choice.unit;
+      unit.delta *= *choice.instrument_beta;
+      weighted_after = hedged(*weighted_book, unit, q);
+    }
+    const double weighted_delta = weighted_after ? std::max(std::abs(weighted_after->delta_low), std::abs(weighted_after->delta_high)) : 0;
+    double residual = target == "delta" ? (beta_sized ? weighted_delta : delta) / std::max(1e-9, *delta_limit)
+        : target == "vega" ? vega / std::max(1e-9, *vega_limit) : grid_limit ? loss / std::max(1e-9, *grid_limit) : loss;
     json order = nullptr, stock_trade = nullptr;
     const auto quantity = static_cast<long long>(size);
     if (q != 0 && choice.option)
@@ -3167,7 +3214,11 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
                       {"worst_cell", after.worst_cell ? number(*after.worst_cell) : json(nullptr)},
                       {"delta_utilisation", ratio(delta, delta_limit)}, {"vega_utilisation", ratio(vega, vega_limit)},
                       {"grid_utilisation", ratio(loss, grid_limit)},
-                      {"beta_weighted_dollar_delta", weighted ? number(*weighted + static_cast<double>(q) * choice.unit.delta * choice.instrument_beta) : json(nullptr)}}},
+                      {"beta_weighted_dollar_delta", weighted && choice.instrument_beta
+                           ? number(*weighted + static_cast<double>(q) * choice.unit.delta * *choice.instrument_beta) : json(nullptr)},
+                      {"beta_weighted_dollar_delta_low", weighted_after ? number(weighted_after->delta_low) : json(nullptr)},
+                      {"beta_weighted_dollar_delta_high", weighted_after ? number(weighted_after->delta_high) : json(nullptr)},
+                      {"beta_weighted_delta_utilisation", weighted_after ? ratio(weighted_delta, delta_limit) : json(nullptr)}}},
         {"order", order}, {"stock_trade", stock_trade},
         {"exceeds_order_limit", choice.option && quantity > view->config.limits.max_order_contracts}});
     ranked.push_back({body, true, cost, residual});
@@ -3184,15 +3235,20 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
       {"current", {{"dollar_delta_low", number(book.delta_low)}, {"dollar_delta_high", number(book.delta_high)},
                    {"vega_low", number(book.vega_low)}, {"vega_high", number(book.vega_high)}, {"worst_cell", worst(book.cells)},
                    {"beta_weighted_dollar_delta", weighted ? number(*weighted) : json(nullptr)},
+                   {"beta_weighted_dollar_delta_low", weighted_book ? number(weighted_book->delta_low) : json(nullptr)},
+                   {"beta_weighted_dollar_delta_high", weighted_book ? number(weighted_book->delta_high) : json(nullptr)},
                    {"delta_limit", number(bucket.limits.dollar_delta)}, {"vega_limit", number(bucket.limits.vega)},
                    {"grid_floor", goal.grid_floor ? number(*goal.grid_floor) : json(nullptr)}}},
+      {"betas", betas}, {"betas_missing", missing}, {"beta_note", nullable(beta_note)},
       {"hedges", hedges}, {"simulated", true},
       {"model", "Linear in the hedge's size: dollar delta and vega across what open orders can reach, and each cell of the rules' "
                 "spot x volatility grid for the held book (pending orders' grid reservations are not included), with the hedge "
                 "entered at the far side. The smallest whole size meeting the target is shown; ranked by spread cost, then residual "
                 "risk. Fees are not included; the what-if and the ticket preview price them. Beta hedges trade SPY or SPX against "
-                "the aggregate bucket, whose dollar delta counts every underlying one for one; the beta-weighted dollar delta is shown "
-                "beside it."}}.dump()};
+                "the aggregate bucket: for a delta target they are sized so the beta-weighted dollar delta to SPY (each underlying's "
+                "reachable dollar delta times its beta, from betas=, the index family, or daily then intraday history as in the risk "
+                "profile) is within the limit, or one for one on dollar delta when an underlying has no beta (beta_note). The "
+                "risk limit itself counts dollar delta one for one, so its utilisation is shown beside the beta-weighted one."}}.dump()};
 }
 }  // namespace
 

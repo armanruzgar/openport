@@ -34,6 +34,33 @@ TEST(Hedges, TheSmallestWholeHedgeBringsDeltaInsideItsLimit) {
   EXPECT_FALSE(server::smallest_hedge(server::hedge_constraints(book, {100, 0, {}, 0, 0}, goal), 1000));
 }
 
+// A 1.5-beta name and a 0.5-beta one: each reachable range scales by its beta
+// before summing, so the same raw dollars weigh more toward the high beta.
+TEST(Hedges, BetaWeightingScalesEachUnderlyingsReachByItsBeta) {
+  const HedgeBook book{150'000, 250'000, 700, 700, {-10, 5}};
+  const auto even = server::beta_weighted(book, {{100'000, 100'000, 1.5}, {50'000, 150'000, 0.5}});
+  ASSERT_TRUE(even.has_value());
+  EXPECT_DOUBLE_EQ(even->delta_low, 175'000);
+  EXPECT_DOUBLE_EQ(even->delta_high, 225'000);
+  EXPECT_EQ(even->vega_low, 700);
+  EXPECT_EQ(even->cells, book.cells);
+  const HedgeGoal goal{100'000, std::nullopt, std::nullopt};
+  // SPY at $500: selling 250 shares brings $225k back to $100k; the raw $250k high needs 300.
+  EXPECT_EQ(solve(*even, {500, 0, {}, 0, 0}, goal), -250);
+  EXPECT_EQ(solve(book, {500, 0, {}, 0, 0}, goal), -300);
+  const auto skewed = server::beta_weighted(book, {{200'000, 200'000, 1.5}, {-50'000, 50'000, 0.5}});
+  ASSERT_TRUE(skewed.has_value());
+  EXPECT_DOUBLE_EQ(skewed->delta_low, 275'000);
+  EXPECT_DOUBLE_EQ(skewed->delta_high, 325'000);
+  // A negative beta swaps the ends of its range.
+  const auto inverse = server::beta_weighted(book, {{-10'000, 40'000, -2}});
+  ASSERT_TRUE(inverse.has_value());
+  EXPECT_DOUBLE_EQ(inverse->delta_low, -80'000);
+  EXPECT_DOUBLE_EQ(inverse->delta_high, 20'000);
+  // Without every beta there is no weighted book to size on.
+  EXPECT_FALSE(server::beta_weighted(book, {{100'000, 100'000, 1.5}, {50'000, 150'000, std::nullopt}}).has_value());
+}
+
 TEST(Hedges, VegaHedgesSellOptionsAgainstLongVega) {
   const HedgeBook book{0, 0, 1200, 1200, {}};
   EXPECT_EQ(solve(book, {5000, 25, {}, 0, 0}, {std::nullopt, 1000, std::nullopt}), -8);

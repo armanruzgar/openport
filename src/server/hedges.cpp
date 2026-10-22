@@ -63,6 +63,18 @@ HedgeResidual hedged(const HedgeBook& book, const HedgeUnit& unit, long long uni
   return result;
 }
 
+std::optional<HedgeBook> beta_weighted(const HedgeBook& book, const std::vector<BetaExposure>& underlyings) {
+  auto result = book;
+  result.delta_low = result.delta_high = 0;
+  for (const auto& u : underlyings) {
+    if (!u.beta || !std::isfinite(*u.beta)) return std::nullopt;
+    const double low = u.delta_low * *u.beta, high = u.delta_high * *u.beta;
+    result.delta_low += std::min(low, high);
+    result.delta_high += std::max(low, high);
+  }
+  return result;
+}
+
 const analytics::OptionMetrics* atm_option(const analytics::UnderlyingMetrics& metrics, pricing::OptionType type) {
   const analytics::OptionMetrics* best = nullptr;
   double best_days = std::numeric_limits<double>::infinity(), best_distance = 0;

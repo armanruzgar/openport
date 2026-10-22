@@ -46,6 +46,17 @@ struct HedgeResidual {
 };
 [[nodiscard]] HedgeResidual hedged(const HedgeBook& book, const HedgeUnit& unit, long long units);
 
+/// One underlying's dollar delta across what its open orders can reach, and its
+/// beta to the hedge's reference when one is known.
+struct BetaExposure {
+  double delta_low = 0, delta_high = 0;
+  std::optional<double> beta;
+};
+/// The book with its dollar delta range beta-weighted to the reference: each
+/// underlying's range times its beta (a negative beta swaps the ends), summed. Vega
+/// and grid cells are unchanged. nullopt when any underlying has no beta.
+[[nodiscard]] std::optional<HedgeBook> beta_weighted(const HedgeBook& book, const std::vector<BetaExposure>& underlyings);
+
 /// The listed option a hedge trades at the money: in the expiry nearest 30 calendar
 /// days that has more than a day to run, the strike nearest the forward (the spot
 /// without a parity forward) with a tradable two-sided quote of `type`. Null when

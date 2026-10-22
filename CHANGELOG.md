@@ -80,7 +80,10 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   estimates, not advice; fees and early exercise are not modelled.
 - **Hedge suggestions.** `GET /api/risk/hedges` gives the smallest share, ATM option
   or SPX/SPY beta hedge bringing a bucket's delta, vega or worst grid cell back inside
-  its limit or above the floor, ranked by spread cost and residual risk. Positions
+  its limit or above the floor, ranked by spread cost and residual risk. For a delta
+  target the SPY/SPX hedge is sized on the beta-weighted dollar delta to SPY (the risk
+  profile's betas, overridable with `betas=`) and reports the residual beta-weighted
+  delta; a missing beta is named and the hedge falls back to one for one. Positions
   sends an option hedge to the what-if and then to its ticket.
 - Python `optimize_strategies`, `hedges` and `risk_profile(legs=, held=)` with
   matching MCP tools.

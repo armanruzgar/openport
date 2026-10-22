@@ -137,19 +137,22 @@ describe("hedge suggestions", { timeout: renderTimeout }, () => {
   const hedges: HedgeSuggestions = { account_version: "17", time: "2026-09-23T15:30:00Z", scope: "aggregate", target: "delta", utilisation: 1, simulated: true,
     model: "Fixture hedge model",
     current: { dollar_delta_low: 700000, dollar_delta_high: 1750000, vega_low: 2450, vega_high: 6125, worst_cell: -900, beta_weighted_dollar_delta: 700000,
-      delta_limit: 5000000, vega_limit: 100000, grid_floor: null },
+      beta_weighted_dollar_delta_low: 700000, beta_weighted_dollar_delta_high: 1750000, delta_limit: 5000000, vega_limit: 100000, grid_floor: null },
+    betas: [{ underlying: "SPX", beta: 1, source: "index", observations: 0 }], betas_missing: [], beta_note: null,
     hedges: [
       { name: "Beta hedge: SPY shares", kind: "shares", underlying: "SPY", instrument: "SPY", beta_hedge: true, expiry: null, strike: null, type: null, feasible: true,
         reason: null, side: "sell", quantity: 1200, price: 600, premium: -720000, spread_cost: 0, residual: null, order: null,
-        stock_trade: { symbol: "SPY", side: "sell", shares: 1200 }, exceeds_order_limit: false },
+        stock_trade: { symbol: "SPY", side: "sell", shares: 1200 }, exceeds_order_limit: false, sizing: "beta_weighted_dollar_delta", instrument_beta: 1 },
       { name: "Beta hedge: SPX ATM call", kind: "option", underlying: "SPX", instrument: quote.symbol!, beta_hedge: true, expiry: expiry.id, strike: 7000, type: "call",
         feasible: true, reason: null, side: "sell", quantity: 2, price: 4.5, premium: -900, spread_cost: 10,
         residual: { dollar_delta_low: 0, dollar_delta_high: 1050000, vega_low: -10, vega_high: 3675, worst_cell: -300, delta_utilisation: 0.21, vega_utilisation: 0.04,
-          grid_utilisation: null, beta_weighted_dollar_delta: 0 },
-        order: { symbol: quote.symbol!, side: "sell", type: "limit", time_in_force: "day", quantity: 2, limit_price: "4.50" }, stock_trade: null, exceeds_order_limit: false },
+          grid_utilisation: null, beta_weighted_dollar_delta: 0, beta_weighted_dollar_delta_low: 0, beta_weighted_dollar_delta_high: 1050000,
+          beta_weighted_delta_utilisation: 0.21 },
+        order: { symbol: quote.symbol!, side: "sell", type: "limit", time_in_force: "day", quantity: 2, limit_price: "4.50" }, stock_trade: null, exceeds_order_limit: false,
+        sizing: "beta_weighted_dollar_delta", instrument_beta: 1 },
       { name: "Beta hedge: SPX ATM put", kind: "option", underlying: "SPX", instrument: null, beta_hedge: true, expiry: null, strike: null, type: null, feasible: false,
         reason: "No tradable two-sided at-the-money quote", side: null, quantity: null, price: null, premium: null, spread_cost: null, residual: null, order: null,
-        stock_trade: null, exceeds_order_limit: false },
+        stock_trade: null, exceeds_order_limit: false, sizing: "beta_weighted_dollar_delta", instrument_beta: 1 },
     ] }
   function Store() { return <span data-testid="what-if">{useWhatIf("live:main").candidates.map((c) => c.name).join("|")}</span> }
   it("ranks hedges, adds an option hedge to the what-if and opens its ticket", async () => {
@@ -160,6 +163,8 @@ describe("hedge suggestions", { timeout: renderTimeout }, () => {
     expect(request).toHaveBeenCalledWith("delta", "aggregate", 1, expect.anything())
     expect(host.textContent).toContain("Sell 1,200 SPY shares")
     expect(host.textContent).toContain("No tradable two-sided at-the-money quote")
+    expect(host.textContent).toContain("sized on beta-weighted delta (β 1.00)")
+    expect(host.textContent).toContain("β-weighted $0…$1,050,000 · 21%")
     const add = [...host.querySelectorAll("button")].filter((b) => b.textContent === "Add to what-if")
     expect(add).toHaveLength(1)
     await act(async () => add[0]!.click())
@@ -170,5 +175,15 @@ describe("hedge suggestions", { timeout: renderTimeout }, () => {
     await waitForRender(() => expect(host.querySelector('input[type="number"][min="1"]')).not.toBeNull())
     await act(async () => tickets[0]!.click())
     await waitForRender(() => expect(host.textContent).toContain("Trade shares"))
+  })
+  it("says when a missing beta leaves beta hedges sized one for one", async () => {
+    const note = "No beta to SPY for ACME: beta hedges are sized on dollar delta one for one, with no beta-weighted delta"
+    vi.spyOn(api, "hedges").mockResolvedValue({ ...hedges, beta_note: note, betas_missing: ["ACME"],
+      current: { ...hedges.current, beta_weighted_dollar_delta: null, beta_weighted_dollar_delta_low: null, beta_weighted_dollar_delta_high: null },
+      hedges: hedges.hedges.map((hedge) => ({ ...hedge, sizing: "dollar_delta" as const })) })
+    await act(async () => root.render(<QueryClientProvider client={client}><HedgePanel risk={risk} trading={trading} /></QueryClientProvider>))
+    await waitForRender(() => expect(host.textContent).toContain(note))
+    expect(host.textContent).toContain("sized one for one: a beta is missing")
+    expect(host.textContent).not.toContain("beta-weighted to SPY")
   })
 })
