@@ -121,7 +121,7 @@ Quantity Ledger::split_stock(const std::string& symbol, std::int64_t numerator, 
   const auto it = stocks_.find(symbol);
   if (it == stocks_.end() || numerator < 1 || denominator < 1)
     throw TradingError(Reason::INVALID_ORDER, "A split needs held shares and positive terms");
-  using Wide = __int128;
+  __extension__ using Wide = __int128;
   const auto held = it->second.shares;
   const Wide scaled = static_cast<Wide>(held) * numerator;  // the split shares, times the denominator
   const auto after = static_cast<Quantity>(scaled / denominator);  // whole shares, toward zero

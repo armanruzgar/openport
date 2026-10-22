@@ -2755,8 +2755,10 @@ Quantity own_ahead(const State& s, const Order& o) {
   }
   return total;
 }
+__extension__ using QueueWide = __int128;
+__extension__ using QueueUnsigned = unsigned __int128;
 /// num / den, its fraction rounded up with that probability from the seed.
-Quantity queue_round(const State& s, OrderId id, std::uint64_t purpose, __int128 num, __int128 den) {
+Quantity queue_round(const State& s, OrderId id, std::uint64_t purpose, QueueWide num, QueueWide den) {
   if (num <= 0 || den <= 0) return 0;
   auto whole = num / den;
   const auto part = num % den;
@@ -2765,9 +2767,9 @@ Quantity queue_round(const State& s, OrderId id, std::uint64_t purpose, __int128
     seed = mix(seed ^ id);
     seed = mix(seed ^ static_cast<std::uint64_t>(s.time));
     seed = mix(seed ^ purpose);
-    if (static_cast<unsigned __int128>(seed) % static_cast<unsigned __int128>(den) < static_cast<unsigned __int128>(part)) ++whole;
+    if (static_cast<QueueUnsigned>(seed) % static_cast<QueueUnsigned>(den) < static_cast<QueueUnsigned>(part)) ++whole;
   }
-  return static_cast<Quantity>(std::min<__int128>(whole, std::numeric_limits<Quantity>::max()));
+  return static_cast<Quantity>(std::min<QueueWide>(whole, std::numeric_limits<Quantity>::max()));
 }
 /// A new spot for an order joining at its limit now, or none while it rests behind the touch.
 std::optional<QueueSpot> join_spot(const State& s, const Order& o, bool through) {
@@ -2828,22 +2830,22 @@ void queue_step(State& s, OrderId id, const MarketActivity& activity, const std:
       spot->source = "prints";
     } else if (activity.volumes_supplied && volume != activity.volumes.end()) {
       if (spot->volume && volume->second >= *spot->volume && shown_before)
-        traded = queue_round(s, id, 1, static_cast<__int128>(volume->second) - *spot->volume, 2);
+        traded = queue_round(s, id, 1, static_cast<QueueWide>(volume->second) - *spot->volume, 2);
       spot->source = "volume";
     } else {
       if (shown_before) {
         const auto elapsed = std::min(s.time - spot->updated, s.config.limits.max_quote_age);
-        traded = queue_round(s, id, 2, static_cast<__int128>(spot->displayed) * std::max<Timestamp>(elapsed, 0), kQueueTurnover);
+        traded = queue_round(s, id, 2, static_cast<QueueWide>(spot->displayed) * std::max<Timestamp>(elapsed, 0), kQueueTurnover);
       }
       spot->source = "rate";
     }
     const auto taken = std::min(spot->ahead, traded);
     spot->ahead -= taken;
-    spot->earned = static_cast<Quantity>(std::min<__int128>(static_cast<__int128>(spot->earned) + traded - taken, o.remaining()));
+    spot->earned = static_cast<Quantity>(std::min<QueueWide>(static_cast<QueueWide>(spot->earned) + traded - taken, o.remaining()));
     // Size that left the level without trading: cancelled ahead of the order in
     // proportion to its place in the queue.
     if (shown_before && book.quote.observation != spot->observation) {
-      const auto left = static_cast<__int128>(spot->displayed) - shown - traded;
+      const auto left = static_cast<QueueWide>(spot->displayed) - shown - traded;
       if (left > 0 && spot->ahead > 0)
         spot->ahead -= std::min(spot->ahead, queue_round(s, id, 3, left * spot->ahead, spot->displayed));
     }
@@ -6948,7 +6950,7 @@ void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actio
       const auto& stock = s.ledger.stocks().at(a.symbol);
       const auto price = split_price ? *split_price
           : (stock.basis < Money{} ? -stock.basis : stock.basis).prorate(a.denominator, magnitude(shares) * a.numerator);
-      using Wide = __int128;
+      __extension__ using Wide = __int128;
       const Wide scaled = static_cast<Wide>(shares) * a.numerator;
       const auto whole = static_cast<Quantity>(scaled / a.denominator);
       const auto fraction = static_cast<std::int64_t>(scaled - static_cast<Wide>(whole) * a.denominator);

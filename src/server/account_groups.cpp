@@ -15,7 +15,7 @@ namespace {
 using json = nlohmann::json;
 using trading::Money;
 using trading::Quantity;
-using Wide = __int128;
+__extension__ using Wide = __int128;
 
 constexpr std::size_t kFileMax = 1 << 20;
 const Money kMinRatio = Money::from_micros(100);
