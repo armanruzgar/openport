@@ -172,6 +172,25 @@ TEST(BrokerFills, TastytradeThinkorswimSchwabAndIbkrExportsAreDetected) {
   EXPECT_EQ(statement.fills[0].time, kTen);
 }
 
+TEST(BrokerFills, QuantitiesBeyondAMillionContractsAreSkippedNotRead) {
+  const auto import = parse_broker_fills(
+      "time,symbol,side,quantity,price\n"
+      "2026-10-21 10:15:32,SPXW261022C05000000,buy,1000000,4.10\n"
+      "2026-10-21 10:15:32,SPXW261022C05000000,buy,1000001,4.10\n"
+      "2026-10-21 10:15:32,SPXW261022C05000000,,-9223372036854775808,4.10\n", "generic");
+  ASSERT_EQ(import.fills.size(), 1U);
+  EXPECT_EQ(import.fills[0].quantity, 1'000'000);
+  ASSERT_EQ(import.skipped.size(), 2U);
+  EXPECT_EQ(import.skipped[0].second, "Quantity beyond 1,000,000 contracts");
+  EXPECT_EQ(import.skipped[1].second, "Quantity beyond 1,000,000 contracts");
+  const auto tasty = parse_broker_fills(
+      "Date,Type,Action,Symbol,Instrument Type,Value,Quantity,Multiplier\n"
+      "2026-10-21T10:15:32-0400,Trade,BUY_TO_OPEN,SPXW  261022C05000000,Equity Option,-410.00,-9223372036854775808,100\n",
+      "tastytrade");
+  EXPECT_TRUE(tasty.fills.empty());
+  ASSERT_EQ(tasty.skipped.size(), 1U);
+}
+
 BrokerImport priced(std::vector<std::pair<std::string_view, Quantity>> buys, std::string_view bid = "4.00", std::string_view ask = "4.20") {
   BrokerImport import;
   import.format = "generic";
@@ -231,6 +250,33 @@ TEST(FillCalibration, RealFillsBeyondTheNaturalSuggestSlippageAndLargeOnesImpact
   EXPECT_EQ(natural.as_displayed.price, m("4.20"));
   EXPECT_FALSE(natural.conservative.fills);
   EXPECT_EQ(calibrate(priced({{"4.20", 1}}), {}).suggestion.fill_model, "as_displayed");
+}
+
+TEST(FillCalibration, PaperPricesSumWholeBlocksSoAMillionContractsAreCheap) {
+  // A million-lot on a thousand-lot book: block b sells at 4.20 + (1 + b) ticks.
+  auto import = priced({{"104.20", 1'000'000}});  // the last block's price
+  import.fills[0].bid.reset();
+  import.fills[0].ask.reset();
+  const std::map<std::size_t, CalibrationQuote> quotes{{import.fills[0].row, {m("4.00"), m("4.20"), 1000, 1000, kTen, "recording"}}};
+  const auto large = calibrate(import, quotes).rows.front();
+  EXPECT_FALSE(large.as_displayed.fills);
+  EXPECT_FALSE(large.midpoint.fills);
+  ASSERT_TRUE(large.conservative.fills);
+  EXPECT_EQ(large.conservative.price, m("54.25"));
+  // A sell's blocks stop at zero: 0.35, 0.30 ... 0.05, then 23 contracts at nothing.
+  BrokerImport sells;
+  BrokerFill sell;
+  sell.row = 2;
+  sell.time = kTen;
+  sell.symbol = "SPXW  261022C05000000";
+  sell.side = Side::Sell;
+  sell.quantity = 30;
+  sell.price = m("0.00");
+  sells.fills.push_back(sell);
+  const auto cheap = calibrate(sells, {{2, {m("0.40"), m("0.60"), 1, 1, kTen, "recording"}}}).rows.front();
+  ASSERT_TRUE(cheap.conservative.fills);
+  EXPECT_EQ(cheap.conservative.price, m("0.046667")) << "1.40 over 30 contracts";
+  EXPECT_FALSE(cheap.as_displayed.fills);
 }
 
 TEST(FillCalibration, FillsWithoutATimeOrAQuoteAreListedButNotCompared) {

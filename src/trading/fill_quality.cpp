@@ -10,6 +10,10 @@
 namespace openport::trading {
 namespace {
 constexpr std::size_t kMaxBrokerFills = 5000;
+/// No real option fill is larger; bigger numbers are a misread column, and the
+/// bound keeps every total of 5,000 fills exact.
+constexpr std::int64_t kMaxBrokerQuantity = 1'000'000;
+bool importable(std::int64_t quantity) { return quantity >= -kMaxBrokerQuantity && quantity <= kMaxBrokerQuantity; }
 
 std::string lower(std::string_view text) {
   std::string out(text);
@@ -246,6 +250,7 @@ RowResult finish(std::optional<std::string> symbol, std::optional<Side> side, st
                  std::optional<Money> price, Timestamp time) {
   if (!symbol) return std::string("Not an option contract this import reads");
   if (!quantity || *quantity == 0) return std::string("No quantity");
+  if (!importable(*quantity)) return std::string("Quantity beyond 1,000,000 contracts");
   if (!side) side = *quantity > 0 ? Side::Buy : Side::Sell;
   if (!price || *price < Money{}) return std::string("No price");
   BrokerFill fill;
@@ -310,7 +315,7 @@ void parse_tastytrade(const std::vector<Row>& rows, BrokerImport& out) {
     const auto per = multiplier ? integer_cell(cell(row, multiplier)) : std::optional<std::int64_t>(100);
     const auto total = money_cell(cell(row, value));
     std::optional<Money> price;
-    if (contracts && *contracts != 0 && per && *per > 0 && total)
+    if (contracts && *contracts != 0 && importable(*contracts) && per && *per > 0 && *per <= kMaxBrokerQuantity && total)
       price = (*total < Money{} ? -*total : *total).prorate(1, (*contracts < 0 ? -*contracts : *contracts) * *per);
     add_row(out, row.line, finish(symbol_cell(cell(row, symbol)), side_cell(cell(row, action)), contracts, price, *when));
   }
@@ -582,34 +587,51 @@ namespace {
 /// or inside fills at `inside` percent (Inside at midpoint).
 PaperOutcome paper_outcome(std::string_view root, Side side, Quantity quantity, Money limit, const CalibrationQuote& quote,
                            std::int64_t slippage, bool impact, std::int64_t inside) {
+  __extension__ using Wide = __int128;
   const bool buy = side == Side::Buy;
   const auto far = buy ? quote.ask : quote.bid;
   const auto size = buy ? quote.ask_size : quote.bid_size;
   const auto tick = tick_size(root, far);
   // Without impact a fill stays within the displayed size; an unknown size limits nothing.
   const bool within = size <= 0 || quantity <= size;
-  Money total;
-  for (Quantity k = 0; k < quantity; ++k) {
-    const auto blocks = impact && size > 0 ? k / size : 0;
-    const auto slip = tick * (slippage + blocks);
-    const auto price = buy ? far + slip : std::max(Money{}, far - slip);
-    if (buy ? price > limit : price < limit) {
-      // Not marketable: an inside limit fills at itself when far enough across the spread.
-      if (k == 0 && inside > 0 && within) {
-        const auto near = buy ? quote.bid : quote.ask;
-        __extension__ using Wide = __int128;
-        const auto reach = buy ? (static_cast<Wide>(limit.micros()) - near.micros()) * 100 >=
-                                     (static_cast<Wide>(far.micros()) - near.micros()) * inside
-                               : (static_cast<Wide>(near.micros()) - limit.micros()) * 100 >=
-                                     (static_cast<Wide>(near.micros()) - far.micros()) * inside;
-        if ((buy ? limit > near && limit < far : limit < near && limit > far) && reach) return {true, limit};
-      }
-      return {};
+  if (quantity <= 0) return {};
+  // Contracts fill in blocks of the displayed size, each `tick` worse than the one
+  // before; prices only worsen, so the first and last blocks bound them all.
+  const Wide per = impact && size > 0 ? size : quantity;
+  const Wide blocks = (quantity + per - 1) / per;
+  const auto block_price = [&](Wide block) {
+    const Wide slip = static_cast<Wide>(tick.micros()) * (slippage + block);
+    return buy ? far.micros() + slip : std::max<Wide>(0, far.micros() - slip);
+  };
+  const auto beyond = [&](Wide price) { return buy ? price > limit.micros() : price < limit.micros(); };
+  if (beyond(block_price(0))) {
+    // Not marketable: an inside limit fills at itself when far enough across the spread.
+    if (inside > 0 && within) {
+      const auto near = buy ? quote.bid : quote.ask;
+      const auto reach = buy ? (static_cast<Wide>(limit.micros()) - near.micros()) * 100 >=
+                                   (static_cast<Wide>(far.micros()) - near.micros()) * inside
+                             : (static_cast<Wide>(near.micros()) - limit.micros()) * 100 >=
+                                   (static_cast<Wide>(near.micros()) - far.micros()) * inside;
+      if ((buy ? limit > near && limit < far : limit < near && limit > far) && reach) return {true, limit};
     }
-    total = total + price;
+    return {};
   }
+  if (beyond(block_price(blocks - 1))) return {};
   if (!impact && !within) return {};
-  return {true, total.prorate(1, quantity)};
+  // The sum over blocks, every one full but the last; a sell's price stops at zero.
+  Wide total = 0;
+  const auto last = static_cast<Wide>(quantity) - (blocks - 1) * per;
+  const auto start = static_cast<Wide>(far.micros()) + (buy ? 1 : -1) * static_cast<Wide>(tick.micros()) * slippage;
+  const Wide step = buy ? tick.micros() : -tick.micros();
+  // Blocks priced above zero: all of a buy's, a sell's until its price reaches zero.
+  Wide priced = blocks;
+  if (!buy) priced = start <= 0 ? 0 : std::min(blocks, tick.micros() > 0 ? (start + tick.micros() - 1) / tick.micros() : blocks);
+  if (priced > 0) {
+    const Wide full = priced == blocks ? blocks - 1 : priced;  // full blocks among them
+    total += per * (full * start + step * full * (full - 1) / 2);
+    if (priced == blocks) total += last * (start + step * (blocks - 1));
+  }
+  return {true, Money::from_micros(static_cast<std::int64_t>((total + quantity / 2) / quantity))};
 }
 }  // namespace
 
