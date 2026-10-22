@@ -94,7 +94,7 @@ std::optional<md::OptionContract> option_of(std::string root, md::Date expiry, d
   if (root.empty() || root.size() > 6 || !(strike > 0) || strike >= 100000 || (right != 'C' && right != 'P')) return std::nullopt;
   const auto milli = static_cast<long long>(std::llround(strike * 1000));
   if (std::abs(static_cast<double>(milli) - strike * 1000) > 1e-6) return std::nullopt;
-  char osi[32];
+  char osi[64];  // room for every int the format could print, so GCC sees no truncation
   std::snprintf(osi, sizeof osi, "%-6s%02d%02d%02d%c%08lld", root.c_str(), expiry.year % 100, expiry.month, expiry.day, right, milli);
   auto contract = md::parse_osi(osi);
   if (contract && contract->expiry != expiry) return std::nullopt;
