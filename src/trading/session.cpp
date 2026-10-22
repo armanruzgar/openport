@@ -2815,8 +2815,7 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   if (order.status == OrderStatus::Filled) order.ended_at = s.time;
   Fill fill{static_cast<std::uint64_t>(s.fills.size() + 1), id, symbol, side,
             quantity, price, fee, quote.observation, quote.time, s.time, context, order.actor, taken,
-            s.config.rules.fees ? std::optional(fees) : std::nullopt, stress, queued};
-  fill.feed = quote.feed;
+            s.config.rules.fees ? std::optional(fees) : std::nullopt, quote.feed, stress, queued};
   s.fills.push_back(fill);
   event(events, "fill", fill);
   count_execution(s, order);
@@ -2917,8 +2916,7 @@ void match_combo(State& s, OrderId id, Events& events, std::optional<OrderId> in
     if (!slice.given) consume_depth(slice.side == Side::Buy ? book.ask_left : book.bid_left, size);
     Fill fill{static_cast<std::uint64_t>(s.fills.size() + 1), id, slice.symbol, slice.side,
               size, price, fee, quote.observation, quote.time, s.time, context, actor, taken,
-              s.config.rules.fees ? std::optional(slice_fees[i]) : std::nullopt, slice.given || inside ? 0 : stress};
-    fill.feed = quote.feed;
+              s.config.rules.fees ? std::optional(slice_fees[i]) : std::nullopt, quote.feed, slice.given || inside ? 0 : stress};
     s.fills.push_back(fill);
     event(events, "fill", fill);
   }
