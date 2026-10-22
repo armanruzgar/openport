@@ -240,8 +240,8 @@ strategy margin for adjusted series, which its scan does not reprice. The desk q
 values and fills an adjusted series from the standard series that pays the same (the 250
 call for a 2:1-adjusted 500 call): prices times shares/100, displayed sizes over it and
 Greeks scaled the same, once the feed lists that series. When none is listed (a 3:2 or a
-reverse split leaves an effective strike such as 333.33 no exchange lists) or the series
-delivers cash only, the desk values it by model: Black at its effective strike, at the
+reverse split leaves an effective strike such as 333.33 no exchange lists), the listed
+one has never quoted, or the series delivers cash only, the desk values it by model: Black at its effective strike, at the
 expiry's forward and discount from the analytics, with the smile IV interpolated between
 the listed strikes either side of it (the nearest one beyond the listed range), scaled
 to its shares (a cash-only series is worth its discounted intrinsic value, at which

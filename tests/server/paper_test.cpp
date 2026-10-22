@@ -5729,6 +5729,53 @@ TEST(PaperStocks, SplitsAdjustHeldSeriesWhichThenTradeAsTheirStandardEquivalents
   engine.stop();
 }
 
+TEST(PaperStocks, AListedEquivalentThatNeverQuotesLeavesTheSeriesModelled) {
+  auto options = paper_options();
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 2, 1}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, call});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016C00250000")});  // listed, never quoted
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016C00245000")});
+  provider.sink->publish(md::ContractDefinition{3, *md::parse_osi("SPY261016C00255000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 14, 14.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  const auto bought = write(engine, "POST", "/api/orders",
+                            {{"client_order_id", "long"}, {"symbol", call.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+                             {"quantity", 1}, {"limit_price", "14.20"}, {"time_in_force", "day"}});
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  const auto day = [&](md::Date date, double shift) {
+    const auto time = md::new_york_to_utc(date, 9, 45);
+    provider.sink->publish(md::UnderlyingQuote{"SPY", time, 254.9 + shift, 255.1 + shift, 255 + shift});
+    provider.sink->publish(md::OptionQuote{2, time, 13 + shift, 13.2 + shift, 20, 20});
+    provider.sink->publish(md::OptionQuote{3, time, 6 + shift, 6.2 + shift, 20, 20});
+    EXPECT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+    engine.synchronize().get();
+    provider.sink->publish(md::OptionQuote{2, time + md::kNanosPerSecond, 13 + shift, 13.2 + shift, 20, 20});
+    EXPECT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+    engine.synchronize().get();
+  };
+  day({2026, 9, 23}, 0);
+  ASSERT_EQ(engine.trading_view()->snapshot->corporate_actions.size(), 1u);
+  const auto days = engine.trading_view()->snapshot->evaluation.days.size();
+  auto portfolio = read(engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["positions"].size(), 1);
+  EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+  ASSERT_TRUE(portfolio["positions"][0]["mark"].is_string()) << portfolio["positions"][0].dump();
+  EXPECT_TRUE(engine.trading_view()->snapshot->valuation_complete);
+  // The next day rolls over on the modelled mark.
+  day({2026, 9, 24}, 1);
+  EXPECT_EQ(engine.trading_view()->snapshot->evaluation.days.size(), days + 1);
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["modelled_mark"], true);
+  engine.stop();
+}
+
 TEST(PaperStocks, ModelledDeepInTheMoneyPutsAreMarkedAtLeastAtTheirExerciseValue) {
   for (const bool long_put : {true, false}) {
     SCOPED_TRACE(long_put ? "long" : "short");

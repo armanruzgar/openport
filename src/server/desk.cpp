@@ -1423,9 +1423,9 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
         // pays the same: shares/100 contracts at its effective strike, whose listing,
         // quote and valuation price it. Its own listing has pre-split terms.
         // Without one listed (after a 3:2 or a reverse split, or for a deliverable of
-        // cash only), it is valued by model from the listed strikes around it
-        // (modelled_series): a mark labelled modelled that keeps it valued and the
-        // days rolling, and never fills.
+        // cash only), or with one listed that has never quoted, it is valued by model
+        // from the listed strikes around it (modelled_series): a mark labelled
+        // modelled that keeps it valued and the days rolling, and never fills.
         const auto adjusted = session.deliverables().find(symbol);
         double scale = 1;
         auto priced = definition->second;
@@ -1440,7 +1440,8 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
             const auto listed = instruments_.find(priced.osi_symbol());
             option = listed == instruments_.end() ? nullptr : book_.option(listed->second);
           }
-          if (!option) model = modelled_series(symbol, definition->second, d, metrics(underlying));
+          if (!option || !option->has_quote || option->quote_ts < 0)
+            model = modelled_series(symbol, definition->second, d, metrics(underlying));
         }
         const bool quoted = option && option->has_quote && option->quote_ts >= 0;
         const bool fresh = current(underlying);
