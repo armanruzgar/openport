@@ -22,7 +22,7 @@ import { whatIfOrderText } from "./WhatIfPanel"
 import { probabilityOfProfit, probabilitySource, singleLeg, smileDistribution } from "../lib/probability"
 import { crossDirection, describeTrigger, marketability, opposite, split, stopDirection, strategyName } from "../lib/ticket"
 import { deliversShares, extendedSession, formatMoney, limitOnlyNotice, limitPriceText, limitPriceTick, paperNotice, roundToTick, sideFromCell, stepLimitPrice, ticketEstimate, validMoney } from "../lib/trading"
-import { useWriteToken } from "../lib/write-token"
+import { isSandboxToken, useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
 import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
 import { useStopTrail } from "./TrailFields"
@@ -105,7 +105,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   surface?: Surface
 }) {
   const api = useActionApi()
-  const { accountScope, underlyings, source, replay, status: feedStatus } = useLive()
+  const { accountScope, underlyings, source, replay, status: feedStatus, accounts: liveAccounts } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()
@@ -113,7 +113,8 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   const portfolio = usePortfolio().data
   const join = useJoinTrade(selection.underlying, portfolio?.strategies)
   // Live only: a group copies this order to each of its accounts as their own submission.
-  const groups = useAccountGroups(source === "live" && !selection.closing)
+  // Groups need more than one account; sandbox visitors have only their own.
+  const groups = useAccountGroups(source === "live" && !selection.closing && !isSandboxToken(token) && liveAccounts.length > 1)
   const [copyGroup, setCopyGroup] = useState("")
   const [copied, setCopied] = useState<CopyOrderResponse>()
   const [side, setSide] = useState<Side>(sideFromCell(selection.cell))
