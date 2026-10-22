@@ -288,8 +288,14 @@ HttpResponse HttpClient::get(std::string_view url, const Headers& headers,
       if (!reusing || timed_out || (impl_->cancellation && impl_->cancellation->load())) throw;
     }
     // A kept-alive connection can be closed by the server between requests; retry once fresh.
-    impl_->connect(target, timeout);
-    return impl_->request(target, sent, timeout);
+    // A failed retry closes too, so no half-read connection is reused.
+    try {
+      impl_->connect(target, timeout);
+      return impl_->request(target, sent, timeout);
+    } catch (...) {
+      impl_->close();
+      throw;
+    }
   };
   // Follows data a host has moved, as Cboe moved its delayed quotes in September 2026.
   constexpr int kMaxRedirects = 5;

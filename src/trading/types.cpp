@@ -258,6 +258,9 @@ bool same_program_rules(AccountRules left, const AccountRules& right) {
   execution.reset_fee = right.reset_fee;
   execution.activation_fee = right.activation_fee;
   execution.max_resets = right.max_resets;
+  // The holiday calendar captured with hold restrictions is the schedule known then,
+  // which the live feed updates; it is not a term of the program.
+  execution.hold_calendar = right.hold_calendar;
   return execution == right;
 }
 void validate_rules(const AccountRules& r) {

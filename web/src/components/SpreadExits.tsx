@@ -13,7 +13,11 @@ export function useSpreadExits(entry: number | null, tick: number, enabled = fal
   const [protect, setProtect] = useState(enabled)
   const [targetOn, setTargetOn] = useState(true)
   const [stopOn, setStopOn] = useState(true)
-  const [percent, setPercent] = useState(entry != null && entry > 0 ? "150" : "50")
+  // A typed percent holds for the side it was typed on: a debit entry takes profit above
+  // 100% of its cost and a credit entry below, so a flip starts again from that side's default.
+  const side = entry != null && entry > 0 ? "debit" : "credit"
+  const [typed, setTyped] = useState<{ side: "debit" | "credit"; percent: string } | null>(null)
+  const percent = typed?.side === side ? typed.percent : side === "debit" ? "150" : "50"
   const [source, setSource] = useState<"combo" | "underlying">("combo")
   const [direction, setDirection] = useState<Trigger["direction"]>("at_or_above")
   const [level, setLevel] = useState("")
@@ -34,8 +38,8 @@ export function useSpreadExits(entry: number | null, tick: number, enabled = fal
     <label className="flex items-center gap-2"><input type="checkbox" checked={protect} onChange={(e) => setProtect(e.target.checked)} />Spread exits</label>
     {protect && <>
       <label className="flex items-center gap-2"><input type="checkbox" checked={targetOn} onChange={(e) => setTargetOn(e.target.checked)} />Take profit</label>
-      {targetOn && <label className="trade-label">{entry != null && entry > 0 ? "Receive (% of entry debit)" : "Buy back (% of entry credit)"}
-        <input className="trade-input" inputMode="decimal" value={percent} onChange={(e) => setPercent(e.target.value)} />
+      {targetOn && <label className="trade-label">{side === "debit" ? "Receive (% of entry debit)" : "Buy back (% of entry credit)"}
+        <input className="trade-input" inputMode="decimal" value={percent} onChange={(e) => setTyped({ side, percent: e.target.value })} />
         <span className="text-muted">Closing limit: {target == null ? "—" : netText(Number(target))}</span>
       </label>}
       <label className="flex items-center gap-2"><input type="checkbox" checked={stopOn} onChange={(e) => setStopOn(e.target.checked)} />Stop loss</label>

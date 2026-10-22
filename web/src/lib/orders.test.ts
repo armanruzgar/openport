@@ -90,6 +90,7 @@ describe("flatten", () => {
     expect(checkCode(changed)).toBe("DAILY_LOSS")
     expect(reasonEvidence(changed)).toBe("$15.65 against a limit of $15.64 · aggregate")
     expect(reasonEvidence({ code: "MAX_ORDER_CONTRACTS", message: "", actual: 3, limit: 2, scope: "SPX" })).toBe("3 contracts against a limit of 2 contracts · SPX")
+    expect(reasonEvidence({ code: "MAX_TRADE_RISK", message: "", actual: 512.5, limit: 500, scope: "trade" })).toBe("$512.50 against a limit of $500.00 · trade")
     // Older servers send neither numbers nor scope.
     expect(reasonEvidence({ code: "USER_CANCEL", message: "Cancelled by caller" })).toBeNull()
     expect(reasonEvidence(null)).toBeNull()

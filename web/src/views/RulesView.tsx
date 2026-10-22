@@ -86,7 +86,7 @@ export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
     ...(p ? [{ title: "Payouts", body: <>
         A payout needs <strong className="text-foreground">{p.qualifying_days} qualifying days</strong> since the previous one: days that end with at least {ruleMoney(p.qualifying_profit)} of net realised profit, after fees.
         Request it with no open positions or working orders. Each payout may take up to {p.withdrawal_percent}% of the profit above your {ruleMoney(e.starting_balance)} starting balance,
-        at least {ruleMoney(p.minimum)}{p.caps.length ? <> and at most {p.caps.map((cap, i) => `${ruleMoney(cap)} for payout ${i + 1}${i === p.caps.length - 1 && i > 0 ? " and later" : ""}`).join(", ")}</> : null}; you keep {p.split_percent}%.
+        at least {ruleMoney(p.minimum)}{p.caps.length ? <> and at most {p.caps.map((cap, i) => `${ruleMoney(cap)} for payout ${i + 1}${i === p.caps.length - 1 ? " and later" : ""}`).join(", ")}</> : null}; you keep {p.split_percent}%.
         Each finished day counts once, toward the payout cycle in progress when it closes.
         {payoutRuleFacts(p, e.starting_balance).map((fact) => <span className="block" key={fact}>{fact}.</span>)}
         {!!p.consistency_percents?.length && <span className="block">Consistency includes losses and the day in progress. The request day remains in the next cycle in full; earlier finished days reset after each payout.</span>}

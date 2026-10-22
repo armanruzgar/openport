@@ -14,7 +14,7 @@ import { describeTrail } from "../lib/ticket"
 import type { StrategyLeg } from "../lib/strategy"
 import { formatMoney, signedMoney } from "../lib/trading"
 import { comboTickCents } from "../lib/trading"
-import { EditOrderDialog, useWrite } from "./OrderActions"
+import { EditOrderDialog, useClientOrderId, useWrite } from "./OrderActions"
 import { useSpreadExits } from "./SpreadExits"
 import { Dialog } from "./Dialog"
 import { StrategyTicket } from "./StrategyTicket"
@@ -181,7 +181,7 @@ export function SpreadExitsDialog({ group, trading, onClose }: { group: Strategy
       held.symbol === leg.symbol && held.side === leg.side && held.ratio === leg.ratio)))
   const [editing, setEditing] = useState<Order | null>(null)
   const [confirmCancel, setConfirmCancel] = useState(false)
-  const [clientId] = useState(() => crypto.randomUUID())
+  const clientIds = useClientOrderId()
   const exits = useSpreadExits(group.cost, comboTickCents(plan.legs.map((leg) => leg.symbol.slice(0, 6).trim())), true)
   if (editing) return <ActionDestination value={destination}><EditOrderDialog order={editing} trading={trading} onClose={() => setEditing(null)} onDone={() => setEditing(null)} /></ActionDestination>
   async function submit() {
@@ -189,13 +189,13 @@ export function SpreadExitsDialog({ group, trading, onClose }: { group: Strategy
     const primary = bracket?.take_profit ?? bracket?.stop_loss
     if (!primary || !bracket) return
     const request: NewOrder = {
-      client_order_id: clientId, legs: plan.legs.map(({ symbol, side, ratio }) => ({ symbol, side, ratio })),
+      client_order_id: "", legs: plan.legs.map(({ symbol, side, ratio }) => ({ symbol, side, ratio })),
       quantity: plan.units, exits_only: true, bracket,
       // The primary is the target, or the stop when there is none: a stop-limit is a GTC limit with its trigger.
       ...(primary.limit_price != null ? { type: "limit", time_in_force: "gtc", limit_price: primary.limit_price, ...(primary.trigger ? { trigger: primary.trigger } : {}) }
         : { type: "market", time_in_force: "ioc", trigger: primary.trigger }),
     }
-    await write.run(() => api.submitOrder(request, trading.write), onClose)
+    await write.run(() => api.submitOrder(clientIds.stamp(request), trading.write), onClose)
   }
   return <Dialog title={`Exits · ${group.label}`} onClose={onClose}>
     <p className="text-sm">{group.title} · {group.units} units</p>

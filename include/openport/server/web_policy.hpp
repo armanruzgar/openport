@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "openport/server/api.hpp"
@@ -20,6 +21,8 @@ namespace openport::server {
 inline constexpr std::size_t kWebSocketMessageMax = 4 * 1024;
 /// Open /ws sessions, handshakes included; the next upgrade gets 503 with Retry-After.
 inline constexpr std::size_t kWebSocketSessionMax = 256;
+/// Open HTTP connections; more are closed on accept, so idle ones cannot exhaust descriptors.
+inline constexpr std::size_t kHttpSessionMax = 512;
 inline constexpr int kWebSocketRetrySeconds = 5;
 
 struct NamedToken {
@@ -129,28 +132,53 @@ struct StaticFile {
                                 const std::vector<std::string>& allowed_origins = {},
                                 const std::vector<std::string>& allowed_hosts = {});
 
-/// Ticks are complete snapshots: preserve the active write buffer and only the
-/// latest pending snapshot. All methods run on the session executor.
+/// `value` percent-encoded as encodeURIComponent does, for a URL fragment the
+/// terminal decodes (the startup link's #token=).
+[[nodiscard]] inline std::string url_component(std::string_view value) {
+  constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  for (const unsigned char c : value) {
+    if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+        c == '-' || c == '_' || c == '.' || c == '!' || c == '~' || c == '*' || c == '\'' || c == '(' || c == ')') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += kHex[c >> 4];
+      out += kHex[c & 15];
+    }
+  }
+  return out;
+}
+
+/// Ticks are complete snapshots of their stream: preserve the active write buffer
+/// and only the latest pending snapshot of each stream (the engine's tick and the
+/// replay's), so one stream never displaces the other. All methods run on the
+/// session executor.
 class TickQueue {
  public:
-  void push(std::shared_ptr<const std::string> tick) {
-    if (!writing_)
-      writing_ = std::move(tick);
-    else
-      pending_ = std::move(tick);
+  void push(std::shared_ptr<const std::string> tick, std::string_view stream = {}) {
+    if (!writing_) { writing_ = std::move(tick); return; }
+    for (auto& [key, value] : pending_)
+      if (key == stream) { value = std::move(tick); return; }
+    pending_.emplace_back(std::string(stream), std::move(tick));
   }
-  void pop() { writing_ = std::move(pending_); }
+  void pop() {
+    writing_.reset();
+    if (pending_.empty()) return;
+    writing_ = std::move(pending_.front().second);
+    pending_.erase(pending_.begin());
+  }
   void clear() {
     writing_.reset();
-    pending_.reset();
+    pending_.clear();
   }
   [[nodiscard]] bool empty() const { return !writing_; }
-  [[nodiscard]] std::size_t size() const { return bool(writing_) + bool(pending_); }
+  [[nodiscard]] std::size_t size() const { return bool(writing_) + pending_.size(); }
   [[nodiscard]] const auto& front() const { return writing_; }
 
  private:
   std::shared_ptr<const std::string> writing_;
-  std::shared_ptr<const std::string> pending_;
+  std::vector<std::pair<std::string, std::shared_ptr<const std::string>>> pending_;
 };
 
 /// A slot covers the handshake as well as the open session and is returned on

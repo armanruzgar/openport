@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 #include "openport/pricing/normal.hpp"
@@ -82,7 +83,9 @@ IvResult implied_vol_black(double price, OptionType type, double forward, double
     result.status = IvStatus::NonFiniteModel;
     return result;
   }
-  if (!(target > 0.0)) {
+  // Deep in the money the time value left after parity can be rounding noise of the
+  // price: solving it would report a precise-looking but wrong volatility.
+  if (!(target > 1024 * std::numeric_limits<double>::epsilon() * (price / discount))) {
     result.status = IvStatus::BelowIntrinsic;
     return result;
   }

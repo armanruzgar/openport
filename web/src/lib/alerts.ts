@@ -35,21 +35,40 @@ export function parseAlerts(text: string | null): AlertSettings {
     return noAlerts
   }
 }
+/**
+ * The settings in this browser. Other terminal tabs share them: their changes arrive
+ * as storage events, and each change here applies to the stored settings as they are
+ * now, so one tab never writes back another's stale list.
+ */
 export function createAlertStore(storage: () => Pick<Storage, "getItem" | "setItem">) {
   let memory: AlertSettings | undefined
   const listeners = new Set<() => void>()
+  function get() {
+    if (memory !== undefined) return memory
+    try { memory = parseAlerts(storage().getItem(key)) } catch { memory = noAlerts }
+    return memory
+  }
+  function set(next: AlertSettings) {
+    memory = next
+    try { storage().setItem(key, JSON.stringify(next)) } catch { /* Keep them for this page. */ }
+    listeners.forEach((listener) => listener())
+  }
   return {
-    get() {
-      if (memory !== undefined) return memory
-      try { memory = parseAlerts(storage().getItem(key)) } catch { memory = noAlerts }
-      return memory
+    get, set,
+    update(change: (current: AlertSettings) => AlertSettings) {
+      try { memory = parseAlerts(storage().getItem(key)) } catch { /* Keep this page's copy. */ }
+      set(change(get()))
     },
-    set(next: AlertSettings) {
-      memory = next
-      try { storage().setItem(key, JSON.stringify(next)) } catch { /* Keep them for this page. */ }
-      listeners.forEach((listener) => listener())
+    subscribe(listener: () => void) {
+      const changed = (event: StorageEvent) => {
+        if (event.key !== key && event.key !== null) return
+        memory = undefined
+        listener()
+      }
+      if (typeof window !== "undefined") window.addEventListener("storage", changed)
+      listeners.add(listener)
+      return () => { listeners.delete(listener); if (typeof window !== "undefined") window.removeEventListener("storage", changed) }
     },
-    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
   }
 }
 export const alertStore = createAlertStore(() => window.localStorage)

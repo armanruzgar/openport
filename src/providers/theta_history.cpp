@@ -1,6 +1,7 @@
 #include "openport/providers/history.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <iterator>
@@ -178,7 +179,12 @@ class ThetaHistory final : public HistorySource {
       if (response.status == 429 && attempt < 3) {
         int seconds = 1 << attempt;
         const auto retry = response.header("Retry-After");
-        if (!retry.empty()) seconds = parse_integer(retry, "ThetaData Retry-After", 1, 60);
+        // Waits as asked, within 1..60 s; a value it cannot read (an HTTP date) keeps the backoff.
+        if (!retry.empty()) {
+          long long asked = 0;
+          const auto [end, error] = std::from_chars(retry.data(), retry.data() + retry.size(), asked);
+          if (error == std::errc{} && end == retry.data() + retry.size()) seconds = static_cast<int>(std::clamp<long long>(asked, 1, 60));
+        }
         wait_(std::chrono::seconds(seconds));
         continue;
       }

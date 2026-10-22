@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -64,6 +65,9 @@ class DatabentoMapper {
   void on_trade(const databento::TradeMsg& msg);
   void on_statistic(const databento::StatMsg& msg);
   void reset_health() { live_underlyings_.clear(); }
+  /// Trades from `now`'s trading date may be missing (a reconnect replays none): its
+  /// volume is no longer published as the day's cumulative volume.
+  void volume_gap(md::Timestamp now);
 
   /// Records dropped because their instrument's definition had not arrived yet.
   [[nodiscard]] std::size_t undefined_records() const noexcept { return undefined_records_; }
@@ -84,6 +88,7 @@ class DatabentoMapper {
   };
   std::unordered_map<md::InstrumentId, Volume> volumes_;
   std::size_t undefined_records_ = 0;
+  std::optional<md::Date> gap_date_;
 };
 
 /// Real-time OPRA options data from Databento, using your own API key.

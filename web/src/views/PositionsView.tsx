@@ -2,7 +2,7 @@ import { shortcutAllowed } from "../lib/keyboard"
 import { ActionDestination, useActionDestination } from "../api/action-destination"
 import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 
 import { marketNow, useLive } from "../api/live"
 import { useAccount, useAllOrders, useRefreshTrading, useTradingQueries } from "../api/trading"
@@ -230,6 +230,12 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
   const data = portfolio.data
   const groups = useMemo(() => strategyGroups(data?.positions ?? [], allOrders ?? [], account?.evaluation.started ?? null),
     [data?.positions, allOrders, account?.evaluation.started])
+  // A picked position that closes or awaits settlement leaves the pick.
+  const pickable = useMemo(() => data && new Set(data.positions.filter((p) => !p.awaiting_settlement).map((p) => p.symbol)), [data])
+  useEffect(() => {
+    if (pickable) setPicked((current) => [...current].every((symbol) => pickable.has(symbol)) ? current : new Set([...current].filter((symbol) => pickable.has(symbol))))
+  }, [pickable])
+  const pickedPositions = data?.positions.filter((p) => picked.has(p.symbol) && pickable?.has(p.symbol)) ?? []
   return <div className="min-w-0 space-y-4">
     <PageHeader title="Positions" subtitle={<>Open positions, risk and scenarios · account version {data?.account_version ?? trading.account_version}</>}>
       <WriteAccess trading={trading} />
@@ -261,10 +267,10 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
       {groups.length > 0 && <Panel title={`Strategies · ${groups.length}`}><Strategies groups={groups} trading={trading} now={marketNow(live)} /></Panel>}
       <Panel title={`Open positions · ${data.positions.length}`} actions={trading.enabled && (data.positions.length > 0 || (data.stocks?.length ?? 0) > 0) ? <>
         {data.positions.length > 1 && <>
-          <span className="text-[11px] text-muted">{picked.size ? `${picked.size} picked` : "Pick positions to close them in one order"}</span>
+          <span className="text-[11px] text-muted">{pickedPositions.length ? `${pickedPositions.length} picked` : "Pick positions to close them in one order"}</span>
           {picked.size > 0 && <button type="button" className="trade-button" onClick={() => setPicked(new Set())}>Clear</button>}
-          <button type="button" className="trade-button" disabled={picked.size < 2} onClick={() => setTogether(true)}>Close together</button>
-          <GroupButton positions={data.positions.filter((p) => picked.has(p.symbol))} trading={trading} onDone={() => setPicked(new Set())} />
+          <button type="button" className="trade-button" disabled={pickedPositions.length < 2} onClick={() => setTogether(true)}>Close together</button>
+          <GroupButton positions={pickedPositions} trading={trading} onDone={() => setPicked(new Set())} />
         </>}
         <button type="button" className="trade-button" onClick={() => setFlatten({ underlying: null })}>Close all</button>
       </> : undefined}>
@@ -302,7 +308,7 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
       ...data.positions.filter((p) => !p.awaiting_settlement).map((p) => p.underlying), ...(data.stocks ?? []).map((s) => s.symbol)])].sort()} /></Panel>}
     {risk.data && <Panel title="Spot × volatility scenarios"><ScenarioPanel scenarios={risk.data.scenarios} /></Panel>}
     {trading.enabled && <Panel title="What-if"><WhatIfPanel positions={data?.positions ?? []}
-      picked={data?.positions.filter((p) => picked.has(p.symbol)) ?? []} trading={trading} /></Panel>}
+      picked={pickedPositions} trading={trading} /></Panel>}
     <Panel title="Kill switch"><KillSwitch kill={risk.data?.kill ?? { latched: trading.kill_latched, reason: null }} trading={trading} /></Panel>
     {editing && <LimitsEditor initial={editing} trading={trading} onClose={() => setEditing(null)} />}
     {closing && <CloseTicket position={closing} trading={trading} onClose={() => setClosing(null)} />}
@@ -315,7 +321,7 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
     {tradingShares && <TradeSharesDialog initial={tradingShares.symbol} trading={trading} onClose={() => setTradingShares(null)} />}
     {flatten && data && <FlattenDialog positions={data.positions} stocks={data.stocks ?? []} orders={allOrders ?? []} trading={trading}
       initial={flatten.underlying} onClose={() => setFlatten(null)} />}
-    {together && data && <CloseTogether positions={data.positions.filter((p) => picked.has(p.symbol))} trading={trading}
+    {together && data && <CloseTogether positions={pickedPositions} trading={trading}
       onClose={() => { setTogether(false); setPicked(new Set()) }} />}
   </div>
 }

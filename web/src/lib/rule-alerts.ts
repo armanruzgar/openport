@@ -52,19 +52,30 @@ export function ruleAlerts(account: Account, risk: Risk): RuleAlert[] {
   return result
 }
 
-/** Claim before notifying. Reloads and account switches share the same durable keys. */
+/**
+ * Claim before notifying. Reloads and account switches share the same durable keys;
+ * a reset starts a new attempt, whose thresholds alert again on the same day. An
+ * account's claims for earlier days and attempts are dropped, so the list stays small.
+ */
+function claimOf(key: string): unknown[] {
+  try { const value: unknown = JSON.parse(key); return Array.isArray(value) ? value : [] } catch { return [] }
+}
 export function createRuleAlertStore(storage: () => Pick<Storage, "getItem" | "setItem">) {
   const memory = new Set<string>()
   return {
-    fresh(account: string, day: string, alerts: readonly RuleAlert[]) {
+    fresh(account: string, attempt: number, day: string, alerts: readonly RuleAlert[]) {
       let saved: string[] = []
       try {
         const value: unknown = JSON.parse(storage().getItem("openport.rule-alerts") ?? "[]")
         if (Array.isArray(value)) saved = value.filter((item): item is string => typeof item === "string")
       } catch { /* Storage can be denied; keep this page's deduplication. */ }
       saved.forEach((key) => memory.add(key))
+      for (const key of memory) {
+        const [owner, claimed, on] = claimOf(key)
+        if (owner === account && (claimed !== attempt || on !== day)) memory.delete(key)
+      }
       const fresh = alerts.filter((alert) => {
-        const key = JSON.stringify([account, day, alert.id])
+        const key = JSON.stringify([account, attempt, day, alert.id])
         if (memory.has(key)) return false
         memory.add(key)
         return true

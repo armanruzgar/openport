@@ -6,7 +6,7 @@
     "license": {
       "name": "MIT"
     },
-    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. The Python symbols() helper reads status.underlyings and series() reads summary.expiries; volatility_history() reads the separate stored-series route. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
+    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. symbols() is status.underlyings and has no separate route; series() and volatility_history() read metric history from /api/underlyings/{symbol}/series; an underlying's expiries are in summary.expiries. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
   },
   "servers": [
     {
@@ -463,6 +463,127 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Candles"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/api/underlyings/{symbol}/series": {
+      "parameters": [
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "fields",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated, without repeats: spot, forward, mfiv9, mfiv30, mfiv93, mfiv182, mfiv365, atm7, atm30, atm60, atm90, atm180, rr25, bf25, rr10, bf10, ratio9_30, ratio30_93, gex, gamma_flip, call_wall, put_wall, and for 1d also proxy_iv30, rv21, vix and vix_minus_mfiv. Default: all applicable fields.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "interval",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "1m",
+              "1d"
+            ],
+            "default": "1d"
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive start: Unix seconds, an ISO timestamp or a New York date (its midnight). Default: 1 day (1m) or 366 days (1d) before to.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive end: Unix seconds, an ISO timestamp or a New York date (its whole day). Default: the current snapshot's market time, or server time before any snapshot.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/series",
+        "description": "Metric history from the local series store, oldest first: 1d completed sessions (up to 3,660 days) or 1m samples (up to 7 days), at most 10,000 rows. Fields are stored series names; proxy_iv30, rv21, vix and vix_minus_mfiv are daily only. VIX tracking requires same-session SPX/SPY and VIX observations, without substituting proxy history. sample_time is the local market sample; vix_sample_time is the source daily bar start. Replays and demo engines have no series store, so their own-metric fields are null.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VolatilitySeries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown, duplicate or daily-only field; bad interval, from or to; a reversed or too-long range; or over 10,000 rows. The body's error may be a message string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown underlying. The body's error may be a message string.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "error": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "error"
+                      ]
+                    }
+                  ]
                 }
               }
             }
@@ -2619,6 +2740,9 @@
           }
         }
       }
+    },
+    "/api/replay/underlyings/{symbol}/series": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
     },
     "/api/replay/underlyings/{symbol}/probability": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1probability"
@@ -6697,66 +6821,6 @@
         }
       }
     },
-    "/api/underlyings/{symbol}/series": {
-      "parameters": [
-        {
-          "name": "symbol",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "fields",
-          "in": "query",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "interval",
-          "in": "query",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "from",
-          "in": "query",
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "to",
-          "in": "query",
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "get": {
-        "summary": "Stored volatility series",
-        "description": "1d completed sessions (up to 3660 days) or 1m samples (up to 7 days). Fields are stored series names; proxy_iv30, rv21, vix and vix_minus_mfiv are daily only. VIX tracking requires same-session SPX/SPY and VIX observations, without substituting proxy history. sample_time is the local market sample; vix_sample_time is the source daily bar start.",
-        "x-scope": "read",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VolatilitySeries"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/api/underlyings/{symbol}/surface-history": {
       "parameters": [
         {
@@ -6844,9 +6908,6 @@
     },
     "/api/replay/history/{run_id}/underlyings/{symbol}/surface-history": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1surface-history"
-    },
-    "/api/replay/underlyings/{symbol}/series": {
-      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
     },
     "/api/replay/history/{run_id}/underlyings/{symbol}/series": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
@@ -25693,7 +25754,7 @@
           },
           "revision": {
             "type": "integer",
-            "description": "Scenario output revision. New runs use 8, which freezes ETF underlying prices at the 16:00 ET stock close (13:00 early) while options trade to 16:15 (13:15 early). Revision 7 keeps positive two-sided quotes with sizes inside four model standard deviations of the forward, using the greater of ATM and strike IV, including 5-delta calls and puts and ordinary protective wings. Remote tails may have no bid; authored book stress events override normal quotes. Saved revisions 1–7 retain their original events; an omitted revision regenerates revision 1."
+            "description": "Scenario output revision. New runs use 9, which gives every strike of an ETF monthly its monthly open interest, holds SPY option volatility with its price after the stock close and keeps an overnight start's frozen index at previous_close. Revision 8 freezes ETF underlying prices at the 16:00 ET stock close (13:00 early) while options trade to 16:15 (13:15 early). Revision 7 keeps positive two-sided quotes with sizes inside four model standard deviations of the forward, using the greater of ATM and strike IV, including 5-delta calls and puts and ordinary protective wings. Remote tails may have no bid; authored book stress events override normal quotes. Saved revisions 1–8 retain their original events; an omitted revision regenerates revision 1."
           },
           "seed": {
             "type": "string"

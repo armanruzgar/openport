@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -91,6 +92,7 @@ class MassiveProvider final : public PollingProvider {
   Options options_;
   SnapshotPublisher publisher_;
   std::atomic<bool> realtime_{false};
+  std::unordered_map<std::string, double> window_spots_;  ///< Last spot per underlying, for the strike window.
 };
 
 /// A cash dividend as Massive's dividends endpoint lists it.

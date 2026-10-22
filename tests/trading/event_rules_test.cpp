@@ -341,6 +341,17 @@ TEST(EventRules, MidnightDayEndKeepsHoldingWindowsUntilTheNextDay) {
   EXPECT_EQ(windows.front().end, md::new_york_to_utc({2026, 9, 26}, 0, 0));
   EXPECT_EQ(event_entry_check(r, "SPX", friday).code, Reason::HOLD_RESTRICTED);
 }
+TEST(EventRules, AnEarlyCloseMovesTheHoldCutoffAsMuchEarlier) {
+  AccountRules r; r.hold_restrictions = {"weekend"};
+  normalize_event_rules(r, true);
+  // The day after Thanksgiving closes at 13:00: the 15:45 cutoff becomes 12:45.
+  const auto friday = md::new_york_to_utc({2026, 11, 27}, 12, 50);
+  ASSERT_EQ(md::regular_close_hour({2026, 11, 27}), 13);
+  const auto windows = event_windows(r, friday, friday);
+  ASSERT_EQ(windows.size(), 1U);
+  EXPECT_EQ(windows.front().start, md::new_york_to_utc({2026, 11, 27}, 12, 45));
+  EXPECT_EQ(event_entry_check(r, "SPX", friday).code, Reason::HOLD_RESTRICTED);
+}
 TEST(EventRules, CombinedRolloverPrecedenceAndRecoveryBeforeLateCloses) {
   for (const bool overnight : {false, true}) {
     for (const bool explicit_roll : {false, true}) {

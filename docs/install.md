@@ -65,6 +65,12 @@ docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport -e DATABENT
 
 `docker build -t openport .` builds the same image from a checkout.
 
+The commands that run once and exit, `--verify-run FILE`, `--backtest` and
+`--import-day`, use the same image and get only the arguments you pass, for example
+`docker run --rm -v openport:/var/lib/openport ghcr.io/38st/openport --verify-run /var/lib/openport/paper-journal.jsonl`.
+Add `--paper-journal /var/lib/openport/paper-journal.jsonl` to a backtest to use the
+server's playbooks, and write its `--out` report inside the volume.
+
 ## Docker Compose
 
 Or use [docker-compose.yml](../docker-compose.yml) from this checkout:

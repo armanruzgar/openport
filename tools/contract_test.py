@@ -248,9 +248,14 @@ class Contract:
                 self.call("GET", verify + "?format=receipt", success=True)
             else:
                 raise ContractMismatch("/api/replay: history is empty; enable durable journals to check archived routes")
-        finally:
+        except BaseException as error:
             if started:
-                self.call("DELETE", "/api/replay", success=True)
+                # A failed cleanup must not replace the failure that stopped the run.
+                try:
+                    self.call("DELETE", "/api/replay", success=True)
+                except Exception as cleanup:
+                    error.add_note(f"cleanup DELETE /api/replay also failed: {cleanup}")
+            raise
         print(f"contract: {len(self.checked)} route/method responses validated")
 
 
@@ -265,6 +270,8 @@ def main():
         Contract(args.base_url, args.token, spec).run()
     except Exception as error:
         print(f"contract: {error}", file=sys.stderr)
+        for note in getattr(error, "__notes__", ()):
+            print(f"contract: {note}", file=sys.stderr)
         return 1
     return 0
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from http.client import HTTPException
 import re
 from typing import Literal
+import uuid
 
 from mcp.server.mcpserver import MCPServer
 from openport import ApiError, Client
@@ -330,8 +332,20 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
 
     @server.tool()
     def place_order(order: Order, account: str | None = None, replay: bool = False) -> dict:
-        """Place a paper order tagged with this agent's name."""
-        return write(account, replay, lambda target: target.place_order(order_body(order)))
+        """Place a paper order tagged with this agent's name. Every result names the
+        client_order_id sent: repeat it to retry after an uncertain response."""
+        body = order_body(order)
+        # Name the ID here rather than in the client, so a failed or lost response still returns it.
+        if not body.get("client_order_id"):
+            body["client_order_id"] = str(uuid.uuid4())
+        try:
+            response = write(account, replay, lambda target: target.place_order(body))
+        except (OSError, HTTPException) as error:
+            # A timeout or dropped connection: the order may have reached the server.
+            response = {"error": {"code": "NO_RESPONSE", "message": f"No response from openportd ({error}); the order may have been placed",
+                                  "status": None}, "account": account, "paper": True}
+        response["client_order_id"] = body["client_order_id"]
+        return response
 
     @server.tool()
     def cancel_order(order_id: str, account: str | None = None, replay: bool = False) -> dict:

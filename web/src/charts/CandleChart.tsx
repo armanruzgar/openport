@@ -98,16 +98,18 @@ export function CandleChart({ bars, interval, levels = [], band, height, formatP
   const xAt = (index: number) => margin.left + (index - win.start + 0.5) * step
 
   // Wheel gestures need a non-passive listener to keep them from the page.
-  const latest = useRef({ win, step })
-  latest.current = { win, step }
+  const latest = useRef({ win, step, total: bars.length })
+  latest.current = { win, step, total: bars.length }
   useEffect(() => {
     const element = ref.current
     if (!element) return
     const onWheel = (event: WheelEvent) => {
-      const { win: current, step: width } = latest.current
+      const { win: current, step: width, total } = latest.current
       if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
         event.preventDefault()
-        setView({ span: current.span, offset: current.offset - event.deltaX / Math.max(width, 1e-9) })
+        // Pan from the unrounded offset, kept in range, so small swipes add up.
+        setView((previous) => ({ span: current.span,
+          offset: Math.max(0, Math.min(total - current.span, previous.offset)) - event.deltaX / Math.max(width, 1e-9) }))
       } else if (event.ctrlKey || event.metaKey) {
         event.preventDefault()
         setView({ span: current.span * (event.deltaY > 0 ? 1.15 : 1 / 1.15), offset: current.offset })

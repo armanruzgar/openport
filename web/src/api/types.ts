@@ -517,7 +517,7 @@ export interface RunInput {
   size?: number
   builtin?: boolean
   generator?: number
-  /** Scenario output revision: 8 freezes ETF prices at the stock close while options trade on; older runs keep their saved revision. */
+  /** Scenario output revision: 9 gives every strike of an ETF monthly its monthly open interest, and 8 froze ETF prices at the stock close; older runs keep their saved revision. */
   revision?: number
   seed?: string
 }

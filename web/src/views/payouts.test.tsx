@@ -102,7 +102,8 @@ describe("funded accounts and payouts", () => {
     const payout = ruleText(custom).find((rule) => rule.title === "Payouts")!
     const text = renderToStaticMarkup(<>{payout.body}</>)
     expect(text).toContain("$200.25")
-    expect(text).toContain("$2,000.50 for payout 1")
+    // A single cap, like the last of several, applies to every later payout too.
+    expect(text).toContain("$2,000.50 for payout 1 and later")
     expect(text).toContain("capped at $2,000.50")
   })
   it("states the funded rules and locks funded plans until their evaluation passes", () => {

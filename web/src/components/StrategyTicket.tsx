@@ -26,6 +26,7 @@ import { comboTickCents, extendedSession, formatMoney, limitOnlyNotice, paperNot
 import { useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
 import { OrderResult } from "./OrderTicket"
+import { useClientOrderId } from "./OrderActions"
 import { WriteAccess, writeBlocked } from "./TradingControls"
 import { useSpreadExits } from "./SpreadExits"
 import { Segmented } from "./ui"
@@ -111,7 +112,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
   const [pending, setPending] = useState(false)
   const [order, setOrder] = useState<Order>()
   const [error, setError] = useState<unknown>()
-  const request = useRef<NewOrder | null>(null)
+  const clientIds = useClientOrderId()
   const busy = useRef(false)
   const latest = useQuery({
     queryKey: ["trading", accountScope, "ticket-order", order?.id, trading.account_version],
@@ -129,7 +130,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
       setAmount(Math.abs(rounded).toFixed(2))
       setDirection(rounded < 0 ? "credit" : "debit")
     }
-    request.current = null
+    clientIds.reset()
     setOrder(undefined)
     setError(undefined)
   }
@@ -223,7 +224,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
     applyNet(current + (delta * tick) / 100)
   }
   function newOrder() {
-    request.current = null
+    clientIds.reset()
     setOrder(undefined)
     setError(undefined)
   }
@@ -235,16 +236,17 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
     setPending(true)
     setError(undefined)
     try {
-      request.current ??= {
-        client_order_id: crypto.randomUUID(), legs: legs.map(({ symbol, side, ratio }) => ({ symbol, side, ratio })), quantity: q,
+      // Terms changed after a failure go out as a new order; the same terms retry under the same ID.
+      const request = clientIds.stamp({
+        client_order_id: "", legs: legs.map(({ symbol, side, ratio }) => ({ symbol, side, ratio })), quantity: q,
         ...(join.group ? { group: join.group } : {}),
         ...(type === "market" ? { type, time_in_force: "ioc" as const } : { type, time_in_force: tif, limit_price: limitText }),
         ...(type === "limit" && tif === "gtd" ? { good_till } : {}),
         ...(walk.walk ? { walk: walk.walk } : {}),
         ...(exitable && exits.bracket ? { bracket: exits.bracket } : {}),
         ...(orderTags.length ? { tags: orderTags } : {}), ...(note ? { note } : {}),
-      }
-      const response = await api.submitOrder(request.current, trading.write)
+      })
+      const response = await api.submitOrder(request, trading.write)
       if (sameSession()) setOrder(response.order)
     } catch (failure) {
       if (sameSession()) setError(failure)

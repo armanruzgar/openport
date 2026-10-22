@@ -104,6 +104,26 @@ TEST(Massive, PublishesTheChainWithRhoMarkedUnpublished) {
   EXPECT_EQ(sink.all<md::UnderlyingQuote>().at(0).symbol, "SPX");
 }
 
+TEST(Massive, AnIndexLevelIsItsSpotAndAMissingPriceIsNoSpotOfZero) {
+  std::string index(kPage);
+  index.replace(index.find(R"("price": 7777.27)"), 16, R"("value": 7777.27)");
+  const auto page = providers::parse_massive_chain_page(index);
+  EXPECT_DOUBLE_EQ(page.underlying_price, 7777.27);
+  providers::MassiveProvider provider({.api_key = "test"});
+  Collector sink;
+  md::Subscription subscription;
+  subscription.strike_window = 0.1;  // 7405 is inside, 9000 outside
+  // No price yet: nothing published as spot, and the window defines nothing new.
+  provider.publish_chain("SPX", page.contracts, 0.0, 0, subscription, sink);
+  EXPECT_TRUE(sink.all<md::UnderlyingQuote>().empty());
+  EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
+  provider.publish_chain("SPX", page.contracts, page.underlying_price, page.underlying_ts, subscription, sink);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 1u);
+  provider.publish_chain("SPX", page.contracts, 0.0, 0, subscription, sink);
+  EXPECT_EQ(sink.all<md::UnderlyingQuote>().size(), 1u);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 1u);
+}
+
 TEST(Massive, IndexUnderlyingsUseTheIPrefix) {
   EXPECT_EQ(providers::massive_chain_url("https://api.massive.com", "SPX"),
             "https://api.massive.com/v3/snapshot/options/I:SPX?limit=250");

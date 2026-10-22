@@ -15,7 +15,7 @@ Providers, command-line flags, terminal settings and who may write.
 | Charles Schwab | `schwab` | Trader API option chain snapshots with the underlying quote, open interest, volume, delta and gamma; real-time or delayed as each response's `isDelayed` says. Polling follows the 120 requests a minute budget. Not yet run live with an account; reports welcome | `SCHWAB_CLIENT_ID`, `SCHWAB_CLIENT_SECRET`, `SCHWAB_REFRESH_TOKEN` |
 | Alpaca | `alpaca` | Option chain snapshots for equity and ETF underlyings (Alpaca lists no index options, so no SPX, NDX, RUT or VIX), from the free indicative feed (`--option feed=indicative`, derived quotes, not the OPRA NBBO) or OPRA with a subscription (`feed=opra`); volume, delta and gamma, no open interest. Not yet run live with an account; reports welcome | `APCA_API_KEY_ID`, `APCA_API_SECRET_KEY` |
 | Interactive Brokers | `ibkr` | Client Portal Web API snapshots through the local gateway you have logged in to, with open interest, delta and gamma; needs `--expiries` and `--window`, because every contract takes one of the account's market-data lines. Build option `OPENPORT_WITH_IBKR` (on by default). Not yet run live with an account; reports welcome | the gateway's own login |
-| Demo | `demo` | Simulated SPX, SPY and QQQ regular sessions, rotating on successive trading dates; `--option days=trend,chop --option speed=60` | none |
+| Demo | `demo` | Simulated SPX, SPY, QQQ, XSP, NDX, RUT and VIX regular sessions, rotating on successive trading dates; `--option days=trend,chop --option speed=60` | none |
 | Replay | `replay` | A recording played back as the whole feed, at 1×, 10×, 60× or full speed (`--option file=PATH --option speed=10`) | none |
 
 Databento, Massive and ThetaData follow their documented APIs and are tested against
@@ -125,8 +125,11 @@ the kill switch, playbook definitions and history deletion. Writes always check 
 without `--require-token`, reads ignore one that matches nothing, except expired
 sandbox credentials when sandboxes are offered. The server prints
 only the link for a token it keeps in a file, as the Docker image does, and never
-prints named tokens. The token file is read at startup; protect it with owner-only
-permissions and restart to rotate tokens. Send Bearer credentials over
+prints named tokens. The token file must hold a valid token at startup; after that the
+server reloads it whenever its modification time or size changes, on `SIGHUP`, or on an
+admin `POST /api/tokens/reload`, so edits rotate or revoke tokens at once, without a
+restart. A malformed replacement keeps the last good set; an empty one revokes every
+named token ([API](api.md)). Protect the file with owner-only permissions. Send Bearer credentials over
 HTTPS behind a reverse proxy for remote access. Static
 files are confined to the web root, and WebSocket upgrades must come from the same
 origin; behind a proxy that rewrites the Host header, list your public origin with

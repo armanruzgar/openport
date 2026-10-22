@@ -42,6 +42,7 @@
 #include "openport/providers/massive.hpp"
 #include "openport/providers/demo.hpp"
 #include "openport/providers/options.hpp"
+#include "openport/providers/replay.hpp"
 #include "openport/server/api.hpp"
 #include "openport/server/backtest.hpp"
 #include "openport/server/engine.hpp"
@@ -366,15 +367,25 @@ std::string load_write_token(const std::filesystem::path& path, bool create = tr
     token += kHex[b & 15];
   }
   if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
-  const int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (fd < 0) {
-    if (errno == EEXIST) if (auto existing = read(); !existing.empty()) return existing;
-    throw std::runtime_error("cannot create " + path.string() + ": " + std::strerror(errno));
-  }
+  // Written in full beside the file and then put in place, so a failed write never
+  // leaves an empty token file behind. An empty one (touched, or emptied to rotate
+  // the token) is replaced; a missing one is created only if no other start won.
+  const auto temporary = path.string() + ".tmp." + std::to_string(::getpid());
+  const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) throw std::runtime_error("cannot create " + temporary + ": " + std::strerror(errno));
   const std::string line = token + "\n";
   const bool written = ::write(fd, line.data(), line.size()) == static_cast<ssize_t>(line.size()) && ::fsync(fd) == 0;
   ::close(fd);
-  if (!written) throw std::runtime_error("cannot write " + path.string());
+  if (!written) { ::unlink(temporary.c_str()); throw std::runtime_error("cannot write " + path.string()); }
+  std::error_code ec;
+  const bool replace = std::filesystem::exists(path, ec);
+  const int placed = replace ? std::rename(temporary.c_str(), path.c_str()) : ::link(temporary.c_str(), path.c_str());
+  const int error = errno;
+  ::unlink(temporary.c_str());
+  if (placed != 0) {
+    if (error == EEXIST) if (auto existing = read(); !existing.empty()) return existing;
+    throw std::runtime_error("cannot create " + path.string() + ": " + std::strerror(error));
+  }
   return token;
 }
 
@@ -658,12 +669,15 @@ int run(int argc, char** argv) {
   // More named accounts live beside the main journal, one journal each.
   const auto paper_accounts = settings.paper_journal.empty()
       ? std::filesystem::path{} : std::filesystem::absolute(settings.paper_journal).parent_path() / "accounts";
+  // Checked before compacting, which rewrites every journal: it has no dry run.
+  if ((settings.repair_dry_run || !settings.repair_file.empty()) && !settings.repair_journals)
+    throw std::invalid_argument("--dry-run and --file require --repair-journals");
+  if (settings.compact_journals && settings.repair_journals)
+    throw std::invalid_argument("--compact-journals and --repair-journals are separate runs");
   if (settings.compact_journals) {
     if (settings.paper_journal.empty()) return usage("HOME is unavailable; specify --paper-journal");
     return compact_journals(settings.paper_journal, paper_accounts);
   }
-  if ((settings.repair_dry_run || !settings.repair_file.empty()) && !settings.repair_journals)
-    throw std::invalid_argument("--dry-run and --file require --repair-journals");
   if (settings.repair_journals) {
     if (settings.paper_journal.empty()) return usage("HOME is unavailable; specify --paper-journal");
     return repair_journals(settings.paper_journal, paper_accounts, settings.repair_dry_run, settings.repair_file);
@@ -704,6 +718,9 @@ int run(int argc, char** argv) {
   if (const auto* feed = dynamic_cast<providers::DemoProvider*>(provider.get())) {
     if (!settings.explicit_symbols) settings.subscription.underlyings = feed->symbols();
     feed->validate(settings.subscription);
+  } else if (const auto* replay = dynamic_cast<providers::ReplayProvider*>(provider.get())) {
+    // A recording plays what it recorded unless --symbols chooses some of it.
+    if (!settings.explicit_symbols) settings.subscription.underlyings = replay->header().subscription.underlyings;
   }
 
   server::CandleStore::Options candle_options;

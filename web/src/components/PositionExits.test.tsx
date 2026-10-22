@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { api } from "../api/client"
+import { api, ApiError } from "../api/client"
 import { liveState, useLive } from "../api/live"
 import type { Order, Position } from "../api/trading-types"
 import { order, portfolio, status, trading } from "../test/trading-fixtures"
@@ -120,4 +120,20 @@ it("trails a held long's stop by a percentage of the mid", async () => {
   expect(api.submitOrder).toHaveBeenCalledWith(expect.objectContaining({
     side: "sell", type: "market", time_in_force: "ioc", trigger, bracket: { stop_loss: { trigger } },
   }), trading.write)
+}, renderTimeout)
+
+it("sends corrected exits after a rejection under a new client order ID, and a retry of the same terms under the same one", async () => {
+  vi.mocked(api.submitOrder).mockRejectedValue(new ApiError(422, "Stop is through the market", "INVALID_TRIGGER"))
+  await render(<PositionExitsDialog position={long} trading={trading} onClose={() => {}} />)
+  await waitForRender(() => expect(host.textContent).toContain("Set exits"))
+  await setField("Stop price", "3.50")
+  await submit()
+  await waitForRender(() => expect(host.textContent).toContain("Stop is through the market"))
+  await submit()
+  await setField("Stop price", "3.40")
+  await submit()
+  const ids = vi.mocked(api.submitOrder).mock.calls.map(([request]) => request.client_order_id)
+  expect(ids).toHaveLength(3)
+  expect(ids[1]).toBe(ids[0])
+  expect(ids[2]).not.toBe(ids[0])
 }, renderTimeout)

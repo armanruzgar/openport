@@ -126,7 +126,10 @@ void Desk::evaluate_playbooks(md::Timestamp driver_time, std::string_view only_a
           if (!reply.decision.ok()) return reply;
         }
       }
-      if (time_stop && close_reason != cancel_reason) {
+      // Live, every time stop checks its close can trade before cancelling working
+      // protection. A replay's plain time stop keeps its recorded order, cancelling
+      // first, so saved runs still verify.
+      if (time_stop && (close_reason != cancel_reason || !options_.replay)) {
         // An account that cannot preview (failed, or stopping) waits like an unpriced close.
         const auto check = project(order, 1.0);
         if (!check.preview || !check.preview->decision.ok()) {

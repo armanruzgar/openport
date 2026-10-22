@@ -49,3 +49,23 @@ it.each([false, true])("confirms before cancelling and keeps the last result on 
   expect(host.querySelector('[role="status"]')?.textContent).toContain(all ? "1 order cancelled" : ": cancelled")
   expect(host.querySelector("dialog")).toBeNull()
 })
+it("edits the order as it is now, and not one that has since filled", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))
+  await act(async () => root.render(<QueryClientProvider client={client}><OrdersView /></QueryClientProvider>))
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label^="Edit order order-1"]')!.click())
+  const key = tradingQueries(0, "17", true).allOrders.queryKey
+  // The query cache notifies observers on a timer.
+  const update = (changes: Partial<typeof order>) => act(async () => {
+    client.setQueryData(key, { account_version: "17", orders: [{ ...order, ...changes }] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await update({ filled_quantity: 4, remaining_quantity: 1 })
+  expect(host.querySelector("dialog[open]")?.textContent).toContain("filled 4 of 5")
+  const limit = host.querySelector<HTMLInputElement>('dialog[open] input[aria-label="Limit price"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(limit, "4.70")
+    limit.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  await update({ filled_quantity: 5, remaining_quantity: 0, status: "filled" })
+  expect(host.querySelector<HTMLButtonElement>('dialog[open] button[type="submit"]')!.disabled).toBe(true)
+})

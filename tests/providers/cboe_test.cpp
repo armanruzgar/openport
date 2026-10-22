@@ -497,6 +497,37 @@ TEST(Cboe, ReadsTheQuotePageWhileTheCdnFileIsStale) {
   EXPECT_EQ(fetched(), (std::vector<std::string>{"file"}));
 }
 
+TEST(Cboe, ReadingThePageDoesNotExtendItsHold) {
+  md::Timestamp now = utc("2026-09-24 15:04:13");
+  providers::CboeDelayedProvider::Options options;
+  options.clock = [&] { return now; };
+  providers::CboeDelayedProvider provider(options);
+  const std::string file = restamped(kChain, "2026-09-23 03:54:59");
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) {
+    return url.find("cdn-api.cboe.com") != std::string_view::npos ? net::HttpResponse{200, file}
+                                                                   : net::HttpResponse{200, page(restamped(kChain, "15:03:40"))};
+  };
+  const md::Subscription subscription{{"SPX"}, 0, 0.0};
+  Collector sink;
+  const auto file_tried = [&] {
+    const bool tried = std::any_of(http.urls.begin(), http.urls.end(), [](const auto& url) { return url.find("cdn-api.cboe.com") != std::string::npos; });
+    http.urls.clear();
+    return tried;
+  };
+  provider.poll_once(http, "SPX", subscription, sink);
+  EXPECT_TRUE(file_tried());
+  // The page is read every 45 s for five minutes; then the file is tried again.
+  bool retried = false;
+  for (int poll = 1; poll <= 7 && !retried; ++poll) {
+    now += 45 * md::kNanosPerSecond;
+    provider.poll_once(http, "SPX", subscription, sink);
+    retried = file_tried();
+    if (poll < 7) { EXPECT_FALSE(retried) << poll; }
+  }
+  EXPECT_TRUE(retried);
+}
+
 TEST(CboeCharts, UrlsFollowTheChainConvention) {
   EXPECT_EQ(providers::cboe_chart_url("SPX", providers::CboeChart::Intraday),
             "https://cdn-api.cboe.com/api/global/delayed_quotes/charts/intraday/_SPX.json");
@@ -673,17 +704,30 @@ TEST(CboeHolidays, TheScheduleIsFetchedDailyAndKeepsWhatItSaw) {
   EXPECT_EQ(schedule.poll_once(http), clock + 3600 * md::kNanosPerSecond);
   EXPECT_EQ(schedule.error(), "cboe holiday schedule: HTTP 503");
   EXPECT_EQ(received.size(), 1u);
-  // A special closure appears; next year's schedule no longer lists this year's, which stay.
+  // A special closure appears in the year's listing.
   clock += 3600 * md::kNanosPerSecond;
-  http.respond = [](std::string_view) {
-    return net::HttpResponse{200, "##\nHoliday Name,Date,Regular Trading Hours,Global Trading Hours\n"
-                                  "National Day of Mourning,2026-10-07,None,None\n"};
-  };
+  const std::string mourning = std::string(kHolidays2026) + "National Day of Mourning,2026-10-07,None,None\n";
+  http.respond = [&](std::string_view) { return net::HttpResponse{200, mourning}; };
   schedule.poll_once(http);
   EXPECT_TRUE(schedule.error().empty());
   ASSERT_EQ(received.size(), 2u);
   EXPECT_EQ(received[1].size(), 13u);
   EXPECT_EQ(received[1][8], (md::ScheduledDay{{2026, 10, 7}, "National Day of Mourning", true, 13, 0}));
+  // Rescinded: the year's next listing no longer has it, so it is dropped.
+  clock += 24 * 3600 * md::kNanosPerSecond;
+  http.respond = [](std::string_view) { return net::HttpResponse{200, std::string(kHolidays2026)}; };
+  schedule.poll_once(http);
+  ASSERT_EQ(received.size(), 3u);
+  EXPECT_EQ(received[2].size(), 12u);
+  // Next year's schedule no longer lists this year's, which stay.
+  clock += 24 * 3600 * md::kNanosPerSecond;
+  http.respond = [](std::string_view) {
+    return net::HttpResponse{200, "##\nHoliday Name,Date,Regular Trading Hours,Global Trading Hours\n"
+                                  "New Year's Day,2027-01-01,None,None\n"};
+  };
+  schedule.poll_once(http);
+  ASSERT_EQ(received.size(), 4u);
+  EXPECT_EQ(received[3].size(), 13u);
 }
 
 TEST(Cboe, PublishesReportedVolumeIncludingZeroAndDeduplicatesWithinTheDate) {

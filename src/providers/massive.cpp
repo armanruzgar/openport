@@ -101,7 +101,9 @@ MassiveContract parse_contract(object result, MassivePage& page) {
     } else if (key == "underlying_asset") {
       for (auto asset : nested) {
         const std::string_view name = asset.unescaped_key();
+        // Index underlyings (I:SPX) report their level as "value" rather than "price".
         if (name == "price") page.underlying_price = as_double(asset.value());
+        if (name == "value" && page.underlying_price <= 0.0) page.underlying_price = as_double(asset.value());
         if (name == "last_updated") page.underlying_ts = as_nanos(asset.value());
       }
     }
@@ -217,7 +219,12 @@ void MassiveProvider::publish_chain(const std::string& underlying,
                                     const std::vector<MassiveContract>& contracts,
                                     double underlying_price, md::Timestamp underlying_ts,
                                     const md::Subscription& subscription, md::EventSink& sink) {
-  sink.publish(md::UnderlyingQuote{underlying, underlying_ts, 0.0, 0.0, underlying_price});
+  // Without a price (a plan without the underlying's entitlement) no spot of 0 is
+  // published over the last one, and a strike window keeps the last spot it had.
+  if (underlying_price > 0.0) sink.publish(md::UnderlyingQuote{underlying, underlying_ts, 0.0, 0.0, underlying_price});
+  auto& window_spot = window_spots_[underlying];
+  if (underlying_price > 0.0) window_spot = underlying_price;
+  const bool waiting = subscription.strike_window > 0 && window_spot <= 0.0;
 
   std::vector<std::pair<const MassiveContract*, md::OptionContract>> parsed;
   parsed.reserve(contracts.size());
@@ -239,11 +246,11 @@ void MassiveProvider::publish_chain(const std::string& underlying,
   realtime_ = any_quote && all_realtime;
 
   const ChainFilter filter(subscription, md::date_from_days(md::now() / md::kNanosPerDay),
-                           underlying_price, expiries);
+                           window_spot, expiries);
   constexpr double kUnpublished = std::numeric_limits<double>::quiet_NaN();
   std::set<md::InstrumentId> seen;
   for (auto& [c, contract] : parsed) {
-    if (!publisher_.known(c->symbol) && !filter.admits(contract)) continue;
+    if (!publisher_.known(c->symbol) && (waiting || !filter.admits(contract))) continue;
     check_cancelled();
     const md::InstrumentId id = publisher_.define(c->symbol, std::move(contract), sink);
     seen.insert(id);

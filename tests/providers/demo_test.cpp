@@ -352,6 +352,89 @@ TEST(DemoMarket, AmericanAndOpeningVolumeRevisionsAreUnchanged) {
   }
 }
 
+TEST(DemoMarket, RevisionNineGivesEveryStrikeOfAnEtfMonthlyItsMonthlyInterest) {
+  // On 2026-09-16 SPY's Sep-18 expiry is a daily (3% of strikes) and September's
+  // monthly (listed through August, 6%). Only the wider strikes were monthly before.
+  const auto scenario = providers::parse_scenario(R"({"id":"etf-monthly","title":"ETF monthly","description":"Open interest of a monthly that is also a daily.",
+    "symbols":["SPY"],"date":"2026-09-16","seed":4242,"generator":1,"volatility":0,"iv_shift":0,"spot_vol":0,
+    "session":"regular","drift":[[1,0]]})", "etf-monthly.json");
+  const auto interest = [&](int revision) {
+    const auto path = temporary("etf-monthly");
+    providers::write_scenario_recording(path, scenario, scenario.date, scenario.seed, revision);
+    md::RecordingReader reader(path);
+    std::map<md::InstrumentId, md::OptionContract> contracts;
+    std::map<std::string, double> out;
+    for (auto event = reader.next(); event; event = reader.next()) {
+      if (const auto* d = std::get_if<md::ContractDefinition>(&event->event)) contracts[d->id] = d->contract;
+      else if (const auto* oi = std::get_if<md::OpenInterest>(&event->event)) {
+        const auto& c = contracts.at(oi->id);
+        if (c.expiry == md::Date{2026, 9, 18}) out.try_emplace(c.osi_symbol(), oi->contracts);
+      }
+    }
+    remove_recording(path);
+    return out;
+  };
+  const auto before = interest(8), after = interest(9);
+  ASSERT_EQ(before.size(), after.size());
+  std::size_t raised = 0, kept = 0;
+  for (const auto& [symbol, contracts] : before) {
+    const double ratio = after.at(symbol) / contracts;
+    if (std::abs(ratio - 1) < 1e-9) ++kept;
+    else { EXPECT_NEAR(ratio, 3, 0.05) << symbol; ++raised; }
+  }
+  EXPECT_GT(raised, 0U);
+  EXPECT_GT(kept, 0U);
+}
+
+TEST(DemoMarket, RevisionNineKeepsAnOvernightIndexAtTheScenariosPreviousClose) {
+  const auto scenario = providers::parse_scenario(R"({"id":"gap-night","title":"Gap night","description":"An overnight session after a moved close.",
+    "symbols":["SPX"],"date":"2026-09-17","seed":77,"generator":1,"volatility":0.1,"iv_shift":0,"spot_vol":-2,
+    "session":"overnight","previous_close":0.05,"drift":[[1,0]]})", "gap-night.json");
+  for (const int revision : {8, 9}) {
+    const auto path = temporary("gap-night");
+    providers::write_scenario_recording(path, scenario, scenario.date, scenario.seed, revision);
+    md::RecordingReader reader(path);
+    const auto day = md::previous_business_day(scenario.date);
+    std::optional<double> frozen, close;
+    for (auto event = reader.next(); event; event = reader.next()) {
+      if (const auto* q = std::get_if<md::UnderlyingQuote>(&event->event); q && q->symbol == "SPX" && q->ts == md::new_york_to_utc(day, 16, 0) && !frozen) frozen = q->last;
+      if (const auto* c = std::get_if<md::UnderlyingClose>(&event->event); c && c->symbol == "SPX" && c->date == day) close = c->price;
+    }
+    remove_recording(path);
+    ASSERT_TRUE(frozen && close) << revision;
+    if (revision == 9) { EXPECT_DOUBLE_EQ(*frozen, *close); }
+    else { EXPECT_NE(*frozen, *close); }
+  }
+}
+
+TEST(DemoMarket, RevisionNineChangesSpyOptionsOnlyAfterTheStockClose) {
+  // Revision 9 stops SPY's option vols following the latent level once its price is
+  // held at the close; until then both revisions quote alike.
+  const auto scenario = providers::parse_scenario(R"({"id":"spy-close","title":"SPY close","description":"SPY options after the stock close.",
+    "symbols":["SPY"],"date":"2026-09-16","seed":99,"generator":1,"volatility":0.3,"iv_shift":0,"spot_vol":-2,
+    "session":"regular","drift":[[1,0]]})", "spy-close.json");
+  const auto close = md::new_york_to_utc(scenario.date, 16, 0);
+  const auto quotes = [&](int revision) {
+    const auto path = temporary("spy-close");
+    providers::write_scenario_recording(path, scenario, scenario.date, scenario.seed, revision);
+    md::RecordingReader reader(path);
+    std::map<md::InstrumentId, md::OptionContract> contracts;
+    std::pair<std::vector<std::pair<double, double>>, std::vector<std::pair<double, double>>> out;
+    const auto option = md::parse_osi("SPY   261016C00600000")->osi_symbol();
+    for (auto event = reader.next(); event; event = reader.next()) {
+      if (const auto* d = std::get_if<md::ContractDefinition>(&event->event)) contracts[d->id] = d->contract;
+      else if (const auto* q = std::get_if<md::OptionQuote>(&event->event); q && contracts.at(q->id).osi_symbol() == option)
+        (q->ts <= close ? out.first : out.second).emplace_back(q->bid, q->ask);
+    }
+    remove_recording(path);
+    return out;
+  };
+  const auto before = quotes(8), after = quotes(9);
+  ASSERT_FALSE(before.second.empty());
+  EXPECT_EQ(before.first, after.first);
+  EXPECT_NE(before.second, after.second);
+}
+
 TEST(DemoMarket, RevisionEightHoldsEtfsAtStockCloseWhileOptionsTradeOn) {
   const test::SanitizerScenarioScale scale;
   const auto scenario = providers::parse_scenario(R"({"id":"etf-close","title":"ETF close","description":"Stock close regression.",

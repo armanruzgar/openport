@@ -3,7 +3,7 @@ import { useOutsideClose } from "../lib/outside-close"
 import { useEffect, useRef, useState } from "react"
 import { useLive } from "../api/live"
 import { useAccount, useRisk, useFills, useTrades } from "../api/trading"
-import { alertStore, describeAlert, directionFor, dividendMessage, deliveryMessage, fillMessage, newestFill, newFills, priceAlertMessage, reached, unordered, useAlertSettings } from "../lib/alerts"
+import { alertStore, describeAlert, directionFor, dividendMessage, deliveryMessage, fillMessage, newestFill, newFills, priceAlertMessage, reached, unordered, useAlertSettings, type PriceAlert } from "../lib/alerts"
 import { useActiveAccount } from "../lib/active-account"
 import { ruleAlerts, ruleAlertStore } from "../lib/rule-alerts"
 import { isNum } from "../lib/format"
@@ -23,8 +23,13 @@ export function AlertWatcher() {
     const spot = (symbol: string) => underlyings.find((u) => u.symbol === symbol)?.spot
     const due = settings.prices.filter((alert) => reached(alert, spot(alert.symbol)))
     if (!due.length) return
-    alertStore.set({ ...settings, prices: settings.prices.filter((alert) => !due.includes(alert)) })
-    for (const alert of due) {
+    // Claim the due alerts in storage: one another tab already fired is gone from there.
+    let claimed: PriceAlert[] = []
+    alertStore.update((current) => {
+      claimed = current.prices.filter((alert) => due.some((d) => d.id === alert.id))
+      return { ...current, prices: current.prices.filter((alert) => !claimed.includes(alert)) }
+    })
+    for (const alert of claimed) {
       const { title, body } = priceAlertMessage(alert, spot(alert.symbol) as number)
       notify(title, body, settings.sound, { kind: "alert", scope: "browser", id: `price:${alert.id}` })
     }
@@ -45,8 +50,9 @@ function RuleWatcher({ sound }: { sound: boolean }) {
   const { source } = useLive()
   useEffect(() => {
     if (!account || !risk || account.account_version !== risk.account_version) return
-    const alerts = ruleAlertStore.fresh(source === "live" ? id : `${source}:${id}`, account.evaluation.day, ruleAlerts(account, risk))
-    for (const alert of alerts) notify(alert.title, alert.body, sound, { kind: "rule", scope: `${source}:${id}`, id: `rule:${account.evaluation.day}:${alert.id}`, quiet: source !== "live" })
+    const attempt = account.evaluation.attempt, day = account.evaluation.day
+    const alerts = ruleAlertStore.fresh(source === "live" ? id : `${source}:${id}`, attempt, day, ruleAlerts(account, risk))
+    for (const alert of alerts) notify(alert.title, alert.body, sound, { kind: "rule", scope: `${source}:${id}`, id: `rule:${attempt}:${day}:${alert.id}`, quiet: source !== "live" })
   }, [account, risk, id, sound, source])
   return null
 }
@@ -110,13 +116,14 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
   const [permission, setPermission] = useState(notificationPermission)
   const spot = underlyings.find((u) => u.symbol === symbol)?.spot
   const value = Number(level)
-  const valid = symbol !== "" && /^\d+(\.\d+)?$/.test(level.trim()) && value > 0
+  // The direction comes from the price now, so an alert waits for one.
+  const valid = symbol !== "" && /^\d+(\.\d+)?$/.test(level.trim()) && value > 0 && isNum(spot)
   const direction = directionFor(value, isNum(spot) ? spot : null)
   const delay = status?.provider.delay_seconds
   function add() {
     if (!valid) return
-    alertStore.set({ ...settings, prices: [...settings.prices,
-      { id: crypto.randomUUID(), symbol, direction, level: value, created: new Date().toISOString() }] })
+    alertStore.update((current) => ({ ...current, prices: [...current.prices,
+      { id: crypto.randomUUID(), symbol, direction, level: value, created: new Date().toISOString() }] }))
     setLevel("")
   }
   return <Dialog title="Alerts" onClose={onClose}>
@@ -132,12 +139,13 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
             onChange={(e) => setLevel(e.target.value)} /></label>
         <button type="submit" className="trade-button" disabled={!valid}>Add alert</button>
       </form>
+      {symbol !== "" && !isNum(spot) && <p className="text-xs text-muted">Alerts need a price for {symbol} to tell rising from falling.</p>}
       {valid && <p className="text-xs text-muted">Alerts once when {describeAlert({ symbol, direction, level: value })}{isNum(spot) ? `, from ${spot.toFixed(2)} now` : ""}.</p>}
       {settings.prices.length ? <ul className="divide-y divide-border/60 text-sm">
         {settings.prices.map((alert) => <li key={alert.id} className="flex items-center justify-between gap-2 py-1.5">
           <span>{describeAlert(alert)} <span className="text-xs text-muted">· set {setAt.format(Date.parse(alert.created))} ET</span></span>
           <button type="button" className="trade-button" aria-label={`Remove alert: ${describeAlert(alert)}`}
-            onClick={() => alertStore.set({ ...settings, prices: settings.prices.filter((a) => a.id !== alert.id) })}>Remove</button>
+            onClick={() => alertStore.update((current) => ({ ...current, prices: current.prices.filter((a) => a.id !== alert.id) }))}>Remove</button>
         </li>)}
       </ul> : <p className="text-sm text-muted">No price alerts.</p>}
     </section>
@@ -145,10 +153,10 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted">Browser notifications</h3>
       <label className="flex items-center justify-between gap-2 text-sm">Notify on each fill
         <input type="checkbox" role="switch" aria-label="Fill alerts" checked={settings.fills} className="h-4 w-4 accent-[var(--accent)]"
-          onChange={(e) => alertStore.set({ ...settings, fills: e.target.checked })} /></label>
+          onChange={(e) => alertStore.update((current) => ({ ...current, fills: e.target.checked }))} /></label>
       <label className="flex items-center justify-between gap-2 text-sm">Play a sound
         <input type="checkbox" role="switch" aria-label="Alert sound" checked={settings.sound} className="h-4 w-4 accent-[var(--accent)]"
-          onChange={(e) => alertStore.set({ ...settings, sound: e.target.checked })} /></label>
+          onChange={(e) => alertStore.update((current) => ({ ...current, sound: e.target.checked }))} /></label>
       <p className="text-xs text-muted">{permission === "granted" ? "Browser notifications are on, so alerts reach you in other tabs too."
         : permission === "denied" ? "This browser blocks notifications from openport, so alerts show on this page only. Allow them in the site settings to change that."
         : permission === "unsupported" ? "This browser has no notifications, so alerts show on this page only."

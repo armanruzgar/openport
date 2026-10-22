@@ -155,13 +155,16 @@ TEST(Tastytrade, FiltersWaitForActualSpotAndRetainPreviouslyDefinedOptions) {
   providers::TastytradeMapper mapper({{"SPX"}, 1, .01}, sink);
   mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
   EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
-  EXPECT_EQ(mapper.subscriptions().size(), 2u);
+  EXPECT_EQ(mapper.subscriptions().size(), 2u);  // the underlying's Quote and Trade
   auto spot = quote("$SPX");
   spot["bidPrice"] = 7399;
   spot["askPrice"] = 7401;
   mapper.event(spot);
   EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 4u);
+  // Quote, Greeks, Summary and Trade (for dayVolume) for each option: the only events read for one.
   EXPECT_EQ(mapper.subscriptions().size(), 18u);
+  EXPECT_TRUE(mapper.subscriptions().contains({"Trade", ".SPX261016C7400"}));
+  EXPECT_FALSE(mapper.subscriptions().contains({"Profile", "$SPX"}));
   sink.events.clear();
   spot["bidPrice"] = 8999;
   spot["askPrice"] = 9001;

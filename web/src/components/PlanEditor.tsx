@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useRef, useState, type ReactNode } from "react"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
 import type { AccountRules, DailyLossBasis, Money, Plan, PlanEvent, HoldRestriction } from "../api/trading-types"
@@ -126,8 +126,10 @@ const amount = (text: string): Money | null => text.trim() === "" || Number(text
 export function customPlan(form: PlanForm, base: AccountRules): { initial_cash: Money; rules: AccountRules } | { error: string } {
   const name = form.name.trim()
   if (!name) return { error: "Name the plan" }
+  // A static floor hides the lock fields and never locks.
+  const lockBalance = form.lock === "balance" && form.drawdown_mode !== "static"
   for (const [label, value, required] of [["Starting balance", form.initial_cash, true], ["Profit target", form.phase === "funded" ? "" : form.profit_target],
-    ["Max drawdown", form.max_drawdown], ["Lock balance", form.lock === "balance" ? form.lock_balance : ""],
+    ["Max drawdown", form.max_drawdown], ["Lock balance", lockBalance ? form.lock_balance : ""],
     ["Maximum trade risk", form.max_trade_risk], ["Daily loss limit", form.daily_loss_limit], ["Profitable-day profit", form.phase === "funded" ? "" : form.profitable_day_profit]] as const)
     if ((required || value.trim() !== "") && !validMoney(value.trim())) return { error: `${label} must be a dollar amount` }
   for (const [label, value] of [["Evaluation fee", form.evaluation_fee], ["Reset fee", form.reset_fee], ["Activation fee", form.activation_fee]] as const)
@@ -171,7 +173,7 @@ export function customPlan(form: PlanForm, base: AccountRules): { initial_cash: 
       return { error: "News events need a UTC timestamp ending in Z; other events need a valid YYYY-MM-DD date" }
   }
   const drawdown = amount(form.max_drawdown)
-  if (form.lock === "balance" && !amount(form.lock_balance)) return { error: "Enter the balance the floor locks at" }
+  if (lockBalance && !amount(form.lock_balance)) return { error: "Enter the balance the floor locks at" }
   const trailing = drawdown != null && form.drawdown_mode !== "static"
   let payouts: AccountRules["payouts"] = null
   if (form.phase === "funded") {
@@ -252,7 +254,11 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 export function PlanEditor({ form, onChange, disabled }: { form: PlanForm; onChange: (form: PlanForm) => void; disabled?: boolean }) {
   const [importStatus, setImportStatus] = useState("")
   const live = useLive()
+  // Imports finish later; merge into the form as edited meanwhile.
+  const latest = useRef(form)
+  latest.current = form
   const mergeEvents = (events: PlanEvent[]) => {
+    const form = latest.current
     const merged = [...form.events, ...events].filter((e, i, all) => all.findIndex((v) => JSON.stringify(v) === JSON.stringify(e)) === i)
     if (merged.length > 256) { setImportStatus("Import exceeds 256 events; remove rows first."); return }
     onChange({ ...form, events: merged }); setImportStatus(`Imported ${merged.length - form.events.length} events. Review and save the plan to apply them.`)

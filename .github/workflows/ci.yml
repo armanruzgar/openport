@@ -183,6 +183,8 @@ jobs:
         run: python tools/demo_soak_test.py
       - name: Order fuzz tool (scripted replay)
         run: python tools/order_fuzz_test.py
+      - name: Container entrypoint (no Docker)
+        run: python tools/docker_entrypoint_test.py
 
   docker:
     name: Docker image

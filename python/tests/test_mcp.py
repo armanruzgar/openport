@@ -247,3 +247,24 @@ def test_flow_earnings_and_analysis_tools_only_read(stub):
     for view in ["stress", "var"]:
         call(server, "analysis_risk", portfolio="ira", view=view)
         assert stub.requests[-1][:2] == ("GET", "/api/analysis/portfolios/ira/risk/" + view)
+
+
+def test_place_order_returns_the_client_order_id_to_retry_after_an_uncertain_response(stub, monkeypatch):
+    server = create_server(Client(stub.url, "secret", retries=0))
+    order = {"quantity": 1, "type": "limit", "time_in_force": "day", "symbol": "SPXW  261022P05000000", "side": "buy", "limit_price": "0.05"}
+    # The status read and then the order both meet an unavailable server.
+    stub.failures = [(503, "TRADING_UNAVAILABLE"), (503, "TRADING_UNAVAILABLE")]
+    failed = call(server, "place_order", account="practice", order=order)
+    assert failed["error"]["status"] == 503
+    sent = stub.requests[-1][3]["client_order_id"]
+    assert failed["client_order_id"] == sent
+    retried = call(server, "place_order", account="practice", order={**order, "client_order_id": failed["client_order_id"]})
+    assert "error" not in retried
+    assert stub.requests[-1][3]["client_order_id"] == sent == retried["client_order_id"]
+    # A timeout is an uncertain response too, not a bare tool error.
+    def timed_out(self, order=None, **fields):
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(Client, "place_order", timed_out)
+    lost = call(server, "place_order", account="practice", order=order)
+    assert lost["error"]["code"] == "NO_RESPONSE"
+    assert lost["client_order_id"] and lost["client_order_id"] != sent

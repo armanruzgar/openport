@@ -103,14 +103,15 @@ function OrdersAccount({ trading }: { trading: TradingStatus }) {
       : <Panel title={tab === "working" ? "Working orders" : "Order history"} actions={tab === "working" && trading.enabled && working.length > 0
           ? <button type="button" className="trade-button" onClick={() => { setNotice(null); setCancelAll(true) }}>Cancel all</button> : undefined}>
         {notice && <p className="mb-2 text-xs text-muted" role="status">{notice}</p>}
-        {orders.data ? <OrdersTable orders={visible} trading={trading} onDone={setNotice} empty={tab === "working" ? "No working orders." : "No orders match."} /> : <Empty>Loading orders…</Empty>}
+        {orders.data ? <OrdersTable orders={visible} all={all} trading={trading} onDone={setNotice} empty={tab === "working" ? "No working orders." : "No orders match."} /> : <Empty>Loading orders…</Empty>}
       </Panel>}
     {cancelAll && <CancelAllDialog orders={working} trading={trading} onClose={() => setCancelAll(false)}
       onDone={(message) => { setNotice(message); setCancelAll(false) }} />}
   </div>
 }
 
-function OrdersTable({ orders, trading, empty, onDone }: { orders: Order[]; trading: TradingStatus; empty: string; onDone: (message: string | null) => void }) {
+/** `all` holds every order as it is now, so an open dialog follows its order out of the filtered rows. */
+function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[]; all: Order[]; trading: TradingStatus; empty: string; onDone: (message: string | null) => void }) {
   const token = useWriteToken()
   const [cancelling, setCancelling] = useState<Order | null>(null)
   const [editing, setEditing] = useState<Order | null>(null)
@@ -156,10 +157,10 @@ function OrdersTable({ orders, trading, empty, onDone }: { orders: Order[]; trad
         </tr>),
       ])}
     </Table>}
-    {cancelling && <CancelOrderDialog order={orders.find((o) => o.id === cancelling.id) ?? cancelling} trading={trading}
+    {cancelling && <CancelOrderDialog order={all.find((o) => o.id === cancelling.id) ?? cancelling} trading={trading}
       onClose={() => setCancelling(null)} onDone={(message) => { onDone(message); setCancelling(null) }} />}
-    {detail && <OrderDetailDialog order={orders.find((o) => o.id === detail.id) ?? detail} onClose={() => setDetail(null)} />}
-    {editing && <EditOrderDialog order={editing} trading={trading} onClose={() => setEditing(null)}
+    {detail && <OrderDetailDialog order={all.find((o) => o.id === detail.id) ?? detail} onClose={() => setDetail(null)} />}
+    {editing && <EditOrderDialog order={all.find((o) => o.id === editing.id) ?? editing} trading={trading} onClose={() => setEditing(null)}
       onDone={(order) => { onDone(`${orderLabel(order)}: changed, ${order.status === "partially_filled" ? "partially filled" : order.status}`); setEditing(null) }} />}
   </div>
 }

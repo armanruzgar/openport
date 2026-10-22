@@ -315,6 +315,42 @@ TEST(Playbooks, DteAndBusinessDayExitsCloseAtTheirExactUpdate) {
   }
 }
 
+TEST(Playbooks, ForwardTestsCountADaysInTradeDeadlineAsATimeStop) {
+  const auto opened = md::new_york_to_utc({2026, 9, 4}, 10, 0);
+  const auto deadline = md::new_york_to_utc({2026, 9, 8}, 15, 45);
+  auto setup = breadth_setup();
+  setup["management"].erase("trailing_stop");
+  setup["management"]["max_days_in_trade"] = 1;
+  server::Desk::Options options;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("live test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(opened, 10), opened, opened);
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", setup}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  ASSERT_EQ(desk.trading_view()->snapshot->positions.size(), 2U) << desk.trading_view()->playbooks_json;
+  desk.replay_batch(breadth_batch(deadline, 10), deadline, deadline);
+  const auto view = desk.trading_view();
+  ASSERT_TRUE(view->snapshot->positions.empty());
+  ASSERT_EQ(view->snapshot->recent_orders.back().request.note, "Playbook automatic days in trade stop; entry 1");
+  const auto forward = server::playbook_forward_report(json::parse(view->playbooks_json), *view).at("morning");
+  EXPECT_EQ(forward.at("time_stops"), 1);
+}
+TEST(Playbooks, AnArchivedPlaybooksReplayModeCanStillBeTurnedOff) {
+  const auto opened = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  server::Desk::Options options; options.replay = true;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(opened, 10), opened, opened);
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", breadth_setup()}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "delete"}, {"id", "morning"}, {"version", 1}}, opened).decision.ok());
+  EXPECT_EQ(json::parse(desk.trading_view()->playbooks_json).at("modes").at("morning"), "auto");
+  EXPECT_FALSE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, opened).decision.ok());
+  const auto off = command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "off"}}, opened);
+  ASSERT_TRUE(off.decision.ok()) << off.decision.message;
+  EXPECT_EQ(json::parse(desk.trading_view()->playbooks_json).at("modes").value("morning", "off"), "off");
+}
+
 TEST(Playbooks, DefinitionValidationRejectsUnknownAndInconsistentFields) {
   EXPECT_NO_THROW(server::validate_playbook(definition()));
   for (const auto& [path, value] : std::vector<std::pair<std::string, json>>{
@@ -1520,6 +1556,37 @@ TEST(Playbooks, ATimeStopWaitsForLiquidityWithoutJournalingRejections) {
     }
   }
   EXPECT_TRUE(view->snapshot->positions.empty());
+}
+TEST(Playbooks, ALiveTimeStopKeepsProtectionUntilItsCloseCanTrade) {
+  test::RecordingFile file;
+  const auto recording = no_bid_wing_day(file.directory, 6);
+  auto setup = definition();
+  setup["window"]["end"] = "09:31";
+  setup["structure"]["template"]["target"] = {{"mode", "strike"}, {"value", 5000}};
+  setup["structure"]["expiry"]["max"] = 1;
+  setup["management"] = {{"close_by", "09:32"}, {"take_profit_percent", 50}};
+  md::RecordingReader reader(recording);
+  server::Desk::Options options;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("live test", reader.header().capabilities, reader.header().subscription, options);
+  desk.start_trading();
+  providers::ReplayBatches batches(reader, reader.header().subscription);
+  const auto first = batches.next(); ASSERT_TRUE(first);
+  desk.replay_batch(first->events, first->received, first->time);
+  ASSERT_TRUE(command(desk, {{"action", "create"}, {"definition", setup}}, desk.market_time()).decision.ok());
+  ASSERT_TRUE(command(desk, {{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, desk.market_time()).decision.ok());
+  const auto exits_working = [&] {
+    const auto open = desk.trading_view()->snapshot->open_orders;
+    return std::any_of(open.begin(), open.end(), [](const auto& order) { return order.parent != 0; });
+  };
+  ASSERT_TRUE(exits_working());
+  while (const auto batch = batches.next()) {
+    desk.replay_batch(batch->events, batch->received, batch->time);
+    // Past close_by while the wing has no bid: the take-profit still protects the trip.
+    if (desk.market_time() < md::new_york_to_utc({2026, 9, 16}, 9, 36)) { EXPECT_TRUE(exits_working()) << md::format_timestamp(desk.market_time()); }
+  }
+  EXPECT_FALSE(exits_working());
+  EXPECT_TRUE(desk.trading_view()->snapshot->positions.empty());
 }
 TEST(Playbooks, AdherenceCountsASameSecondLossOnlyIfItClosedBeforeTheEntry) {
   // B45: an entry accepted while the losing strategy was still open broke no cooldown,

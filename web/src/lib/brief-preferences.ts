@@ -2,13 +2,15 @@ import { useSyncExternalStore } from "react"
 
 const key = "openport.brief-levels"
 const event = "openport:brief-levels"
-let fallback = false
+// The choice this page could not store; it outranks a stale stored one.
+let fallback: boolean | undefined
 export function loadBriefLevels() {
-  try { return localStorage.getItem(key) === "true" } catch { return fallback }
+  if (fallback !== undefined) return fallback
+  try { return localStorage.getItem(key) === "true" } catch { return false }
 }
 export function saveBriefLevels(value: boolean) {
-  fallback = value
-  try { localStorage.setItem(key, String(value)) } catch { /* Private browsing can deny storage. */ }
+  // Private browsing can deny storage, and full storage refuses writes.
+  try { localStorage.setItem(key, String(value)); fallback = undefined } catch { fallback = value }
   window.dispatchEvent(new Event(event))
 }
 function subscribe(callback: () => void) {

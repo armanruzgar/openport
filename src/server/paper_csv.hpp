@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <charconv>
 #include <nlohmann/json.hpp>
 
@@ -20,7 +21,19 @@ inline std::optional<md::Date> csv_date(std::string_view text) {
       !md::valid_date(date) || md::format_date(date) != text) return {};
   return date;
 }
-inline std::string csv_quote(std::string_view text) {
+/// A cell a spreadsheet would run as a formula (a note or tag starting = + - @, tab
+/// or CR) gets a leading apostrophe; signed numbers stay numbers.
+inline std::string csv_neutral(std::string_view text) {
+  if (text.empty() || std::string_view("=+-@\t\r").find(text.front()) == std::string_view::npos) return std::string(text);
+  const auto digits = text.substr(1);
+  const bool number = (text.front() == '-' || text.front() == '+') && !digits.empty() &&
+      digits.find_first_not_of("0123456789.") == std::string_view::npos && std::count(digits.begin(), digits.end(), '.') <= 1 &&
+      digits.front() != '.' && digits.back() != '.';
+  return number ? std::string(text) : "'" + std::string(text);
+}
+inline std::string csv_quote(std::string_view raw) {
+  const auto neutral = csv_neutral(raw);
+  const std::string_view text = neutral;
   if (text.find_first_of(",\"\r\n") == std::string_view::npos) return std::string(text);
   std::string result = "\"";
   for (const auto c : text) { result += c; if (c == '"') result += '"'; }

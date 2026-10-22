@@ -126,6 +126,9 @@ describe("custom plans", () => {
     expect(customPlan({ ...form, day_end: "16:00" }, rules)).toEqual({ error: "The trading day ends between 16:15 and 24:00" })
     expect(customPlan({ ...form, day_end: "24:30" }, rules)).toEqual({ error: "The trading day ends between 16:15 and 24:00" })
     expect(customPlan({ ...form, lock: "balance", lock_balance: "" }, rules)).toEqual({ error: "Enter the balance the floor locks at" })
+    // A static floor hides the lock balance, so a stale one cannot block the plan.
+    for (const lock_balance of ["", "1,000"])
+      expect(customPlan({ ...form, drawdown_mode: "static", lock: "balance", lock_balance }, rules)).not.toHaveProperty("error")
     expect(customPlan({ ...form, initial_cash: "0" }, rules)).toEqual({ error: "The starting balance must be above zero" })
   })
 })
@@ -208,6 +211,8 @@ it("blocks flat-time entries at the market clock and announces the deadline", ()
   const r = { ...rules, flat_time: "15:45", day_end: "18:00" }
   const before = "2026-11-03T20:30:00Z", after = "2026-11-03T20:45:00Z"
   expect(timeRuleNotices(account.evaluation, r, before)).toEqual(["Flat by 15:45 ET, positions will be closed"])
+  // Saturday 15:30 ET: no session to be flat for.
+  expect(timeRuleNotices(account.evaluation, r, "2026-11-07T20:30:00Z")).toEqual([])
   expect(timeRuleNotices(account.evaluation, r, after)).toEqual(["Flat time passed; openings blocked until the day ends"])
   expect(planEntryNotice(r, "SPX", before, false)).toBeNull()
   expect(planEntryNotice(r, "SPX", after, false)).toContain("FLAT_TIME")

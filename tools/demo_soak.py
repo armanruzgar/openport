@@ -2,7 +2,7 @@
 """Soak test: hold an SPX iron condor with far wings through a demo-market day and
 check, every few seconds, that the account can still trade.
 
-    tools/demo_soak.py URL [SPEED] [PLAN] [--seed SEED] [--timeout SECONDS] [--json [PATH]]
+    tools/demo_soak.py URL [SPEED] [PLAN] [--seed SEED] [--token TOKEN] [--timeout SECONDS] [--json [PATH]]
 
 URL is an openportd to test, such as one started for it with
 `openportd --port 8094 --no-history --paper-journal /tmp/soak/paper.jsonl`. The soak
@@ -10,12 +10,15 @@ replaces any replay running there and trades only the replay's own in-memory acc
 SPEED is the replay's speed (default 120), PLAN its plan (default practice) and SEED
 the demo day's seed (default: one the server picks). The report prints the replay
 run id and seed, so a saved run can be found and the market can be repeated.
+TOKEN is sent as a Bearer credential, for a server with a write token or
+--require-token; without one, only a loopback server with open writes accepts the soak.
 --json writes a sorted JSON summary to PATH; omit PATH or use - for stdout, with
 human progress on stderr. Without --json, text output is unchanged. The JSON
 includes `run_id`, market times, leg symbols, all counters and exit_status. Probe
 timing still depends on playback and HTTP scheduling.
 --timeout sets the HTTP timeout in seconds (default 180), including scenario
-generation, replay stepping and pausing while the current batch finishes.
+generation, replay stepping and pausing while the current batch finishes. It also
+bounds the wait for SPX to accept orders once the replay starts.
 
 Each probe pauses the replay, places a limit buy of the short put inside the price
 band and under the ask, cancels it and resumes, so it asks whether the account can
@@ -23,6 +26,8 @@ trade at all without trading. A probe that fills all the same is reported and so
 back, keeping the condor whole. The report counts refused probes by code, probe fills
 and portfolio snapshots with incomplete marks; a healthy build refuses only by the
 account's own risk rules and fills no probe. The exit status is 1 when a probe filled.
+A soak that cannot start, cannot get SPX accepting orders or cannot fill every condor
+leg stops before probing, saying why, with exit status 2 and no summary.
 """
 import argparse
 import json
@@ -33,15 +38,22 @@ import urllib.error
 import urllib.request
 
 
+class SoakError(RuntimeError):
+    """The soak could not set up what it measures."""
+
+
 class Client:
-    def __init__(self, base, timeout=180):
+    def __init__(self, base, timeout=180, token=None):
         self.base = base.rstrip("/")
         self.timeout = timeout
+        self.token = token
 
     def call(self, method, path, body=None):
         data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(self.base + path, data=data, method=method,
-                                         headers={"Content-Type": "application/json"})
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = "Bearer " + self.token
+        request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return response.status, json.loads(response.read() or b"null")
@@ -111,14 +123,20 @@ def soak(client, speed=120, plan="practice", seed=None, out=print, pause=1.0):
     if seed is not None:
         start["seed"] = str(seed)
     status, body = client.call("POST", "/api/replay", start)
-    assert status in (200, 201), (status, body)
+    if status not in (200, 201):
+        raise SoakError(f"POST /api/replay: HTTP {status} {body}")
     identity = body["replay"]
     out("demo day", identity.get("scenario"), "run", identity.get("id"), "seed", identity.get("seed"), "plan", plan, "speed", speed)
+    deadline = time.monotonic() + client.timeout
     while True:
-        _, st = client.call("GET", "/api/replay/status")
+        status, st = client.call("GET", "/api/replay/status")
+        if status != 200:
+            raise SoakError(f"GET /api/replay/status: HTTP {status} {st}")
         spx = next((u for u in st["underlyings"] if u["symbol"] == "SPX"), None)
         if spx and spx["options"] > 0 and spx["paper"]["accepting"]:
             break
+        if time.monotonic() >= deadline:
+            raise SoakError(f"SPX did not accept orders within {client.timeout:g} s: {spx}")
         time.sleep(0.5)
 
     _, initial_portfolio = client.call("GET", "/api/replay/portfolio")
@@ -146,11 +164,17 @@ def soak(client, speed=120, plan="practice", seed=None, out=print, pause=1.0):
     out("expiry", expiry)
     for name, leg in legs.items():
         out(f"  {name:10s} {leg['symbol']}  bid {leg['bid']} ask {leg['ask']}  delta {leg['delta']:.3f}")
+    missing = []
     for name, side in (("long put", "buy"), ("long call", "buy"), ("short put", "sell"), ("short call", "sell")):
         status, body = client.call("POST", "/api/replay/orders", {
             "client_order_id": f"condor-{name.replace(' ', '-')}", "symbol": legs[name]["symbol"], "side": side,
             "type": "market", "quantity": 1, "time_in_force": "ioc"})
         out(f"  {side} {name}: {status} {body.get('order', {}).get('status') if status < 300 else body}")
+        if status >= 300 or int(body.get("order", {}).get("filled_quantity") or 0) != 1:
+            missing.append(f"{name} ({code(body) or (body or {}).get('order', {}).get('status')})")
+    # Without the whole condor, every probe would be an opening buy, not one against the held short.
+    if missing:
+        raise SoakError("the condor did not form: " + ", ".join(missing) + " did not fill")
     _, risk = client.call("GET", "/api/replay/risk")
     limits = (risk or {}).get("limits") or {}
 
@@ -234,6 +258,7 @@ def main(argv=None):
     parser.add_argument("speed", nargs="?", type=int, default=120)
     parser.add_argument("plan", nargs="?", default="practice")
     parser.add_argument("--seed", type=int, help="demo day seed; the server picks one when omitted")
+    parser.add_argument("--token", help="Bearer token for a server with a write token or --require-token")
     parser.add_argument("--timeout", type=float, default=180, metavar="SECONDS",
                         help="HTTP timeout, including replay generation and stepping (default: 180 seconds)")
     parser.add_argument("--json", nargs="?", const="-", metavar="PATH",
@@ -242,7 +267,11 @@ def main(argv=None):
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be a finite positive number of seconds")
     out = (lambda *parts: print(*parts, file=sys.stderr)) if args.json == "-" else print
-    result = soak(Client(args.url, timeout=args.timeout), args.speed, args.plan, args.seed, out=out)
+    try:
+        result = soak(Client(args.url, timeout=args.timeout, token=args.token), args.speed, args.plan, args.seed, out=out)
+    except SoakError as error:
+        print(f"demo_soak: {error}", file=sys.stderr)
+        return 2
     if args.json is not None:
         write_json(result, args.json)
     return result["exit_status"]

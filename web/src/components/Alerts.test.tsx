@@ -24,7 +24,7 @@ class FakeNotification {
   static requestPermission = vi.fn(async () => "granted" as NotificationPermission)
   constructor(title: string, options?: { body?: string }) { shown.push({ title, body: options?.body }) }
 }
-function live(spot: number, source: "live" | "replay" = "live", scope = 0) {
+function live(spot: number | null, source: "live" | "replay" = "live", scope = 0) {
   const underlyings = [{ ...status.underlyings[0]!, spot }]
   vi.mocked(useLive).mockReturnValue(liveState({ ...status, underlyings }, null, "open", scope, "main", () => {}, source))
 }
@@ -117,6 +117,25 @@ describe("the alert watcher", () => {
     expect(host.textContent).toContain("SPX rose to 5,000.00")
   })
 
+  it("keeps another tab's alerts and does not repeat one it already fired", async () => {
+    const up = { id: "up", symbol: "SPX", direction: "above" as const, level: 5000, created: "2026-09-23T19:00:00.000Z" }
+    const down = { ...up, id: "down", direction: "below" as const, level: 4900 }
+    const added = { ...up, id: "added", level: 5100 }
+    alertStore.set({ fills: false, sound: false, prices: [up, down] })
+    live(4990)
+    await render(<AlertWatcher />)
+    // Another tab fired "up" and added an alert; its storage event has not arrived here yet.
+    localStorage.setItem("openport.alerts", JSON.stringify({ fills: false, sound: false, prices: [down, added] }))
+    live(5001)
+    await render(<AlertWatcher />)
+    expect(shown).toEqual([])
+    expect(alertStore.get().prices.map((a) => a.id)).toEqual(["down", "added"])
+    // Its later changes arrive as storage events.
+    localStorage.setItem("openport.alerts", JSON.stringify({ fills: false, sound: false, prices: [down] }))
+    await act(async () => window.dispatchEvent(new StorageEvent("storage", { key: "openport.alerts" })))
+    expect(alertStore.get().prices.map((a) => a.id)).toEqual(["down"])
+  })
+
   it("ignores a replay's prices", async () => {
     alertStore.set({ ...noAlerts, prices: [{ id: "up", symbol: "SPX", direction: "above", level: 5000, created: "2026-09-23T19:00:00.000Z" }] })
     live(5100, "replay")
@@ -158,6 +177,14 @@ describe("the alerts dialog", () => {
     await act(async () => host.querySelector<HTMLInputElement>('[aria-label="Fill alerts"]')!.click())
     expect(alertStore.get().fills).toBe(true)
     await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Remove alert: SPX rises to 5,010.00"]')!.click())
+    expect(alertStore.get().prices).toEqual([])
+  })
+  it("waits for a price before adding an alert, which would otherwise default to rising", async () => {
+    live(null)
+    await render(<AlertsDialog initial={{ symbol: "SPX", level: 4900 }} onClose={() => {}} />)
+    expect(host.textContent).toContain("Alerts need a price for SPX")
+    expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')!.disabled).toBe(true)
+    await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     expect(alertStore.get().prices).toEqual([])
   })
 })

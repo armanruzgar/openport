@@ -180,6 +180,24 @@ describe("Backtest page", { timeout: renderTimeout }, () => {
     expect(host.querySelector('path[aria-label="Combined cumulative P&L"]')).not.toBeNull()
     expect(host.querySelectorAll("table")[1]?.textContent).toContain("—")
   })
+  it("drops a compared or selected run the server has since deleted", async () => {
+    const runs = ["000001", "000002", "000003"].map((id) => ({ ...state, id, status: "completed" as const, summary: report.summary }))
+    vi.mocked(api.backtests).mockResolvedValue({ active: null, label, runs })
+    vi.mocked(api.backtest).mockImplementation(async (id) => ({ ...state, id, status: "completed" }))
+    await render()
+    for (const id of ["000001", "000002", "000003"]) await act(async () => host.querySelector<HTMLInputElement>(`[aria-label="Compare run ${id}"]`)!.click())
+    await field("Saved report", "000002")
+    await waitForRender(() => expect(host.textContent).toContain("Run 000002 · completed"))
+    await waitForRender(() => expect(api.compareBacktests).toHaveBeenCalledWith(["000001", "000002", "000003"], expect.any(AbortSignal)))
+    // Retention removes 000002 when another backtest starts.
+    vi.mocked(api.backtests).mockResolvedValue({ active: null, label, runs: [runs[0]!, runs[2]!] })
+    vi.mocked(api.compareBacktests).mockClear(); vi.mocked(api.backtest).mockClear()
+    await waitForRender(() => expect(host.querySelector('[aria-label="Compare run 000002"]')).toBeNull())
+    await waitForRender(() => expect(api.compareBacktests).toHaveBeenCalledWith(["000001", "000003"], expect.any(AbortSignal)))
+    expect(api.compareBacktests).not.toHaveBeenCalledWith(expect.arrayContaining(["000002"]), expect.anything())
+    await waitForRender(() => expect(host.textContent).toContain("Run 000001 · completed"))
+    expect(api.backtest).not.toHaveBeenCalledWith("000002", expect.anything())
+  })
   it("compares joint and legacy reports and labels already-joint inputs", async () => {
     await render(<BacktestCompareView comparison={{ ...comparison,
       runs: [{ ...comparison.runs[0]!, playbook: undefined, mode: "joint", playbooks: [{ id: "alpha", name: "Alpha", version: 2 }, { id: "beta", name: "Beta", version: 1 }] }, comparison.runs[1]!],

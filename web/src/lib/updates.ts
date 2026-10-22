@@ -47,10 +47,11 @@ export function createUpdateStore(
   storage: () => Storage = () => localStorage,
   fetcher: typeof fetch = (...args) => fetch(...args),
   now = () => Date.now(),
-  // Serialize checks across tabs too. Without locks or storage, skip the check.
+  // Serialize checks across tabs too. Browsers offer locks only in secure contexts; on
+  // plain HTTP the day reserved in storage still limits them. Without storage, skip the check.
   lock: (check: () => Promise<void>) => Promise<void> = (check) =>
     typeof navigator !== "undefined" && navigator.locks
-      ? navigator.locks.request("openport.update-check", check) : Promise.resolve(),
+      ? navigator.locks.request("openport.update-check", check) : check(),
 ) {
   let state: UpdateState | undefined
   let pending: Promise<void> | null = null

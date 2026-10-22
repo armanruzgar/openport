@@ -7,7 +7,7 @@ import type { Bracket, NewOrder, Order, Position, Side, TradingStatus } from "..
 import { describeTrigger, stopDirection } from "../lib/ticket"
 import { formatMoney, roundToTick, validMoney } from "../lib/trading"
 import { Dialog } from "./Dialog"
-import { EditOrderDialog, useWrite } from "./OrderActions"
+import { EditOrderDialog, useClientOrderId, useWrite } from "./OrderActions"
 import { useStopTrail } from "./TrailFields"
 import { TradingError, WriteAccess } from "./TradingControls"
 
@@ -42,7 +42,7 @@ export function PositionExitsDialog({ position, trading, onClose }: { position: 
   const orders = useOpenOrders()
   const active = positionExits(position, orders.data?.orders ?? [])
   const [editing, setEditing] = useState<Order | null>(null)
-  const [clientId] = useState(() => crypto.randomUUID())
+  const clientIds = useClientOrderId()
   const long = position.quantity > 0
   const opened: Side = long ? "buy" : "sell"
   const exitSide: Side = long ? "sell" : "buy"
@@ -64,7 +64,7 @@ export function PositionExitsDialog({ position, trading, onClose }: { position: 
     ...(targetOn ? { take_profit: { limit_price: target } } : {}),
     ...(stopOn ? { stop_loss: { trigger, ...(limitOn ? { limit_price: limit } : {}) } } : {}),
   } : null
-  const request = bracket ? heldExitsOrder(position, clientId, bracket) : null
+  const request = bracket ? heldExitsOrder(position, "", bracket) : null
   const stopText = describeTrigger(trigger, exitSide, position.underlying)
   return <Dialog title={`Exits · ${position.symbol}`} onClose={onClose}>
     <p className="text-sm">{long ? `${position.quantity} long` : `${-position.quantity} short`} {position.type}s at {formatMoney(position.average_price)}</p>
@@ -79,7 +79,7 @@ export function PositionExitsDialog({ position, trading, onClose }: { position: 
       </div>)}
       <button type="button" className="trade-button" disabled={write.pending || write.blocked}
         onClick={() => void write.run(() => api.cancelOrders(active.map((order) => order.id), trading.write), onClose)}>Cancel exits</button>
-    </> : <form className="space-y-3 text-xs" onSubmit={(e) => { e.preventDefault(); if (request) void write.run(() => api.submitOrder(request, trading.write), onClose) }}>
+    </> : <form className="space-y-3 text-xs" onSubmit={(e) => { e.preventDefault(); if (request) void write.run(() => api.submitOrder(clientIds.stamp(request), trading.write), onClose) }}>
       <fieldset className="space-y-3" disabled={write.pending}>
         <label className="flex items-center gap-2"><input type="checkbox" checked={targetOn} onChange={(e) => setTargetOn(e.target.checked)} />Take profit</label>
         {targetOn && <label className="trade-label">Limit price ($)<input className="trade-input" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} />

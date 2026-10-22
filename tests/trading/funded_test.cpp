@@ -1,6 +1,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include "openport/server/equity.hpp"
 #include <nlohmann/json.hpp>
 
 #include "support/scripted_market.hpp"
@@ -67,6 +68,27 @@ AccountRules size_plan(std::int64_t days = 2, std::int64_t payouts = 1) {
   r.scaling = {{Money{}, 2}, {m("100"), 4}};
   r.size_scaling = SizeScaling{1, payouts, days, 25, m("14000")};
   return r;
+}
+
+TEST(TradingFunded, FillEquitySamplesKeepTheFloorSizeScalingRaised) {
+  ScriptedMarket f;
+  TradingSession s(config(size_plan()), f.time);
+  f.seed(s);
+  profit_day(s, f, "200");
+  next_day(s, f, {2026, 9, 23});
+  ASSERT_TRUE(s.request_payout(m("40"), f.time).decision.ok());
+  next_day(s, f, {2026, 9, 24});
+  ASSERT_EQ(s.snapshot()->evaluation.size_scaling->history.size(), 1U);
+  // The scaled drawdown is wider than the floor's distance below the peak, so a new
+  // high must not move the floor down.
+  ASSERT_TRUE(s.submit(f.market("held", 2), f.time).decision.ok());
+  ASSERT_TRUE(s.submit(f.limit("part", 1, "4.50", Side::Sell, TimeInForce::Gtc), f.time).decision.ok());
+  const auto before = s.snapshot();
+  quote(s, f, "4.50", "4.70");
+  ASSERT_GT(s.snapshot()->evaluation.peak, before->evaluation.peak);
+  const auto samples = server::fill_equity_samples(s, *before);
+  ASSERT_FALSE(samples.empty());
+  for (const auto& sample : samples) EXPECT_EQ(sample.floor, s.snapshot()->evaluation.floor);
 }
 
 TEST(TradingFunded, SizeScalingCreditsCapitalWithoutChangingProfitOrPayoutStanding) {
@@ -278,6 +300,21 @@ TEST(TradingFunded, SizeScalingRejectsEvaluationAndInvalidRangesAndNeverScalesAF
   next_day(s, f, {2026, 9, 24});
   EXPECT_EQ(s.snapshot()->evaluation.starting_balance, m("10000"));
   EXPECT_TRUE(s.snapshot()->evaluation.size_scaling->history.empty());
+}
+
+TEST(TradingFunded, SharesHeldBlockAPayoutAsPositionsDo) {
+  ScriptedMarket f;
+  TradingSession s(config(size_plan()), f.time);
+  f.seed(s);
+  profit_day(s, f, "200");
+  next_day(s, f, {2026, 9, 23});
+  ASSERT_TRUE(s.trade_stock("SPY", 1, f.time, StockPrice{"SPY", f.time, m("100")}).decision.ok());
+  EXPECT_FALSE(payout_quote(*s.snapshot(), s.config().rules).flat);
+  const auto refused = s.request_payout(m("40"), f.time);
+  EXPECT_EQ(refused.decision.code, Reason::PAYOUT_NOT_ELIGIBLE);
+  EXPECT_NE(refused.decision.message.find("share holding"), std::string::npos);
+  ASSERT_TRUE(s.trade_stock("SPY", -1, f.time, StockPrice{"SPY", f.time, m("100")}).decision.ok());
+  EXPECT_TRUE(s.request_payout(m("40"), f.time).decision.ok());
 }
 
 TEST(TradingFunded, ConsistencyCountsNetDaysIncludingTodayAndRestartsAtThePayoutDay) {

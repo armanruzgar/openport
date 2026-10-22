@@ -48,7 +48,8 @@
     const asof = new Date(CH.SPY.last.slice(0, 10) + 'T12:00:00Z');
     const day = asof.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' });
     const date = asof.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-    note.textContent = `# simulated prints at Cboe’s delayed closing quotes, ${day} ${date}. Hover to pause.`;
+    // With reduced motion the tape stays a still snapshot, so there is nothing to pause.
+    note.textContent = `# simulated prints at Cboe’s delayed closing quotes, ${day} ${date}.` + (reduce ? ' Held still for reduced motion.' : ' Hover to pause.');
 
     // The clock runs through the last minutes of that session; options on all three trade until 16:15 ET.
     const OPEN = (15 * 3600 + 52 * 60) * 1000, END = (16 * 3600 + 14 * 60 + 59) * 1000;
@@ -56,14 +57,19 @@
     const gauss = () => Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
     const pad = (s, n) => String(s).padStart(n);
     const spot = s => s.spot0 * (1 + r * s.beta + s.x);
+    // SPXW ticks by the price itself: nickels under 3.00 and dimes from 3.00, so each price
+    // takes its own tick, and a step from 3.00 down lands on 2.95.
     const tickOf = (s, p) => (s.root === 'SPXW' ? (p < 3 ? 0.05 : 0.1) : 0.01);
+    const cents = p => Math.round(p * 100) / 100;
+    const up = (s, p) => cents(p + tickOf(s, p));
+    const down = (s, p) => cents(Math.max(tickOf(s, 0), p - tickOf(s, p - 0.001)));
     function quote(q) {
       const dS = spot(q.s) - q.s.spot0;
       const mid = Math.max(0.01, q.mid + q.delta * dS + 0.5 * q.gamma * dS * dS);
-      const t = tickOf(q.s, mid);
-      const bid = Math.max(t, Math.floor((mid - q.half) / t + 1e-9) * t);
-      const ask = Math.max(bid + t, Math.ceil((mid + q.half) / t - 1e-9) * t);
-      return { bid, ask, t };
+      const low = mid - q.half, high = mid + q.half, tb = tickOf(q.s, low), ta = tickOf(q.s, high);
+      const bid = Math.max(tb, cents(Math.floor(low / tb + 1e-9) * tb));
+      const ask = Math.max(up(q.s, bid), cents(Math.ceil(high / ta - 1e-9) * ta));
+      return { bid, ask };
     }
     function pick(list, total, weight) {
       let u = Math.random() * total;
@@ -96,7 +102,7 @@
       }
       if (u < 0.18) {
         const levels = 2 + (Math.random() * 2 | 0), steps = [];
-        for (let i = 0; i < levels; i++) steps.push([print(q, side, size(s), Math.max(qt.t, px + (buy ? i : -i) * qt.t))]);
+        for (let i = 0, p = px; i < levels; i++, p = buy ? up(s, p) : down(s, p)) steps.push([print(q, side, size(s), p)]);
         return steps;
       }
       return [[print(q, side, size(s), px)]];
@@ -153,12 +159,23 @@
       clearTimeout(trimTimer);
       trimTimer = setTimeout(() => { while (tapeRows.children.length > ROWS) tapeRows.lastElementChild.remove(); }, 220);
     }
+    function fill() {
+      while (tapeRows.children.length < ROWS) {
+        for (const g of order()) { sim += 40 + Math.random() * 600; push(g, false); }
+      }
+    }
     function loop() {
       const now = performance.now();
       let wait = 250;
       if (!paused() && !document.hidden && !tape.hidden) {
         sim += now - last;
-        if (sim > END) sim = OPEN;
+        if (sim > END) {
+          // The clock starts the last minutes again on a fresh tape, so no print sits above a later one.
+          sim = OPEN;
+          queue = [];
+          tapeRows.textContent = '';
+          fill();
+        }
         if (!queue.length) queue = order();
         push(queue.shift(), true);
         wait = queue.length ? 50 + Math.random() * 40 : Math.min(1600, Math.max(60, -Math.log(1 - Math.random()) * 380));
@@ -166,9 +183,7 @@
       last = now;
       setTimeout(loop, wait);
     }
-    while (tapeRows.children.length < ROWS) {
-      for (const g of order()) { sim += 40 + Math.random() * 600; push(g, false); }
-    }
+    fill();
     tape.hidden = note.hidden = false;
     tape.addEventListener('mouseenter', () => { hover = true; });
     tape.addEventListener('mouseleave', () => { hover = false; });
@@ -208,9 +223,11 @@
       tape.hidden = note.hidden = false;
       hintTape.hidden = true;
       pinned = false;
-      res.textContent = 'Simulated prints at Cboe’s delayed closing quotes for SPXW, SPY and QQQ. Sides and sizes are random.';
+      res.textContent = 'Simulated prints at Cboe’s delayed closing quotes for SPXW, SPY and QQQ. Sides and sizes are random.'
+        + (reduce ? ' The tape is held still because your system asks for reduced motion.' : '');
     },
     pause(res) {
+      if (reduce) { res.textContent = 'The tape is already still: your system asks for reduced motion.'; return; }
       pinned = !pinned;
       res.textContent = pinned ? 'Tape paused. Run pause again to resume.' : 'Tape resumed.';
     },
@@ -303,10 +320,13 @@
   new IntersectionObserver(([entry]) => { heroVisible = entry.isIntersecting; }).observe(hero);
   document.addEventListener('keydown', e => {
     const key = e.key || '', ctrl = e.ctrlKey && !e.metaKey && !e.altKey;
-    if (ctrl && key.toLowerCase() === 'l') { e.preventDefault(); run('clear'); return; }
-    if (ctrl && key.toLowerCase() === 'm') { e.preventDefault(); run('theme'); return; }
     const typing = e.target.closest?.('input, textarea, select, [contenteditable]');
-    if (key === '?' && (!typing || (e.target === input && !input.value))) { e.preventDefault(); run('help'); input.focus({ preventScroll: true }); return; }
+    // Shortcuts act at the prompt, or while the terminal is in view and nothing else takes typing:
+    // further down they would scroll the reader back up. ^L stays the address bar's outside the prompt.
+    const terminal = e.target === input || (!typing && heroVisible);
+    if (ctrl && key.toLowerCase() === 'l' && e.target === input) { e.preventDefault(); run('clear'); return; }
+    if (ctrl && key.toLowerCase() === 'm' && terminal) { e.preventDefault(); run('theme'); return; }
+    if (key === '?' && (e.target === input ? !input.value : terminal)) { e.preventDefault(); run('help'); input.focus({ preventScroll: true }); return; }
     if (!typing && heroVisible && key.length === 1 && key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) input.focus({ preventScroll: true });
   });
 

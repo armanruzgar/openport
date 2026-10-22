@@ -75,6 +75,11 @@ export function NewAccountDialog({ trading, onClose, onCreated }: { trading: Tra
   const list = offeredPlans(plans.data?.plans ?? [], account)
   const selected = list.find((plan) => plan.id === choice && !plan.unlocked_by) ?? null
   const trimmed = name.trim()
+  // Margin settings start again from each plan chosen, so one plan's never override another's.
+  function choose(id: string) {
+    setChoice(id)
+    setMargin(undefined)
+  }
   async function submit() {
     if (!selected || !trimmed || [...trimmed].length > 64 || busy.current || writeBlocked(trading, token)) return
     busy.current = true
@@ -112,7 +117,7 @@ export function NewAccountDialog({ trading, onClose, onCreated }: { trading: Tra
           {list.map((plan) => (
             <label key={plan.id} className={`block cursor-pointer rounded-md border p-3 ${choice === plan.id ? "border-accent bg-accent/5" : "border-border hover:border-muted"}`}>
               <div className="flex items-start gap-2">
-                <input type="radio" name="plan" value={plan.id} disabled={!!plan.unlocked_by} checked={choice === plan.id} onChange={() => setChoice(plan.id)}
+                <input type="radio" name="plan" value={plan.id} disabled={!!plan.unlocked_by} checked={choice === plan.id} onChange={() => choose(plan.id)}
                   className="mt-1 accent-[var(--accent)]" />
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{plan.name} <span className="text-xs text-muted">· {plan.id}</span></div>

@@ -204,6 +204,7 @@ class Engine final : public MetricsSource {
   std::unique_ptr<SeriesWorker> series_worker_;
   std::thread thread_;
   std::atomic<bool> stopping_{false};
+  std::atomic<bool> shutting_down_{false};  ///< Set before the provider stops, unlike stopping_.
   bool started_ = false;
   bool provider_started_ = false;
 

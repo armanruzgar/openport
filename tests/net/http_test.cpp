@@ -1,6 +1,10 @@
 #include "openport/net/http.hpp"
 #include "openport/net/websocket.hpp"
 
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/read_until.hpp>
+#include <boost/asio/streambuf.hpp>
+#include <boost/asio/write.hpp>
 #include <gtest/gtest.h>
 #include <zlib.h>
 
@@ -51,6 +55,36 @@ TEST(Http, GunzipAcceptsExactlyTheDecompressionLimit) {
   EXPECT_EQ(openport::net::kMaxDecompressedBytes, 256u * 1024 * 1024);
   const auto compressed = gzip(std::string(openport::net::kMaxDecompressedBytes, 'x'));
   EXPECT_EQ(gunzip(compressed).size(), openport::net::kMaxDecompressedBytes);
+}
+
+TEST(Http, AFailedRetryDoesNotLeaveItsConnectionForTheNextRequest) {
+  namespace asio = boost::asio;
+  using asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor acceptor(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto port = acceptor.local_endpoint().port();
+  std::thread server([&] {
+    const auto serve = [&](std::string_view reply, bool close) {
+      auto socket = std::make_shared<tcp::socket>(acceptor.accept());
+      asio::streambuf request;
+      asio::read_until(*socket, request, "\r\n\r\n");
+      asio::write(*socket, asio::buffer(reply));
+      if (close) socket->close();
+      return socket;
+    };
+    // A kept-alive answer, then the server drops the connection.
+    serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", true);
+    // The retry: a malformed answer with a stale one behind it, connection left open.
+    const auto held = serve("HTTP/1.1 200 OK\r\nBroken header\r\n\r\n"
+                            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nstale", false);
+    serve("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfresh", true);
+  });
+  openport::net::HttpClient client;
+  const auto url = "http://127.0.0.1:" + std::to_string(port) + "/x";
+  EXPECT_EQ(client.get(url, {}, std::chrono::seconds(5)).body, "ok");
+  EXPECT_THROW((void)client.get(url, {}, std::chrono::seconds(5)), std::exception);
+  EXPECT_EQ(client.get(url, {}, std::chrono::seconds(5)).body, "fresh");
+  server.join();
 }
 
 TEST(Http, ParsesUrls) {

@@ -86,7 +86,7 @@ export function underlyingsOf(items: readonly { underlying: string }[]): string[
 }
 
 /** Checks whose evidence is in dollars; the others count contracts, dollar delta or vega. */
-const dollarChecks = new Set(["DAILY_LOSS", "BUYING_POWER", "PRICE_BAND", "PROFIT_LOCK", "SOFT_FLOOR", "INVALID_PAYOUT"])
+const dollarChecks = new Set(["DAILY_LOSS", "BUYING_POWER", "PRICE_BAND", "PROFIT_LOCK", "SOFT_FLOOR", "INVALID_PAYOUT", "MAX_TRADE_RISK"])
 const units: Record<string, string> = { MAX_ORDER_CONTRACTS: " contracts", DELTA_LIMIT: " dollar delta", VEGA_LIMIT: " vega", TRADE_LIMIT: " opening trades", COOLDOWN: " minutes" }
 /** The check behind a reason: a RISK_CHANGED cancel names it at the start of its message. */
 export function checkCode(reason: Decision): string {

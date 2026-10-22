@@ -389,7 +389,10 @@ TEST_F(Sandboxes, OrderRateIncludesPreviewsAndEditsButExitsStayAvailable) {
     now = server::Sandboxes::Clock::time_point{} + elapsed;
     for (const auto& [method, path] : std::vector<std::pair<std::string, std::string>>{
         {"POST", "/api/orders"}, {"POST", "/api/orders/preview"}, {"POST", "/api/orders/what-if"},
-        {"PUT", "/api/orders/1"}, {"POST", "/api/orders/1/preview"}}) {
+        {"PUT", "/api/orders/1"}, {"POST", "/api/orders/1/preview"},
+        // Notes, alerts and grouping are journaled too, and share the budget.
+        {"PUT", "/api/days/2026-10-09/note"}, {"PUT", "/api/trades/1/note"}, {"POST", "/api/alerts"},
+        {"POST", "/api/trades/group"}}) {
       const auto refused = server::check_api_write(request(method, path, token(own)), policy);
       ASSERT_TRUE(refused) << path;
       EXPECT_EQ(refused->status, 429);
@@ -501,7 +504,11 @@ TEST_F(Sandboxes, IdleExpiryDeletesAccountCredentialAndAllFilesWithoutUsingMarke
   now += 1h;
   EXPECT_FALSE(manager->active(id(own)));
   EXPECT_EQ(send(request("GET", "/api/status", token(own))).status, 403);
+  // Like a deleted account, it is removed from notifications.
+  std::vector<std::string> removed;
+  source->desk->set_removal_sink([&](const std::string& account) { removed.push_back(account); });
   source->desk->expire_sandboxes(manager->expired());
+  EXPECT_EQ(removed, std::vector<std::string>{id(own)});
   EXPECT_FALSE(source->trading_view(id(own)));
   EXPECT_FALSE(std::filesystem::exists(directory));
   EXPECT_TRUE(std::filesystem::exists(desk_options.paper_journal));

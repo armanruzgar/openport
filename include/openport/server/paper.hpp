@@ -130,6 +130,13 @@ struct TradingView {
   md::Timestamp replay_start = 0, replay_end = 0;  ///< Risk-setting rollover horizon; zero for live accounts.
 };
 
+/// How an expired position awaiting settlement settles: on the closing print, recorded
+/// or still awaited (with the last print before the close as the fallback) for half an
+/// hour after the close; on the opening print for AM series, live while it can still
+/// come and in a replay whenever it does; or by a value entered by hand.
+[[nodiscard]] std::string_view settle_by(const md::OptionContract& contract, const trading::TradingSnapshot& snapshot,
+                                         const TradingView& view);
+
 /// The market's implied variance of an underlying's log price from its analytics'
 /// market time to that day's regular close: the nearest expiry's at-the-money IV²
 /// times its years (as the IV was solved, on calendar time), with today's share of it
@@ -173,7 +180,8 @@ struct BetaEstimate {
   std::string source;
 };
 /// Beta from bars matched by start time; consecutive bars of one series whose gap
-/// exceeds `max_gap` (0 for any) are not paired into a return.
+/// exceeds `max_gap` (0 for any) are not paired into a return. A beta beyond +/-10
+/// is no estimate (empty source), as risk profiles accept none.
 [[nodiscard]] BetaEstimate estimate_beta(const std::vector<md::Bar>& asset, const std::vector<md::Bar>& benchmark,
                                          std::size_t max_returns, md::Timestamp max_gap = 0);
 /// Whether two symbols follow the same index (SPX, SPXW, XSP and SPY; NDX, NDXP, XND

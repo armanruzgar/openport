@@ -23,6 +23,16 @@
 #include "openport/trading/history.hpp"
 
 namespace openport::server {
+std::string_view settle_by(const md::OptionContract& c, const trading::TradingSnapshot& s, const TradingView& view) {
+  // A replay records the first opening print at or after 9:30 however late it comes.
+  if (c.settlement == md::Settlement::AM && view.opening_settlement && (view.run || s.time <= c.expiry_time() + kOpeningPrintWait))
+    return "opening_print";
+  if (c.settlement == md::Settlement::PM &&
+      (s.closing_prints.contains(c.underlying + " " + md::format_date(c.expiry)) ||
+       s.time < md::new_york_to_utc(c.expiry, md::regular_close_hour(c.expiry), 0) + kLastPrintWait))
+    return "closing_print";
+  return "manual";
+}
 namespace {
 using nlohmann::json;
 using namespace trading;
@@ -708,13 +718,7 @@ json portfolio_json(const TradingView& view) {
         // How an expired position settles: on the closing print, recorded or still awaited
         // (with the last print before the close as the fallback) for half an hour after the
         // close, or by a value entered by hand once no automatic source remains.
-        {"settle_by", !p.awaiting_settlement ? json(nullptr)
-            : c.settlement == md::Settlement::AM && view.opening_settlement &&
-              s.time <= c.expiry_time() + kOpeningPrintWait ? json("opening_print")
-            : c.settlement == md::Settlement::PM &&
-              (s.closing_prints.contains(c.underlying + " " + md::format_date(c.expiry)) ||
-               s.time < md::new_york_to_utc(c.expiry, md::regular_close_hour(c.expiry), 0) + kLastPrintWait)
-                ? json("closing_print") : json("manual")},
+        {"settle_by", !p.awaiting_settlement ? json(nullptr) : json(std::string(settle_by(c, s, view)))},
         {"greeks", position_greeks(p, view)},
         {"attribution", s.attributions.contains(c.osi_symbol()) ? attribution_json(s.attributions.at(c.osi_symbol())) : json(nullptr)},
         {"trade", trade_of(c.osi_symbol())}, {"lifetime", lifetime_of(c.osi_symbol())}});

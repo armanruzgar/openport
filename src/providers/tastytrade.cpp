@@ -195,6 +195,8 @@ std::set<DxlinkSubscription> TastytradeMapper::subscriptions() const {
     (void)underlying;
     for (const auto* type : {"Quote", "Trade"}) result.insert({type, symbol});
   }
+  // Only the events event() reads: each subscription counts toward the 25000 cap.
+  // An option's Trade carries its session dayVolume.
   for (const auto& [symbol, instrument] : instruments_) {
     (void)instrument;
     for (const auto* type : {"Quote", "Greeks", "Summary", "Trade"}) result.insert({type, symbol});

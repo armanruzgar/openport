@@ -147,8 +147,11 @@ export function BacktestView() {
   const listing = useQuery({ queryKey: ["backtests"], queryFn: ({ signal }) => api.backtests(signal), refetchInterval: 1000 })
   const [selected, setSelected] = useState("")
   const [compareIds, setCompareIds] = useState<string[]>([]), [deleting, setDeleting] = useState("")
-  const comparison = useQuery({ queryKey: ["backtest-compare", compareIds], queryFn: ({ signal }) => api.compareBacktests(compareIds, signal), enabled: compareIds.length >= 2 })
-  const activeId = selected || listing.data?.active || listing.data?.runs[0]?.id || ""
+  // A run the server has since deleted (retention on a new start, or another tab) leaves the comparison and the selection.
+  const listed = listing.data && new Set(listing.data.runs.map((run) => run.id))
+  const compared = listed ? compareIds.filter((id) => listed.has(id)) : compareIds
+  const comparison = useQuery({ queryKey: ["backtest-compare", compared], queryFn: ({ signal }) => api.compareBacktests(compared, signal), enabled: compared.length >= 2 })
+  const activeId = (listed && !listed.has(selected) ? "" : selected) || listing.data?.active || listing.data?.runs[0]?.id || ""
   const job = useQuery({ queryKey: ["backtest", activeId], queryFn: ({ signal }) => api.backtest(activeId, signal), enabled: !!activeId,
     refetchInterval: (query) => ["running", "cancelling"].includes(query.state.data?.status ?? "running") ? 1000 : false })
   const versions = Object.values(definitions.data?.definitions ?? {}).flatMap((record) => record.versions.map((definition) => ({ ...definition, archived: record.deleted })))
@@ -220,19 +223,19 @@ export function BacktestView() {
     {!!listing.data?.runs.length && <Panel title="Saved runs"><p className="mb-2 text-xs text-muted">Select 2–8 finished reports to compare. Keep exempts a run from automatic retention.</p><div className="overflow-x-auto"><table className="w-full text-left text-sm">
       <thead><tr>{["Compare", "Run", "Playbook", "Disk size", "Retention", "Delete"].map((title) => <th className="p-2" key={title}>{title}</th>)}</tr></thead>
       <tbody>{listing.data.runs.map((run) => <tr className="border-t border-border" key={run.id}>
-        <td className="p-2"><input type="checkbox" aria-label={`Compare run ${run.id}`} checked={compareIds.includes(run.id)} disabled={!run.summary || ["running", "cancelling"].includes(run.status) || (compareIds.length >= 8 && !compareIds.includes(run.id))} onChange={(event) => setCompareIds(event.target.checked ? [...compareIds, run.id] : compareIds.filter((id) => id !== run.id))} /></td>
+        <td className="p-2"><input type="checkbox" aria-label={`Compare run ${run.id}`} checked={compared.includes(run.id)} disabled={!run.summary || ["running", "cancelling"].includes(run.status) || (compared.length >= 8 && !compared.includes(run.id))} onChange={(event) => setCompareIds(event.target.checked ? [...compared, run.id] : compared.filter((id) => id !== run.id))} /></td>
         <td className="p-2"><button className="text-accent" onClick={() => setSelected(run.id)}>{run.id} · {run.status}</button></td>
         <td className="p-2">{run.mode === "joint" && "Joint · "}{playbookNames(run)}</td><td className="p-2">{run.bytes == null ? "—" : `${(run.bytes / 1048576).toFixed(2)} MiB`}</td>
         <td className="p-2"><label><input type="checkbox" aria-label={`Keep run ${run.id}`} checked={run.keep ?? false} disabled={!!blocked || pending} onChange={(event) => { const keep = event.target.checked; void mutate(async () => { await api.keepBacktest(run.id, keep, mode) }) }} /> Keep</label></td>
         <td className="p-2"><button className="trade-button" aria-label={`Delete run ${run.id}`} disabled={!!blocked || pending || ["running", "cancelling"].includes(run.status)} onClick={() => setDeleting(run.id)}>Delete</button></td>
       </tr>)}</tbody>
     </table></div></Panel>}
-    {comparison.data && compareIds.length >= 2 && <BacktestCompareView comparison={comparison.data} />}
+    {comparison.data && compared.length >= 2 && <BacktestCompareView comparison={comparison.data} />}
     {deleting && <Dialog title="Delete saved backtest?" onClose={() => setDeleting("")}>
       <p className="text-sm">Permanently delete run {deleting}, including its report and journals? Kept runs can also be deleted. This cannot be undone.</p>
       <TradingError error={error} />
       <button className="trade-button" disabled={!!blocked || pending} onClick={() => void mutate(async () => {
-        await api.deleteBacktest(deleting, mode); setCompareIds(compareIds.filter((id) => id !== deleting));
+        await api.deleteBacktest(deleting, mode); setCompareIds(compared.filter((id) => id !== deleting));
         if (activeId === deleting) setSelected(""); setDeleting("")
       }, false)}>Delete saved run</button>
       <button className="trade-button" disabled={pending} onClick={() => setDeleting("")}>Cancel</button>

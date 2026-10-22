@@ -81,6 +81,16 @@ describe("held strategies", () => {
       "buy 6900 2026-10-16PM", "sell 6890 2026-10-16PM", "sell 6850 2026-10-16PM", "buy 6840 2026-10-16PM"])
   })
 
+  it("name the chosen strike when a roll's target lacks it", () => {
+    const [spread] = strategyGroups([short, long], [combo("7", [[6900, "sell"], [6890, "buy"]], 2, "-1.20")], null)
+    const row = (strike: number, tradable = true): ChainRow => ({ strike, iv: 0.2, gex: null, vex: null, call: null,
+      put: { ...quote, symbol: `SPXW  261016P0${strike}000`, tradable, untradable_reason: null } })
+    expect(rollPlan(spread!, { id: "2026-10-16PM", strikes: [row(6900), row(6890), row(6850)] }, undefined, [6850, 6840]))
+      .toEqual({ reason: "Oct 16 lists no 6840 put." })
+    expect(rollPlan(spread!, { id: "2026-10-16PM", strikes: [row(6850, false), row(6840)] }, undefined, [6850, 6840]))
+      .toEqual({ reason: "The 6850 put is not tradable." })
+  })
+
   it("settle AM contracts at the 09:30 open and PM ones at the 16:00 close, New York time", () => {
     expect(settlementTime("2026-10-16", "PM")).toBe(Date.parse("2026-10-16T20:00:00Z"))
     expect(settlementTime("2026-12-18", "AM")).toBe(Date.parse("2026-12-18T14:30:00Z"))
@@ -142,6 +152,10 @@ describe("strategies in the journal", () => {
     expect(journalLabel(entries[1]!)).toBe(contractLabel(list[4]!))
     expect(tradeBuckets([entries[0]!], "duration", "put").reduce((n, b) => n + b.trades, 0)).toBe(1)
     expect(tradeBuckets([entries[0]!], "duration", "call").every((b) => b.trades === 0)).toBe(true)
+    // A tag filter that keeps only the new legs totals those, not the whole trade.
+    const [kept] = wholeEntries(tradeGroups(list.slice(0, 2), fills, [spread, roll], [whole]))
+    expect(Number(kept!.net)).toBe(50)
+    expect(kept!.status).toBe("closed")
   })
 
   it.each([false, true])("counts a condor only under All, regardless of leg order (whole: %s)", (whole) => {

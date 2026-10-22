@@ -247,11 +247,76 @@ TEST(WebPolicy, SlowClientKeepsActiveWriteAndOnlyNewestPendingTick) {
   EXPECT_TRUE(queue.empty());
 }
 
+TEST(WebPolicy, TheStartupLinkEncodesItsTokenAsTheTerminalDecodesIt) {
+  EXPECT_EQ(server::url_component("0123abcdef"), "0123abcdef");
+  // decodeURIComponent restores each: & and # no longer end the fragment, % stays literal.
+  EXPECT_EQ(server::url_component("p&ss#1"), "p%26ss%231");
+  EXPECT_EQ(server::url_component("50%off"), "50%25off");
+  EXPECT_EQ(server::url_component("%41 caf\xc3\xa9"), "%2541%20caf%C3%A9");
+}
+
+TEST(WebPolicy, SlowClientKeepsTheNewestTickOfEachStream) {
+  server::TickQueue queue;
+  queue.push(std::make_shared<const std::string>("active"), "tick");
+  // Every second the engine's tick and then the replay's arrive during a write.
+  for (int i = 0; i < 3; ++i) {
+    queue.push(std::make_shared<const std::string>("tick " + std::to_string(i)), "tick");
+    queue.push(std::make_shared<const std::string>("replay " + std::to_string(i)), "replay_tick");
+  }
+  ASSERT_EQ(queue.size(), 3u);
+  queue.pop();
+  EXPECT_EQ(*queue.front(), "tick 2");
+  queue.pop();
+  EXPECT_EQ(*queue.front(), "replay 2");
+  queue.pop();
+  EXPECT_TRUE(queue.empty());
+}
+
 TEST_F(StaticFiles, MissingWebRootExplainsHowToBuildOrSelectTheTerminal) {
   const auto result = server::resolve_static_file(parent / "missing", "/");
   EXPECT_EQ(result.status, 404);
   EXPECT_EQ(result.reason,
             "web terminal not built: run `npm run build` in web/, or pass --web-root");
+}
+
+TEST(WebServer, ConnectionsBeyondTheCapAreClosedAtOnceAndFreedSlotsServeAgain) {
+  server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
+  web.set_http_session_limit(2);
+  web.start(2);
+  asio::io_context io;
+  const tcp::endpoint endpoint{asio::ip::make_address("127.0.0.1"), web.port()};
+  const auto get = [&](tcp::socket& socket) {
+    http::request<http::empty_body> request{http::verb::get, "/api/status", 11};
+    request.set(http::field::host, "localhost");
+    beast::error_code ec;
+    http::write(socket, request, ec);
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    if (!ec) http::read(socket, buffer, response, ec);
+    return !ec;
+  };
+  tcp::socket first(io), second(io), third(io);
+  first.connect(endpoint);
+  second.connect(endpoint);
+  ASSERT_TRUE(get(first));
+  ASSERT_TRUE(get(second));
+  third.connect(endpoint);
+  const auto started = std::chrono::steady_clock::now();
+  char byte;
+  beast::error_code closed;
+  third.read_some(asio::buffer(&byte, 1), closed);
+  EXPECT_EQ(closed, asio::error::eof);
+  EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(5));
+  first.close();
+  bool served = false;
+  for (int attempt = 0; attempt < 500 && !served; ++attempt) {
+    tcp::socket next(io);
+    next.connect(endpoint);
+    served = get(next);
+    if (!served) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_TRUE(served);
+  web.stop();
 }
 
 TEST(WebServer, StopClosesHttpAndWebSocketSessionsAndReleasesThePort) {
@@ -566,6 +631,10 @@ TEST(WebPolicy, NamedTokenFilesAreStrictAndDiagnosticsHideSecrets) {
   ASSERT_EQ(tokens.size(), 3U);
   EXPECT_EQ(tokens[1].name, "agent");
   EXPECT_EQ(tokens[1].scopes, (std::vector<std::string>{"read", "trade:practice", "replay"}));
+  // A '#' inside a secret is part of it; a comment starts a field.
+  const auto hashed = server::parse_token_file("ops admin x#Gk2-long-secret #comment\n");
+  ASSERT_EQ(hashed.size(), 1U);
+  EXPECT_EQ(hashed[0].secret, "x#Gk2-long-secret");
   for (const std::string line : {"", "# empty", "a read", "a read secret extra", "a trade: secret", "a read, secret",
       "a unknown secret", "a read,read secret", "system admin secret", "loopback admin secret", "a read secret\na admin other",
       "a read secret\nb admin secret", "a trade:../main secret", "a trade:MAIN secret", "a trade:bad_id secret", "a trade:-main secret",
@@ -896,7 +965,11 @@ TEST(WebPolicy, BrowserSocketTokensUseHeadersWithoutAmbiguousCredentials) {
   EXPECT_EQ(server::websocket_authorization("", "openport, openport.token.616263"), "Bearer abc");
   EXPECT_EQ(server::websocket_authorization("Bearer abc", ""), "Bearer abc");
   EXPECT_FALSE(server::websocket_authorization("Bearer abc", "openport, openport.token.616263"));
-  for (const auto* value : {"openport, openport.token.", "openport, openport.token.0", "openport, openport.token.00", "openport, openport.token.gg", "other"}) {
+  // Legacy tokens may contain a space or UTF-8, as the terminal hex-encodes them.
+  EXPECT_EQ(server::websocket_authorization("", "openport, openport.token.636f727265637420686f727365"), "Bearer correct horse");
+  EXPECT_EQ(server::websocket_authorization("", "openport, openport.token.636166c3a9"), "Bearer caf\xc3\xa9");
+  for (const auto* value : {"openport, openport.token.", "openport, openport.token.0", "openport, openport.token.00", "openport, openport.token.gg",
+                            "openport, openport.token.610a62", "openport, openport.token.617f", "other"}) {
     EXPECT_FALSE(server::websocket_authorization("", value));
   }
 }

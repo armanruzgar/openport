@@ -534,7 +534,9 @@ Playbooks::Json Playbooks::change(const Json& command, std::string_view account,
     }
   } else if (action == "delete" || action == "mode") {
     const auto id = command.at("id").get<std::string>();
-    if (!definitions.contains(id) || definitions.at(id).at("deleted") == true) invalid("Unknown playbook");
+    // An archived playbook can still be switched off: a replay keeps its mode on delete.
+    const bool off = action == "mode" && command.contains("mode") && command.at("mode") == "off";
+    if (!definitions.contains(id) || (definitions.at(id).at("deleted") == true && !off)) invalid("Unknown playbook");
     if (action == "delete") {
       if (command.at("version") != definitions.at(id).at("versions").back().at("version")) invalid("Playbook changed; reload before deleting");
       definitions[id]["deleted"] = true;
@@ -975,11 +977,13 @@ nlohmann::json playbook_forward_report(const json& publication, const TradingVie
       versions[version].push_back(row);
     }
     // Count each filled automatic close once, including closes after a window ended.
+    // A max_days_in_trade deadline is the same time stop under its own label.
     for (const auto& order : view.snapshot->recent_orders) {
-      const std::string prefix = "Playbook automatic time stop; entry ";
-      if (order.actor != "system" || !order.filled_quantity || !order.request.note.starts_with(prefix)) continue;
-      const auto entry = order.request.note.substr(prefix.size());
-      if (entries.contains(decimal_id(entry, "entry"))) ++time_stops;
+      if (order.actor != "system" || !order.filled_quantity) continue;
+      for (const std::string prefix : {"Playbook automatic time stop; entry ", "Playbook automatic days in trade stop; entry "}) {
+        if (!order.request.note.starts_with(prefix)) continue;
+        if (entries.contains(decimal_id(order.request.note.substr(prefix.size()), "entry"))) ++time_stops;
+      }
     }
     for (const auto& window : forward.at("windows")) {
       const auto version = std::to_string(window.at("version").get<int>());

@@ -25,7 +25,20 @@ def test_urls_auth_accounts_and_unknown_fields(stub):
     client.accounts()
     assert "account=" not in stub.requests[-1][1]
     assert client.symbols() == ["SPX"]
-    assert client.series("SPX")[0]["id"] == "2026-10-22PM"
+    assert client.summary("SPX")["expiries"][0]["id"] == "2026-10-22PM"
+
+
+def test_series_reads_metric_history_from_its_route(stub):
+    client = Client(stub.url, account="practice")
+    series = client.series("SPX")
+    assert set(series) >= {"symbol", "interval", "from", "to", "fields", "rows"}
+    assert urlsplit(stub.requests[-1][1]).path == "/api/underlyings/SPX/series"
+    assert urlsplit(stub.requests[-1][1]).query == ""
+    client.for_replay().series("SPX", ["mfiv30", "atm30", "rr25"], "1d", start="2026-01-01", end=1758571200)
+    target = urlsplit(stub.requests[-1][1])
+    assert target.path == "/api/replay/underlyings/SPX/series"
+    assert parse_qs(target.query) == {"fields": ["mfiv30,atm30,rr25"], "interval": ["1d"],
+                                      "from": ["2026-01-01"], "to": ["1758571200"]}
 
 
 def test_errors_carry_reason_and_do_not_retry_422(stub):

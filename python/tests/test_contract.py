@@ -83,6 +83,7 @@ def test_entire_contract_against_threaded_synthetic_http_server(stub):
     expected = {(path, "get") for path, item in SPEC["paths"].items()
                 if path.startswith("/api/") and "get" in contract.resolve(item)}
     assert expected <= contract.checked
+    assert {("/api/underlyings/{symbol}/series", "get"), ("/api/replay/underlyings/{symbol}/series", "get")} <= contract.checked
 
 
 def test_first_mismatch_names_route_and_field(stub):
@@ -103,6 +104,45 @@ def test_refuses_to_replace_an_active_replay(stub):
     with pytest.raises(ContractMismatch):
         Contract(stub.url, "secret", SPEC).run()
     assert all(method == "GET" for method, *_rest in stub.requests)
+
+
+def test_series_route_describes_metric_history_and_its_errors():
+    contract = Contract("", None, SPEC)
+    # The shape series_api.cpp writes: per-field values and sources, null gap rows.
+    body = {"symbol": "SPX", "interval": "1d", "from": 1726718400, "to": 1758571200, "fields": ["mfiv30", "rv21"],
+            "rows": [{"t": 1758571200, "sample_time": 1758570900, "mfiv30": 15.2, "rv21": None,
+                      "sources": {"mfiv30": "own", "rv21": None}},
+                     {"t": 1758657600, "mfiv30": None, "rv21": 11.0, "sources": {"mfiv30": None, "rv21": "daily_closes"}}]}
+    contract.validate("GET", "/api/underlyings/SPX/series?fields=mfiv30,rv21", 200, body)
+    contract.validate("GET", "/api/replay/underlyings/SPX/series", 200, {**body, "rows": []})
+    with pytest.raises(ContractMismatch, match=r"rows.0.mfiv30"):
+        contract.validate("GET", "/api/underlyings/SPX/series", 200, {**body, "rows": [{**body["rows"][0], "mfiv30": "15.2"}]})
+    contract.validate("GET", "/api/underlyings/SPX/series?interval=1h", 400, {"error": "interval must be 1m or 1d"})
+    contract.validate("GET", "/api/underlyings/XYZ/series", 404, {"error": "unknown underlying"})
+    assert {("/api/underlyings/{symbol}/series", "get"), ("/api/replay/underlyings/{symbol}/series", "get")} <= contract.checked
+
+
+def test_a_failed_cleanup_keeps_the_route_that_broke_the_run(stub, monkeypatch, capsys):
+    import sys
+    from urllib.error import URLError
+    from tools import contract_test
+    original = Contract.call
+    def call(self, method, path, body=None, *, success=False):
+        if (method, path) == ("POST", "/api/replay/orders?account=main"):
+            raise URLError("orders route crashed the server")
+        if (method, path) == ("DELETE", "/api/replay"):
+            raise URLError("Connection refused")
+        return original(self, method, path, body, success=success)
+    monkeypatch.setattr(Contract, "call", call)
+    with pytest.raises(URLError, match="orders route crashed the server") as caught:
+        Contract(stub.url, "secret", SPEC).run()
+    assert caught.value.__notes__ == ["cleanup DELETE /api/replay also failed: <urlopen error Connection refused>"]
+    stub.replay = None  # The failed DELETE left the first run's replay up.
+    monkeypatch.setattr(sys, "argv", ["contract_test.py", stub.url, "--token", "secret"])
+    assert contract_test.main() == 1
+    lines = capsys.readouterr().err.splitlines()
+    assert lines == ["contract: <urlopen error orders route crashed the server>",
+                     "contract: cleanup DELETE /api/replay also failed: <urlopen error Connection refused>"]
 
 
 def test_real_cpp_handler_responses_without_network(tmp_path):

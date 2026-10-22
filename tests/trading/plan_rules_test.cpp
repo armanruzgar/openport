@@ -346,6 +346,13 @@ TEST(ProgramCosts, TradingRestrictionsStartANewPurchaseButExecutionMarginAndCost
   EXPECT_TRUE(same_program_rules(rules, execution));
   execution.margin = MarginMode::Strategy; execution.account_type = AccountType::Ira;
   EXPECT_TRUE(same_program_rules(rules, execution));
+  // The holiday schedule captured with hold restrictions is not a program term: a
+  // parsed plan has none yet, and the live schedule changes after the attempt starts.
+  rules.hold_restrictions = execution.hold_restrictions = {"weekend"};
+  execution.hold_calendar = std::vector<md::ScheduledDay>{};
+  EXPECT_TRUE(same_program_rules(rules, execution));
+  execution.hold_restrictions = {"earnings"};
+  EXPECT_FALSE(same_program_rules(rules, execution));
 }
 
 TEST(ProgramCosts, DefaultsKeepBytesAndNegativeOrFractionalSettingsAreRejected) {

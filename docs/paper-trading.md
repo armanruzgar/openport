@@ -224,7 +224,7 @@ day's regular close, Cboe supplies its positive finite `data.close` as the under
 price, including revisions, so delivered shares use that close rather than
 after-hours trades; without a valid close it keeps the current quote
 ([Cboe clocks](runtime.md#product-sessions-and-cboe-clocks)).
-Generated scenarios at revision 8 likewise hold ETF prices at the 16:00 stock close
+Generated scenarios from revision 8 likewise hold ETF prices at the 16:00 stock close
 (13:00 early) while options trade to 16:15 (13:15 early), so exercise and delivery
 use that close. Saved revisions 1–7 preserve their historical price movement.
 They count in equity, daily loss and the rules, at their dollar
@@ -4121,7 +4121,7 @@ require `Authorization: Bearer TOKEN`, checked with a constant-time digest compa
 missing/incorrect credentials return 403 `WRITE_TOKEN_REQUIRED`. Without either,
 `--write-token-file PATH` uses the token kept in PATH, creating a random one with
 owner-only permissions when it is missing, and prints a link carrying it,
-`http://localhost:PORT/#token=TOKEN`, which the terminal saves in that browser tab and
+percent-encoded, `http://localhost:PORT/#token=TOKEN`, which the terminal saves in that browser tab and
 drops from the address bar, also when opened in a tab already showing the terminal;
 the Docker image keeps its token in its volume this way.
 The terminal's "Enter write token" button saves a token by hand.

@@ -2325,9 +2325,39 @@ TEST(ReplayRun, StopCancelsAndJoinsBackgroundVerification) {
   EXPECT_EQ(stopping.wait_for(20ms), std::future_status::timeout);
   release.set_value();
   stopping.get();
+  // Cancelled, it found no difference: it reads as interrupted, never as failed,
+  // here and after a restart.
   const auto status = json::parse(replay_call(host, "GET", route).body);
-  EXPECT_EQ(status.at("status"), "failed");
-  EXPECT_NE(status.at("message").get<std::string>().find("cancelled"), std::string::npos);
+  EXPECT_EQ(status.at("status"), "idle");
+  EXPECT_NE(status.at("message").get<std::string>().find("interrupted"), std::string::npos);
+  options.verification_progress = {};
+  server::ReplayHost restarted(options);
+  EXPECT_EQ(json::parse(replay_call(restarted, "GET", route).body).at("status"), "idle");
+  restarted.stop();
+}
+
+TEST(ReplayRun, ARunsSidecarIsOptionalForItsArchiveButNeededToResume) {
+  test::RecordingFile file;
+  write_stream(file.path, true);
+  server::Engine::Options engine;
+  engine.paper_journal = file.directory / "main.jsonl";
+  server::ReplayHost host({file.directory, engine, false});
+  const auto started = replay_call(host, "POST", "/api/replay", {{"file", "session.oprec"}, {"speed", 0}});
+  ASSERT_EQ(started.status, 201);
+  const auto id = json::parse(started.body).at("replay").at("id").get<std::string>();
+  ASSERT_TRUE(test::recording_eventually([&] { return json::parse(host.tick()).at("replay").at("finished").get<bool>(); }));
+  ASSERT_EQ(replay_call(host, "DELETE", "/api/replay").status, 200);
+  const auto sidecar = file.directory / "replays" / (id + ".json");
+  ASSERT_TRUE(std::filesystem::exists(sidecar));
+  // A damaged sidecar: the archive still opens from its journal.
+  { std::ofstream out(sidecar, std::ios::trunc); out << "{\"demo\":"; }
+  EXPECT_EQ(replay_call(host, "GET", "/api/replay/history/" + id).status, 200);
+  // None at all: the run is not offered for a resume that would be refused.
+  std::filesystem::remove(sidecar);
+  const auto history = json::parse(replay_call(host, "GET", "/api/replay").body).at("history");
+  ASSERT_EQ(history.size(), 1U);
+  EXPECT_EQ(history[0].at("interrupted"), false) << history[0];
+  host.stop();
 }
 
 TEST(ReplayRun, HistoryWaitsForTheStoppingJournalsFinalSync) {

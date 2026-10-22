@@ -317,7 +317,18 @@ md::Timestamp CboeHolidaySchedule::poll_once(net::HttpClient& http) {
   try {
     const auto response = http.get(kCboeHolidaysUrl, {}, options_.timeout, &stopping_);
     if (response.status != 200) throw std::runtime_error("HTTP " + std::to_string(response.status));
-    for (auto& day : parse_cboe_holidays(response.body)) days_[day.date] = std::move(day);
+    // The latest listing wins: an upcoming day of a year it lists, but no longer this
+    // day (rescinded, or back to a full day), is dropped. Past days, and the rest of a
+    // year once Cboe lists only the next, are kept as seen.
+    auto listed = parse_cboe_holidays(response.body);
+    const auto today = md::new_york_time(now).date;
+    std::set<int> years;
+    for (const auto& day : listed) years.insert(day.date.year);
+    std::erase_if(days_, [&](const auto& entry) {
+      return !(entry.first < today) && years.contains(entry.first.year) &&
+          std::none_of(listed.begin(), listed.end(), [&](const auto& day) { return day.date == entry.first; });
+    });
+    for (auto& day : listed) days_[day.date] = std::move(day);
     std::vector<md::ScheduledDay> all;
     for (const auto& [date, day] : days_) all.push_back(day);
     sink_(std::move(all));
@@ -468,7 +479,8 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
     parse_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     return parsed;
   };
-  bool read_page = page_until_[underlying] > now;
+  const bool holding = page_until_[underlying] > now;
+  bool read_page = holding;
   if (read_page && now - page_fetched_[underlying] < std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_interval).count())
     return "cboe " + underlying + " (page): waiting for Cboe's next page, about once a minute";
   if (!read_page) {
@@ -491,7 +503,9 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
         response = std::move(page);
         have = true;
         source = "page";
-        page_until_[underlying] = now + std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_hold).count();
+        // The hold starts when the page beats the file, and is not extended by
+        // reading the page during it: the file is tried again when it ends.
+        if (!holding) page_until_[underlying] = now + std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_hold).count();
       }
     }
     // A page no fresher than the file (both idle overnight, say) is left alone for a while.

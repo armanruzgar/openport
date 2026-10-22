@@ -1468,6 +1468,12 @@ TEST(CircuitBreakers, BadRecoveryAndFailedWritesReportStorageErrorsWithoutStoppi
         std::string original;
         std::getline(in, original);
         EXPECT_EQ(original, "{broken");
+        // Once the file can be written, the halt still unsaved is written and the error clears.
+        std::filesystem::remove(file.string() + ".tmp");
+        provider.sink->publish(md::UnderlyingQuote{"SPX", time + md::kNanosPerSecond, 5000, 5000, 5000});
+        ASSERT_TRUE(wait_for([&] { return engine.status().circuit_breaker.error.empty(); }));
+        std::ifstream saved(file);
+        EXPECT_FALSE(json::parse(saved).at("halts").empty());
       }
     }
     std::filesystem::remove_all(options.paper_journal.parent_path());
@@ -4275,6 +4281,20 @@ TEST(PaperProbability, PriceOddsAddUpAndTouchingIsLikelierThanFinishingBeyond) {
   EXPECT_EQ(server::price_odds(100, 100, 0).touch, 1);
 }
 
+TEST(PaperSettlement, AReplayAwaitsALateOpeningPrintThatLiveWouldNot) {
+  const auto contract = *md::parse_osi("SPX260918C06000000");
+  trading::TradingSnapshot snapshot;
+  snapshot.time = contract.expiry_time() + 10 * md::kNanosPerMinute;  // 9:40, no print since 9:30
+  server::TradingView view;
+  view.opening_settlement = true;
+  EXPECT_EQ(server::settle_by(contract, snapshot, view), "manual");
+  view.run = server::RunIdentity{};
+  EXPECT_EQ(server::settle_by(contract, snapshot, view), "opening_print");
+  snapshot.time = contract.expiry_time() + md::kNanosPerMinute;
+  view.run.reset();
+  EXPECT_EQ(server::settle_by(contract, snapshot, view), "opening_print");
+}
+
 TEST(PaperBeta, BetaIsTheCovarianceOverTheBenchmarksVarianceOfPairedReturns) {
   std::vector<md::Bar> asset, benchmark;
   double a = 100, b = 50;
@@ -4295,6 +4315,17 @@ TEST(PaperBeta, BetaIsTheCovarianceOverTheBenchmarksVarianceOfPairedReturns) {
   EXPECT_EQ(server::estimate_beta(asset, benchmark, 252, md::kNanosPerDay).observations, 37U);
   EXPECT_EQ(server::estimate_beta(asset, benchmark, 252, md::kNanosPerMinute).observations, 0U);
   EXPECT_TRUE(server::estimate_beta({}, benchmark, 252).source.empty());
+  // Beyond +/-10 a risk profile would refuse it: no estimate rather than a failed profile.
+  std::vector<md::Bar> wild;
+  double w = 100;
+  for (std::size_t i = 0; i < benchmark.size(); ++i) {
+    if (i) w *= std::exp(15 * std::log(benchmark[i].close / benchmark[i - 1].close));
+    wild.push_back({benchmark[i].start, w, w, w, w});
+  }
+  const auto extreme = server::estimate_beta(wild, benchmark, 252);
+  EXPECT_TRUE(extreme.source.empty());
+  EXPECT_EQ(extreme.beta, 0);
+  EXPECT_EQ(extreme.observations, 39U);
   EXPECT_TRUE(server::same_index("SPY", "SPX"));
   EXPECT_TRUE(server::same_index("QQQ", "NDX"));
   EXPECT_FALSE(server::same_index("QQQ", "SPY"));

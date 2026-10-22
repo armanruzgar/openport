@@ -936,6 +936,21 @@ TEST(ReplayHost, AnInterruptedDriverSixRunResumesWhereItStoppedWithTheSameJourna
   EXPECT_EQ(history[0]["interrupted"], true) << history[0];
   EXPECT_EQ(call(host, "POST", "/api/replay", json{{"resume", id}, {"plan", "practice"}}.dump()).status, 400);
   EXPECT_EQ(call(host, "POST", "/api/replay", R"({"resume":"no-such-run"})").status, 404);
+  {
+    // A resume that fails (another process still holds the journal) leaves the
+    // run's equity history as it was.
+    const auto equity = crashed / "replays" / (id + ".jsonl.equity.csv");
+    { std::ofstream out(equity); out << "kept\n"; }
+    {
+      const auto held = trading::FileJournal::resume((crashed / "replays" / (id + ".jsonl")).string());
+      const auto refused = call(host, "POST", "/api/replay", json{{"resume", id}, {"speed", 0}}.dump());
+      EXPECT_NE(refused.status, 201) << refused.body;
+    }
+    std::ifstream in(equity);
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(in), {}), "kept\n");
+    EXPECT_FALSE(std::filesystem::exists(equity.string() + ".resuming"));
+    std::filesystem::remove(equity);
+  }
   const auto resumed = call(host, "POST", "/api/replay", json{{"resume", id}, {"speed", 0}}.dump());
   ASSERT_EQ(resumed.status, 201) << resumed.body;
   EXPECT_EQ(json::parse(resumed.body)["replay"]["id"], id);

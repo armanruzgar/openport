@@ -102,4 +102,20 @@ describe("F17/F59 calendar rules", () => {
     } finally { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() }
 
   })
+  it("keeps edits made while an import loads", async () => {
+    let finish!: (value: Awaited<ReturnType<typeof api.calendarEvents>>) => void
+    vi.spyOn(api, "calendarEvents").mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    let form = planForm({ initial_cash: "100000", rules: account.rules })
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+    const host = document.createElement("div"), root = createRoot(host)
+    const draw = () => root.render(<PlanEditor form={form} onChange={(next) => { form = next; draw() }} />)
+    try {
+      await act(async () => draw())
+      await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Import server calendar")!.click())
+      await act(async () => { form = { ...form, profit_target: "7777" }; draw() })
+      await act(async () => finish({ events: [{ kind: "news", time: "2026-10-01T14:00:00Z", label: "FOMC" }] }))
+      expect(form.profit_target).toBe("7777")
+      expect(form.events).toHaveLength(1)
+    } finally { await act(async () => root.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() }
+  })
 })
