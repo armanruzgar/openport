@@ -4403,12 +4403,24 @@ its trade time cannot tell reliably whether the value it shows is the day's quot
 computed once every component has opened, so it could settle a position early on a
 wrong value or late. Settlement is journaled once: a row Cboe revises after a position
 settled on it does not change that settlement. Waiting AM positions on those
-underlyings show `settle_by: "soq"` through their expiry date and settle once their
+underlyings show `settle_by: "soq"` while their expiry date is within the fetcher's
+14-day lookback (counted in trading dates, which end at 17:00 ET) and settle once their
 date's row arrives, with source `published_soq`, provider `cboe`, the `index`, `date`
-and `url`. After the expiry date without one they show
+and `url`. Past the lookback without one, or when the server runs without
+`--am-settlement cboe`, they show
 `manual`, and an import before the fetch still settles exactly once: manual import
 remains the fallback for a fetch that fails or a value Cboe has not published. Demo and
-replay accounts keep their opening print. PM imports are
+replay accounts keep their opening print.
+
+How long after the open Cboe posts a date's row in the history CSV has not been
+measured: the endpoint was only checked on 2026-10-21, and the documented 15-minute
+CDN cache adds to whatever the posting lag is. Treat the lag as unknown; a position can
+wait from the open until the row appears. While any position is `AWAITING_SETTLEMENT`
+it has no fresh mark, so the account's valuation is incomplete: new option and share
+orders that need complete marks are refused with `STALE_QUOTE` (reduce-only closes of
+other positions still run, see Flatten), and the trading-day rollover waits
+(`Rollover requires complete marked equity`) until the position settles, by the
+fetched value or a manual import. PM imports are
 accepted only while no closing print is recorded. The same journal transaction
 records the reference value, canonical definition and integration
 `settlement_source`: `provider_official_close`, `provider_closing_print` or

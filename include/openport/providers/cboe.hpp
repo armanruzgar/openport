@@ -275,6 +275,9 @@ struct SettlementQuotation {
 /// the "DATE,<index>" header.
 [[nodiscard]] std::vector<SettlementQuotation> parse_cboe_soq_history(std::string_view csv, std::string_view underlying,
                                                                       std::string_view index, md::Date since = {});
+/// How many days back CboeSettlementQuotations keeps looking for a date's row: an
+/// AM position awaiting its published value can still settle on it until then.
+inline constexpr std::int64_t kCboeSoqLookbackDays = 14;
 /// Fetches the special opening quotations of the AM-settled underlyings it is given:
 /// their daily history when started and every `interval` (Cboe's CDN caches it for 15
 /// minutes), so a date's row is found soon after Cboe publishes it and a restart still
@@ -287,7 +290,7 @@ class CboeSettlementQuotations {
     std::chrono::seconds interval{15 * 60};
     std::chrono::seconds retry{15 * 60};
     std::chrono::seconds timeout{30};
-    std::int64_t lookback_days = 14;
+    std::int64_t lookback_days = kCboeSoqLookbackDays;
     std::function<md::Timestamp()> clock = md::now;
   };
 

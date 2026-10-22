@@ -19,6 +19,7 @@
 #include "openport/server/series.hpp"
 #include "openport/trading/stress.hpp"
 #include "openport/server/plans.hpp"
+#include "openport/providers/cboe.hpp"
 #include "openport/trading/contracts.hpp"
 #include "openport/trading/history.hpp"
 
@@ -736,11 +737,13 @@ json portfolio_json(const TradingView& view) {
         {"settle_by", !p.awaiting_settlement ? json(nullptr)
             : c.settlement == md::Settlement::AM && view.opening_settlement &&
               s.time <= c.expiry_time() + kOpeningPrintWait ? json("opening_print")
-            // A published special opening quotation is fetched through the expiry date.
+            // A published special opening quotation is still fetched while its date is
+            // within the fetcher's lookback, however late Cboe posts the row.
             : c.settlement == md::Settlement::AM &&
               std::find(view.published_opening_quotations.begin(), view.published_opening_quotations.end(), c.underlying) !=
                   view.published_opening_quotations.end() &&
-              md::trading_date(s.time) <= c.expiry ? json("soq")
+              md::days_since_epoch(md::trading_date(s.time)) - md::days_since_epoch(c.expiry) <= providers::kCboeSoqLookbackDays
+                ? json("soq")
             : c.settlement == md::Settlement::PM &&
               (s.closing_prints.contains(c.underlying + " " + md::format_date(c.expiry)) ||
                s.time < md::new_york_to_utc(c.expiry, md::regular_close_hour(c.expiry), 0) + kLastPrintWait)

@@ -5432,12 +5432,12 @@ TEST(PaperRecovery, AMPositionsWaitForTheHistoryRowOfTheirDate) {
   engine.stop();
 }
 
-TEST(PaperRecovery, WithoutAPublishedOpeningQuotationAMPositionsSettleByHandAfterTheDate) {
+TEST(PaperRecovery, WithoutAPublishedOpeningQuotationAMPositionsSettleByHandPastTheLookback) {
   auto options = paper_options();
   options.published_opening_quotations = {"SPX"};
   test::ScriptedMarket market;
   market.contract = *md::parse_osi("SPX261016C05000000");
-  const auto later = *md::parse_osi("SPXW261019C05000000");
+  const auto later = *md::parse_osi("SPXW261120C05000000");
   PaperProvider provider;
   server::Engine engine(provider, {{"SPX"}}, options); engine.start();
   ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
@@ -5448,7 +5448,16 @@ TEST(PaperRecovery, WithoutAPublishedOpeningQuotationAMPositionsSettleByHandAfte
   provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
   ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
   ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
-  const auto monday = md::new_york_to_utc({2026, 10, 19}, 9, 45);
+  // The fetcher still looks for the date's row after it: the evening of the expiry
+  // date, the next trading days and the last date of its 14-day lookback.
+  for (const auto& time : {md::new_york_to_utc({2026, 10, 16}, 17, 30), md::new_york_to_utc({2026, 10, 19}, 9, 45),
+                           md::new_york_to_utc({2026, 10, 30}, 9, 45)}) {
+    provider.sink->publish(md::OptionQuote{1, time, 8, 8.2, 1, 1});
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time; }));
+    EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq") << md::format_timestamp(time);
+  }
+  // Past it, the row can no longer arrive: the position settles by hand.
+  const auto monday = md::new_york_to_utc({2026, 11, 2}, 9, 45);
   provider.sink->publish(md::OptionQuote{1, monday, 8, 8.2, 1, 1});
   ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= monday; }));
   EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "manual");
