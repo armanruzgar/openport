@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 #include "broker_json.hpp"
@@ -77,10 +78,12 @@ double parse_ibkr_number(std::string_view text, bool price) {
     if (i + 1 == text.size() && (c == 'K' || c == 'M')) scale = c == 'K' ? 1e3 : 1e6;
     else digits += c;
   }
-  double result = 0;
-  const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), result);
-  if (digits.empty() || error != std::errc{} || end != digits.data() + digits.size() || !std::isfinite(result))
-    return missing;
+  // strtod, not from_chars: older libc++ (macOS 15) has no floating-point from_chars.
+  // Plain decimals only, so no whitespace, sign prefix, hex, inf or nan gets through.
+  if (digits.empty() || digits.find_first_not_of("0123456789.-eE") != std::string::npos) return missing;
+  char* end = nullptr;
+  const double result = std::strtod(digits.c_str(), &end);
+  if (end != digits.c_str() + digits.size() || !std::isfinite(result)) return missing;
   return result * scale;
 }
 

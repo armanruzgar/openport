@@ -2,6 +2,7 @@
 #include "openport/server/plans.hpp"
 #include "openport/server/playbooks.hpp"
 #include "openport/trading/history.hpp"
+#include "paper_json.hpp"
 #include "strategy_template.hpp"
 
 #include <algorithm>
@@ -199,8 +200,7 @@ std::optional<ApiResponse> playbook_read(const ApiRequest& request, const Metric
         if (parameters.contains("payout_odds")) {
           const auto text = parameters.at("payout_odds").get<std::string>();
           double value = -1;
-          const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-          if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !(value >= 0 && value <= 1))
+          if (!query_decimal(text, value) || !(value >= 0 && value <= 1))
             throw std::invalid_argument("payout_odds must be a number from 0 to 1");
           payout_odds = value;
         }
