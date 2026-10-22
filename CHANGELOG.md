@@ -208,6 +208,7 @@ preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plan
 - Opt-in discipline guardrails: a losing-streak cooldown and size-creep warnings or
   blocks against the median of recent opening orders, journaled as `tilt_flag` events.
 - Python client and MCP: `rules_compare`, `validate_rule_pack` and economics on `pass_odds`.
+
 ### Fill models and fill quality
 
 - **Queue fills** (`fill_model: "queue"`, `queue_fills`, `queue_seed`): a resting
@@ -242,6 +243,8 @@ preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plan
   4 GiB and 20 seconds, newest first, stopping once every fill has a quote; `search`
   reports how far it got. Quantities above a million contracts are skipped. The
   broker layouts are tested on sample files, not live exports.
+- Fills report `stress_ticks` and `queued`. The fills CSV keeps every earlier column
+  in place and ends with `feed`, `stress_ticks`, `queued`.
 
 ### API, Python and automation
 
