@@ -422,9 +422,9 @@ struct FlattenPreview {
 
 /// New terms for an open order; each field left empty keeps its value.
 struct OrderChange {
-  std::optional<Quantity> quantity;    ///< The total, filled contracts (or units) included.
-  std::optional<Money> limit_price;    ///< Limit orders only; a multi-leg order's net per unit.
-  std::optional<Money> trigger_level;  ///< Armed orders with a trigger only.
+  std::optional<Quantity> quantity = {};    ///< The total, filled contracts (or units) included.
+  std::optional<Money> limit_price = {};    ///< Limit orders only; a multi-leg order's net per unit.
+  std::optional<Money> trigger_level = {};  ///< Armed orders with a trigger only.
   /// DAY or GTC, for resting limit orders: a DAY order then ends with this session.
   std::optional<TimeInForce> tif = {};
   std::optional<std::optional<Walk>> walk = {};

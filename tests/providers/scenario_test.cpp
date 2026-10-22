@@ -557,8 +557,9 @@ TEST(Scenarios, BuiltInObjectivesComeFromTheirOwnFileKeyedByScenarioId) {
     EXPECT_FALSE(providers::valid_scenario_id(id)) << id;
   for (const auto& scenario : providers::builtin_scenarios()) {
     EXPECT_EQ(json::parse(scenario.source).count("objectives"), 0U) << scenario.id;
-    if (scenario.id == "morning-crush" || scenario.id == "afternoon-waterfall" || scenario.id == "range-bleed")
+    if (scenario.id == "morning-crush" || scenario.id == "afternoon-waterfall" || scenario.id == "range-bleed") {
       EXPECT_FALSE(scenario.objectives.empty()) << scenario.id;
+    }
   }
   std::vector<providers::Scenario> scenarios{providers::parse_scenario(valid().dump(), "test.json")};
   const auto id = scenarios.front().id;

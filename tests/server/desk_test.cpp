@@ -3038,7 +3038,7 @@ TEST(ReproducibleRun, QueueFillsFromRecordedPrintsVerifyWithIdenticalBytes) {
         desk.stop();
       }
       if (repeat == 0) { golden = read_file(journal); } else { EXPECT_EQ(read_file(journal), golden); }
-      if (!queue) EXPECT_EQ(golden.find("queue"), std::string::npos);
+      if (!queue) { EXPECT_EQ(golden.find("queue"), std::string::npos); }
       const auto verified = server::verify_run(journal);
       EXPECT_TRUE(verified.matched) << verified.message;
     }

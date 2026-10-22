@@ -513,8 +513,9 @@ TEST(SeriesApi, RankUsesFullPrecisionCurrentIvSoTheSameSnapshotIsATie) {
   EXPECT_EQ(response["history_ranks"].size(), server::kSeriesFields.size());
   for (const auto* field : {"rr25", "bf25", "ratio9_30", "ratio30_93"}) {
     EXPECT_EQ(response["history_ranks"][field]["window"], 252);
-    if (!response["history_ranks"][field]["current"].is_null())
+    if (!response["history_ranks"][field]["current"].is_null()) {
       EXPECT_EQ(response["history_ranks"][field]["percentile"], 0);
+    }
   }
 }
 TEST(SeriesApi, VixTrackingJoinsCompletedSessionsWithoutProxySubstitutionOrGapFilling) {

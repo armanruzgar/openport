@@ -150,12 +150,13 @@ TEST(SmileDynamics, GridMatchesStickyStrikeWithoutASurfaceAndMovesWithOne) {
         const auto index = i * vols.size() + j;
         const double sticky = snapshot->scenarios.cells[index].pnl, pnl = moved.cells[index].pnl;
         // No move, same smile; sticky delta still applies a vol shock in delta space.
-        if (spots[i] == 0 && (dynamics == SmileDynamics::StickyMoneyness || vols[j] == 0))
+        if (spots[i] == 0 && (dynamics == SmileDynamics::StickyMoneyness || vols[j] == 0)) {
           EXPECT_NEAR(pnl, sticky, 1e-9) << index;
+        }
         // A long call on a negative skew: the smile's slide lowers its vol in a
         // selloff and raises it in a rally, relative to sticky strike.
-        if (spots[i] < 0) EXPECT_LT(pnl, sticky) << index;
-        if (spots[i] > 0) EXPECT_GT(pnl, sticky) << index;
+        if (spots[i] < 0) { EXPECT_LT(pnl, sticky) << index; }
+        if (spots[i] > 0) { EXPECT_GT(pnl, sticky) << index; }
       }
   }
 }
@@ -238,8 +239,8 @@ TEST(SmileDynamics, TimeBetaAndTermScaledGridsMoveSmilesAsTheProfileDoes) {
           EXPECT_DOUBLE_EQ(grid.cells[index].pnl, profile.curves[day].pnl[spot]) << index;
           EXPECT_EQ(grid.cells[index].days, scan.days[day]);
           // A long call on a negative skew gains from the slide in a rally and loses in a selloff.
-          if (scan.spot_percent[spot] > 0) EXPECT_GT(grid.cells[index].pnl, sticky.cells[index].pnl) << index;
-          if (scan.spot_percent[spot] < 0) EXPECT_LT(grid.cells[index].pnl, sticky.cells[index].pnl) << index;
+          if (scan.spot_percent[spot] > 0) { EXPECT_GT(grid.cells[index].pnl, sticky.cells[index].pnl) << index; }
+          if (scan.spot_percent[spot] < 0) { EXPECT_LT(grid.cells[index].pnl, sticky.cells[index].pnl) << index; }
         }
     }
   }

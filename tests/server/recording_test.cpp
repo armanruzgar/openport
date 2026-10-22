@@ -1692,7 +1692,7 @@ TEST(ReplayHost, ScenarioPacksCannotReplaceBuiltInsOrNameAPathOutsideTheirDirect
   for (const auto& pack : json::parse(call(restored, "GET", "/api/replay/packs").body)["packs"]) {
     EXPECT_NE(pack["scenario"]["id"], "escaped");
     EXPECT_NE(pack["scenario"]["id"], "../escaped");
-    if (pack["scenario"]["id"] == builtin.id) EXPECT_EQ(pack["seed"], std::to_string(builtin.seed));
+    if (pack["scenario"]["id"] == builtin.id) { EXPECT_EQ(pack["seed"], std::to_string(builtin.seed)); }
   }
 }
 }

@@ -126,7 +126,7 @@ TEST(FlowTape, SweepsSurviveEvictionAndAFullTape) {
     const auto n = 15'000 + i;
     const bool two_venues = (n / 30) % 2 == 1;
     const bool edge = n % 30 < 10 || n % 30 >= 20;  // within a second of a neighbouring run
-    if (!edge) EXPECT_EQ(full.prints[i].sweep, two_venues) << n;
+    if (!edge) { EXPECT_EQ(full.prints[i].sweep, two_venues) << n; }
   }
 }
 
@@ -170,7 +170,7 @@ TEST(FlowTape, SimulatedPrintsSitOnTheQuoteAndRepeat) {
     EXPECT_EQ(first->ts, volume.ts);
     EXPECT_EQ(first->venue, 0);
     (first->price == 2.00 ? bids : first->price == 2.06 ? asks : mids)++;
-    if (first->price != 2.00 && first->price != 2.06) EXPECT_DOUBLE_EQ(first->price, 2.03);
+    if (first->price != 2.00 && first->price != 2.06) { EXPECT_DOUBLE_EQ(first->price, 2.03); }
   }
   EXPECT_GT(bids, 0);
   EXPECT_GT(asks, 0);

@@ -106,8 +106,9 @@ TEST(AmericanApproximation, BoundedByEuropeanIntrinsicAndTheTree) {
             // Up to a year and 40% vol both stay within 0.2% of the strike of the
             // converged tree. Beyond that they drift apart (BAW above, BS2002
             // below by over $1 at three years and 60% vol), as documented.
-            if (t <= 1 && vol <= 0.4)
+            if (t <= 1 && vol <= 0.4) {
               EXPECT_NEAR(price, tree, 0.002 * k) << t << ' ' << vol << ' ' << k << ' ' << static_cast<int>(type);
+            }
           }
           // BS2002's flat boundary is suboptimal exercise: it is a lower bound
           // on the true American value, up to the tree's own error.

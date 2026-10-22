@@ -313,7 +313,7 @@ TEST(Api, SurfaceAddsSabrOnlyWhenRequested) {
     const json& fit = expiry["sabr"];
     EXPECT_GT(fit["alpha"].get<double>(), 0);
     EXPECT_EQ(fit["beta_calibrated"], std::string_view(beta) == "fit");
-    if (std::string_view(beta) != "fit") EXPECT_DOUBLE_EQ(fit["beta"].get<double>(), std::stod(beta));
+    if (std::string_view(beta) != "fit") { EXPECT_DOUBLE_EQ(fit["beta"].get<double>(), std::stod(beta)); }
     EXPECT_LT(fit["rmse_vol_points"].get<double>(), 1);
     EXPECT_TRUE(fit["butterfly_ok"].is_boolean());
     EXPECT_TRUE(expiry["points"][0]["sabr_iv"].is_number());
@@ -687,6 +687,7 @@ class VolatilitySource final : public server::MetricsSource {
   mutable std::atomic<int> event_reads{0};
   std::vector<trading::PlanEvent> calendar;
   std::shared_ptr<const server::TradingView> plan;
+  using server::MetricsSource::trading_view;
   std::shared_ptr<const server::TradingView> trading_view(std::string_view account) const override {
     return account == "practice" ? plan : nullptr;
   }

@@ -714,7 +714,7 @@ TEST_F(PaperEngine, WhatIfModelsOrderChainsWithoutTrading) {
     const auto candidate = json::parse(response.body)["candidates"][0];
     EXPECT_EQ(candidate["decision"], "ok");
     EXPECT_FALSE(candidate["after"].is_null());
-    if (std::string_view(key) == "then") EXPECT_EQ(candidate["after"]["exposure"]["dollar_delta"], 0);
+    if (std::string_view(key) == "then") { EXPECT_EQ(candidate["after"]["exposure"]["dollar_delta"], 0); }
     chained[key] = nullptr;
     expect_error(write(*engine, "POST", "/api/orders/what-if",
         {{"candidates", json::array({{{"orders", json::array({chained})}}})}}), 400, "INVALID_REQUEST");
@@ -5697,7 +5697,7 @@ TEST_F(PaperEngine, ScenarioExplorerAddsDatesAndLeavesRuleGridUnchanged) {
     const auto profile = read(*engine, std::string("/api/risk/profile?underlying=SPX&days=0&dynamics=") + dynamics);
     EXPECT_EQ(moved["surface_fallback"], profile["surface_fallback"]);
     // Without a surface the grid is the sticky-strike grid, and says why.
-    if (moved["surface_fallback"] == json::array({"SPX"})) EXPECT_EQ(moved["slices"], grid["slices"]);
+    if (moved["surface_fallback"] == json::array({"SPX"})) { EXPECT_EQ(moved["slices"], grid["slices"]); }
   }
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/scenarios?dynamics=sticky"}, *engine).status, 400);
   EXPECT_EQ(read(*engine, "/api/risk")["scenarios"], before);
