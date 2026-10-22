@@ -136,7 +136,9 @@ Valuation valuation_for(const std::string& symbol, const md::OptionContract& con
 /// expiry's nearest listed strikes interpolate, at the analytics' forward, scaled
 /// to the deliverable's shares. A deliverable of cash only is worth its discounted
 /// intrinsic value and moves with nothing. A European model of an American series:
-/// the value is labelled modelled and never trades.
+/// the value is labelled modelled and never trades, and is floored at what exercising
+/// the deliverable is worth now, as the American series is (a deep put's European
+/// value falls below it). There it moves one for one with the deliverable's shares.
 struct ModelledSeries {
   double price = 0;
   Valuation valuation;
@@ -179,6 +181,12 @@ std::optional<ModelledSeries> modelled_series(const std::string& symbol, const m
       out.valuation.gamma = g.gamma * carry * carry * scale;
       out.valuation.vega = g.vega / 100.0 * scale;
       out.valuation.theta = g.theta / 365.0 * scale;
+      const double intrinsic = scale * std::max(0.0, call ? metrics->spot - strike : strike - metrics->spot);
+      if (contract.style == pricing::ExerciseStyle::American && intrinsic > out.price) {
+        out.price = intrinsic;
+        out.valuation.delta = call ? scale : -scale;
+        out.valuation.gamma = out.valuation.vega = out.valuation.theta = 0;
+      }
     }
     out.valuation.valid = valid_valuation(out.valuation);
     if (!std::isfinite(out.price) || out.price < 0 || !out.valuation.valid) return std::nullopt;

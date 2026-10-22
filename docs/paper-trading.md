@@ -245,7 +245,12 @@ delivers cash only, the desk values it by model: Black at its effective strike, 
 expiry's forward and discount from the analytics, with the smile IV interpolated between
 the listed strikes either side of it (the nearest one beyond the listed range), scaled
 to its shares (a cash-only series is worth its discounted intrinsic value). It is a
-European model of an American series. The value marks the position as a quote with no
+European model of an American series, floored at the deliverable's exercise value at
+the analytics' spot (shares times its distance from the effective strike, over 100),
+as the American series would be: a deep in-the-money put's European value falls below
+it, which would show a holder a false loss and give a short's holders a reason to
+exercise overnight. On the floor it moves one for one with the deliverable's shares
+(delta of shares/100, no gamma, vega or theta). The value marks the position as a quote with no
 size, `modelled_mark: true` on the position, so the account stays valued, rollovers
 continue and margin and risk see it; it never fills an order, so the series cannot be
 traded until a listed series quotes it (close it by exercise, or wait for expiry). An

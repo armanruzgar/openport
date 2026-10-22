@@ -5729,6 +5729,60 @@ TEST(PaperStocks, SplitsAdjustHeldSeriesWhichThenTradeAsTheirStandardEquivalents
   engine.stop();
 }
 
+TEST(PaperStocks, ModelledDeepInTheMoneyPutsAreMarkedAtLeastAtTheirExerciseValue) {
+  for (const bool long_put : {true, false}) {
+    SCOPED_TRACE(long_put ? "long" : "short");
+    auto options = paper_options();
+    options.analytics.fallback_rate = 0.10;  // a European model of a deep put then falls below intrinsic
+    options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};
+    PaperProvider provider;
+    server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+    engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+    const auto put = *md::parse_osi("SPY261016P00500000");
+    const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+    provider.sink->publish(md::ContractDefinition{0, put});
+    provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016P00330000")});
+    provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016P00340000")});
+    provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+    provider.sink->publish(md::OptionQuote{0, monday, 9, 9.2, 10, 10});
+    ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+    engine.synchronize().get();
+    const auto contracts = long_put ? 1 : 6;
+    const auto traded = write(engine, "POST", "/api/orders",
+        {{"client_order_id", "put"}, {"symbol", put.osi_symbol()}, {"side", long_put ? "buy" : "sell"}, {"type", "limit"},
+         {"quantity", contracts}, {"limit_price", long_put ? "9.20" : "9.00"}, {"time_in_force", "day"}});
+    ASSERT_EQ(traded.status, 201) << traded.body;
+    // After 3-for-2 the put delivers 150 shares at an effective 333.33, deep in the money
+    // with SPY at 250: worth at least 1.5 x 83.33 = 125.00 exercised.
+    const auto day = [&](md::Date date) {
+      const auto time = md::new_york_to_utc(date, 9, 45);
+      provider.sink->publish(md::UnderlyingQuote{"SPY", time, 249.9, 250.1, 250});
+      provider.sink->publish(md::OptionQuote{1, time, 80, 80.4, 20, 20});
+      provider.sink->publish(md::OptionQuote{2, time, 90, 90.4, 20, 20});
+      EXPECT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+      engine.synchronize().get();
+      provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 80, 80.4, 20, 20});
+      EXPECT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+      engine.synchronize().get();
+    };
+    day({2026, 9, 23});
+    auto portfolio = read(engine, "/api/portfolio");
+    ASSERT_EQ(portfolio["positions"].size(), 1);
+    EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+    ASSERT_TRUE(portfolio["positions"][0]["mark"].is_string()) << portfolio["positions"][0].dump();
+    EXPECT_GE(Money::parse(portfolio["positions"][0]["mark"].get<std::string>()), Money::parse("125.00"));
+    // Holders exercise only an option trading below its exercise value: the short put's
+    // modelled mark gives them no reason overnight.
+    day({2026, 9, 24});
+    portfolio = read(engine, "/api/portfolio");
+    ASSERT_EQ(portfolio["positions"].size(), 1);
+    EXPECT_EQ(portfolio["positions"][0]["quantity"], long_put ? 1 : -6);
+    EXPECT_TRUE(engine.trading_view()->snapshot->closures.empty());
+    engine.stop();
+  }
+}
+
 TEST(PaperStocks, AdjustedSeriesWithoutAListedEquivalentAreModelledAndTheDaysRollOn) {
   auto options = paper_options();
   options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};
