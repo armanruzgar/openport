@@ -5839,6 +5839,88 @@ TEST(PaperStocks, ModelledDeepInTheMoneyPutsAreMarkedAtLeastAtTheirExerciseValue
   }
 }
 
+TEST(PaperStocks, AFlooredModelledMarkIsTheSessionsExerciseValueToTheMicro) {
+  auto options = paper_options();
+  options.analytics.fallback_rate = 0.10;
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto put = *md::parse_osi("SPY261016P00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, put});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016P00330000")});
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016P00340000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 9, 9.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  ASSERT_EQ(write(engine, "POST", "/api/orders",
+      {{"client_order_id", "put"}, {"symbol", put.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+       {"quantity", 1}, {"limit_price", "9.20"}, {"time_in_force", "day"}}).status, 201);
+  // At 250.000001 the 150 shares are worth 375.0000015 a unit, which the session
+  // rounds to 375.000002: the put is worth 124.999998 exercised, not the double's
+  // 124.9999985 rounded either way.
+  const auto time = md::new_york_to_utc({2026, 9, 23}, 9, 45);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", time, 249.900001, 250.100001, 250.000001});
+  provider.sink->publish(md::OptionQuote{1, time, 80, 80.4, 20, 20});
+  provider.sink->publish(md::OptionQuote{2, time, 90, 90.4, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+  engine.synchronize().get();
+  provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 80, 80.4, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+  engine.synchronize().get();
+  const auto snapshot = engine.trading_view()->snapshot;
+  ASSERT_EQ(snapshot->positions.size(), 1u);
+  EXPECT_TRUE(snapshot->positions[0].modelled_mark);
+  ASSERT_TRUE(snapshot->positions[0].mark);
+  EXPECT_EQ(*snapshot->positions[0].mark, Money::parse("124.999998"));
+  engine.stop();
+}
+
+TEST(PaperStocks, AnAmericanSeriesDeliveringCashOnlyIsMarkedAtItsUndiscountedPayoff) {
+  auto options = paper_options();
+  options.analytics.fallback_rate = 0.10;
+  // 1-for-101: 100 shares become 0.99 of a share, all of it paid in cash.
+  options.corporate_actions = {{"SPY", {2026, 9, 23}, 1, 101}};
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  const auto monday = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, call});
+  provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPY261016C50000000")});
+  provider.sink->publish(md::ContractDefinition{2, *md::parse_osi("SPY261016C51500000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", monday, 509.9, 510.1, 510});
+  provider.sink->publish(md::OptionQuote{0, monday, 14, 14.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == monday; }));
+  engine.synchronize().get();
+  ASSERT_EQ(write(engine, "POST", "/api/orders",
+      {{"client_order_id", "call"}, {"symbol", call.osi_symbol()}, {"side", "buy"}, {"type", "limit"},
+       {"quantity", 1}, {"limit_price", "14.20"}, {"time_in_force", "day"}}).status, 201);
+  // A share held marks the split at the stock's price.
+  ASSERT_EQ(write(engine, "POST", "/api/stocks/trade", {{"symbol", "SPY"}, {"side", "buy"}, {"shares", 1}}).status, 200);
+  const auto time = md::new_york_to_utc({2026, 9, 23}, 9, 45);
+  provider.sink->publish(md::UnderlyingQuote{"SPY", time, 51500, 51520, 51510});
+  provider.sink->publish(md::OptionQuote{1, time, 2130, 2140, 20, 20});
+  provider.sink->publish(md::OptionQuote{2, time, 1220, 1230, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == time; }));
+  engine.synchronize().get();
+  provider.sink->publish(md::OptionQuote{1, time + md::kNanosPerSecond, 2130, 2140, 20, 20});
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time >= time + md::kNanosPerSecond; }));
+  engine.synchronize().get();
+  const auto portfolio = read(engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["positions"].size(), 1);
+  // The 510.00 a share of the split mark, 0.99 of a split share: $51,000 a contract.
+  EXPECT_EQ(portfolio["positions"][0]["deliverable"], json({{"shares", 0}, {"cash", "51000.00"}}));
+  EXPECT_EQ(portfolio["positions"][0]["modelled_mark"], true);
+  // $510 a unit against the $500 strike, exercisable now: 10.00, not discounted.
+  EXPECT_EQ(portfolio["positions"][0]["mark"], "10.00") << portfolio["positions"][0].dump();
+  engine.stop();
+}
+
 TEST(PaperStocks, AdjustedSeriesWithoutAListedEquivalentAreModelledAndTheDaysRollOn) {
   auto options = paper_options();
   options.corporate_actions = {{"SPY", {2026, 9, 23}, 3, 2}};

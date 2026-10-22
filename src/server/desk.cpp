@@ -134,13 +134,17 @@ Valuation valuation_for(const std::string& symbol, const md::OptionContract& con
 /// no listed series pays the same (after a 3:2 or a reverse split, its effective
 /// strike is not listed): Black at its effective strike with the smile IV the
 /// expiry's nearest listed strikes interpolate, at the analytics' forward, scaled
-/// to the deliverable's shares. A deliverable of cash only is worth its discounted
-/// intrinsic value and moves with nothing. A European model of an American series:
+/// to the deliverable's shares. A deliverable of cash only is worth its intrinsic
+/// value, discounted for a European series and not for an American one, which can
+/// be exercised now, and moves with nothing. A European model of an American series:
 /// the value is labelled modelled and never trades, and is floored at what exercising
 /// the deliverable is worth now, as the American series is (a deep put's European
 /// value falls below it). There it moves one for one with the deliverable's shares.
+/// `mark` is the price in Money; a floored one is the exercise value worked in the
+/// session's own decimal arithmetic, so it never rounds below it.
 struct ModelledSeries {
   double price = 0;
+  Money mark;
   Valuation valuation;
 };
 std::optional<ModelledSeries> modelled_series(const std::string& symbol, const md::OptionContract& contract,
@@ -170,9 +174,20 @@ std::optional<ModelledSeries> modelled_series(const std::string& symbol, const m
     ModelledSeries out;
     out.valuation = {symbol, metrics->as_of, 0, 0, 0, 0, metrics->spot, forward, discount, years, iv, true};
     out.valuation.spot_source = metrics->spot_source;
-    if (d.shares == 0) {
+    const bool american = contract.style == pricing::ExerciseStyle::American;
+    // What exercising one unit is worth now, as the session's unit_exercise_value works it.
+    const auto exercise = [&] {
+      const auto worth = (Money::from_double(metrics->spot) * d.shares + d.cash).prorate(1, 100);
+      const auto struck = Money::from_double(contract.strike);
+      return std::max(Money{}, call ? worth - struck : struck - worth);
+    }();
+    if (d.shares == 0 && american) {
+      out.mark = exercise;
+      out.price = exercise.dollars();
+    } else if (d.shares == 0) {
       const double worth = d.cash.dollars() / 100;
       out.price = discount * std::max(0.0, call ? worth - contract.strike : contract.strike - worth);
+      if (std::isfinite(out.price)) out.mark = Money::from_double(out.price);
     } else {
       const double scale = static_cast<double>(d.shares) / 100, carry = forward / metrics->spot;
       const auto g = pricing::black_greeks(contract.type, forward, strike, years, iv, discount);
@@ -181,9 +196,10 @@ std::optional<ModelledSeries> modelled_series(const std::string& symbol, const m
       out.valuation.gamma = g.gamma * carry * carry * scale;
       out.valuation.vega = g.vega / 100.0 * scale;
       out.valuation.theta = g.theta / 365.0 * scale;
-      const double intrinsic = scale * std::max(0.0, call ? metrics->spot - strike : strike - metrics->spot);
-      if (contract.style == pricing::ExerciseStyle::American && intrinsic > out.price) {
-        out.price = intrinsic;
+      if (std::isfinite(out.price)) out.mark = Money::from_double(out.price);
+      if (american && std::isfinite(out.price) && exercise > out.mark) {
+        out.mark = exercise;
+        out.price = exercise.dollars();
         out.valuation.delta = call ? scale : -scale;
         out.valuation.gamma = out.valuation.vega = out.valuation.theta = 0;
       }
@@ -1465,7 +1481,7 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
               ++observations_[symbol];
             }
             const auto time = fresh ? offered(underlying, as_of) : as_of;
-            const auto value = Money::from_double(model->price);
+            const auto value = model->mark;
             QuoteObservation quote{symbol, observations_[symbol], time, value, value, 0, 0, std::min(as_of, time)};
             quote.modelled = true;
             quotes.push_back(std::move(quote));
