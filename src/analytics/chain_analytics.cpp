@@ -147,14 +147,14 @@ struct ExposureTerm {
   double scale;      ///< discount * carry
   double weight;
 
-  ExposureTerm(double strike, double vol, double years, double discount, double carry,
-               double calls, double puts)
-      : strike(strike), vol(vol), years(years), discount(discount), carry(carry),
+  ExposureTerm(double strike_, double vol_, double years_, double discount_, double carry_,
+               double calls_, double puts_)
+      : strike(strike_), vol(vol_), years(years_), discount(discount_), carry(carry_),
         // Using true time here would turn a small forward/spot gap near expiry into a
         // huge carry rate against the floored charm horizon.
-        carry_rate(std::log(carry) / years), yield(-std::log(discount * carry) / years),
-        calls(calls), puts(puts), sd(vol * std::sqrt(years)), root_years(std::sqrt(years)),
-        log_ratio(std::log(carry / strike)), scale(discount * carry), weight(calls + puts) {}
+        carry_rate(std::log(carry_) / years_), yield(-std::log(discount_ * carry_) / years_),
+        calls(calls_), puts(puts_), sd(vol_ * std::sqrt(years_)), root_years(std::sqrt(years_)),
+        log_ratio(std::log(carry_ / strike_)), scale(discount_ * carry_), weight(calls_ + puts_) {}
 };
 
 struct ExposurePoint {
