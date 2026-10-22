@@ -117,8 +117,12 @@ def test_series_route_describes_metric_history_and_its_errors():
     contract.validate("GET", "/api/replay/underlyings/SPX/series", 200, {**body, "rows": []})
     with pytest.raises(ContractMismatch, match=r"rows.0.mfiv30"):
         contract.validate("GET", "/api/underlyings/SPX/series", 200, {**body, "rows": [{**body["rows"][0], "mfiv30": "15.2"}]})
-    contract.validate("GET", "/api/underlyings/SPX/series?interval=1h", 400, {"error": "interval must be 1m or 1d"})
-    contract.validate("GET", "/api/underlyings/XYZ/series", 404, {"error": "unknown underlying"})
+    error = lambda code, message: {"error": {"code": code, "message": message, "actual": None, "limit": None, "scope": None}}
+    contract.validate("GET", "/api/underlyings/SPX/series?interval=1h", 400, error("INVALID_REQUEST", "interval must be 1m or 1d"))
+    contract.validate("GET", "/api/underlyings/XYZ/series", 404, error("NOT_FOUND", "unknown underlying"))
+    # A bare message string is not the contract's error shape.
+    with pytest.raises(ContractMismatch):
+        contract.validate("GET", "/api/underlyings/XYZ/series", 404, {"error": "unknown underlying"})
     assert {("/api/underlyings/{symbol}/series", "get"), ("/api/replay/underlyings/{symbol}/series", "get")} <= contract.checked
 
 

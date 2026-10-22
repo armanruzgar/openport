@@ -1062,6 +1062,9 @@ json account_json(const TradingView& view) {
               {"inactivity_deadline", timed.inactivity_deadline ? json(md::format_date(*timed.inactivity_deadline)) : json(nullptr)},
               {"flat_time", r.flat_time ? json(clock_text(*r.flat_time)) : json(nullptr)},
               {"flat_now", plan_flat_now(r, s.time)},
+              // Whether today's flat time applies: a market day by the holiday calendar.
+              {"flat_today", r.flat_time.has_value() && s.time > 0 &&
+                  md::market_session(md::new_york_to_utc(plan_trading_date(r, s.time), 9, 30)).open},
               {"scaling", scaling},
               {"size_scaling", size_scaling},
               {"day_lock", e.day_lock == Reason::NONE ? json(nullptr) : json(to_string(e.day_lock))},

@@ -122,9 +122,11 @@ including payments after the last session. On an ex-date the ETF price drops by 
 payment; the preceding close remains cum-dividend, including when the run starts
 on the ex-date.
 
-An explicit session `dividends` entry replaces the generated payment for that symbol
-and date, in prices and the Replay account. The resulting scenario calendar replaces
-`--dividends` payments on matching symbols and dates; other server payments remain.
+An explicit session `dividends` entry is that symbol's dividend for its calendar
+quarter: it replaces the generated payment in the quarter, in prices and the Replay
+account (revisions before 9 replaced only one on the same date). The resulting
+scenario calendar replaces `--dividends` payments of the same symbol in the same
+quarter, so a simulated ETF never pays twice; other server payments remain.
 The complete merged schedule is recorded in the run's start record for verification
 and resume. In the real-time demo feed the generated calendar supplies account
 payments and warnings when no `--dividends` source was given; an explicit source
@@ -187,8 +189,8 @@ interest, also on dates when that expiry is one of the date's dailies or weeklie
 Revisions 2–8 gave the monthly level only to its wider strikes listed on earlier
 dates, so open interest jumped near the edge of the daily strike window. Revision 9
 also holds SPY option volatility with SPY's price after the stock close (as QQQ's
-already was), and keeps an overnight first session's frozen cash index at the close
-`previous_close` sets.
+already was), keeps an overnight first session's frozen cash index at the close
+`previous_close` sets, and makes an authored dividend its quarter's only payment.
 
 ## Several sessions
 

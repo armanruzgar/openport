@@ -129,7 +129,8 @@ prints named tokens. The token file must hold a valid token at startup; after th
 server reloads it whenever its modification time or size changes, on `SIGHUP`, or on an
 admin `POST /api/tokens/reload`, so edits rotate or revoke tokens at once, without a
 restart. A malformed replacement keeps the last good set; an empty one revokes every
-named token ([API](api.md)). Protect the file with owner-only permissions. Send Bearer credentials over
+named token ([API](api.md)). Each secret is at least eight printable characters,
+and a `#` starts a comment only at the start of a field. Protect the file with owner-only permissions. Send Bearer credentials over
 HTTPS behind a reverse proxy for remote access. Static
 files are confined to the web root, and WebSocket upgrades must come from the same
 origin; behind a proxy that rewrites the Host header, list your public origin with

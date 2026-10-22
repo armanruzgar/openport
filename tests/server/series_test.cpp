@@ -429,7 +429,13 @@ TEST(SeriesApi, ValidatesRangesFieldsAndIntervalsBeforeReading) {
   EXPECT_EQ(body["rows"][0]["mfiv30"], 20);
   EXPECT_EQ(body["rows"][0]["sources"]["mfiv30"], "own");
   EXPECT_FALSE(body["rows"][0].contains("atm30"));
-  EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/QQQ/series"}, source).status, 404);
+  // Errors take the shape every route uses.
+  const auto unknown = server::handle_api({"GET", "/api/underlyings/QQQ/series"}, source);
+  EXPECT_EQ(unknown.status, 404);
+  EXPECT_EQ(json::parse(unknown.body)["error"]["code"], "NOT_FOUND");
+  const auto invalid = server::handle_api({"GET", "/api/underlyings/SPX/series?interval=5m"}, source);
+  EXPECT_EQ(invalid.status, 400);
+  EXPECT_EQ(json::parse(invalid.body)["error"]["code"], "INVALID_REQUEST");
   const auto unfinished = server::handle_api({"GET", "/api/underlyings/SPX/series?interval=1d&from=2026-09-22&to=2026-09-22"}, source);
   EXPECT_TRUE(json::parse(unfinished.body)["rows"].empty());
 }

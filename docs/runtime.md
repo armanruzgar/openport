@@ -1156,8 +1156,9 @@ nonzero `--expiries` or `--window` are rejected.
 
 Revision 9 is the default: every strike of an ETF monthly carries monthly open
 interest, also when the monthly is a daily or weekly expiry that date; SPY option
-volatility holds with SPY's price after the stock close; and an overnight start's
-frozen cash index matches `previous_close`. Revision 8
+volatility holds with SPY's price after the stock close; an overnight start's
+frozen cash index matches `previous_close`; and an authored dividend is its quarter's
+only payment. Revision 8
 holds ETF underlying prices at the 16:00 stock close
 (13:00 early) while options trade to 16:15 (13:15 early). Revision 7 adds two-sided
 liquid wings; `--option revision=7` keeps those quotes with the historical post-close

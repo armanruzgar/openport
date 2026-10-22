@@ -989,8 +989,8 @@ TEST(ReplayHost, InterruptedMultiSessionRunKeepsSessionsDividendsAndVerifiesAtTh
   std::filesystem::create_directory(scenarios);
   { std::ofstream out(scenarios / "quarter.json"); out << R"({"id":"quarter","title":"Quarter","description":"Across an ex-date.",
     "symbols":["SPY"],"date":"2026-09-17","seed":1,"generator":1,"volatility":0,"iv_shift":0,"spot_vol":0,
-    "sessions":[{"session":"regular","drift":[[1,0]]},{"session":"regular","drift":[[1,0]]},
-    {"session":"regular","drift":[[1,0]],"dividends":[{"symbol":"SPY","per_share":2.25}]}]})"; }
+    "sessions":[{"session":"regular","drift":[[1,0]]},{"session":"regular","drift":[[1,0]],"dividends":[{"symbol":"SPY","per_share":2.25}]},
+    {"session":"regular","drift":[[1,0]]}]})"; }
   server::Engine::Options base;
   base.paper_journal = file.directory / "main.jsonl";
   base.analytics.deamericanize = false;
@@ -1000,7 +1000,6 @@ TEST(ReplayHost, InterruptedMultiSessionRunKeepsSessionsDividendsAndVerifiesAtTh
   std::filesystem::create_directories(crashed / "replays");
   std::string id, uninterrupted;
   json sessions;
-  const auto ex = providers::demo_dividends({2026, 9, 18}, {2026, 9, 18}).front().per_share;
   {
     server::ReplayHost host({file.directory, base, true, scenarios});
     const auto started = call(host, "POST", "/api/replay", R"({"scenario":"quarter","paused":true,"speed":0,"seed":"scenario"})");
@@ -1020,9 +1019,11 @@ TEST(ReplayHost, InterruptedMultiSessionRunKeepsSessionsDividendsAndVerifiesAtTh
     ASSERT_EQ(exercised.status, 200) << exercised.body;
     ASSERT_EQ(call(host, "PUT", "/api/replay", R"({"until":"2026-09-18T10:00"})").status, 200);
     const auto payments = json::parse(call(host, "GET", "/api/replay/trades").body)["dividends"];
+    // The session's authored payment is the quarter's only one: the generated and
+    // the server's payments of the quarter are replaced.
     ASSERT_EQ(payments.size(), 1U);
-    EXPECT_EQ(payments[0]["per_share"], ex.str());
-    EXPECT_EQ(payments[0]["amount"], (ex * 100).str());
+    EXPECT_EQ(payments[0]["per_share"], "2.25");
+    EXPECT_EQ(payments[0]["amount"], "225.00");
     const auto journal = file.directory / "replays" / (id + ".jsonl");
     std::filesystem::copy_file(journal, crashed / "replays" / (id + ".jsonl"));
     { std::ofstream out(crashed / "replays" / (id + ".json")); out << state.dump() << '\n'; }
@@ -1048,9 +1049,9 @@ TEST(ReplayHost, InterruptedMultiSessionRunKeepsSessionsDividendsAndVerifiesAtTh
   }));
   ASSERT_EQ(call(host, "PUT", "/api/replay", R"({"paused":true})").status, 200);
   const auto payments = json::parse(call(host, "GET", "/api/replay/trades").body)["dividends"];
-  ASSERT_EQ(payments.size(), 2U);
-  EXPECT_EQ(payments[1]["per_share"], "2.25");
-  EXPECT_EQ(payments[1]["amount"], "225.00");
+  ASSERT_EQ(payments.size(), 1U);
+  EXPECT_EQ(payments[0]["per_share"], "2.25");
+  EXPECT_EQ(payments[0]["amount"], "225.00");
   ASSERT_EQ(call(host, "PUT", "/api/replay", R"({"until":"16:15"})").status, 200);
   ASSERT_TRUE(test::recording_eventually([&] { return json::parse(host.tick())["replay"]["finished"].get<bool>(); }));
   host.stop();

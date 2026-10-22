@@ -419,6 +419,24 @@ TEST(Playbooks, LiveAutoBindingsAreAccountSpecific) {
   EXPECT_EQ(store.publication("practice", false).at("modes").at("morning"), "auto");
   EXPECT_TRUE(store.publication("other", false).at("modes").empty());
 }
+TEST(Playbooks, RemovingAnAccountEndsItsForwardTests) {
+  server::Playbooks store;
+  store.change({{"action", "create"}, {"definition", definition()}}, "main", false);
+  const auto started = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  store.change({{"action", "mode"}, {"id", "morning"}, {"mode", "auto"}}, "sandbox-gone", false, started);
+  const auto open = store.publication("sandbox-gone", false).at("forward_tests").at("morning").at("windows");
+  ASSERT_EQ(open.size(), 1U);
+  ASSERT_TRUE(open[0].at("ended").is_null());
+  const auto expired = started + 60 * md::kNanosPerMinute;
+  store.remove_account("sandbox-gone", expired);
+  const auto windows = store.catalogue().at("forward_tests");
+  ASSERT_EQ(windows.size(), 1U);
+  EXPECT_EQ(windows[0].at("ended"), md::format_timestamp(expired));
+  EXPECT_FALSE(windows[0].at("end_order").is_null());
+  EXPECT_FALSE(store.enabled("sandbox-gone"));
+  // The catalogue it leaves validates as a saved one does.
+  EXPECT_NO_THROW(server::Playbooks(std::filesystem::path{}, store.catalogue()));
+}
 TEST(Playbooks, StartupFinishesRemovingBindingsOfADeletedAccount) {
   test::RecordingFile file;
   const auto path = file.directory / "playbooks.json";

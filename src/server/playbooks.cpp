@@ -606,12 +606,20 @@ Playbooks::Json Playbooks::publication(std::string_view account, bool replay) co
   result["simulated"] = true;
   return result;
 }
-void Playbooks::remove_account(const std::string& account) {
+void Playbooks::remove_account(const std::string& account, md::Timestamp now) {
   staged_.erase(account);
   reasons_.erase(account);
   std::erase_if(suppressed_, [&](const auto& item) { return item.first.starts_with(account + ":"); });
   auto next = catalogue_;
   next["modes"].erase(account);
+  // Its forward tests end with it, covering every order it placed.
+  if (next.contains("forward_tests"))
+    for (auto& window : next["forward_tests"])
+      if (window.at("account") == account && window.at("ended").is_null()) {
+        const auto started = *md::parse_datetime(window.at("started").get<std::string>(), md::Zone::Utc);
+        window["ended"] = md::format_timestamp(std::max(now, started));
+        window["end_order"] = std::to_string(std::numeric_limits<trading::OrderId>::max());
+      }
   try { save(next); }
   catch (...) {
     // Deletion has already committed its tombstone; no transient owner remains

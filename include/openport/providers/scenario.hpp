@@ -132,6 +132,8 @@ inline constexpr int kScenarioRevision = 9;
 /// generated payments for the same symbol/date; revisions 1-3 have only explicit entries.
 [[nodiscard]] std::vector<trading::Dividend> scenario_dividends(const Scenario& scenario, md::Date date,
                                                                int revision = kScenarioRevision);
+/// Whether two ex-dates fall in one calendar quarter, as one quarterly dividend's would.
+[[nodiscard]] bool same_dividend_quarter(md::Date a, md::Date b);
 /// The option contracts a scenario lists on `date`, in the order it defines them.
 [[nodiscard]] std::vector<md::OptionContract> scenario_chain(const Scenario& scenario, md::Date date,
                                                              int revision = kScenarioRevision);

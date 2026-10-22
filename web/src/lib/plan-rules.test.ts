@@ -213,6 +213,9 @@ it("blocks flat-time entries at the market clock and announces the deadline", ()
   expect(timeRuleNotices(account.evaluation, r, before)).toEqual(["Flat by 15:45 ET, positions will be closed"])
   // Saturday 15:30 ET: no session to be flat for.
   expect(timeRuleNotices(account.evaluation, r, "2026-11-07T20:30:00Z")).toEqual([])
+  // Thanksgiving, a Thursday: the server's calendar says there is no session either.
+  expect(timeRuleNotices({ ...account.evaluation, flat_today: false }, r, "2026-11-26T20:30:00Z")).toEqual([])
+  expect(timeRuleNotices({ ...account.evaluation, flat_today: true }, r, before)).toEqual(["Flat by 15:45 ET, positions will be closed"])
   expect(timeRuleNotices(account.evaluation, r, after)).toEqual(["Flat time passed; openings blocked until the day ends"])
   expect(planEntryNotice(r, "SPX", before, false)).toBeNull()
   expect(planEntryNotice(r, "SPX", after, false)).toContain("FLAT_TIME")

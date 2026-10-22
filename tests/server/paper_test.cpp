@@ -5446,6 +5446,8 @@ TEST_F(PaperEngine, FlatRulesRoundTripValidationAndAccountProgress) {
   EXPECT_EQ(account["rules"], rules);
   EXPECT_EQ(account["evaluation"]["flat_time"], "10:01");
   EXPECT_EQ(account["evaluation"]["flat_now"], false);
+  // A market day by the calendar: the terminal counts down to the flat time.
+  EXPECT_EQ(account["evaluation"]["flat_today"], true);
   for (const auto& patch : std::vector<json>{{{"flat_time", "17:00"}}, {{"flat_time", "24:00"}},
       {{"flat_time", "09:60"}}, {{"flat_time", "9:30"}}, {{"flat_time", 600}},
       {{"flat_time", false}}, {{"no_overnight", nullptr}}, {{"no_overnight", 1}}, {{"no_overnight", "true"}},

@@ -407,6 +407,22 @@ TEST(DemoMarket, RevisionNineKeepsAnOvernightIndexAtTheScenariosPreviousClose) {
   }
 }
 
+TEST(DemoMarket, RevisionNineLetsAnAuthoredDividendReplaceItsQuartersGeneratedOne) {
+  const auto& scenarios = providers::builtin_scenarios();
+  const auto slide = std::find_if(scenarios.begin(), scenarios.end(), [](const auto& s) { return s.id == "three-day-slide"; });
+  ASSERT_NE(slide, scenarios.end());
+  const auto september = [&](int revision) {
+    std::vector<trading::Dividend> out;
+    for (const auto& d : providers::scenario_dividends(*slide, slide->date, revision))
+      if (d.symbol == "SPY" && providers::same_dividend_quarter(d.ex_date, {2026, 9, 1})) out.push_back(d);
+    return out;
+  };
+  EXPECT_EQ(september(8).size(), 2U);
+  const auto replaced = september(9);
+  ASSERT_EQ(replaced.size(), 1U);
+  EXPECT_EQ(replaced[0].ex_date, (md::Date{2026, 9, 15}));
+}
+
 TEST(DemoMarket, RevisionNineChangesSpyOptionsOnlyAfterTheStockClose) {
   // Revision 9 stops SPY's option vols following the latent level once its price is
   // held at the close; until then both revisions quote alike.
