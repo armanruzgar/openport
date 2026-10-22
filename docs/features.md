@@ -199,7 +199,8 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   expiry opening print for AM settlement, an approximation of the official special
   opening quotation. Live providers require manual settlement imports, or with
   `--am-settlement cboe` settle SPX, RUT, DJX and VIX AM options on the special opening
-  quotation Cboe publishes, keeping manual import as the fallback.
+  quotation in Cboe's daily history row for their expiry date, waiting until it appears
+  and keeping manual import as the fallback.
   [Settlement](paper-trading.md#expiry-and-explicit-settlement).
 
 ## Margin and buying power

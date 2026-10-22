@@ -794,7 +794,7 @@ int run(int argc, char** argv) {
         [&engine](std::vector<providers::SettlementQuotation> found) {
           std::vector<server::OpeningQuotation> list;
           for (auto& q : found)
-            list.push_back({q.underlying, q.date, q.value, q.quote_time, "cboe", q.index, q.url});
+            list.push_back({q.underlying, q.date, q.value, "cboe", q.index, q.url});
           engine.set_opening_quotations(std::move(list));
         }, providers::CboeSettlementQuotations::Options{});
     soq->start();

@@ -255,19 +255,18 @@ struct CboeSoqIndex {
 inline constexpr CboeSoqIndex kCboeSoqIndices[] = {{"SPX", "SET"}, {"RUT", "RLS"}, {"DJX", "DJS"}, {"VIX", "VRO"}};
 /// The SOQ index of an underlying's AM-settled options, or empty.
 [[nodiscard]] std::string_view cboe_soq_index(std::string_view underlying);
-/// Cboe's daily history of an SOQ index ("DATE,SET" then "MM/DD/YYYY,value" rows), and
-/// its delayed quote, which carries the day's value once every component has opened.
+/// Cboe's daily history of an SOQ index ("DATE,SET" then "MM/DD/YYYY,value" rows).
+/// Its row for a date is the published record AM options settle on. The index's
+/// delayed quote is not used: when it shows the day's value cannot be told reliably
+/// from its trade time, which can come before every component has opened.
 [[nodiscard]] std::string cboe_soq_history_url(std::string_view index);
-[[nodiscard]] std::string cboe_soq_quote_url(std::string_view index);
 
-/// One published special opening quotation. `quote_time` is when Cboe's delayed quote
-/// says the value was computed; zero for a history row, which carries only its date.
+/// One published special opening quotation: a history row, with its date.
 struct SettlementQuotation {
   std::string underlying;
   std::string index;
   md::Date date;
   double value = 0;
-  md::Timestamp quote_time = 0;
   std::string url;
   bool operator==(const SettlementQuotation&) const = default;
 };
@@ -276,30 +275,19 @@ struct SettlementQuotation {
 /// the "DATE,<index>" header.
 [[nodiscard]] std::vector<SettlementQuotation> parse_cboe_soq_history(std::string_view csv, std::string_view underlying,
                                                                       std::string_view index, md::Date since = {});
-/// The value in a delayed quote of the index (`"symbol": "^SET"`), dated by its New York
-/// `last_trade_time`; empty when the quote names another symbol or has no positive
-/// value or trade time.
-[[nodiscard]] std::optional<SettlementQuotation> parse_cboe_soq_quote(std::string_view json, std::string_view underlying,
-                                                                      std::string_view index);
-
 /// Fetches the special opening quotations of the AM-settled underlyings it is given:
-/// the delayed quote every `interval` (Cboe's CDN caches it for 15 minutes), and the
-/// daily history when started and every `history_interval`, so a restart still finds
-/// the values of the last `lookback_days`. `sink` receives every value it holds each
-/// time one is new or changed; a history row replaces a quote of the same date.
+/// their daily history when started and every `interval` (Cboe's CDN caches it for 15
+/// minutes), so a date's row is found soon after Cboe publishes it and a restart still
+/// finds the values of the last `lookback_days`. `sink` receives every value it holds
+/// each time one is new or changed.
 class CboeSettlementQuotations {
  public:
   using Sink = std::function<void(std::vector<SettlementQuotation>)>;
   struct Options {
     std::chrono::seconds interval{15 * 60};
-    std::chrono::seconds history_interval{6 * 3600};
     std::chrono::seconds retry{15 * 60};
     std::chrono::seconds timeout{30};
     std::int64_t lookback_days = 14;
-    /// A delayed quote's value is taken only when computed on its date this long
-    /// after the 09:30 ET open: earlier, the index's components may not all have
-    /// printed their openings. History rows are always taken and are preferred.
-    std::chrono::seconds quote_after_open{30 * 60};
     std::function<md::Timestamp()> clock = md::now;
   };
 
@@ -325,7 +313,6 @@ class CboeSettlementQuotations {
   Sink sink_;
   Options options_;
   md::Timestamp due_ = 0;
-  md::Timestamp history_due_ = 0;
   std::map<std::pair<std::string, md::Date>, SettlementQuotation> known_;
   std::thread thread_;
   std::atomic<bool> stopping_{false};

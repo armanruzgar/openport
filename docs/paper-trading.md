@@ -4385,26 +4385,21 @@ Live real-provider AM positions settle by the explicit `POST /api/settlements` i
 (the terminal's Settle button) with `settle_by: "manual"`, as their feed does not supply
 the official special opening quotation, unless the server is started with
 `--am-settlement cboe`. It then fetches the special opening quotations Cboe Global
-Indices publishes for SPX (index `SET`), RUT (`RLS`), DJX (`DJS`) and VIX (`VRO`): the
-delayed quote `https://cdn.cboe.com/api/global/delayed_quotes/quotes/_SET.json` every
-15 minutes (Cboe's CDN caches it that long), which carries the day's value and Cboe's
-New York `last_trade_time` once every component has opened, and the daily history
-`https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv` at startup and
-every six hours, so a restart still finds the last two weeks' values. Both endpoints
-were reachable without an account on 2026-10-21; the tests use responses recorded
-then. NDX's quotation is Nasdaq's and is not fetched. The history row is preferred: it
-replaces a quote of the same date whenever its value differs, and a quote never replaces
-it. A delayed quote counts only when it says the value was computed on its date at
-least 30 minutes after the 09:30 ET open (past the opening-print window; an earlier
-value may predate the components' opening prints), and the desk applies the same rule
-to what it is given. A later history row that differs from a quote the desk holds
-replaces it while no position has settled on it. Settlement is journaled once, though:
-a position settles on the first value that passes these checks, and a history row that
-arrives after that and differs does not change it (the settlement source keeps the
-quote's `quote_time`, so such a case can be audited). Waiting AM positions on those underlyings
-show `settle_by: "soq"` through their expiry date and settle once their date's value
-arrives, with source `published_soq`, provider `cboe`, the `index`, `date`, `url` and,
-from the delayed quote, `quote_time`. After the expiry date without one they show
+Indices publishes for SPX (index `SET`), RUT (`RLS`), DJX (`DJS`) and VIX (`VRO`) from
+their daily history
+`https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv`, at startup
+and every 15 minutes (Cboe's CDN caches it that long), so a date's row is found soon
+after Cboe publishes it and a restart still finds the last two weeks' values. The
+endpoint was reachable without an account on 2026-10-21; the tests use responses
+recorded then. NDX's quotation is Nasdaq's and is not fetched. A position settles only
+on the history row for its exact expiry date. The index's delayed quote is not used:
+its trade time cannot tell reliably whether the value it shows is the day's quotation,
+computed once every component has opened, so it could settle a position early on a
+wrong value or late. Settlement is journaled once: a row Cboe revises after a position
+settled on it does not change that settlement. Waiting AM positions on those
+underlyings show `settle_by: "soq"` through their expiry date and settle once their
+date's row arrives, with source `published_soq`, provider `cboe`, the `index`, `date`
+and `url`. After the expiry date without one they show
 `manual`, and an import before the fetch still settles exactly once: manual import
 remains the fallback for a fetch that fails or a value Cboe has not published. Demo and
 replay accounts keep their opening print. PM imports are

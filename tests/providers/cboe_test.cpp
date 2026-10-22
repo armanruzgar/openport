@@ -762,7 +762,6 @@ TEST(CboeSoq, MapsAmSettledUnderlyingsToTheirPublishedIndices) {
   EXPECT_TRUE(providers::cboe_soq_index("NDX").empty());
   EXPECT_TRUE(providers::cboe_soq_index("SPY").empty());
   EXPECT_EQ(providers::cboe_soq_history_url("SET"), "https://cdn.cboe.com/api/global/us_indices/daily_prices/SET_History.csv");
-  EXPECT_EQ(providers::cboe_soq_quote_url("RLS"), "https://cdn.cboe.com/api/global/delayed_quotes/quotes/_RLS.json");
 }
 
 TEST(CboeSoq, ReadsTheHistoryFromADateOn) {
@@ -770,7 +769,6 @@ TEST(CboeSoq, ReadsTheHistoryFromADateOn) {
   ASSERT_EQ(rows.size(), 4u);
   EXPECT_EQ(rows[0].date, (md::Date{2026, 10, 16}));
   EXPECT_DOUBLE_EQ(rows[0].value, 7757.09);  // the October monthly's settlement
-  EXPECT_EQ(rows[0].quote_time, 0);           // a row has a date, not a time
   EXPECT_EQ(rows[0].underlying, "SPX");
   EXPECT_EQ(rows[3].date, (md::Date{2026, 10, 21}));
   EXPECT_EQ(providers::parse_cboe_soq_history(kSetHistory, "SPX", "SET").size(), 7u);
@@ -780,48 +778,7 @@ TEST(CboeSoq, ReadsTheHistoryFromADateOn) {
   EXPECT_THROW((void)providers::parse_cboe_soq_history("<html>moved</html>", "SPX", "SET"), std::runtime_error);
 }
 
-TEST(CboeSoq, ReadsTheDaysValueFromTheDelayedQuote) {
-  const auto quote = providers::parse_cboe_soq_quote(kSetQuote, "SPX", "SET");
-  ASSERT_TRUE(quote);
-  EXPECT_EQ(quote->date, (md::Date{2026, 10, 21}));
-  EXPECT_DOUBLE_EQ(quote->value, 7736.8799);
-  EXPECT_EQ(quote->quote_time, md::new_york_to_utc({2026, 10, 21}, 10, 35) + 51 * md::kNanosPerSecond);
-  EXPECT_FALSE(providers::parse_cboe_soq_quote(kRlsQuote, "SPX", "SET"));  // another index
-  EXPECT_FALSE(providers::parse_cboe_soq_quote(R"({"data":{"symbol":"^SET","current_price":0}})", "SPX", "SET"));
-  EXPECT_THROW((void)providers::parse_cboe_soq_quote("{}", "SPX", "SET"), std::runtime_error);
-}
-
-TEST(CboeSoq, TakesADelayedQuoteOnlyOnceComputedPastTheOpeningPrints) {
-  md::Timestamp clock = md::new_york_to_utc({2026, 10, 21}, 9, 50);
-  std::vector<std::vector<providers::SettlementQuotation>> received;
-  providers::CboeSettlementQuotations::Options options;
-  options.clock = [&] { return clock; };
-  options.lookback_days = 3;
-  providers::CboeSettlementQuotations soq({"SPX"},
-      [&](std::vector<providers::SettlementQuotation> all) { received.push_back(std::move(all)); }, options);
-  std::string stamp = "2026-10-21T09:45:00";
-  test::HttpStub http;
-  http.respond = [&](std::string_view url) {
-    if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, "DATE,SET\n10/20/2026,7681.230000\n"};
-    auto quote = std::string(kSetQuote);
-    quote.replace(quote.find("2026-10-21T10:35:51"), 19, stamp);
-    return net::HttpResponse{200, quote};
-  };
-  soq.poll_once(http);
-  // At 09:45 the value may predate the components' opening prints: only the history is held.
-  ASSERT_EQ(received.size(), 1u);
-  ASSERT_EQ(received[0].size(), 1u);
-  EXPECT_EQ(received[0][0].date, (md::Date{2026, 10, 20}));
-  stamp = "2026-10-21T10:35:51";
-  clock += 15 * 60 * md::kNanosPerSecond;
-  soq.poll_once(http);
-  ASSERT_EQ(received.size(), 2u);
-  ASSERT_EQ(received[1].size(), 2u);
-  EXPECT_EQ(received[1][1].date, (md::Date{2026, 10, 21}));
-  EXPECT_GT(received[1][1].quote_time, 0);
-}
-
-TEST(CboeSoq, FetchesQuotesOftenAndTheHistoryRarely) {
+TEST(CboeSoq, HoldsOnlyTheHistoryRowOfADateFetchedEachInterval) {
   md::Timestamp clock = md::new_york_to_utc({2026, 10, 21}, 11, 0);
   std::vector<std::vector<providers::SettlementQuotation>> received;
   providers::CboeSettlementQuotations::Options options;
@@ -831,6 +788,7 @@ TEST(CboeSoq, FetchesQuotesOftenAndTheHistoryRarely) {
       [&](std::vector<providers::SettlementQuotation> all) { received.push_back(std::move(all)); }, options);
   EXPECT_EQ(soq.underlyings(), (std::vector<std::string>{"SPX", "RUT"}));
   test::HttpStub http;
+  // The delayed quote already shows 10/21's value; the history does not have it yet.
   http.respond = [](std::string_view url) {
     if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, std::string(kSetHistory.substr(0, kSetHistory.find("10/21")))};
     if (url.ends_with("_SET.json")) return net::HttpResponse{200, std::string(kSetQuote)};
@@ -838,33 +796,32 @@ TEST(CboeSoq, FetchesQuotesOftenAndTheHistoryRarely) {
     return net::HttpResponse{404, ""};
   };
   EXPECT_EQ(soq.poll_once(http), clock + 15 * 60 * md::kNanosPerSecond);
-  EXPECT_EQ(http.urls.size(), 4u);
   EXPECT_EQ(soq.error(), "cboe RLS history: HTTP 404");
+  for (const auto& url : http.urls) EXPECT_TRUE(url.ends_with("_History.csv")) << url;
+  // 10/19 and 10/20 from the history; older rows fall outside the lookback, and 10/21
+  // waits for its row.
   ASSERT_EQ(received.size(), 1u);
-  // 10/19 and 10/20 from the history, 10/21's from each quote; older rows fall outside the lookback.
-  ASSERT_EQ(received[0].size(), 4u);
-  EXPECT_EQ(received[0][0].index, "RLS");
-  EXPECT_GT(received[0][0].quote_time, 0);
-  EXPECT_EQ(received[0][3].date, (md::Date{2026, 10, 21}));
-  EXPECT_EQ(received[0][3].underlying, "SPX");
-  // Nothing new: no publication. The history failed, so it is retried with the quotes.
+  ASSERT_EQ(received[0].size(), 2u);
+  EXPECT_EQ(received[0][1].date, (md::Date{2026, 10, 20}));
+  EXPECT_EQ(received[0][1].underlying, "SPX");
+  // Nothing new: no publication.
   clock += 15 * 60 * md::kNanosPerSecond;
   soq.poll_once(http);
-  EXPECT_EQ(http.urls.size(), 8u);
   EXPECT_EQ(received.size(), 1u);
-  // The published history replaces the quote of its date only if it differs.
+  // The row appears.
   http.respond = [](std::string_view url) {
-    if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, "DATE,SET\n10/21/2026,7736.900000\n"};
+    if (url.ends_with("SET_History.csv")) return net::HttpResponse{200, "DATE,SET\n10/21/2026,7736.880000\n"};
     if (url.ends_with("RLS_History.csv")) return net::HttpResponse{200, "DATE,RLS\n10/21/2026,2787.060100\n"};
     return net::HttpResponse{503, ""};
   };
   clock += 15 * 60 * md::kNanosPerSecond;
   soq.poll_once(http);
+  EXPECT_TRUE(soq.error().empty()) << soq.error();
   ASSERT_EQ(received.size(), 2u);
-  const auto& spx = received[1][3];
-  EXPECT_DOUBLE_EQ(spx.value, 7736.9);
-  EXPECT_EQ(spx.quote_time, 0);
-  EXPECT_GT(received[1][0].quote_time, 0);  // RUT's history agreed with its quote
-  EXPECT_NE(soq.error().find("cboe SET quote: HTTP 503"), std::string::npos);
+  ASSERT_EQ(received[1].size(), 4u);
+  EXPECT_EQ(received[1][0].index, "RLS");
+  EXPECT_DOUBLE_EQ(received[1][0].value, 2787.0601);
+  EXPECT_EQ(received[1][3].date, (md::Date{2026, 10, 21}));
+  EXPECT_DOUBLE_EQ(received[1][3].value, 7736.88);
 }
 }  // namespace

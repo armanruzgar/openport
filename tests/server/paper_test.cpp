@@ -5362,8 +5362,8 @@ TEST(PaperRecovery, LiveAMPositionsSettleOnThePublishedOpeningQuotation) {
     ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
     ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
     // Another date's value, or another underlying's, does not settle it.
-    engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, 0, "cboe", "SET", "https://example.test/SET"},
-                                   {"RUT", {2026, 10, 16}, 2400, 0, "cboe", "RLS", "https://example.test/RLS"}});
+    engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, "cboe", "SET", "https://example.test/SET"},
+                                   {"RUT", {2026, 10, 16}, 2400, "cboe", "RLS", "https://example.test/RLS"}});
     const auto after = market.contract.expiry_time() + 30 * md::kNanosPerMinute;
     provider.sink->publish(md::OptionQuote{1, after, 8, 8.2, 1, 1});
     ASSERT_TRUE(wait_for([&] {
@@ -5371,8 +5371,7 @@ TEST(PaperRecovery, LiveAMPositionsSettleOnThePublishedOpeningQuotation) {
       return view->snapshot->time == after && !view->snapshot->positions.empty() && view->snapshot->positions[0].awaiting_settlement;
     }));
     EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq");
-    const auto computed = md::new_york_to_utc({2026, 10, 16}, 10, 35) + 51 * md::kNanosPerSecond;
-    engine.set_opening_quotations({{"SPX", {2026, 10, 16}, 7757.09, computed, "cboe", "SET", "https://example.test/SET"}});
+    engine.set_opening_quotations({{"SPX", {2026, 10, 16}, 7757.09, "cboe", "SET", "https://example.test/SET"}});
     provider.sink->publish(md::OptionQuote{1, after + md::kNanosPerMinute, 8, 8.2, 1, 1});
     ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->positions.empty(); }));
     engine.stop();
@@ -5386,14 +5385,14 @@ TEST(PaperRecovery, LiveAMPositionsSettleOnThePublishedOpeningQuotation) {
     EXPECT_EQ(source["provider"], "cboe");
     EXPECT_EQ(source["index"], "SET");
     EXPECT_EQ(source["date"], "2026-10-16");
-    EXPECT_EQ(source["quote_time"], md::format_timestamp(md::new_york_to_utc({2026, 10, 16}, 10, 35) + 51 * md::kNanosPerSecond));
+    EXPECT_FALSE(source.contains("quote_time"));  // a row has a date, not a time
     found = true;
   }
   EXPECT_TRUE(found);
   std::filesystem::remove_all(path.parent_path());
 }
 
-TEST(PaperRecovery, OpeningQuotationsFromEarlyDelayedQuotesWaitAndTheHistoryRowWins) {
+TEST(PaperRecovery, AMPositionsWaitForTheHistoryRowOfTheirDate) {
   auto options = paper_options();
   options.published_opening_quotations = {"SPX"};
   test::ScriptedMarket market;
@@ -5409,26 +5408,27 @@ TEST(PaperRecovery, OpeningQuotationsFromEarlyDelayedQuotesWaitAndTheHistoryRowW
   provider.sink->publish(md::OptionQuote{1, market.time, 9, 9.2, 1, 1});
   ASSERT_TRUE(wait_for([&] { return engine.metrics("SPX") && engine.metrics("SPX")->as_of == market.time; }));
   ASSERT_EQ(write(engine, "POST", "/api/orders", order(market, "am", "4.20")).status, 201);
-  // A delayed quote computed at 09:45, before its components can all have opened, or
-  // stamped another date, does not settle it.
+  // Hours after the open, with the history's earlier rows held but not its date's,
+  // the position waits.
   const md::Date expiry{2026, 10, 16};
-  engine.set_opening_quotations({{"SPX", expiry, 7700, md::new_york_to_utc(expiry, 9, 45), "cboe", "SET", "https://example.test/SET"}});
-  const auto after = market.contract.expiry_time() + 90 * md::kNanosPerMinute;
+  engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, "cboe", "SET", "https://example.test/SET_History.csv"}});
+  const auto after = market.contract.expiry_time() + 6 * 60 * md::kNanosPerMinute;
   provider.sink->publish(md::OptionQuote{1, after, 8, 8.2, 1, 1});
   ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time == after; }));
   engine.synchronize().get();
   ASSERT_EQ(engine.trading_view()->snapshot->positions.size(), 1u);
   EXPECT_TRUE(engine.trading_view()->snapshot->positions[0].awaiting_settlement);
-  // The history row and a later quote that differs: the row is the published record.
-  engine.set_opening_quotations({{"SPX", expiry, 7757.50, 0, "cboe", "SET", "https://example.test/SET_History.csv"},
-                                 {"SPX", expiry, 7757.09, md::new_york_to_utc(expiry, 10, 35), "cboe", "SET", "https://example.test/SET"}});
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["settle_by"], "soq");
+  // The row appears.
+  engine.set_opening_quotations({{"SPX", {2026, 10, 15}, 7690.08, "cboe", "SET", "https://example.test/SET_History.csv"},
+                                 {"SPX", expiry, 7757.50, "cboe", "SET", "https://example.test/SET_History.csv"}});
   provider.sink->publish(md::OptionQuote{1, after + md::kNanosPerMinute, 8, 8.2, 1, 1});
   ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->positions.empty(); }));
   const auto& settlements = engine.trading_view()->snapshot->settlements;
   ASSERT_EQ(settlements.size(), 1u);
   EXPECT_EQ(settlements[0].value, Money::parse("7757.50"));
   ASSERT_TRUE(settlements[0].source);
-  EXPECT_FALSE(settlements[0].source->contains("quote_time"));
+  EXPECT_EQ(settlements[0].source->at("url"), "https://example.test/SET_History.csv");
   engine.stop();
 }
 

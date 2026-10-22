@@ -1205,8 +1205,9 @@ The National Day of Mourning on 2025-01-09 is built in.
 `--am-settlement cboe` (default `manual`) likewise fetches the special opening
 quotations Cboe Global Indices publishes for the subscribed AM-settled index
 underlyings (`providers::CboeSettlementQuotations`): SPX's `SET`, RUT's `RLS`, DJX's
-`DJS` and VIX's `VRO`, from the delayed quote every 15 minutes and the daily history CSV
-at startup and every six hours. Live accounts settle their AM options on them. A failed
+`DJS` and VIX's `VRO`, from the daily history CSV at startup and every 15 minutes.
+Live accounts settle their AM options on the row for their expiry date and wait until
+it appears; the index's delayed quote is not used. A failed
 fetch is retried within 15 minutes, and the manual `POST /api/settlements` import stays
 available. Demo and replay providers refuse the
 flag. See [Durable startup and settlement sources](paper-trading.md#durable-startup-and-settlement-sources).

@@ -63,11 +63,6 @@ struct CircuitBreakerStatus {
 
 /// A live demo restart may only capture an AM opening print through 09:35 ET.
 inline constexpr md::Timestamp kOpeningPrintWait = 5 * md::kNanosPerMinute;
-/// A special opening quotation read from a delayed quote counts only when the quote
-/// says it was computed on its date at least this long after the 09:30 ET open, well
-/// past the opening-print window: an earlier one may predate the components' opening
-/// prints. A history row, which carries only its date, is the published record.
-inline constexpr md::Timestamp kOpeningQuotationAfter = 30 * md::kNanosPerMinute;
 
 /// How long after the regular close an expired PM position waits for its closing
 /// print before the last print before the close may stand in; past it, a position

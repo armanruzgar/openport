@@ -1596,7 +1596,6 @@ void Desk::update_trading(const std::vector<md::Event>& batch,
             const auto& q = soq->second;
             SettlementSource source{{"kind", "published_soq"}, {"provider", q.provider}, {"symbol", contract.underlying},
                 {"index", q.index}, {"date", md::format_date(q.date)}, {"url", q.url}};
-            if (q.quote_time > 0) source["quote_time"] = md::format_timestamp(q.quote_time);
             session.settle(contract.osi_symbol(), Money::from_double(q.value), market_time_, source);
             sample_equity(account);
             continue;
@@ -2193,22 +2192,14 @@ void Desk::set_corporate_actions(std::vector<trading::CorporateAction> actions) 
 void Desk::set_opening_quotations(std::vector<OpeningQuotation> quotations) {
   // Recorded runs never read them: their AM positions keep their opening print.
   if (options_.replay || provider_ == "demo") return;
-  // Each set replaces the last, so a history row that differs from the delayed quote
-  // of its date replaces it, until a position settles: settlement is journaled once.
+  // Each set replaces the last, so a revised row replaces its date's value until a
+  // position settles: settlement is journaled once. The first row of a date stands.
   opening_quotations_.clear();
   for (auto& q : quotations) {
     if (std::find(options_.published_opening_quotations.begin(), options_.published_opening_quotations.end(), q.underlying) ==
             options_.published_opening_quotations.end() || !std::isfinite(q.value) || q.value <= 0)
       continue;
-    // A delayed quote counts only once it was computed past the opening prints.
-    if (q.quote_time != 0 && (md::trading_date(q.quote_time) != q.date ||
-                              q.quote_time < md::new_york_to_utc(q.date, 9, 30) + kOpeningQuotationAfter))
-      continue;
-    // The history row is the published record: a quote never displaces one.
-    const auto key = std::make_pair(q.underlying, q.date);
-    if (const auto held = opening_quotations_.find(key); held != opening_quotations_.end() && held->second.quote_time == 0 && q.quote_time != 0)
-      continue;
-    opening_quotations_[key] = std::move(q);
+    opening_quotations_.try_emplace({q.underlying, q.date}, std::move(q));
   }
 }
 std::shared_ptr<const analytics::UnderlyingMetrics> Desk::metrics(const std::string& symbol) const {

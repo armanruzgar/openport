@@ -22,13 +22,12 @@ class SeriesStore;
 class Sandboxes;
 
 /// A published special opening quotation (SOQ): the value an AM-settled underlying's
-/// options settle on for a date, with where it was published. `quote_time` is the
-/// publisher's own computation time, zero when it gave only the date.
+/// options settle on for a date, with where it was published: the publisher's record
+/// for that date (Cboe's daily history row), never a delayed quote of the index.
 struct OpeningQuotation {
   std::string underlying;
   md::Date date;
   double value = 0;
-  md::Timestamp quote_time = 0;
   std::string provider;
   std::string index;
   std::string url;
