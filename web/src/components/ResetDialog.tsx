@@ -7,6 +7,8 @@ import { FillModelPicker } from "./FillModelPicker"
 import { FeeModelPicker } from "./FeeModelPicker"
 import { lockReason, offeredPlans, payoutRuleFacts } from "../lib/payouts"
 import { resetQuote } from "../lib/program-costs"
+import { propRuleFacts } from "../lib/prop-rules"
+import { isPackPlan, packPlans, useRulePacks } from "../lib/rule-packs"
 import { phaseFact, sizeScalingFact, scalingFact, dailyLossFact, dayEndFact, drawdownFact, objectiveFacts, targetFact, timeRuleFacts, tradeRuleFacts } from "../lib/plan-rules"
 import { compareMoney, ruleMoney, formatMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
@@ -32,6 +34,7 @@ export function planFacts(plan: Pick<Plan, "initial_cash" | "rules">): string[] 
     ...(dailyLoss ? [dailyLoss] : []),
     ...objectiveFacts(r),
     ...tradeRuleFacts(r),
+    ...propRuleFacts(r),
     ...timeRuleFacts(r),
     ...(sizeScalingFact(r) ? [sizeScalingFact(r)!] : []),
     ...(scalingFact(r) ? [scalingFact(r)!] : []),
@@ -70,8 +73,11 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
   const busy = useRef(false)
   const list = offeredPlans(plans.data?.plans ?? [], account)
   const selected = list.find((p) => p.id === choice && lockReason(p, list, account) == null) ?? null
-  // Custom rules can use either phase without taking the preset's name.
-  const bases = list
+  // Custom rules can use either phase without taking the preset's name. Imported
+  // rule packs' plans start a custom attempt too, under their own names.
+  const [packs] = useRulePacks()
+  const imported = packPlans(packs)
+  const bases = [...list, ...imported]
   const [baseId, setBaseId] = useState("")
   const [form, setForm] = useState<PlanForm | null>(null)
   const base = bases.find((p) => p.id === baseId) ?? bases.find((p) => p.rules.profit_target) ?? bases[0] ?? null
@@ -89,13 +95,17 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
     if (form || !base) return
     const start = bases.find((p) => p.id === choice) ?? base
     setBaseId(start.id)
-    setForm(planForm(start))
+    setForm(formFor(start))
   }
   function startFrom(id: string) {
     const plan = bases.find((p) => p.id === id)
     if (!plan) return
     setBaseId(id)
-    setForm(planForm(plan))
+    setForm(formFor(plan))
+  }
+  function formFor(plan: Plan): PlanForm {
+    const form = planForm(plan)
+    return isPackPlan(plan.id) ? { ...form, name: plan.name } : form
   }
   async function submit() {
     if (!ready || busy.current || writeBlocked(trading, token)) return
@@ -177,7 +187,10 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
             <label className="block space-y-1 text-xs">
               <span className="text-muted">Start from</span>
               <select className="trade-input w-full" value={base.id} disabled={pending} onChange={(event) => startFrom(event.target.value)}>
-                {bases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {list.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {imported.length > 0 && <optgroup label="Imported rule packs">
+                  {imported.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </optgroup>}
               </select>
             </label>
             <PlanEditor form={form} onChange={setForm} disabled={pending} />

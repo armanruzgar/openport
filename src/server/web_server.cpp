@@ -327,9 +327,13 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   if (access) *access = {};
   if (authorization_valid) *authorization_valid = {};
   if (!request.target.starts_with("/api/") && request.target != "/ws" && !request.target.starts_with("/ws/events")) return {};
-  const bool read = request.method == "GET";
+  // Rule comparisons and rule-pack validation compute from their body and change
+  // nothing, so they take read access; they still pass the origin check of a POST.
+  const auto bare = request.target.substr(0, request.target.find('?'));
+  const bool computes = request.method == "POST" && (bare == "/api/account/rules-compare" || bare == "/api/rule-packs/validate");
+  const bool read = request.method == "GET" || computes;
   if (!read && request.method != "POST" && request.method != "PUT" && request.method != "PATCH" && request.method != "DELETE") return {};
-  if (request.ambiguous_headers || (!read && !websocket_origin_allowed(
+  if (request.ambiguous_headers || (request.method != "GET" && !websocket_origin_allowed(
           request.origin ? std::optional<std::string_view>(*request.origin) : std::nullopt,
           request.host, policy.allowed_origins)))
     return api_error(403, "ORIGIN_REJECTED", "Origin or security headers are ambiguous or not allowed");
@@ -404,9 +408,10 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
     if (path.starts_with("/api/underlyings/") && path.ends_with("/volatility") && account != sandbox)
       return api_error(403, "SCOPE_REQUIRED", "Event volatility may read only this sandbox's plan calendar");
     const bool market_read = read && (path == "/ws" || path == "/api/status" || path == "/api/accounts" ||
-        path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" || path.starts_with("/api/underlyings/"));
+        path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" ||
+        path == "/api/rule-packs/validate" || path.starts_with("/api/underlyings/"));
     const bool account_read = read && (path == "/ws/events" || path == "/api/account" || path == "/api/account/equity" ||
-        path == "/api/account/pass-odds" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
+        path == "/api/account/pass-odds" || path == "/api/account/rules-compare" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/risk/hedges" || path == "/api/trades" ||
         path == "/api/trades.csv" || path == "/api/fills.csv" || path == "/api/playbooks" || path == "/api/alerts");
     if ((!market_read && account != sandbox) || (read && !market_read && !account_read) ||

@@ -601,10 +601,32 @@ class Client:
         return self._request("GET", "/calendar/events", params={"from": start, "to": end}, control=True)
 
     def pass_odds(self, days: int = 20, samples: int = 1000, *,
-                  playbook: str | None = None, seed: str | None = None) -> JSON:
-        """Derived historical estimate, not a prediction; insufficient history is 422."""
+                  playbook: str | None = None, seed: str | None = None, economics: bool = False,
+                  payout_odds: float | None = None, payout: str | None = None) -> JSON:
+        """Derived historical estimate, not a prediction; insufficient history is 422.
+
+        economics=True adds challenge economics (expected value and break-even pass rate)
+        for the account's program; payout_odds and payout replace the simulated first payout.
+        """
         return self._request("GET", "/account/pass-odds", scoped=True,
-                             params={"days": days, "samples": samples, "playbook": playbook, "seed": seed})
+                             params={"days": days, "samples": samples, "playbook": playbook, "seed": seed,
+                                     "economics": "true" if economics else None,
+                                     "payout_odds": payout_odds, "payout": payout})
+
+    def rules_compare(self, plans: list[str] | None = None, rules: list[JSON] | None = None, *,
+                      include_current: bool = True) -> JSON:
+        """Replay this live account's recorded attempt against presets and custom rule sets
+        ({"name", "initial_cash", "rules"}) side by side. Read-only; nothing is re-executed."""
+        body: JSON = {"include_current": include_current}
+        if plans is not None:
+            body["plans"] = plans
+        if rules is not None:
+            body["rules"] = rules
+        return self._request("POST", "/account/rules-compare", body, scoped=True, control=True)
+
+    def validate_rule_pack(self, pack: JSON) -> JSON:
+        """Check a versioned rule pack and return it normalized; nothing is stored."""
+        return self._request("POST", "/rule-packs/validate", pack, control=True)
 
     def strategy_template(self, symbol: str, expiry: str, template: JSON, *,
                           min_strike: float | None = None, max_strike: float | None = None) -> JSON:

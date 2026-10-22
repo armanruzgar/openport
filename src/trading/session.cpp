@@ -56,6 +56,21 @@ Decision volume_share_check(const std::string& symbol, Quantity held, Quantity o
       static_cast<double>(contracts), volume ? std::optional(static_cast<double>(*volume) * static_cast<double>(percent) / 100) : std::nullopt,
       symbol, evidence};
 }
+Decision minute_volume_check(const std::string& symbol, Quantity opening, std::int64_t percent,
+    std::optional<std::int64_t> volume) {
+  __extension__ using Wide = __int128;
+  if (opening <= 0) return {};
+  RuleEvidence evidence;
+  evidence.contract = symbol; evidence.contracts = opening; evidence.volume = volume; evidence.percent = percent;
+  if (!volume)
+    return {Reason::MINUTE_VOLUME, symbol + ": the plan caps opening orders at " + std::to_string(percent) +
+        "% of the last minute's volume, and this feed has not reported the contract's volume both a minute ago and within "
+        "the last minute, so the cap cannot be checked", static_cast<double>(opening), std::nullopt, symbol, evidence};
+  if (static_cast<Wide>(opening) * 100 <= static_cast<Wide>(percent) * *volume) return {};
+  return {Reason::MINUTE_VOLUME, symbol + ": opening " + std::to_string(opening) + " contracts exceeds " + std::to_string(percent) +
+      "% of the last minute's volume " + std::to_string(*volume), static_cast<double>(opening),
+      static_cast<double>(*volume) * static_cast<double>(percent) / 100, symbol, evidence};
+}
 namespace {
 using detail::State;
 using Events = std::vector<Json>;
@@ -1395,6 +1410,7 @@ Evaluation fresh_evaluation(const State& s, std::uint64_t attempt) {
   e.day = s.day;
   e.day_open_equity = e.starting_balance;
   e.day_close_equity = e.starting_balance;
+  if (s.config.rules.drawdown_basis == DrawdownBasis::Balance) e.day_close_balance = e.starting_balance;
   return e;
 }
 /// Capital changes neither P&L nor the account's distance above its floor.
@@ -1584,6 +1600,25 @@ void begin_cooldown(State& s, Events& events) {
   event(events, "guardrail_latched", Json{{"reason", Reason::COOLDOWN}, {"until", s.guardrails.cooldown_until}});
   latch_guardrail(s, Reason::COOLDOWN, events);
 }
+/// A discipline guardrail's flag: kept for the day (the latest 50) and journaled.
+void flag_tilt(State& s, Reason code, std::string message, Events& events) {
+  auto& tilt = s.guardrails.tilt;
+  tilt.push_back({s.time, code, std::move(message)});
+  if (tilt.size() > 50) tilt.erase(tilt.begin());
+  event(events, "tilt_flag", tilt.back());
+}
+/// A close's realised P&L for the losing-streak guardrail: losses in a row reaching
+/// loss_streak start the cooldown and flag tilt; a winning close ends the streak.
+void count_close(State& s, Money realised, Events& events) {
+  const auto streak = s.config.guardrails.loss_streak;
+  if (streak == 0 || realised == Money{}) return;
+  if (realised > Money{}) { s.guardrails.losing_closes = 0; return; }
+  if (++s.guardrails.losing_closes < streak) return;
+  flag_tilt(s, Reason::LOSS_STREAK, std::to_string(s.guardrails.losing_closes) + " losing closes in a row; opening orders "
+            "wait out the " + std::to_string(s.config.guardrails.cooldown_minutes) + "-minute cooldown", events);
+  s.guardrails.losing_closes = 0;
+  begin_cooldown(s, events);
+}
 /// A triggered close is a stop only when the watched move hurts the held position.
 bool closing_stop(const State& s, const Order& order) {
   if (order.role == OrderRole::StopLoss) return true;
@@ -1626,6 +1661,7 @@ void guardrail_fill(State& s, OrderId id, bool opening, Money realised_before, E
   if (stopped ||
       (g.cooldown_loss > Money{} && s.ledger.account().realised - realised_before < -g.cooldown_loss))
     begin_cooldown(s, events);
+  if (!opening) count_close(s, s.ledger.account().realised - realised_before, events);
 }
 /// Catch up every elapsed interval, retaining each scheduled step in history.
 /// Execution uses the current observation, never an invented intermediate quote.
@@ -1705,7 +1741,8 @@ void start_flat_time(State& s, Events& events) {
     }
   }
 }
-void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope = {});
+void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope = {},
+                       const std::vector<std::string>* only = nullptr);
 void advance(State& s, Timestamp time, Events& events) {
   if (time < 0 || time < s.time) throw TradingError(Reason::INVALID_TIME, "Market time must be nonnegative and monotone");
   const auto previous_time = s.time;
@@ -2237,10 +2274,77 @@ Decision min_hold_check(const State& s, const Order& o) {
   }
   return {};
 }
+std::string decimal(double value, int places);
+/// Adding to a leg of a trade over the open-loss cap: under BlockAdds refused until
+/// an observation finds the trade back within the cap, and under Flatten while its
+/// close is pending. Reductions always work.
+Decision open_loss_check(const State& s, const Order& o) {
+  const auto& cap = s.config.rules.open_loss_cap;
+  const auto& over = s.evaluation.open_loss_symbols;
+  if (!cap || cap->action == OpenLossAction::Fail || over.empty() || o.system || kept_within(o)) return {};
+  const auto adds = [&](const std::string& symbol, Side side) {
+    const auto q = held(s, symbol);
+    return q != 0 && (q > 0) == (side == Side::Buy) && std::find(over.begin(), over.end(), symbol) != over.end();
+  };
+  std::vector<std::pair<std::string, Side>> legs;
+  if (multi_leg(o.request)) for (const auto& leg : o.request.legs) legs.emplace_back(leg.symbol, leg.side);
+  else legs.emplace_back(o.request.symbol, o.request.side);
+  for (const auto& [symbol, side] : legs)
+    if (adds(symbol, side))
+      return {Reason::OPEN_LOSS_CAP, cap->action == OpenLossAction::Flatten
+              ? "This position's trade reached the plan's open-loss cap and is being closed; it cannot be added to"
+              : "This position's open loss is at the plan's open-loss cap; it can be reduced or closed, "
+                "but not added to, until it is back within the cap", {}, {}, symbol};
+  return {};
+}
+/// The median of the recent opening sizes the size-creep guardrail compares with,
+/// once it has three of them.
+std::optional<double> size_median(const GuardrailState& g) {
+  if (g.opening_sizes.size() < 3) return std::nullopt;
+  auto sizes = g.opening_sizes;
+  std::sort(sizes.begin(), sizes.end());
+  const auto n = sizes.size();
+  return n % 2 ? static_cast<double>(sizes[n / 2]) : (static_cast<double>(sizes[n / 2 - 1]) + static_cast<double>(sizes[n / 2])) / 2;
+}
+/// An opening order's size for size creep: its contracts, every leg counted.
+Quantity opening_size(const OrderRequest& r) {
+  if (!multi_leg(r)) return r.quantity;
+  Quantity ratios = 0;
+  for (const auto& leg : r.legs) ratios += leg.ratio;
+  Quantity size = 0;
+  if (__builtin_mul_overflow(r.quantity, ratios, &size)) return std::numeric_limits<Quantity>::max();
+  return size;
+}
+/// How far an opening order exceeds the rolling median, when it does: its size,
+/// the median and the limit (median × size_creep_percent / 100).
+struct SizeCreep { Quantity size; double median, limit; };
+std::optional<SizeCreep> size_creep(const State& s, const Order& o) {
+  const auto& g = s.config.guardrails;
+  if (g.size_creep_percent == 0 || o.system || kept_within(o) || o.request.exits_only || closing_only(s, o)) return std::nullopt;
+  const auto median = size_median(s.guardrails);
+  if (!median) return std::nullopt;
+  const auto size = opening_size(o.request);
+  const double limit = *median * static_cast<double>(g.size_creep_percent) / 100;
+  if (static_cast<double>(size) <= limit) return std::nullopt;
+  return SizeCreep{size, *median, limit};
+}
+std::string size_creep_message(const SizeCreep& c, std::int64_t percent) {
+  return std::to_string(c.size) + " contracts is more than " + std::to_string(percent) + "% of the median of your recent opening orders (" +
+         decimal(c.median, c.median == std::floor(c.median) ? 0 : 1) + ")";
+}
+Decision discipline_check(const State& s, const Order& o, Stage stage) {
+  if (stage != Stage::Accept || !s.config.guardrails.size_creep_block) return {};
+  if (const auto creep = size_creep(s, o))
+    return {Reason::SIZE_CREEP, size_creep_message(*creep, s.config.guardrails.size_creep_percent) +
+            "; your size-creep guardrail refuses it", static_cast<double>(creep->size), creep->limit, "account"};
+  return {};
+}
 Decision order_check(const State& s, const Order& o, Stage stage = Stage::Accept) {
   if (const auto d = min_hold_check(s, o); !d.ok()) return d;
   if (const auto d = account_check(s, closing_only(s, o), o.id); !d.ok()) return d;
   if (const auto d = entry_check(s, o); !d.ok()) return d;
+  if (const auto d = open_loss_check(s, o); !d.ok()) return d;
+  if (const auto d = discipline_check(s, o, stage); !d.ok()) return d;
   try { (void)clean_annotation(o.request.note, o.request.tags); }
   catch (const TradingError& e) { return failure(e.code(), e.what()); }
   if (stage == Stage::Accept && !o.request.group.empty())
@@ -3117,13 +3221,20 @@ void close_shares(State& s, const std::string& symbol, Quantity shares, StockSou
 }
 /// All scheduled closes and position-rule liquidations share the manual flatten planner. Only executable
 /// liquidity creates system IOCs; later transactions retry the remaining holdings.
-void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope) {
+void flatten_positions(State& s, std::string_view label, Events& events, const std::string& scope,
+                       const std::vector<std::string>* only) {
+  const auto named = [&](const std::string& symbol) {
+    return !only || std::find(only->begin(), only->end(), symbol) != only->end();
+  };
   std::vector<std::string> symbols;
   for (const auto& [symbol, position] : s.ledger.positions())
     if (scope.empty() || s.contracts.at(symbol).underlying == scope) symbols.push_back(symbol);
   std::map<std::string, Quantity> held_back;
+  // Planned across every position in scope, so a named long that covers a short
+  // closes with it; `only` then keeps the closes that touch a named position.
   const auto closes = plan_closes(s, symbols, held_back);
   for (const auto& close : closes) {
+    if (std::none_of(close.legs.begin(), close.legs.end(), [&](const Leg& leg) { return named(leg.symbol); })) continue;
     // A delayed system IOC already owns these legs until it fills or ends.
     bool pending = false;
     for (const auto id : open_ids(s)) {
@@ -3174,7 +3285,7 @@ void flatten_positions(State& s, std::string_view label, Events& events, const s
   }
   std::vector<std::pair<std::string, Quantity>> stocks;
   for (const auto& [symbol, stock] : s.ledger.stocks())
-    if (scope.empty() || symbol == scope) stocks.emplace_back(symbol, stock.shares);
+    if ((scope.empty() || symbol == scope) && named(symbol)) stocks.emplace_back(symbol, stock.shares);
   for (const auto& [symbol, shares] : stocks) close_shares(s, symbol, shares, StockSource::Rule, events);
   if (!holds_scope(s, {}, s.time)) s.evaluation.flat_pending = false;
 }
@@ -3280,16 +3391,21 @@ PlanInputs plan_inputs(const State& s, Money equity) {
 // Whole trades use the same grouping as the trade journal, so rolls count once.
 void refresh_trade_objectives(State& s) {
   const auto& rules = s.config.rules;
-  if (rules.phase == Phase::Funded || (rules.trade_consistency_percent == 0 && rules.min_trades == 0 && rules.microscalp_percent == 0)) return;
+  const bool funded = rules.phase == Phase::Funded;
+  const bool objectives = !funded && (rules.trade_consistency_percent > 0 || rules.min_trades > 0 ||
+                                      rules.microscalp_percent > 0 || rules.best_position_percent > 0);
+  const bool review = funded && rules.payouts.review.has_value();
+  if (!objectives && !review) return;
   auto& e = s.evaluation;
-  struct Whole { Money pnl; bool closed = true; std::uint64_t first = 0; };
+  struct Whole { Money pnl; bool closed = true; std::uint64_t first = 0; Timestamp opened = 0, last = 0; bool open_loss = false; };
   const State::TradeObjectives inputs{s.fills.size(), s.closures.size(), s.stock_fills.size(), s.dividends.size(),
-                                      e.attempt, e.first_fill, e.first_stock_fill, s.groups};
+                                      e.attempt, e.first_fill, e.first_stock_fill, s.groups, e.cycle_started, e.open_loss_trades.size()};
   if (const auto& cached = s.trade_objectives; cached && cached->fills == inputs.fills &&
       cached->closures == inputs.closures && cached->stock_fills == inputs.stock_fills &&
       cached->dividends == inputs.dividends && cached->attempt == inputs.attempt &&
       cached->first_fill == inputs.first_fill && cached->first_stock_fill == inputs.first_stock_fill &&
-      cached->groups.same(inputs.groups)) return;
+      cached->groups.same(inputs.groups) && cached->cycle_started == inputs.cycle_started &&
+      cached->open_loss_trades == inputs.open_loss_trades) return;
   std::map<std::string, Whole> trades;
   e.short_profit = {};
   for (const auto& life : lifecycles(s.fills, s.closures, s.contracts)) {
@@ -3300,6 +3416,10 @@ void refresh_trade_objectives(State& s) {
     trade.pnl = trade.pnl + life.gross - life.fees;
     trade.closed = trade.closed && life.closed.has_value();
     if (trade.first == 0 || life.first_fill < trade.first) trade.first = life.first_fill;
+    if (trade.opened == 0 || life.opened < trade.opened) trade.opened = life.opened;
+    if (life.closed) trade.last = std::max(trade.last, *life.closed);
+    const auto id = std::to_string(life.first_fill);
+    trade.open_loss = trade.open_loss || std::find(e.open_loss_trades.begin(), e.open_loss_trades.end(), id) != e.open_loss_trades.end();
   }
   if (rules.microscalp_percent > 0)
     for (const auto& life : share_lifecycles(s.stock_fills, s.dividends))
@@ -3307,19 +3427,112 @@ void refresh_trade_objectives(State& s) {
           *life.closed - life.opened < rules.microscalp_seconds * md::kNanosPerSecond)
         e.short_profit = e.short_profit + std::max(Money{}, life.gross + life.dividends);
   e.best_trade.reset();
+  e.best_position.reset();
+  e.position_excess = {};
   e.closed_trades = 0;
-  std::uint64_t best_first = 0;
+  e.cycle_trades.clear();
+  std::uint64_t best_first = 0, position_first = 0;
+  const auto better = [](const std::optional<BestTrade>& best, std::uint64_t best_at, Money pnl, std::uint64_t first) {
+    return !best || pnl > best->pnl || (pnl == best->pnl && first < best_at);
+  };
   for (const auto& [id, trade] : trades) {
     if (!trade.closed) continue;
+    if (review && trade.pnl > Money{} && in_payout_cycle(e, trade.last))
+      e.cycle_trades.push_back({id, trade.pnl, trade.last - trade.opened, trade.last, trade.open_loss});
+    if (!objectives) continue;
     if (rules.min_trades > 0) ++e.closed_trades;
-    if (rules.trade_consistency_percent == 0 || trade.pnl <= Money{}) continue;
-    if (!e.best_trade || trade.pnl > e.best_trade->pnl ||
-        (trade.pnl == e.best_trade->pnl && trade.first < best_first)) {
+    if (trade.pnl <= Money{}) continue;
+    if (rules.best_position_percent > 0) {
+      e.position_excess = e.position_excess + std::max(Money{}, trade.pnl - best_position_cap(rules));
+      if (better(e.best_position, position_first, trade.pnl, trade.first)) {
+        e.best_position = BestTrade{id, trade.pnl};
+        position_first = trade.first;
+      }
+    }
+    if (rules.trade_consistency_percent == 0) continue;
+    if (better(e.best_trade, best_first, trade.pnl, trade.first)) {
       e.best_trade = BestTrade{id, trade.pnl};
       best_first = trade.first;
     }
   }
+  // Share round trips (exercise and assignment deliveries, and share trades) are
+  // trades of their own, net of dividends; they carry no fees.
+  if (review)
+    for (const auto& life : share_lifecycles(s.stock_fills, s.dividends)) {
+      const auto pnl = life.gross + life.dividends;
+      if (!life.closed || pnl <= Money{} || !in_payout_cycle(e, *life.closed)) continue;
+      const auto id = "s" + std::to_string(life.fills.front());
+      e.cycle_trades.push_back({id, pnl, *life.closed - life.opened, *life.closed,
+          std::find(e.open_loss_trades.begin(), e.open_loss_trades.end(), id) != e.open_loss_trades.end()});
+    }
+  // The review reads them in the order they closed.
+  std::stable_sort(e.cycle_trades.begin(), e.cycle_trades.end(), [](const auto& a, const auto& b) { return a.closed < b.closed; });
   s.trade_objectives = inputs;
+}
+/// The trade each held contract or stock is in, by the trades view's ID: an
+/// option's trade_group, else its round trip; shares, which never join a trade, are
+/// a trade of their own ("s" and the opening stock fill).
+std::map<std::string, std::string> held_trades(const State& s) {
+  std::map<std::string, std::string> out;
+  if (s.reviewing.ready) {
+    for (const auto& [symbol, open] : s.reviewing.builder.open) out[symbol] = trade_group(open.life, s.groups);
+  } else {
+    for (const auto& life : lifecycles(s.fills, s.closures, s.contracts))
+      if (!life.closed) out[life.symbol] = trade_group(life, s.groups);
+  }
+  for (const auto& [symbol, trip] : s.trips) out.try_emplace(symbol, trip);
+  return out;
+}
+/// The open-loss cap (OpenLossCap) on each trade's marked open P&L, net across its
+/// legs, so a hedged spread is measured as one: a trade whose open loss reaches the
+/// cap is journaled once (`open_loss_cap`) and its round trips remembered for payout
+/// reviews; a Fail action fails the attempt, a Flatten action has monitor_rules close
+/// the whole trade, and BlockAdds refuses adding to its legs while it stays there.
+/// Trades with a leg without a mark are not measured.
+void check_open_loss(State& s, const PlanInputs& inputs, Events& events) {
+  auto& e = s.evaluation;
+  const auto& rules = s.config.rules;
+  if (!rules.open_loss_cap) return;
+  const auto limit = open_loss_limit(e, rules, inputs);
+  struct Trade { std::vector<std::string> symbols; Money pnl; bool marked = true; };
+  std::map<std::string, Trade> trades;
+  if (limit) {
+    const auto m = measure(s);
+    const auto of = held_trades(s);
+    const auto add = [&](const std::string& symbol, const std::optional<Money>& unrealised) {
+      const auto it = of.find(symbol);
+      auto& trade = trades[it == of.end() ? symbol : it->second];
+      trade.symbols.push_back(symbol);
+      if (unrealised) trade.pnl = trade.pnl + *unrealised;
+      else trade.marked = false;
+    };
+    for (const auto& p : m.positions) add(p.position.contract.osi_symbol(), p.unrealised);
+    for (const auto& p : m.stocks) add(p.position.symbol, p.unrealised);
+  }
+  std::vector<std::string> symbols;
+  std::optional<std::pair<std::string, Money>> first;
+  constexpr const char* actions[] = {"flatten", "block_adds", "fail"};
+  for (const auto& [id, trade] : trades) {
+    if (!trade.marked || trade.pnl >= Money{} || -trade.pnl < *limit) continue;
+    const auto loss = -trade.pnl;
+    if (!first) first.emplace(id, loss);
+    const bool known = std::any_of(trade.symbols.begin(), trade.symbols.end(), [&](const std::string& symbol) {
+      return std::find(e.open_loss_symbols.begin(), e.open_loss_symbols.end(), symbol) != e.open_loss_symbols.end();
+    });
+    symbols.insert(symbols.end(), trade.symbols.begin(), trade.symbols.end());
+    if (known) continue;
+    for (const auto& symbol : trade.symbols)
+      if (const auto trip = s.trips.find(symbol); trip != s.trips.end() &&
+          std::find(e.open_loss_trades.begin(), e.open_loss_trades.end(), trip->second) == e.open_loss_trades.end())
+        e.open_loss_trades.push_back(trip->second);
+    event(events, "open_loss_cap", Json{{"trade", id}, {"symbols", trade.symbols}, {"symbol", trade.symbols.front()},
+        {"loss", loss}, {"limit", *limit}, {"action", actions[static_cast<int>(rules.open_loss_cap->action)]}});
+  }
+  e.open_loss_symbols = std::move(symbols);
+  if (first && rules.open_loss_cap->action == OpenLossAction::Fail)
+    decide(s, {EvaluationStatus::Failed, false, Reason::OPEN_LOSS_CAP, *limit,
+        "The open loss of trade " + first->first + ", " + dollars(first->second) + ", reached the open-loss cap of " +
+        dollars(*limit)}, inputs.equity, events);
 }
 void observe_equity(State& s, Events& events) {
   refresh_trade_objectives(s);
@@ -3338,18 +3551,23 @@ void observe_equity(State& s, Events& events) {
       if (!e.day_low_equity || *equity < *e.day_low_equity) { e.day_low_equity = *equity; e.day_low_at = s.time; }
       if (!e.day_high_equity || *equity > *e.day_high_equity) { e.day_high_equity = *equity; e.day_high_at = s.time; }
     }
+    const auto inputs = plan_inputs(s, *equity);
+    if (rules.drawdown_basis == DrawdownBasis::Balance && plan_trading_date(rules, s.time) == e.day)
+      e.day_close_balance = inputs.balance;
     // A crossed holding boundary is decided at rollover; a close in the meantime
     // cannot turn that pending failure into a pass.
     if (e.status == EvaluationStatus::Active && e.holding_violations.empty()) {
-      const auto verdict = evaluate_plan(e, rules, plan_inputs(s, *equity));
+      const auto verdict = evaluate_plan(e, rules, inputs);
       // Include the deciding observation, then freeze the closest approach. Fills
       // after the decision still mark equity but never evaluate the attempt again.
-      if (rules.max_drawdown > Money{} && e.started > 0 && (!e.closest_floor || *equity - e.floor < *e.closest_floor)) {
-        e.closest_floor = *equity - e.floor;
+      const auto measured = rules.drawdown_basis == DrawdownBasis::Balance ? inputs.balance : *equity;
+      if (rules.max_drawdown > Money{} && e.started > 0 && (!e.closest_floor || measured - e.floor < *e.closest_floor)) {
+        e.closest_floor = measured - e.floor;
         e.closest_floor_at = s.time;
       }
       if (verdict.decided()) decide(s, verdict, *equity, events);
       else if (verdict.lock) lock_day(s, verdict, *equity, events);
+      else check_open_loss(s, inputs, events);
     }
     const auto soft_floor = soft_floor_of(s);
     const auto& g = s.config.guardrails;
@@ -3367,6 +3585,7 @@ std::string_view liquidation_label(const Evaluation& e, bool decided) {
   if (code == Reason::INACTIVITY) return "inactivity";
   if (code == Reason::OVERNIGHT_HOLD) return "overnight";
   if (code == Reason::HOLD_RESTRICTED) return "hold";
+  if (code == Reason::OPEN_LOSS_CAP) return "open_loss";
   if (decided) return e.status == EvaluationStatus::Passed ? "target" : "drawdown";
   return "day_lock";
 }
@@ -3390,6 +3609,11 @@ void monitor_rules(State& s, Events& events) {
     std::vector<std::pair<std::string, Quantity>> stocks;
     for (const auto& [symbol, stock] : s.ledger.stocks()) stocks.emplace_back(symbol, stock.shares);
     for (const auto& [symbol, shares] : stocks) close_shares(s, symbol, shares, StockSource::Rule, events);
+  } else if (rules.open_loss_cap && rules.open_loss_cap->action == OpenLossAction::Flatten && !e.open_loss_symbols.empty()) {
+    // The whole trade closes as Flatten closes positions: a spread as one order and
+    // shorts before the longs that cover them, so no leg is left naked.
+    const auto over = e.open_loss_symbols;
+    flatten_positions(s, "open_loss", events, {}, &over);
   }
   std::vector<std::string> symbols;
   for (const auto& [symbol, position] : s.ledger.positions()) symbols.push_back(symbol);
@@ -4349,6 +4573,17 @@ CommandResult place_order(State& s, OrderRequest request, Timestamp time, const 
 /// Places one order. On a buy-only plan a manual close that only its own armed stops
 /// keep from fitting cancels them (POSITION_CLOSED), newest first, as far as it needs
 /// to; if the close is refused anyway, the stops stay and it records that refusal.
+/// An accepted opening order joins the size-creep window, flagged as tilt first when it
+/// exceeds the rolling median (the guardrail warns; with a block it never gets here).
+void record_opening_size(State& s, const Order& o, Events& events) {
+  const auto& g = s.config.guardrails;
+  if (g.size_creep_percent == 0 || o.system || kept_within(o) || o.request.exits_only || closing_only(s, o)) return;
+  if (const auto creep = size_creep(s, o)) flag_tilt(s, Reason::SIZE_CREEP, size_creep_message(*creep, g.size_creep_percent), events);
+  auto& sizes = s.guardrails.opening_sizes;
+  sizes.push_back(opening_size(o.request));
+  const auto window = static_cast<std::size_t>(g.size_creep_window == 0 ? 20 : g.size_creep_window);
+  if (sizes.size() > window) sizes.erase(sizes.begin(), sizes.end() - static_cast<std::ptrdiff_t>(window));
+}
 CommandResult place_one(State& s, OrderRequest request, Timestamp time, const Decision& rejection, Events& events, OrderId paired = 0) {
   const auto stops = rejection.ok() ? superseded_stops(s, request) : std::vector<OrderId>{};
   if (stops.empty()) return place_order(s, std::move(request), time, rejection, events, paired);
@@ -4379,8 +4614,10 @@ CommandResult place_order(State& s, OrderRequest request, Timestamp time, const 
     stored.reason = decision;
     stored.ended_at = time;
     event(events, "order_rejected", stored);
+    if (decision.code == Reason::SIZE_CREEP) flag_tilt(s, Reason::SIZE_CREEP, decision.message, events);
     return CommandResult{decision, stored.id, 0};
   }
+  record_opening_size(s, stored, events);
   const auto id = stored.id;
   const auto symbols = order_symbols(stored.request);
   if (stored.request.exits_only) {
@@ -4932,6 +5169,24 @@ ProgramCosts program_costs(const TradingSnapshot& snapshot, const AccountRules& 
   }
   return out;
 }
+std::vector<ReviewTrade> review_offences(const Evaluation& e, const AccountRules& rules, Money cycle_profit) {
+  std::vector<ReviewTrade> out;
+  const auto& review = rules.payouts.review;
+  if (!review) return out;
+  __extension__ using Wide = __int128;
+  for (auto trade : e.cycle_trades) {
+    if (!in_payout_cycle(e, trade.closed) || trade.pnl <= Money{}) continue;
+    if (review->min_hold_seconds > 0 && trade.held < review->min_hold_seconds * md::kNanosPerSecond)
+      trade.offences.push_back("short_hold");
+    // Exactly: pnl × 100 > percent × cycle profit.
+    if (review->max_trade_percent > 0 &&
+        static_cast<Wide>(trade.pnl.micros()) * 100 > static_cast<Wide>(std::max(Money{}, cycle_profit).micros()) * review->max_trade_percent)
+      trade.offences.push_back("oversized");
+    if (review->open_loss && trade.open_loss) trade.offences.push_back("open_loss");
+    if (!trade.offences.empty()) out.push_back(std::move(trade));
+  }
+  return out;
+}
 PayoutQuote payout_quote(const TradingSnapshot& s, const AccountRules& rules) {
   __extension__ using Wide = __int128;
   const auto& p = rules.payouts;
@@ -4972,18 +5227,44 @@ PayoutQuote payout_quote(const TradingSnapshot& s, const AccountRules& rules) {
       q.consistency_needed = Money::from_micros(static_cast<std::int64_t>(micros));
     }
   }
+  if (q.funded && p.review) {
+    if (auto offending = review_offences(e, rules, q.cycle_profit); !offending.empty()) {
+      // The nth review that finds offending trades takes the nth step of the ladder.
+      const auto earlier = static_cast<std::size_t>(std::count_if(e.payouts.begin(), e.payouts.end(),
+          [](const Payout& payout) { return payout.review && !payout.review->trades.empty(); }));
+      PayoutReviewOutcome outcome;
+      outcome.step = p.review->ladder.at(std::min(earlier, p.review->ladder.size() - 1));
+      for (const auto& trade : offending) outcome.forfeited = outcome.forfeited + trade.pnl;
+      if (outcome.step == ReviewStep::Warning) outcome.forfeited = {};
+      outcome.trades = std::move(offending);
+      q.forfeit = whole_cents(outcome.forfeited);
+      outcome.forfeited = q.forfeit;
+      q.review = std::move(outcome);
+    }
+  }
+  // Forfeited profit leaves with the payout, so neither it nor the payout may come from it.
+  const auto equity = s.equity - q.forfeit;
   q.profit = s.equity - e.starting_balance;
-  q.withdrawable = whole_cents(q.profit > Money{} ? q.profit.prorate(p.withdrawal_percent, 100) : Money{});
+  const auto payable = q.profit - q.forfeit;
+  q.withdrawable = whole_cents(payable > Money{} ? payable.prorate(p.withdrawal_percent, 100) : Money{});
   if (!p.caps.empty()) q.cap = p.caps.at(std::min<std::size_t>(q.number, p.caps.size()) - 1);
   q.maximum = q.cap ? std::min(q.withdrawable, *q.cap) : q.withdrawable;
+  if (q.review && q.review->step == ReviewStep::Cap) q.maximum = std::min(q.maximum, p.review->cap);
   // Touching the floor fails the account; an unlocked floor moves down with the
-  // withdrawal, a locked one does not.
+  // withdrawal, a locked one does not, and one raised to the starting balance after it
+  // must stay below the equity left.
   if (rules.max_drawdown > Money{} && e.floor_locked)
-    q.maximum = std::min(q.maximum, whole_cents(s.equity - e.floor - Money::from_micros(10'000)));
+    q.maximum = std::min(q.maximum, whole_cents(equity - e.floor - Money::from_micros(10'000)));
+  if (p.after_payout == PayoutFloor::StartingBalance)
+    q.maximum = std::min(q.maximum, whole_cents(equity - std::max(e.floor, e.starting_balance) - Money::from_micros(10'000)));
+  if (p.after_payout == PayoutFloor::Reset) {
+    q.reset_balance = whole_cents(e.starting_balance.prorate(p.reset_percent, 100));
+    q.maximum = std::min(q.maximum, whole_cents(equity - *q.reset_balance));
+  }
   bool buffer_blocks = false;
   if (p.buffer > Money{} && (p.buffer_payouts == 0 || q.number <= static_cast<std::uint64_t>(p.buffer_payouts))) {
     q.buffer_balance = e.starting_balance + p.buffer;
-    const auto room = whole_cents(s.equity - *q.buffer_balance);
+    const auto room = whole_cents(equity - *q.buffer_balance);
     buffer_blocks = room <= Money{};
     q.maximum = std::min(q.maximum, room);
   }
@@ -5322,6 +5603,14 @@ std::vector<OrderWarning> order_warnings(const State& s, const OrderRequest& r) 
       out.push_back({"SLIPPAGE_BAND", "The account's " + std::to_string(s.config.rules.slippage_ticks) + " slippage ticks price this order at " +
                      slipped.str() + ", outside the price band around the mid " + mid(quote).str() +
                      ", so it is refused PRICE_BAND; widen the band or lower the slippage"});
+  }
+  // A size-creep guardrail that only warns: the order is accepted and flagged as tilt.
+  if (!s.config.guardrails.size_creep_block) {
+    Order opening;
+    opening.request = r;
+    if (const auto creep = size_creep(s, opening))
+      out.push_back({"SIZE_CREEP", size_creep_message(*creep, s.config.guardrails.size_creep_percent) +
+                     "; it is accepted, and flagged as tilt in the journal"});
   }
   return out;
 }
@@ -6250,8 +6539,11 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     }
     const bool personal_latch = s.guardrails.owns_kill;
     const auto cooldown_until = s.guardrails.cooldown_until;
+    // The size-creep median rolls across days; the day's counts and flags end with it.
+    auto opening_sizes = std::move(s.guardrails.opening_sizes);
     s.guardrails = {};
     s.guardrails.owns_kill = personal_latch;
+    s.guardrails.opening_sizes = std::move(opening_sizes);
     if (cooldown_until > s.time) s.guardrails.cooldown_until = cooldown_until;
     refresh_guardrail_latch(s, events);
     const auto opening_equity = snapshot.equity + capital;
@@ -6261,6 +6553,7 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     e.day = day;
     e.day_open_equity = opening_equity;
     e.day_close_equity = opening_equity;
+    if (rules.drawdown_basis == DrawdownBasis::Balance) e.day_close_balance = plan_inputs(snapshot).balance;
     s.start_equity = opening_equity;
     s.day = day;
     // Each round trip keeps its stretches to the close; the new day's P&L by
@@ -6353,22 +6646,39 @@ CommandResult TradingSession::request_payout(Money amount, Timestamp time) {
     if (amount < quote.minimum) return reject("Below the minimum payout", quote.minimum);
     if (amount > quote.maximum) return reject("Above the maximum for this payout", quote.maximum);
     const Money equity = snapshot.equity;  // Flat, so this is cash.
-    s.ledger.withdraw(amount);
+    // Forfeited profit leaves with the payout; a reset then takes the account down
+    // to its reset balance. Neither is paid to the trader.
+    const auto& p = rules.payouts;
+    const auto removed = quote.reset_balance ? equity - quote.forfeit - amount - *quote.reset_balance : Money{};
+    const auto out = amount + quote.forfeit + removed;
+    s.ledger.withdraw(out);
     // The trading day in progress takes the withdrawal, even after its date
     // ends and before rollover, so its P&L and an end-of-day ratchet ignore it.
-    s.start_equity = s.start_equity - amount;
-    e.day_open_equity = e.day_open_equity - amount;
-    e.day_close_equity = e.day_close_equity - amount;
+    s.start_equity = s.start_equity - out;
+    e.day_open_equity = e.day_open_equity - out;
+    e.day_close_equity = e.day_close_equity - out;
+    if (e.day_close_balance) e.day_close_balance = *e.day_close_balance - out;
     // The day's extremes too, so a daily loss limit trailing the day's high
     // does not count the withdrawal as a loss.
-    if (e.day_low_equity) e.day_low_equity = *e.day_low_equity - amount;
-    if (e.day_high_equity) e.day_high_equity = *e.day_high_equity - amount;
-    if (!e.floor_locked) {
-      e.peak = e.peak - amount;
+    if (e.day_low_equity) e.day_low_equity = *e.day_low_equity - out;
+    if (e.day_high_equity) e.day_high_equity = *e.day_high_equity - out;
+    if (p.after_payout == PayoutFloor::Reset) {
+      // The floor starts again below the reset balance, as at the attempt's start.
+      e.peak = *quote.reset_balance;
+      e.floor_locked = false;
+      e.floor = evaluation_floor(rules, e.peak, e.floor_locked, e.starting_balance);
+    } else if (!e.floor_locked) {
+      e.peak = e.peak - out;
       const auto floor = evaluation_floor(rules, e.peak, e.floor_locked, e.starting_balance);
-      e.floor = e.size_scaling ? std::max(e.floor - amount, floor) : floor;
+      e.floor = e.size_scaling ? std::max(e.floor - out, floor) : floor;
+    }
+    if (p.after_payout == PayoutFloor::StartingBalance) {
+      e.floor = std::max(e.floor, e.starting_balance);
+      e.floor_locked = true;
     }
     e.payouts.push_back({quote.number, s.time, e.day, amount, amount.prorate(rules.payouts.split_percent, 100), equity});
+    e.payouts.back().review = quote.review;
+    e.payouts.back().removed = removed;
     s.payouts_received = s.payouts_received + e.payouts.back().trader_share;
     e.qualifying_days = 0;
     e.cycle_started = s.time;
@@ -6772,6 +7082,11 @@ CommandResult TradingSession::trade_stock(const std::string& symbol, Quantity si
     if (const auto d = account_check(s, reduces); !d.ok()) return CommandResult{d, {}, 0};
     if (!reduces)
       if (const auto d = plan_entry_check(s.config.rules, symbol, s.time); !d.ok()) return CommandResult{d, {}, 0};
+    if (const auto& cap = s.config.rules.open_loss_cap; cap && cap->action != OpenLossAction::Fail && shares != 0 &&
+        (shares > 0) == (signed_shares > 0) &&
+        std::find(s.evaluation.open_loss_symbols.begin(), s.evaluation.open_loss_symbols.end(), symbol) != s.evaluation.open_loss_symbols.end())
+      return CommandResult{{Reason::OPEN_LOSS_CAP, "These shares' open loss is at the plan's open-loss cap; they can be reduced, "
+                            "but not added to, until they are back within the cap", {}, {}, symbol}, {}, 0};
     if (!reduces) {
       if (md::is_index_underlying(symbol))
         return CommandResult{failure(Reason::INVALID_ORDER, "Index underlyings settle in cash and have no shares to trade"), {}, 0};
@@ -6829,6 +7144,7 @@ CommandResult TradingSession::trade_stock(const std::string& symbol, Quantity si
     }
     if (s.config.guardrails.cooldown_loss > Money{} && s.ledger.account().realised - realised_before < -s.config.guardrails.cooldown_loss)
       begin_cooldown(s, events);
+    if (reduces) count_close(s, s.ledger.account().realised - realised_before, events);
     event(events, "stock_trade", Json{{"symbol", symbol}, {"shares", signed_shares}, {"price", *price}});
     return CommandResult{};
   });

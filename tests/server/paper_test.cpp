@@ -2791,7 +2791,10 @@ TEST(PaperPlans, PresetsListExactRules) {
                   {"trading_start", nullptr}, {"trading_end", nullptr}, {"flat_time", nullptr}, {"no_overnight", false},
                   {"scaling", json::array()}, {"size_scaling", nullptr}, {"events", json::array()},
                   {"news_before_minutes", 0}, {"news_after_minutes", 0}, {"news_action", "block"},
-                  {"hold_restrictions", json::array()}, {"hold_cutoff", "15:45"}});
+                  {"hold_restrictions", json::array()}, {"hold_cutoff", "15:45"}, {"drawdown_basis", "equity"},
+                  {"open_loss_cap", nullptr}, {"minute_volume_percent", 0}, {"best_position_percent", 0}});
+    if (rules.at("payouts").is_object())
+      rules["payouts"].update({{"review", nullptr}, {"after_payout", "keep"}, {"reset_percent", 100}});
     return rules;
   };
   const auto scaling = plans[19];
@@ -5145,7 +5148,8 @@ TEST_F(PaperEngine, TimeAndTradeRulesSurviveCreateResetAndPresetMatching) {
   rules.update({{"plan", "Funded combined rules"}, {"phase", "funded"}, {"profit_target", nullptr},
                 {"time_limit_days", 0}, {"payouts", {{"qualifying_profit", "0.00"}, {"qualifying_days", 1},
                     {"withdrawal_percent", 50}, {"split_percent", 80}, {"minimum", "0.00"}, {"caps", json::array()},
-                    {"consistency_percents", json::array()}, {"buffer", "0.00"}, {"buffer_payouts", 0}}},
+                    {"consistency_percents", json::array()}, {"buffer", "0.00"}, {"buffer_payouts", 0},
+                    {"review", nullptr}, {"after_payout", "keep"}, {"reset_percent", 100}}},
                 {"size_scaling", {{"profit_percent", 10}, {"payouts", 2}, {"days", 80},
                     {"increase_percent", 25}, {"max_balance", "200000.00"}}}});
   response = write(*engine, "POST", "/api/accounts", {{"name", "Funded combined"}, {"initial_cash", "100000"}, {"rules", rules}});
@@ -5553,5 +5557,226 @@ TEST_F(PaperEngine, ExtendedCapsRoundTripThroughTheLimitsEndpoint) {
   EXPECT_EQ(risk["scopes"]["playbook:weekly"]["limits"]["short_vega"], 40);
   EXPECT_EQ(write(*engine, "POST", "/api/alerts", {{"scope", "account"}, {"metric", "delta_utilisation"},
       {"direction", "at_or_above"}, {"level", "0.8"}}).status, 201);
+}
+
+TEST_F(PaperEngine, PropRulesRoundTripThroughResetAndAccountViews) {
+  seed();
+  auto rules = read(*engine, "/api/account")["rules"];
+  rules.update({{"plan", "Prop custom"}, {"profit_target", "1000.00"}, {"max_drawdown", "500.00"}, {"drawdown_basis", "balance"},
+                {"open_loss_cap", {{"basis", "drawdown_room"}, {"amount", nullptr}, {"percent", 30}, {"action", "block_adds"}}},
+                {"minute_volume_percent", 25}, {"best_position_percent", 40}});
+  auto response = write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", rules}, {"reason", "prop rules"}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("prop-rules", "POST", "/api/account/reset", response);
+  EXPECT_EQ(json::parse(response.body)["rules"], rules);
+  test::capture_contract("prop-rules", "GET", "/api/account", server::handle_api({"GET", "/api/account"}, *engine));
+  const auto account = read(*engine, "/api/account");
+  EXPECT_EQ(account["rules"], rules);
+  EXPECT_EQ(account["evaluation"]["open_loss"]["limit"], "150.00");
+  EXPECT_EQ(account["evaluation"]["open_loss"]["positions"], json::array());
+  EXPECT_EQ(account["evaluation"]["best_position"]["cap"], "400.00");
+  EXPECT_EQ(account["evaluation"]["best_position"]["trade"], nullptr);
+  auto broken = rules;
+  broken["open_loss_cap"]["percent"] = 0;
+  expect_error(write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", broken}, {"reason", "bad cap"}}),
+               400, "INVALID_RULES");
+  broken = rules;
+  broken["open_loss_cap"]["basis"] = "sometimes";
+  EXPECT_EQ(write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", broken}, {"reason", "bad basis"}}).status, 400);
+  // Funded payout reviews and the floor after a payout.
+  rules.update({{"plan", "Prop funded"}, {"phase", "funded"}, {"profit_target", nullptr}, {"best_position_percent", 0},
+                {"payouts", {{"qualifying_profit", "50.00"}, {"qualifying_days", 1}, {"withdrawal_percent", 50}, {"split_percent", 80},
+                    {"minimum", "10.00"}, {"caps", json::array()}, {"consistency_percents", json::array()}, {"buffer", "0.00"},
+                    {"buffer_payouts", 0}, {"after_payout", "starting_balance"}, {"reset_percent", 100},
+                    {"review", {{"min_hold_seconds", 60}, {"max_trade_percent", 0}, {"open_loss", true},
+                                {"ladder", {"warning", "forfeit"}}, {"cap", nullptr}}}}}});
+  response = write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", rules}, {"reason", "prop funded"}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("prop-rules", "POST", "/api/account/reset", response);
+  EXPECT_EQ(json::parse(response.body)["rules"], rules);
+  const auto payout = read(*engine, "/api/account")["payout"];
+  EXPECT_EQ(payout["review"], nullptr);
+  EXPECT_EQ(payout["forfeit"], "0.00");
+  EXPECT_EQ(payout["after_payout"], "starting_balance");
+  EXPECT_EQ(payout["reset_balance"], nullptr);
+  // A preset with a new rule set no longer follows the preset.
+  auto preset = server::find_plan("intraday-100k")->rules;
+  preset.minute_volume_percent = 10;
+  EXPECT_EQ(server::preset_id(Money::parse("100000"), preset), "");
+}
+
+TEST_F(PaperEngine, DisciplineGuardrailsAndTiltFlagsAppearOnTheRiskView) {
+  seed();
+  auto risk = read(*engine, "/api/risk");
+  auto g = risk["guardrails"];
+  EXPECT_EQ(g["loss_streak"], 0);
+  EXPECT_EQ(g["size_creep_block"], false);
+  g.update({{"size_creep_percent", 200}, {"size_creep_block", true}});
+  auto response = write(*engine, "PUT", "/api/risk/guardrails", {{"expected_revision", risk["limits_revision"]}, {"guardrails", g}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("prop-rules", "PUT", "/api/risk/guardrails", response);
+  EXPECT_EQ(json::parse(response.body)["guardrails"], g);
+  for (int i = 0; i < 3; ++i)
+    ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "small-" + std::to_string(i), "4.20")).status, 201);
+  auto big = order(market, "big", "4.20");
+  big["quantity"] = 3;
+  expect_error(write(*engine, "POST", "/api/orders", big), 422, "SIZE_CREEP");
+  test::capture_contract("prop-rules", "GET", "/api/account", server::handle_api({"GET", "/api/account"}, *engine));
+  const auto state = read(*engine, "/api/account")["guardrail_state"];
+  ASSERT_EQ(state["tilt"].size(), 1U);
+  EXPECT_EQ(state["tilt"][0]["code"], "SIZE_CREEP");
+  EXPECT_EQ(state["recent_opening_sizes"], json::array({1, 1, 1}));
+  EXPECT_EQ(state["losing_closes"], 0);
+  g["loss_streak"] = 2;
+  risk = read(*engine, "/api/risk");
+  expect_error(write(*engine, "PUT", "/api/risk/guardrails", {{"expected_revision", risk["limits_revision"]}, {"guardrails", g}}),
+               422, "INVALID_LIMITS");
+}
+
+TEST_F(PaperEngine, RulesCompareReplaysTheAttemptAgainstPresetsAndCustomRules) {
+  seed();
+  auto buy = order(market, "open", "4.20");
+  buy["quantity"] = 2;
+  const auto bought = write(*engine, "POST", "/api/orders", buy);
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  market.time += md::kNanosPerSecond;
+  quote("3.40", "3.60");
+  auto tight = read(*engine, "/api/account")["rules"];
+  tight.update({{"plan", "Tight"}, {"max_drawdown", "100"}});
+  auto response = write(*engine, "POST", "/api/account/rules-compare",
+      {{"plans", {"intraday-100k"}}, {"rules", {{{"name", "Tight"}, {"initial_cash", "100000"}, {"rules", tight}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("prop-rules", "POST", "/api/account/rules-compare", response);
+  const auto result = json::parse(response.body);
+  EXPECT_EQ(result["simulated"], true);
+  EXPECT_EQ(result["days"].size(), 1U);
+  ASSERT_EQ(result["sets"].size(), 3U);
+  EXPECT_EQ(result["sets"][0]["name"], "Current rules");
+  EXPECT_EQ(result["sets"][0]["status"], "active");
+  EXPECT_EQ(result["sets"][1]["plan_id"], "intraday-100k");
+  EXPECT_EQ(result["sets"][1]["status"], "active");
+  EXPECT_EQ(result["sets"][1]["not_replayed"], json::array({"strategies"}));
+  EXPECT_EQ(result["sets"][2]["status"], "failed");
+  EXPECT_EQ(result["sets"][2]["code"], "DRAWDOWN_FLOOR");
+  EXPECT_EQ(result["sets"][2]["days"][0]["outcome"], "failed");
+  EXPECT_EQ(result["sets"][2]["decided_day"], result["days"][0]);
+  // Payout rules are not replayed; only the recorded withdrawals are.
+  auto funded = tight;
+  funded.update({{"plan", "Funded reset"}, {"phase", "funded"}, {"profit_target", nullptr}, {"max_drawdown", "3000"},
+                 {"payouts", {{"qualifying_profit", "100"}, {"qualifying_days", 5}, {"withdrawal_percent", 50},
+                              {"split_percent", 80}, {"minimum", "100"}, {"caps", json::array()},
+                              {"review", {{"min_hold_seconds", 60}, {"ladder", {"warning"}}}},
+                              {"after_payout", "reset"}, {"reset_percent", 90}}}});
+  const auto payout_rules = write(*engine, "POST", "/api/account/rules-compare",
+      {{"include_current", false}, {"rules", {{{"name", "Funded reset"}, {"initial_cash", "100000"}, {"rules", funded}}}}});
+  ASSERT_EQ(payout_rules.status, 200) << payout_rules.body;
+  EXPECT_EQ(json::parse(payout_rules.body)["sets"][0]["not_replayed"], json::array({"payout_review", "after_payout", "reset_percent"}));
+  // Read access suffices and nothing changes.
+  const auto before = read(*engine, "/api/account");
+  EXPECT_EQ(write(*engine, "POST", "/api/account/rules-compare", {{"include_current", false}, {"plans", {"eod-50k"}}}).status, 200);
+  EXPECT_EQ(read(*engine, "/api/account"), before);
+  expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"plans", {"nope"}}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"include_current", false}}), 400, "INVALID_REQUEST");
+  expect_error(write(*engine, "POST", "/api/account/rules-compare?account=nobody", json::object()), 404, "UNKNOWN_ACCOUNT");
+  json many = json::array();
+  for (int i = 0; i < 8; ++i) many.push_back("eod-50k");
+  expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"plans", many}}), 400, "INVALID_REQUEST");
+}
+
+TEST_F(PaperEngine, RulePacksValidateNormalizeAndStaySeparateFromPresets) {
+  auto rules = read(*engine, "/api/account")["rules"];
+  rules.update({{"profit_target", "6000"}, {"max_drawdown", "3000"}, {"drawdown_mode", "end_of_day"}});
+  rules.erase("plan");
+  rules.erase("plan_id");
+  json pack{{"format", "openport.rule-pack"}, {"version", 1}, {"id", "my-desk-2026"}, {"name", "My desk terms"},
+            {"effective_from", "2026-09-01"}, {"source", "https://example.com/terms"},
+            {"verify", "Copied from the terms page on 2026-09-01; check before each purchase"},
+            {"plans", {{{"id", "eval-100"}, {"name", "Desk Eval 100K"}, {"initial_cash", "100000"}, {"rules", rules}},
+                       {{"id", "funded-100"}, {"name", "Desk Funded 100K"}, {"initial_cash", "100000"}, {"unlocked_by", "eval-100"},
+                        {"rules", json::object()}}}}};
+  auto funded = rules;
+  funded.update({{"phase", "funded"}, {"profit_target", nullptr},
+                 {"payouts", {{"qualifying_profit", "100"}, {"qualifying_days", 5}, {"withdrawal_percent", 50},
+                              {"split_percent", 80}, {"minimum", "100"}, {"caps", json::array()}}}});
+  pack["plans"][1]["rules"] = funded;
+  auto response = write(*engine, "POST", "/api/rule-packs/validate", pack);
+  ASSERT_EQ(response.status, 200) << response.body;
+  test::capture_contract("prop-rules", "POST", "/api/rule-packs/validate", response);
+  auto result = json::parse(response.body);
+  EXPECT_EQ(result["valid"], true) << result.dump();
+  EXPECT_EQ(result["warnings"], json::array());
+  ASSERT_EQ(result["pack"]["plans"].size(), 2U);
+  EXPECT_EQ(result["pack"]["plans"][0]["rules"]["plan"], "Desk Eval 100K");
+  EXPECT_FALSE(result["pack"]["plans"][0]["rules"].contains("plan_id"));
+  EXPECT_EQ(result["pack"]["plans"][1]["unlocked_by"], "eval-100");
+  EXPECT_EQ(result["pack"]["plans"][1]["rules"]["payouts"]["after_payout"], "keep");
+  // A normalized pack validates to itself.
+  response = write(*engine, "POST", "/api/rule-packs/validate", result["pack"]);
+  EXPECT_EQ(json::parse(response.body)["pack"], result["pack"]);
+  auto later = pack;
+  later["effective_from"] = "2027-01-04";
+  result = json::parse(write(*engine, "POST", "/api/rule-packs/validate", later).body);
+  EXPECT_EQ(result["valid"], true);
+  ASSERT_EQ(result["warnings"].size(), 1U);
+  auto bad = pack;
+  bad["source"] = "ftp://example.com";
+  bad["plans"][0]["name"] = "Intraday 100K";
+  bad["plans"][1]["unlocked_by"] = "missing";
+  bad["plans"][1]["rules"]["profit_target"] = "100";
+  response = write(*engine, "POST", "/api/rule-packs/validate", bad);
+  test::capture_contract("prop-rules", "POST", "/api/rule-packs/validate", response);
+  result = json::parse(response.body);
+  EXPECT_EQ(result["valid"], false);
+  EXPECT_EQ(result["pack"], nullptr);
+  std::set<std::string> where;
+  for (const auto& error : result["errors"]) where.insert(error["where"].get<std::string>());
+  EXPECT_EQ(where, (std::set<std::string>{"source", "plans[0]", "plans[1]"}));
+  // Plans that unlock each other could never be started.
+  auto cycle = pack;
+  cycle["plans"][0]["unlocked_by"] = "funded-100";
+  result = json::parse(write(*engine, "POST", "/api/rule-packs/validate", cycle).body);
+  EXPECT_EQ(result["valid"], false);
+  ASSERT_EQ(result["errors"].size(), 1U) << result.dump();
+  EXPECT_EQ(result["errors"][0]["where"], "plans");
+  EXPECT_EQ(result["errors"][0]["message"], "unlocked_by forms a cycle: eval-100 -> funded-100 -> eval-100");
+  expect_error(write(*engine, "POST", "/api/rule-packs/validate?account=default", pack), 400, "INVALID_REQUEST");
+  // A read token may validate and compare; nothing it sends changes an account.
+  server::WritePolicy policy{"0.0.0.0", "", {}, server::parse_token_file("reader read reader-secret"), true};
+  for (const auto* target : {"/api/rule-packs/validate", "/api/account/rules-compare"}) {
+    server::ApiRequest request{"POST", target};
+    request.content_type = "application/json";
+    request.host = "localhost:8080";
+    request.authorization = "Bearer reader-secret";
+    EXPECT_FALSE(server::check_api_write(request, policy)) << target;
+  }
+}
+
+TEST_F(PaperEngine, AMinuteVolumeCapRefusesWithoutAMinuteOfVolume) {
+  seed("4.00", "4.20", 100);
+  auto rules = read(*engine, "/api/account")["rules"];
+  rules.update({{"plan", "Minute volume"}, {"profit_target", "1000"}, {"minute_volume_percent", 4}});
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", rules}, {"reason", "volume"}}).status, 200);
+  const auto code = [](const server::ApiResponse& r) { return json::parse(r.body)["error"]["code"]; };
+  auto response = write(*engine, "POST", "/api/orders", order(market, "unknown", "4.20"));
+  EXPECT_EQ(response.status, 422);
+  EXPECT_EQ(code(response), "MINUTE_VOLUME");
+  EXPECT_EQ(json::parse(response.body)["error"]["evidence"]["volume"], nullptr);
+  // Each report in its own batch: the engine keeps only an instrument's latest within one.
+  provider.sink->publish(md::OptionVolume{0, market.time, 100});
+  quote("4.00", "4.20", 100);
+  market.time += 61 * md::kNanosPerSecond;
+  provider.sink->publish(md::OptionVolume{0, market.time, 150});
+  quote("4.00", "4.20", 100);
+  // Four percent of the minute's 50 contracts is two.
+  auto three = order(market, "three", "4.20");
+  three["quantity"] = 3;
+  response = write(*engine, "POST", "/api/orders", three);
+  EXPECT_EQ(response.status, 422);
+  EXPECT_EQ(code(response), "MINUTE_VOLUME");
+  EXPECT_EQ(json::parse(response.body)["error"]["evidence"]["volume"], 50);
+  auto two = order(market, "two", "4.20");
+  two["quantity"] = 2;
+  response = write(*engine, "POST", "/api/orders", two);
+  EXPECT_EQ(response.status, 201) << response.body;
 }
 }

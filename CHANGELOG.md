@@ -177,6 +177,38 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
 - Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
 
+### Evaluation and prop rules
+
+All new rule types are off by default and in no built-in preset; plans without them keep
+their journal bytes. As AccountRules fields they are program rules: setting one drops a
+preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plans`.
+
+- Open-loss cap on one trade's marked loss, net across its legs (fixed, or a share of
+  the start-of-day profit balance or drawdown room), that closes the whole trade (a
+  spread as one order, shorts first, never leaving a naked leg, with adds refused while
+  the close is pending), blocks adds or fails the attempt (`OPEN_LOSS_CAP`), journaled
+  as `open_loss_cap` events.
+- Balance drawdown basis: the floor follows and checks the closed balance, so it can be
+  set per phase; best-position cap on the profit one trade counts toward the target
+  (`BEST_POSITION` objective); opening-order cap on the last minute's option volume,
+  refused with `MINUTE_VOLUME` when that volume is unknown.
+- Payout reviews of short-held, oversized or open-loss trades (share round trips
+  included; a trade closed at a payout's own timestamp is reviewed by that payout only)
+  escalate warning, forfeit and cap, in the payout preview and the journaled payout; the floor after a payout can
+  stay, reset the account to a share of its starting balance, or move up to it.
+- `POST /api/account/rules-compare` replays the attempt's recorded days against presets
+  or custom rules side by side, adding back everything a payout took out (forfeits and
+  reset removals too); payout reviews and the floor after a payout are listed as not
+  replayed. The Rules page shows where each passes, fails or locks.
+- Versioned rule packs (`effective_from`, `source`, `verify`) validate through
+  `POST /api/rule-packs/validate`, which refuses `unlocked_by` cycles; the terminal imports, exports and starts custom
+  attempts from them, apart from the presets.
+- `pass-odds?economics=true` adds challenge economics: expected value and break-even pass
+  rate from each program step's odds, fees and resets and the first funded payout.
+- Opt-in discipline guardrails: a losing-streak cooldown and size-creep warnings or
+  blocks against the median of recent opening orders, journaled as `tilt_flag` events.
+- Python client and MCP: `rules_compare`, `validate_rule_pack` and economics on `pass_odds`.
+
 ### API, Python and automation
 
 - Versioned account WebSocket events with bounded delivery and typed Python iteration.

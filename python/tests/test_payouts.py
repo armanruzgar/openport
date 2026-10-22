@@ -16,7 +16,7 @@ def test_payout_types_and_optional_rule_defaults():
         assert set(get_type_hints(wire)) == set(schemas[wire.__name__]["properties"])
     assert get_type_hints(AccountRules)["payouts"] == PayoutRules | None
     assert get_type_hints(Account)["payout"] == PayoutStatus | None
-    assert PayoutRules.__optional_keys__ == {"consistency_percents", "buffer", "buffer_payouts"}
+    assert PayoutRules.__optional_keys__ == {"consistency_percents", "buffer", "buffer_payouts", "review", "after_payout", "reset_percent"}
     contract = Contract("", None, SPEC)
     validator = jsonschema.Draft202012Validator({"$ref": "urn:openport#/components/schemas/PayoutRules"}, registry=contract.registry)
     rules = dict(qualifying_profit="50.00", qualifying_days=1, withdrawal_percent=50,

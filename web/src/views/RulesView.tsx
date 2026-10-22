@@ -13,6 +13,8 @@ import { Empty, PageHeader, Panel } from "../components/ui"
 import { lockReason, offeredPlans, payoutCap, payoutRuleFacts } from "../lib/payouts"
 import { sizeScalingFact, scalingFact, clockText, dailyLossBasisText, dailyLossFact, dayEnd, floorMoves, objectiveFacts, timeRuleEntries } from "../lib/plan-rules"
 import { compareMoney, ruleMoney, formatMoney, subtractMoney } from "../lib/trading"
+import { openLossFact, reviewFacts } from "../lib/prop-rules"
+import { ChallengeEconomicsPanel, RulePacksPanel, RulesComparePanel } from "../components/PropRulesPanels"
 
 function Rule({ title, children }: { title: string; children: ReactNode }) {
   return <div className="border-b border-border/50 py-3 last:border-0">
@@ -89,6 +91,7 @@ export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
         at least {ruleMoney(p.minimum)}{p.caps.length ? <> and at most {p.caps.map((cap, i) => `${ruleMoney(cap)} for payout ${i + 1}${i === p.caps.length - 1 ? " and later" : ""}`).join(", ")}</> : null}; you keep {p.split_percent}%.
         Each finished day counts once, toward the payout cycle in progress when it closes.
         {payoutRuleFacts(p, e.starting_balance).map((fact) => <span className="block" key={fact}>{fact}.</span>)}
+        {reviewFacts(p).map((fact) => <span className="block" key={fact}>{fact}. Forfeited profit leaves the account with the payout and is not paid.</span>)}
         {!!p.consistency_percents?.length && <span className="block">Consistency includes losses and the day in progress. The request day remains in the next cycle in full; earlier finished days reset after each payout.</span>}
         A withdrawal is not a loss: the day's starting equity {r.lock_balance ? "and a floor that has not locked yet move" : "moves"} down with it.
         {payoutCap(p.caps, e.payouts.length + 1) && <> Your next payout is number {e.payouts.length + 1}, capped at {ruleMoney(payoutCap(p.caps, e.payouts.length + 1))}.</>}
@@ -105,6 +108,16 @@ export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
       When both apply, the tighter cap wins. Risk excludes fees and assumes a fill at the option or combo stop, using the entry limit or current market far side.
       Without a priced stop, including an underlying-price trigger, risk uses the bounded expiry payoff. Unbounded or unknown loss refuses. Stops can slip or remain unfilled.
     </> }] : []),
+    ...(r.drawdown_basis === "balance" && r.max_drawdown ? [{ title: "Floor on the closed balance", body: "The floor follows and is checked against the closed balance: cash plus what open positions cost, so realised P&L after fees. Open losses do not touch it until you close; an open-loss cap is what limits them." }] : []),
+    ...(r.open_loss_cap ? [{ title: "Open-loss cap", body: <>{openLossFact(r.open_loss_cap)}.
+        {e.open_loss?.limit ? <> Today one position may carry at most <strong className="text-foreground">{formatMoney(e.open_loss.limit)}</strong> of open loss, measured at its marks.</> : <> There is no limit today: no profit at the day's open and no drawdown floor to take a share of.</>}
+        {e.open_loss?.positions.length ? <> Over it now: {e.open_loss.positions.join(", ")}.</> : null}
+        {" "}Each position is measured alone, so a spread's legs count separately. Breaches are journaled as open_loss_cap events.</> }] : []),
+    ...(r.minute_volume_percent ? [{ title: "Opening order size against the last minute's volume", body: `Each opening order's contracts per leg may be at most ${r.minute_volume_percent}% of that contract's volume in the minute before acceptance, from the feed's cumulative volume reports a minute apart. Without both reports the order is refused with MINUTE_VOLUME, since the cap cannot be checked. Reductions are exempt; fills are not rechecked.` }] : []),
+    ...(r.phase !== "funded" && r.best_position_percent && r.profit_target ? [{ title: "Best-position cap", body: <>
+        One closed whole trade counts at most {e.best_position ? ruleMoney(e.best_position.cap) : `${r.best_position_percent}% of the target`} toward the target; profit above it is left out.
+        {e.best_position && compareMoney(e.best_position.excess, "0") === 1 ? <> So far {formatMoney(e.best_position.excess)} is left out, so {formatMoney(e.best_position.counted_profit)} counts.</> : null}
+        {" "}It holds the pass back, never fails the account: more profit from other trades makes up for it.</> }] : []),
     { title: "Strategies", body: r.buy_only
       ? "Buy-only and single-leg: open positions by buying calls or puts. A sell may only close contracts you already hold, counting your other working sells. Multi-leg orders are not available. Put exercise must deliver against held long shares; exercise that would sell shares short is refused. Expiry auto-exercise and assignment still deliver shares."
       : r.defined_risk
@@ -186,9 +199,13 @@ function Rules({ trading }: { trading: TradingStatus }) {
       {risk && <PersonalRules risk={risk} />}
       <BreachPanel breach={data.breach} />
       <TradingError error={plans.error} />
+      {plans.data && <RulesComparePanel plans={offeredPlans(plans.data.plans, data)} />}
+      <ChallengeEconomicsPanel />
+      <RulePacksPanel account={data} />
       {plans.data ? <>
         {/* Funded plans appear only when the terminal offers them (lib/features). */}
         <Panel title="Evaluation plans">
+          <p className="mb-2 text-xs text-muted">Built-in plans are illustrative: this project's own terms, modelled on common prop-firm rule types, not any firm's.</p>
           <PlanTable label="Evaluation plans" plans={plans.data.plans.filter((p) => p.rules.phase !== "funded")} columns={[
             ["Step", (p) => phaseFact(p.rules)],
             ["Profit target", (p) => p.rules.profit_target ? ruleMoney(p.rules.profit_target) : "—", true],

@@ -31,7 +31,8 @@ class Decision(TypedDict, total=False):
 
 
 class EvaluationObjective(TypedDict):
-    code: Literal["PROFIT_TARGET", "MIN_TRADING_DAYS", "MIN_PROFITABLE_DAYS", "CONSISTENCY", "TRADE_CONSISTENCY", "MIN_TRADES", "MICROSCALPING"]
+    code: Literal["PROFIT_TARGET", "MIN_TRADING_DAYS", "MIN_PROFITABLE_DAYS", "CONSISTENCY", "TRADE_CONSISTENCY", "MIN_TRADES", "MICROSCALPING",
+                  "BEST_POSITION"]
     met: bool
     actual: float | None
     required: float
@@ -206,10 +207,35 @@ class Portfolio(TypedDict):
     positions: list[JSON]
 
 
+class PayoutReview(TypedDict):
+    min_hold_seconds: int
+    max_trade_percent: int
+    open_loss: bool
+    ladder: list[Literal["warning", "forfeit", "cap"]]
+    cap: str | None
+
+
+class ReviewTrade(TypedDict):
+    id: str
+    pnl: str
+    held_seconds: int
+    closed: str
+    offences: list[Literal["short_hold", "oversized", "open_loss"]]
+
+
+class PayoutReviewOutcome(TypedDict):
+    step: Literal["warning", "forfeit", "cap"]
+    trades: list[ReviewTrade]
+    forfeited: str
+
+
 class PayoutOptions(TypedDict, total=False):
     consistency_percents: list[int]
     buffer: str
     buffer_payouts: int
+    review: PayoutReview | None
+    after_payout: Literal["keep", "reset", "starting_balance"]
+    reset_percent: int
 
 
 class PayoutRules(PayoutOptions):
@@ -248,6 +274,17 @@ class PayoutStatus(TypedDict):
     best_day: PayoutBestDay | None
     consistency_needed: str
     buffer_balance: str | None
+    review: PayoutReviewOutcome | None
+    forfeit: str
+    after_payout: Literal["keep", "reset", "starting_balance"]
+    reset_balance: str | None
+
+
+class OpenLossCap(TypedDict):
+    basis: Literal["amount", "day_profit", "drawdown_room"]
+    amount: str | None
+    percent: int
+    action: Literal["flatten", "block_adds", "fail"]
 
 
 class SizeScaling(TypedDict):
@@ -382,6 +419,10 @@ class AccountRules(TypedDict, total=False):
     scaling: list[ScalingStep]
     size_scaling: SizeScaling | None
     fees: FeeSchedule
+    drawdown_basis: Literal["equity", "balance"]
+    open_loss_cap: OpenLossCap | None
+    minute_volume_percent: int
+    best_position_percent: int
 
 
 class AccountDamage(TypedDict):
@@ -401,7 +442,22 @@ class AccountStorage(TypedDict, total=False):
     journal_size: JournalSize
 
 
+class OpenLossStatus(TypedDict):
+    limit: str | None
+    positions: list[str]
+    trades: list[str]
+
+
+class BestPositionStatus(TypedDict):
+    cap: str
+    excess: str
+    counted_profit: str
+    trade: BestTrade | None
+
+
 class EvaluationProgress(TypedDict, total=False):
+    open_loss: OpenLossStatus | None
+    best_position: BestPositionStatus | None
     next_event: EventWindow | None
     active_events: list[EventWindow]
     day_low_equity: str | None

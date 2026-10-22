@@ -36,6 +36,7 @@ std::string_view to_string(Reason reason) noexcept {
     CASE(HEDGING); CASE(COUNTER_POSITION); CASE(MAX_VOLUME_SHARE);
     CASE(NEWS_BLACKOUT); CASE(HOLD_RESTRICTED); CASE(RESET_LIMIT);
     CASE(GAMMA_LIMIT); CASE(THETA_LIMIT); CASE(GRID_LOSS_LIMIT); CASE(SHORT_VEGA_LIMIT);
+    CASE(OPEN_LOSS_CAP); CASE(MINUTE_VOLUME); CASE(BEST_POSITION); CASE(LOSS_STREAK); CASE(SIZE_CREEP);
   }
 #undef CASE
   return "UNKNOWN";
@@ -349,6 +350,39 @@ void validate_rules(const AccountRules& r) {
     throw TradingError(Reason::INVALID_RULES, "The contracts held cap must be 0 to 100000; zero disables it");
   if (r.max_trade_risk < Money{} || r.max_trade_risk_percent < 0 || r.max_trade_risk_percent > 100)
     throw TradingError(Reason::INVALID_RULES, "Maximum trade risk must be nonnegative and its percentage 0 to 100");
+  if (r.drawdown_basis != DrawdownBasis::Equity && r.drawdown_basis != DrawdownBasis::Balance)
+    throw TradingError(Reason::INVALID_RULES, "drawdown_basis must be equity or balance");
+  if (const auto& cap = r.open_loss_cap) {
+    const bool percent = cap->basis != OpenLossBasis::Amount;
+    if ((cap->basis != OpenLossBasis::Amount && cap->basis != OpenLossBasis::DayProfit && cap->basis != OpenLossBasis::DrawdownRoom) ||
+        (cap->action != OpenLossAction::Flatten && cap->action != OpenLossAction::BlockAdds && cap->action != OpenLossAction::Fail) ||
+        (percent ? cap->percent < 1 || cap->percent > 100 || cap->amount != Money{} : cap->amount <= Money{} || cap->percent != 0) ||
+        (cap->basis == OpenLossBasis::DrawdownRoom && r.max_drawdown <= Money{}))
+      throw TradingError(Reason::INVALID_RULES, "An open-loss cap takes a positive amount, or a percentage 1-100 of the day's "
+                         "opening profit or of the drawdown room (which needs a drawdown rule), and flattens, blocks adds or fails");
+  }
+  if (r.minute_volume_percent < 0 || r.minute_volume_percent > 1000)
+    throw TradingError(Reason::INVALID_RULES, "minute_volume_percent must be 0-1000; zero disables it");
+  if (r.best_position_percent < 0 || r.best_position_percent > 100 ||
+      (r.best_position_percent > 0 && (r.profit_target <= Money{} || r.phase == Phase::Funded)))
+    throw TradingError(Reason::INVALID_RULES, "best_position_percent must be 0-100 and needs a profit target outside the funded phase");
+  if (const auto& review = p.review) {
+    if (r.phase != Phase::Funded || review->min_hold_seconds < 0 || review->min_hold_seconds > 3600 ||
+        review->max_trade_percent < 0 || review->max_trade_percent > 100 || review->ladder.empty() || review->ladder.size() > 16 ||
+        (review->min_hold_seconds == 0 && review->max_trade_percent == 0 && !review->open_loss) ||
+        (review->open_loss && !r.open_loss_cap) || review->cap < Money{} ||
+        std::any_of(review->ladder.begin(), review->ladder.end(), [](ReviewStep step) {
+          return step != ReviewStep::Warning && step != ReviewStep::Forfeit && step != ReviewStep::Cap; }) ||
+        (std::find(review->ladder.begin(), review->ladder.end(), ReviewStep::Cap) != review->ladder.end()) != (review->cap > Money{}))
+      throw TradingError(Reason::INVALID_RULES, "A payout review needs funded rules, at least one offence (hold seconds 1-3600, a trade "
+                         "share 1-100% or open-loss breaches with an open-loss cap), 1-16 ladder steps, and a positive cap exactly when a step caps");
+  }
+  if ((p.after_payout != PayoutFloor::Keep && p.after_payout != PayoutFloor::Reset && p.after_payout != PayoutFloor::StartingBalance) ||
+      p.reset_percent < 1 || p.reset_percent > 100 || (p.after_payout != PayoutFloor::Reset && p.reset_percent != 100) ||
+      (p.after_payout != PayoutFloor::Keep && (r.phase != Phase::Funded || r.max_drawdown <= Money{})) ||
+      (p.after_payout == PayoutFloor::StartingBalance && r.drawdown_mode == DrawdownMode::Static))
+    throw TradingError(Reason::INVALID_RULES, "after_payout is keep, reset (reset_percent 1-100) or starting_balance; the last two "
+                       "need funded rules with a drawdown floor, and a static floor cannot move to the starting balance");
   validate_time_rules(r);
   validate_event_rules(r);
   if (r.fees) {

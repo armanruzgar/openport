@@ -31,6 +31,26 @@ struct EvaluationDay {
   Reason locked = Reason::NONE;  ///< The plan limit that locked the day, if one did.
 };
 
+/// A closed whole trade a payout review reads: one with a positive net P&L closed
+/// in the payout cycle. `offences` names what a review found (short_hold,
+/// oversized, open_loss), empty until one does.
+struct ReviewTrade {
+  std::string id;
+  Money pnl;
+  Timestamp held = 0;    ///< From its first opening fill to its last close.
+  Timestamp closed = 0;
+  bool open_loss = false;  ///< It breached the plan's open-loss cap while open.
+  std::vector<std::string> offences = {};
+  bool operator==(const ReviewTrade&) const = default;
+};
+/// What a payout review decided: the ladder step taken, the offending trades and
+/// the profit forfeited with the payout (zero for a warning).
+struct PayoutReviewOutcome {
+  ReviewStep step = ReviewStep::Warning;
+  std::vector<ReviewTrade> trades;
+  Money forfeited;
+  bool operator==(const PayoutReviewOutcome&) const = default;
+};
 /// A funded-account withdrawal. The account pays out `amount`; the trader keeps
 /// `trader_share` of it.
 struct Payout {
@@ -40,6 +60,8 @@ struct Payout {
   Money amount;
   Money trader_share;
   Money balance;  ///< Equity when requested, before the withdrawal.
+  std::optional<PayoutReviewOutcome> review = {};  ///< Only when the review found offending trades.
+  Money removed = {};  ///< PayoutFloor::Reset: what the account dropped to restart at its reset balance.
 };
 
 struct SizeScale {
@@ -120,6 +142,12 @@ struct Evaluation {
   std::vector<std::string> holding_violations;  ///< Boundaries crossed while still holding, decided at rollover.
   std::vector<std::string> event_actions;  ///< Stable keys of once-only calendar actions.
   Timestamp event_checked = 0;  ///< Last transaction checked for holding cutoffs.
+  std::optional<Money> day_close_balance;  ///< Latest closed balance on `day`, kept only under a balance drawdown basis.
+  std::vector<std::string> open_loss_symbols;  ///< Positions over the open-loss cap now, by OSI or share symbol.
+  std::vector<std::string> open_loss_trades;   ///< Trade IDs whose positions breached it this attempt.
+  Money position_excess;  ///< Closed whole trades' profit above the best-position cap, with that rule on.
+  std::optional<BestTrade> best_position;  ///< The best closed whole trade, with that rule on.
+  std::vector<ReviewTrade> cycle_trades;   ///< Positive trades closed this payout cycle, under a payout review.
 };
 
 /// The highest reached step, or the first step below zero profit; zero without scaling.
@@ -244,6 +272,16 @@ struct TimeRuleProgress {
 [[nodiscard]] Decision plan_entry_check(const AccountRules& rules, std::string_view underlying, Timestamp time);
 /// Why opening orders are refused while the day is locked.
 [[nodiscard]] std::string day_lock_message(Reason lock);
+/// Whether a trade closed at `closed` belongs to the payout cycle in progress: from
+/// the cycle's start, but strictly after the last payout, so a trade closed at the
+/// payout's own timestamp stays with the cycle that payout reviewed.
+[[nodiscard]] bool in_payout_cycle(const Evaluation& evaluation, Timestamp closed);
+/// The open-loss cap in dollars now (see OpenLossCap), whole cents rounded down;
+/// absent without the rule, or while a day-profit basis has neither profit nor a floor.
+[[nodiscard]] std::optional<Money> open_loss_limit(const Evaluation& evaluation, const AccountRules& rules,
+                                                   const PlanInputs& now);
+/// The largest profit one closed whole trade may count toward the target under the best-position rule.
+[[nodiscard]] Money best_position_cap(const AccountRules& rules);
 
 struct PassOdds {
   double pass = 0, fail = 0, neither = 0;
@@ -256,6 +294,78 @@ struct PassOdds {
 /// days without recorded extrema are left out, not fabricated.
 [[nodiscard]] PassOdds pass_odds(const Evaluation& current, const AccountRules& rules,
     Money equity, const std::vector<EvaluationDay>& history, int days, int samples, std::uint64_t seed);
+
+/// A closed whole trade as a rules replay reads it: when it closed, its net P&L and how long it was held.
+struct ReplayTrade {
+  std::string id;
+  Timestamp closed = 0;
+  Money pnl;
+  Timestamp held = 0;
+};
+/// One recorded day in a rules replay, for one rule set: `outcome` is active,
+/// locked (its daily loss limit locked it), passed or failed (decided that day),
+/// or after (decided earlier).
+struct RuleReplayDay {
+  md::Date day;
+  std::string outcome;
+  Money close;  ///< The rule set's equity at the day's close: its starting balance plus the recorded P&L.
+  Money floor;  ///< Its floor after the day; zero without a drawdown rule.
+};
+struct RuleReplay {
+  EvaluationStatus status = EvaluationStatus::Active;
+  Reason code = Reason::NONE;
+  std::string message;
+  std::optional<md::Date> decided_day;
+  Timestamp decided_at = 0;  ///< The recorded observation's time: an extreme's, or the day's close (zero when unknown).
+  Money decided_equity;
+  std::vector<md::Date> locked_days;
+  std::optional<Money> closest_floor;  ///< Least room above the floor seen.
+  std::vector<RuleReplayDay> days;
+};
+/// Replays one attempt's recorded path against other rules: each finished day
+/// is its open, its recorded low and high in timestamp order, and its close,
+/// then the day in progress (its open, extremes and `now`). Each rule set starts
+/// at its own `starting_balance` and moves by the recorded dollar P&L; the
+/// closed balance moves by each day's realised P&L, at its close. Days count as
+/// trading days with recorded executions or, where the account did not count
+/// them, with realised P&L. Trades in `trades` count toward trade objectives from
+/// the day they closed. Nothing is re-executed, so a rule that would have closed
+/// positions (a lock, the open-loss cap) only ends that day at its level.
+[[nodiscard]] RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now,
+    const std::vector<ReplayTrade>& trades, Money starting_balance, const AccountRules& rules);
+
+/// One step of a program for challenge economics: its pass odds, what its first
+/// attempt costs (the purchase or activation fee) and each reset, and how many
+/// resets it allows (zero: unlimited, counted to 100 attempts).
+struct EconomicsStep {
+  std::string plan;
+  double pass = 0;
+  Money first_cost;
+  Money reset_cost;
+  std::int64_t max_resets = 0;
+};
+struct EconomicsStepResult {
+  std::string plan;
+  double pass = 0;           ///< One attempt's pass odds.
+  double eventual_pass = 0;  ///< Within the attempts allowed.
+  double expected_cost = 0;  ///< The first attempt's cost plus expected resets', in dollars.
+  double expected_attempts = 0;
+};
+/// Expected value of buying the first step: each step's eventual pass odds
+/// multiply into the funded step, worth `payout_odds × payout` (the trader's
+/// share), less every expected cost along the way. The break-even pass rate is
+/// the first step's single-attempt pass odds at which that value is zero, by
+/// bisection with the other steps held; absent when no rate breaks even.
+struct ChallengeEconomics {
+  std::vector<EconomicsStepResult> steps;
+  double payout_odds = 0;
+  double payout = 0;
+  double expected_cost = 0;
+  double expected_payout = 0;
+  double expected_value = 0;
+  std::optional<double> break_even_pass;
+};
+[[nodiscard]] ChallengeEconomics challenge_economics(const std::vector<EconomicsStep>& steps, double payout_odds, Money payout);
 
 /// The fee charged when an attempt starts; zero fees have no kind or journal field.
 struct AttemptFee {
