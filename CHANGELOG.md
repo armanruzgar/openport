@@ -20,6 +20,28 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Import date ranges and resume.** All importers accept inclusive `--import-days`
   ranges and repeated dates, skip calendar closures, report progress and skip only
   matching complete recordings.
+- **Charles Schwab market data.** `--provider schwab` polls Trader API option
+  chains with the underlying quote, open interest, volume, delta and gamma, using
+  an OAuth refresh token from the environment. Health follows each response's
+  `isDelayed`; `isMini`/`isNonStandard` and `mini`/`nonStandard` both mark a
+  nonstandard contract. Tested against documentation-shaped samples; not yet run live.
+- **Alpaca market data.** `--provider alpaca` polls option snapshots for equity
+  and ETF underlyings from the free indicative feed (reported as delayed, derived
+  quotes) or OPRA with a subscription. Alpaca has no index options, so SPX and
+  other indexes are refused. Not yet run live.
+- **Interactive Brokers market data.** `--provider ibkr` reads Client Portal Web
+  API snapshots through your logged-in local gateway: it keeps the session alive,
+  maps contract ids to OSI symbols, paces requests and counts market-data lines.
+  Requires `--expiries` and `--window`. Build option `OPENPORT_WITH_IBKR` (on by
+  default). Not yet run live.
+- **Feed failover.** `--fallback-provider NAME` switches an underlying to a second
+  provider once the main one has been in error or silent for
+  `--fallback-seconds` (default 30), and back once it has been fresh for as long.
+  A primary labelled stale whose snapshots advance keeps its underlyings, and none
+  move onto a backup that could not start or reports an error. Contracts map by OSI
+  symbol; the backup reports delayed with a fallback label in status and the
+  terminal. Paper trading keeps its freshness checks, and every fill names the feed
+  that priced it (`feed` in the fills API and journal).
 
 ### Recording and replay
 
@@ -109,6 +131,12 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - Historical VaR/ES at 99% needs 100 observations (95% still needs 20); below that `var99`/`es99` are null and `tail99_reason` says why.
 - A tagged order that reduces an untagged book over its scope cap is no longer refused; the scope is valued over the same positions with and without the order.
 - Scenario grids for grid-loss caps and alerts are remembered by their exact inputs, so order checks stop repricing every open order's grid.
+- **See skew move with spot.** The spot × volatility grid and the risk profile can
+  reprice with sticky-moneyness or sticky-delta smiles along each underlying's
+  fitted SSVI surface (`dynamics=`), beside the default sticky strike. Underlyings
+  without a surface stay sticky strike and are named. Rules, margin and breach
+  estimates are unchanged. The choice applies to every Scenario explorer mode
+  (dated, beta-weighted and term-scaled), with a Smile selector there too.
 
 ### Trading, financing and halts
 
@@ -171,6 +199,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   provider/feed and recent error categories into a reviewable bug report. Local
   fatal signal logs contain no memory dump; there is no telemetry. `/api/status`
   adds optional build metadata for clients.
+
 ### Flow, earnings and outside portfolios
 
 - **Read the option tape.** A Flow tab on Trade shows time and sales from feeds
@@ -189,36 +218,17 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   Greeks, risk profile and scenario grid on your feed. It is not a paper account and
   can never be traded. Every route, reads included, needs admin; imports may be up
   to 4 MiB. `/api/analysis/portfolios`.
+  Its risk views include the historical stress tests and one-day historical
+  VaR/expected shortfall (`risk/stress`, `risk/var`), without the floor or paper
+  margin an account would have.
 - Option prints now carry the printing venue where the provider gives one.
   Recordings from such providers (Databento, and ThetaData or Databento imports)
   use format version 5, which older builds refuse at the header; every other
-  provider writes the same files as before.
+  provider writes the same files as before. Daily `--record-dir` files and a
+  feed behind `--fallback-provider` carry the venue header as well.
 - The Python client and MCP server can read the tape, the earnings history and
   analysis portfolios.
-### Providers
 
-- **Charles Schwab market data.** `--provider schwab` polls Trader API option
-  chains with the underlying quote, open interest, volume, delta and gamma, using
-  an OAuth refresh token from the environment. Health follows each response's
-  `isDelayed`; `isMini`/`isNonStandard` and `mini`/`nonStandard` both mark a
-  nonstandard contract. Tested against documentation-shaped samples; not yet run live.
-- **Alpaca market data.** `--provider alpaca` polls option snapshots for equity
-  and ETF underlyings from the free indicative feed (reported as delayed, derived
-  quotes) or OPRA with a subscription. Alpaca has no index options, so SPX and
-  other indexes are refused. Not yet run live.
-- **Interactive Brokers market data.** `--provider ibkr` reads Client Portal Web
-  API snapshots through your logged-in local gateway: it keeps the session alive,
-  maps contract ids to OSI symbols, paces requests and counts market-data lines.
-  Requires `--expiries` and `--window`. Build option `OPENPORT_WITH_IBKR` (on by
-  default). Not yet run live.
-- **Feed failover.** `--fallback-provider NAME` switches an underlying to a second
-  provider once the main one has been in error or silent for
-  `--fallback-seconds` (default 30), and back once it has been fresh for as long.
-  A primary labelled stale whose snapshots advance keeps its underlyings, and none
-  move onto a backup that could not start or reports an error. Contracts map by OSI
-  symbol; the backup reports delayed with a fallback label in status and the
-  terminal. Paper trading keeps its freshness checks, and every fill names the feed
-  that priced it (`feed` in the fills API and journal).
 ### Pricing and volatility models
 
 - **Choose a closed-form American model.** `--american-model bs2002|baw` removes
@@ -238,14 +248,6 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   and SABR fits run on a background worker, one per snapshot at a time, so they
   never stall other API reads; a request for a snapshot already fitting gets 503
   with `Retry-After`.
-
-### Risk
-
-- **See skew move with spot.** The spot × volatility grid and the risk profile can
-  reprice with sticky-moneyness or sticky-delta smiles along each underlying's
-  fitted SSVI surface (`dynamics=`), beside the default sticky strike. Underlyings
-  without a surface stay sticky strike and are named. Rules, margin and breach
-  estimates are unchanged.
 
 ## 0.4.0 (2026-10-06)
 
