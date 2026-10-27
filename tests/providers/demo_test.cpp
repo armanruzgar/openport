@@ -499,7 +499,9 @@ TEST(DemoMarket, RevisionEightHoldsEtfsAtStockCloseWhileOptionsTradeOn) {
           market.seed(account);
           ASSERT_TRUE(account.submit(market.market("delivery", 2), market.time).decision.ok());
           market.time += 5 * md::kNanosPerMinute;
-          account.on_quotes({}, {}, market.time, {{symbol, market.time, exercise_prices.at(symbol)}});
+          ++market.observation;
+          // The shares an exercise opens take a share entry's checks, which need the held marks fresh.
+          account.on_quotes({market.quote()}, {market.valuation()}, market.time, {{symbol, market.time, exercise_prices.at(symbol)}});
           const auto exercised = account.exercise(market.symbol(), 1, market.time);
           ASSERT_TRUE(exercised.decision.ok()) << exercised.decision.message;
           ASSERT_EQ(account.snapshot()->stock_fills.size(), 1U);

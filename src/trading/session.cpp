@@ -5858,6 +5858,8 @@ TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared
   if (config.fee_per_contract < Money{}) throw TradingError(Reason::INVALID_MONEY, "Fee cannot be negative");
   // As reset_account requires: percentage rules and payouts work from this balance.
   if (config.initial_cash <= Money{}) throw TradingError(Reason::INVALID_MONEY, "Starting balance must be positive");
+  if (config.rules.size_scaling && config.rules.size_scaling->max_balance < config.initial_cash)
+    throw TradingError(Reason::INVALID_RULES, "Account size scaling maximum must be at least the starting balance");
   if (journal && journal->sequence() != 0) throw TradingError(Reason::JOURNAL_CORRUPT, "Use recover for a nonempty journal");
   impl_->actor = std::move(actor);
   impl_->state.config = std::move(config);
@@ -7535,6 +7537,16 @@ CommandResult TradingSession::exercise(const std::string& symbol, Quantity contr
       t.closures.push_back({symbol, contracts, intrinsic, t.time, ClosureKind::Exercise, t.fills.size(), fee});
       if (shares != 0) trade_shares(t, contract.underlying, shares, *price, StockSource::Exercise, symbol);
     };
+    // Shares the exercise opens, or adds to, enter the plan as a share trade would:
+    // its entry windows, stop requirement, hedging, trade-risk and exposure rules
+    // apply. Shares that only reduce a holding, as a put against long shares, do not.
+    if (shares != 0 && !reduces_shares(s, contract.underlying, shares)) {
+      if (const auto d = plan_entry_check(s.config.rules, contract.underlying, s.time); !d.ok()) return CommandResult{d, {}, 0};
+      ShareTerms terms;
+      terms.exercise = true;
+      if (const auto d = opening_share_rules_check(s, contract.underlying, shares, *price, terms, events, apply); !d.ok())
+        return CommandResult{d, {}, 0};
+    }
     if (s.config.rules.buying_power) {
       State projected = s;
       apply(projected);
