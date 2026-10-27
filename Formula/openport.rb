@@ -48,7 +48,7 @@ class Openport < Formula
          "--candle-dir", var/"openport/candles",
          "--series-dir", var/"openport/series",
          "--write-token-file", var/"openport/write-token",
-         "--web-root", opt_share/"openport/web"]
+         "--web-root", opt_pkgshare/"web"]
     keep_alive true
     working_dir var/"openport"
     log_path var/"log/openport.log"
