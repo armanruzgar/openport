@@ -234,14 +234,14 @@
     bench(res) {
       res.innerHTML = 'iv solve   0.4 µs   5.4 Newton iterations per option\n'
         + 'spx pass   40 ms    30,182 options, 63 expiries\n'
-        + '# medians, Apple M2 Max, 2026-09-24. <a href="https://github.com/38st/openport/blob/main/docs/methods.md">methods ↗</a>';
+        + '# medians, Apple M2 Max, 2026-09-24. <a href="https://github.com/armanruzgar/openport/blob/main/docs/methods.md">methods ↗</a>';
     },
     docs(res) {
-      const base = 'https://github.com/38st/openport/blob/main/docs/';
+      const base = 'https://github.com/armanruzgar/openport/blob/main/docs/';
       res.innerHTML = [['architecture', 'architecture.md'], ['methods', 'methods.md'], ['paper trading', 'paper-trading.md'], ['providers', 'providers.md'], ['install', 'install.md']]
         .map(([t, f]) => `<a href="${base}${f}">${t} ↗</a>`).join('\n');
     },
-    github(res) { res.innerHTML = '<a href="https://github.com/38st/openport">github.com/38st/openport ↗</a>  MIT licence'; },
+    github(res) { res.innerHTML = '<a href="https://github.com/armanruzgar/openport">github.com/armanruzgar/openport ↗</a>  MIT licence'; },
     theme(res) { toggleTheme(); res.textContent = 'theme: ' + theme(); },
     sudo(res) { res.textContent = 'Not needed. Everything runs as you, on your machine.'; },
     buy(res) { res.textContent = 'Orders go through the terminal’s ticket, and fills are simulated. Try install.'; },

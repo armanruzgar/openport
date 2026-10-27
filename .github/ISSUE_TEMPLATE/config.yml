@@ -1,8 +1,8 @@
 blank_issues_enabled: true
 contact_links:
   - name: Questions and practice workflows
-    url: https://github.com/38st/openport/discussions
+    url: https://github.com/armanruzgar/openport/discussions
     about: Ask setup questions, share workflows or discuss an idea before requesting a feature.
   - name: Report a security problem
-    url: https://github.com/38st/openport/security/advisories/new
+    url: https://github.com/armanruzgar/openport/security/advisories/new
     about: Please report vulnerabilities privately, not in a public issue.

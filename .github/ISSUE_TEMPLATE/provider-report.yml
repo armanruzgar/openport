@@ -6,7 +6,7 @@ body:
       value: |
         Run `openport-probe --certify PROVIDER SYMBOL --report-dir NEW_DIRECTORY`.
         For a timed run add `--seconds 60`; polling otherwise stops after one cycle.
-        See [certification instructions](https://github.com/38st/openport/blob/main/docs/providers.md#live-certification-reports).
+        See [certification instructions](https://github.com/armanruzgar/openport/blob/main/docs/providers.md#live-certification-reports).
         Review both reports before attaching them. Never attach credentials,
         account identifiers, raw logs, recordings or licensed market payloads.
   - type: dropdown

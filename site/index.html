@@ -34,8 +34,8 @@
       <button class="key" type="button" data-cmd="help" data-js hidden><kbd>[?]</kbd><span>Help</span></button>
       <button class="key" type="button" data-cmd="theme" data-js hidden aria-label="Switch between light and dark themes"><kbd>[^M]</kbd><span id="theme-label">Light mode</span></button>
       <a class="key" href="#quick-start"><kbd aria-hidden="true">[↓]</kbd><span>Install</span></a>
-      <a class="key" href="https://github.com/38st/openport/blob/main/docs/first-ten-minutes.md"><kbd aria-hidden="true">[↗]</kbd><span>Docs</span></a>
-      <a class="key" href="https://github.com/38st/openport"><kbd aria-hidden="true">[↗]</kbd><span>GitHub</span></a>
+      <a class="key" href="https://github.com/armanruzgar/openport/blob/main/docs/first-ten-minutes.md"><kbd aria-hidden="true">[↗]</kbd><span>Docs</span></a>
+      <a class="key" href="https://github.com/armanruzgar/openport"><kbd aria-hidden="true">[↗]</kbd><span>GitHub</span></a>
     </nav>
   </header>
 
@@ -85,17 +85,17 @@
           <button id="install-homebrew" class="key" type="button" role="tab" aria-selected="false" aria-controls="install-panel" tabindex="-1" data-install="homebrew"><kbd aria-hidden="true">[2]</kbd><span>Homebrew</span></button>
         </div>
         <div id="install-panel" class="term" role="tabpanel" aria-labelledby="install-docker">
-          <pre id="install-command" tabindex="0" aria-label="Docker quick start"><code>docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport</code></pre>
+          <pre id="install-command" tabindex="0" aria-label="Docker quick start"><code>docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/armanruzgar/openport</code></pre>
           <button class="key" type="button" data-copy data-js hidden><kbd aria-hidden="true">[c]</kbd><span>Copy</span></button>
         </div>
         <p id="copy-status" class="copy-status" role="status" aria-live="polite"></p>
         <p id="install-description">With Docker installed, this starts Cboe’s free 15-minute delayed feed for SPX, SPY, QQQ, IWM and DIA. No key needed. Open the link it prints, <code>http://localhost:8080/#token=…</code>. The volume keeps your accounts and chart history between runs. When nothing is trading, choose the demo market’s simulated prices.</p>
-        <template id="homebrew-command">brew tap 38st/openport https://github.com/38st/openport
+        <template id="homebrew-command">brew tap armanruzgar/openport https://github.com/armanruzgar/openport
 brew install openport
 brew services start openport
 openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"</template>
-        <p><a class="more" href="https://github.com/38st/openport/blob/main/docs/first-ten-minutes.md">Next: your first ten minutes ↗</a></p>
-        <a class="more" href="https://github.com/38st/openport/blob/main/docs/install.md">Your provider, a release archive or a source build ↗</a>
+        <p><a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/first-ten-minutes.md">Next: your first ten minutes ↗</a></p>
+        <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/install.md">Your provider, a release archive or a source build ↗</a>
         <!-- TODO: set data-demo-url to the verified hosted HTTPS URL. Placeholder: https://demo.example.com. Keep hidden until configured. -->
         <a id="hosted-demo" class="more key" data-demo-url="" hidden><kbd aria-hidden="true">[↗]</kbd><span>Try it in your browser</span></a>
       </div>
@@ -115,7 +115,7 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
           <div><dt>accounts</dt><dd>cash · IRA · margin · fill models · itemized fees</dd></div>
         </dl>
         <p>On the default delayed feed, a pass is practice, not proof: a real-time chart shows where the market went next. Funded plans stay hidden in the terminal unless already funded or explicitly enabled; OpenPort funds no one.</p>
-        <a class="more" href="https://github.com/38st/openport/blob/main/docs/paper-trading.md">Rules, fills and simulation limits ↗</a>
+        <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/paper-trading.md">Rules, fills and simulation limits ↗</a>
       </div>
     </section>
 
@@ -133,7 +133,7 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
         </dl>
         <p>Medians on an Apple M2 Max on 2026-09-24: the IV solve from <code>openport_bench</code>, the SPX pass over 23 passes on live data. Differences are against Cboe’s published IVs during the session, on out-of-the-money options within 10% of the forward. SVI fits run separately, on demand in the API.</p>
         <p>Exposure assumes dealers are long calls and short puts: a modelling convention, not knowledge of anyone’s positions.</p>
-        <a class="more" href="https://github.com/38st/openport/blob/main/docs/methods.md">Methods, assumptions and measurements ↗</a>
+        <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/methods.md">Methods, assumptions and measurements ↗</a>
       </div>
     </section>
 
@@ -150,7 +150,7 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
           <div><dt>review</dt><dd>whole trades across rolls · export attempt and run identity</dd></div>
         </dl>
         <p>These are simulated results and model estimates, not predictions.</p>
-        <a class="more" href="https://github.com/38st/openport/blob/main/docs/features.md">Features and limits ↗</a>
+        <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/features.md">Features and limits ↗</a>
       </div>
     </section>
 
@@ -164,7 +164,7 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
           <div><dt>adapters</dt><dd>Databento · Massive · ThetaData · Tradier · tastytrade · Schwab · Alpaca · Interactive Brokers market data</dd></div>
         </dl>
         <p>The adapters follow their documented APIs and are tested against sample responses, but have not yet been run live with a key or account. The broker adapters read market data only; they never send orders.</p>
-        <a class="more" href="https://github.com/38st/openport/blob/main/docs/providers.md">Write a provider adapter ↗</a>
+        <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/providers.md">Write a provider adapter ↗</a>
       </div>
     </section>
 
@@ -193,14 +193,14 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
 
   <footer class="foot col">
     <nav aria-label="Project resources">
-      <a href="https://github.com/38st/openport">GitHub</a>
-      <a href="https://github.com/38st/openport/discussions">Discussions</a>
-      <a href="https://github.com/38st/openport/releases">Releases</a>
-      <a href="https://github.com/38st/openport/blob/main/docs/architecture.md">Architecture</a>
-      <a href="https://github.com/38st/openport/blob/main/docs/runtime.md">Runtime guide</a>
-      <a href="https://github.com/38st/openport/blob/main/docs/providers.md">Provider guide</a>
-      <a href="https://github.com/38st/openport/blob/main/SECURITY.md">Security policy</a>
-      <a href="https://github.com/38st/openport/blob/main/LICENSE">MIT licence</a>
+      <a href="https://github.com/armanruzgar/openport">GitHub</a>
+      <a href="https://github.com/armanruzgar/openport/discussions">Discussions</a>
+      <a href="https://github.com/armanruzgar/openport/releases">Releases</a>
+      <a href="https://github.com/armanruzgar/openport/blob/main/docs/architecture.md">Architecture</a>
+      <a href="https://github.com/armanruzgar/openport/blob/main/docs/runtime.md">Runtime guide</a>
+      <a href="https://github.com/armanruzgar/openport/blob/main/docs/providers.md">Provider guide</a>
+      <a href="https://github.com/armanruzgar/openport/blob/main/SECURITY.md">Security policy</a>
+      <a href="https://github.com/armanruzgar/openport/blob/main/LICENSE">MIT licence</a>
     </nav>
     <p>Not investment advice. Simulated trading only.</p>
   </footer>

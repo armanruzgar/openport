@@ -12,7 +12,7 @@ it("keeps Docker available without JavaScript and points Docs at the first ten m
   expect(document.getElementById("install-command")!.textContent).toContain("docker run")
   const docs = [...document.querySelectorAll("a")].find(a => a.textContent?.includes("Docs"))!
   expect(docs.href).toContain("docs/first-ten-minutes.md")
-  expect(document.querySelector('a[href="https://github.com/38st/openport/discussions"]')).not.toBeNull()
+  expect(document.querySelector('a[href="https://github.com/armanruzgar/openport/discussions"]')).not.toBeNull()
 })
 
 it("switches the command and explanation with mouse and keyboard using one tab stop", () => {

@@ -1,7 +1,7 @@
 name: openport-demo
 services:
   openport:
-    image: ${OPENPORT_IMAGE:-ghcr.io/38st/openport:latest}
+    image: ${OPENPORT_IMAGE:-ghcr.io/armanruzgar/openport:latest}
     command: ["--provider", "demo", "--sandboxes", "${SANDBOXES:-20}",
               "--sandbox-idle-seconds", "3600", "--client-ip-header", "X-Real-IP",
               "--allowed-host", "${DEMO_HOST:?Set DEMO_HOST}",

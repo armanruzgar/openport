@@ -20,7 +20,7 @@ Providers, command-line flags, terminal settings and who may write.
 
 Databento, Massive and ThetaData follow their documented APIs and are tested against
 sample responses, but have not yet been run live with a key. If you have one, an
-[issue](https://github.com/38st/openport/issues) saying how it went is welcome.
+[issue](https://github.com/armanruzgar/openport/issues) saying how it went is welcome.
 
 The Tradier, tastytrade, Schwab, Alpaca and Interactive Brokers adapters read market
 data only. They never send broker orders or read balances or positions; the
@@ -102,7 +102,7 @@ Pass the prerequisite in the same account before resetting into the next step.
 | Status → Updates → Check for updates | Off | Browser update checks, saved in this browser |
 
 Update checks are opt-in and off by default. When on, the web terminal itself, not
-the server, asks `https://api.github.com/repos/38st/openport/releases/latest` at most
+the server, asks `https://api.github.com/repos/armanruzgar/openport/releases/latest` at most
 once a day. It compares that release with the running version from `GET /api/status`,
 and shows a small dismissible notice with a link to the release when it is newer.
 Nothing else is sent. A network failure stays silent.

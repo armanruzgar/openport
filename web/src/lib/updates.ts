@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react"
 
-export const releaseEndpoint = "https://api.github.com/repos/38st/openport/releases/latest"
+export const releaseEndpoint = "https://api.github.com/repos/armanruzgar/openport/releases/latest"
 export const updateInterval = 24 * 60 * 60 * 1000
 const enabledKey = "openport.updates.enabled"
 const cacheKey = "openport.updates.cache"
@@ -40,7 +40,7 @@ type Storage = Pick<globalThis.Storage, "getItem" | "setItem">
 
 function releaseFor(tag: unknown): Release | null {
   return typeof tag === "string" && parseVersion(tag)
-    ? { version: tag, url: `https://github.com/38st/openport/releases/tag/${encodeURIComponent(tag)}` } : null
+    ? { version: tag, url: `https://github.com/armanruzgar/openport/releases/tag/${encodeURIComponent(tag)}` } : null
 }
 
 export function createUpdateStore(

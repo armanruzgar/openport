@@ -51,6 +51,10 @@ brew services start openport
 openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"
 ```
 
+A tap added before the project moved, as `38st/openport`, still updates through
+GitHub's redirect. Point it at the new home with `brew tap --custom-remote
+38st/openport https://github.com/armanruzgar/openport`.
+
 For the repository's Compose file, run these commands beside `docker-compose.yml`.
 They use the default `openport` volume; substitute your volume name if customized.
 The archive is owner-only; move it to private backup storage afterwards.
@@ -59,7 +63,7 @@ The archive is owner-only; move it to private backup storage afterwards.
 docker compose stop openport
 docker compose images
 docker run --rm --user 0 --entrypoint sh \
-  -v openport:/data:ro -v "$PWD":/backup ghcr.io/38st/openport \
+  -v openport:/data:ro -v "$PWD":/backup ghcr.io/armanruzgar/openport \
   -c 'umask 077; tar -czf /backup/openport-before-upgrade.tgz -C /data .'
 docker compose pull
 docker compose up -d
@@ -87,7 +91,7 @@ directory or **new volume**, not on top of newer journal files. For Docker:
 ```sh
 docker volume create openport-restored
 docker run --rm --user 0 --entrypoint tar \
-  -v openport-restored:/data -v "$PWD":/backup:ro ghcr.io/38st/openport \
+  -v openport-restored:/data -v "$PWD":/backup:ro ghcr.io/armanruzgar/openport \
   -xzf /backup/openport-before-upgrade.tgz -C /data
 ```
 

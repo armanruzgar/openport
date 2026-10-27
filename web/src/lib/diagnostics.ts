@@ -38,5 +38,5 @@ export function diagnostics(status: Status, feed: Pick<Status["feed"], "state" |
 
 export function diagnosticsIssueUrl(report: string, version?: string): string {
   const query = new URLSearchParams({ template: "bug_report.yml", version: version ?? "unavailable", diagnostics: report })
-  return `https://github.com/38st/openport/issues/new?${query}`
+  return `https://github.com/armanruzgar/openport/issues/new?${query}`
 }
