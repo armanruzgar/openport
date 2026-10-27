@@ -97,7 +97,12 @@ strike, while the option's own trade records its real result and the shares' P&L
 their own move from there. `exercise(symbol, contracts, time)` exercises long, in-the-
 money contracts early in the same way against the underlying's fresh price, so any
 time value left is a cost; it takes the account's checks and, with the
-`buying_power` rule, must fit within it.
+`buying_power` rule, must fit within it. Shares an exercise opens, or adds to, enter
+the plan as a share trade would: its entry windows and allowed underlyings,
+`require_stop_loss` (no bracket can protect delivered shares, so sell the option
+instead), hedging, `max_trade_risk` (a long's whole value, a short's unbounded loss)
+and the exposure limits all apply. Shares that only reduce a holding, as a put
+exercised against long shares, take none of them.
 
 ### Simulated expiry pin risk
 

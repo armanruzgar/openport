@@ -181,6 +181,95 @@ TEST(TradingDelivery, DefinedRiskPutExerciseCannotOpenShortShares) {
   EXPECT_TRUE(s.exercise(put.osi_symbol(), 1, f.time).decision.ok());
 }
 
+TEST(TradingDelivery, ExerciseOpeningSharesTakesTheShareEntryRulesAsATradeDoes) {
+  const auto call = *md::parse_osi("SPY261022C00500000");
+  const auto put = *md::parse_osi("SPY261022P00520000");
+  const auto stopped = [](OrderRequest request) {
+    request.bracket = Bracket{ExitSpec{Trigger{TriggerSource::Option, TriggerDirection::AtOrBelow, m("3.00")}, {}}, {}};
+    return request;
+  };
+  {
+    // A required stop: the shares a call delivers have none, as a bare share buy has none.
+    Spy f; AccountRules rules; rules.require_stop_loss = true;
+    TradingSession s(roomy(rules), f.time);
+    f.define(s, call); f.quote(s, call, "10", "10.20");
+    ASSERT_TRUE(s.submit(stopped(f.market("call", call, 1)), f.time).decision.ok());
+    EXPECT_EQ(s.trade_stock("SPY", 100, f.time).decision.code, Reason::STOP_REQUIRED);
+    const auto refused = s.exercise(call.osi_symbol(), 1, f.time);
+    EXPECT_EQ(refused.decision.code, Reason::STOP_REQUIRED);
+    EXPECT_NE(refused.decision.message.find("sell the option instead"), std::string::npos) << refused.decision.message;
+    EXPECT_EQ(s.snapshot()->positions.at(0).position.quantity, 1);
+    EXPECT_TRUE(s.snapshot()->stocks.empty());
+    EXPECT_TRUE(s.submit(f.market("sell", call, 1, Side::Sell), f.time).decision.ok());
+  }
+  {
+    // A trade-risk cap: delivered long shares risk their whole value, short shares an unbounded loss.
+    Spy f; AccountRules rules; rules.max_trade_risk = m("2000");
+    TradingSession s(roomy(rules), f.time);
+    f.define(s, call); f.quote(s, call, "10", "10.20");
+    f.define(s, put); f.quote(s, put, "10", "10.20");
+    ASSERT_TRUE(s.submit(f.market("call", call, 1), f.time).decision.ok());
+    ASSERT_TRUE(s.submit(f.market("put", put, 1), f.time).decision.ok());
+    const auto long_shares = s.exercise(call.osi_symbol(), 1, f.time).decision;
+    EXPECT_EQ(long_shares.code, Reason::MAX_TRADE_RISK);
+    ASSERT_TRUE(long_shares.actual.has_value());
+    EXPECT_DOUBLE_EQ(*long_shares.actual, 51000.0);
+    ASSERT_TRUE(long_shares.limit.has_value());
+    EXPECT_DOUBLE_EQ(*long_shares.limit, 2000.0);
+    const auto short_shares = s.exercise(put.osi_symbol(), 1, f.time).decision;
+    EXPECT_EQ(short_shares.code, Reason::MAX_TRADE_RISK);
+    EXPECT_FALSE(short_shares.actual.has_value());
+    EXPECT_EQ(s.snapshot()->positions.size(), 2U);
+    // Shares the plan let in with a bracket stop can be delivered against: the put only reduces them.
+    StockOrderRequest shares;
+    shares.client_order_id = "shares"; shares.symbol = "SPY"; shares.type = StockOrderType::Market; shares.shares = 100;
+    shares.stop_loss = m("500");
+    ASSERT_TRUE(s.submit_stock_order(shares, f.time).decision.ok());
+    ASSERT_NE(stock(s, "SPY"), nullptr);
+    EXPECT_EQ(stock(s, "SPY")->position.shares, 100);
+    ASSERT_TRUE(s.exercise(put.osi_symbol(), 1, f.time).decision.ok());
+    EXPECT_EQ(stock(s, "SPY"), nullptr);
+  }
+  {
+    // Plan hours: outside them a call exercise opens shares no share trade could, while the option can still be sold.
+    Spy f; AccountRules rules; rules.trading_start = 9 * 60 + 30; rules.trading_end = 11 * 60;
+    TradingSession s(roomy(rules), f.time);
+    f.define(s, call); f.quote(s, call, "10", "10.20");
+    ASSERT_TRUE(s.submit(f.market("call", call, 1), f.time).decision.ok());
+    f.time = md::new_york_to_utc({2026, 9, 22}, 11, 30);
+    f.quote(s, call, "10", "10.20");
+    EXPECT_EQ(s.trade_stock("SPY", 100, f.time).decision.code, Reason::OUTSIDE_PLAN_HOURS);
+    EXPECT_EQ(s.exercise(call.osi_symbol(), 1, f.time).decision.code, Reason::OUTSIDE_PLAN_HOURS);
+    EXPECT_TRUE(s.submit(f.market("sell", call, 1, Side::Sell), f.time).decision.ok());
+  }
+}
+
+TEST(TradingDelivery, ASessionNeedsAScalingMaximumAtLeastTheStartingBalanceAsAResetDoes) {
+  Spy f;
+  AccountRules rules;
+  rules.plan = "Funded test";
+  rules.phase = Phase::Funded;
+  rules.max_drawdown = m("1000");
+  rules.lock_balance = m("10000");
+  rules.payouts.qualifying_profit = m("50");
+  rules.payouts.qualifying_days = 1;
+  rules.payouts.withdrawal_percent = 50;
+  rules.payouts.split_percent = 80;
+  rules.payouts.minimum = m("10");
+  rules.size_scaling = SizeScaling{1, 1, 2, 25, m("100000")};
+  ASSERT_NO_THROW(TradingSession(roomy(rules), f.time));
+  auto bad = rules;
+  bad.size_scaling->max_balance = m("99999.99");
+  std::string constructed, reset;
+  try { TradingSession s(roomy(bad), f.time); FAIL(); }
+  catch (const TradingError& error) { EXPECT_EQ(error.code(), Reason::INVALID_RULES); constructed = error.what(); }
+  TradingSession s(roomy(rules), f.time);
+  try { s.reset_account(m("100000"), bad, "test", f.time); FAIL(); }
+  catch (const TradingError& error) { EXPECT_EQ(error.code(), Reason::INVALID_RULES); reset = error.what(); }
+  EXPECT_EQ(constructed, reset);
+  EXPECT_NE(constructed.find("at least the starting balance"), std::string::npos) << constructed;
+}
+
 TEST(TradingDelivery, ASessionNeedsAPositiveStartingBalanceAsAResetDoes) {
   Spy f;
   for (const auto* cash : {"0", "-1"}) {
@@ -586,8 +675,15 @@ TEST(TradingDelivery, ExerciseNeedsALongInTheMoneyEquityOptionAndItsPrice) {
   f.spot = 480;
   s.on_quotes({}, {}, f.time);
   EXPECT_EQ(s.exercise(put.osi_symbol(), 1, f.time).decision.code, Reason::STALE_QUOTE);
+  // The short shares it opens take a share entry's checks, which need every held mark fresh too.
   f.price(s);
-  EXPECT_TRUE(s.exercise(put.osi_symbol(), 1, f.time).decision.ok());
+  EXPECT_EQ(s.exercise(put.osi_symbol(), 1, f.time).decision.code, Reason::STALE_QUOTE);
+  f.quote(s, call, "1.00", "1.20");
+  f.quote(s, put, "39.00", "39.20");
+  index.time = f.time;
+  ++index.observation;
+  s.on_quotes({index.quote()}, {index.valuation()}, f.time);
+  { const auto d = s.exercise(put.osi_symbol(), 1, f.time).decision; EXPECT_TRUE(d.ok()) << d.message; }
   EXPECT_EQ(stock(s, "SPY")->position.shares, -100);
 }
 

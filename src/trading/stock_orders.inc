@@ -10,6 +10,7 @@ struct ShareTerms {
   /// is the move to the stop rather than the shares' whole value.
   std::optional<Money> stop;
   std::uint64_t order = 0;   ///< The working order it fills, recorded with the fill.
+  bool exercise = false;     ///< Shares an exercise delivers: no bracket can protect them.
 };
 
 /// Shares whose open loss is at the plan's open-loss cap can be reduced but not added to.
@@ -69,6 +70,48 @@ Decision opening_share_check(const State& s, const std::string& symbol, Quantity
   return counter_position_check({{symbol, static_cast<double>(signed_shares) * price.dollars()}}, inputs.counter_positions);
 }
 
+/// Whether `signed_shares` only reduce the shares held, which opening rules let through.
+bool reduces_shares(const State& s, const std::string& symbol, Quantity signed_shares) {
+  const auto shares = shares_held(s, symbol);
+  return shares != 0 && (shares > 0) != (signed_shares > 0) &&
+         (shares > 0 ? -signed_shares <= shares : signed_shares <= -shares);
+}
+
+/// The checks shares that open or add to a holding take at their price, after
+/// share_entry_checks: the stop requirement, hedging, the other accounts' positions,
+/// complete marks, the loss and trade-risk limits, and exposure once `project` has
+/// applied the whole trade to a copy of the state. Exercise delivers shares through
+/// the same checks as a share trade, since the plan's share-entry rules are the same.
+template <class Project>
+Decision opening_share_rules_check(State& s, const std::string& symbol, Quantity signed_shares, Money price,
+                                   const ShareTerms& terms, Events& events, const Project& project) {
+  if (s.config.rules.require_stop_loss && !terms.stop)
+    return failure(Reason::STOP_REQUIRED, terms.exercise ? "This plan requires a stop-loss: exercise would open shares without one; sell the option instead"
+                                          : terms.order ? "This plan requires a stop-loss: enter shares with a bracket stop_loss"
+                                                        : "This plan requires a stop-loss; share entries do not support brackets");
+  if (const auto d = hedging_direction_check(s, symbol, static_cast<double>(signed_shares) * price.dollars()); !d.ok()) return d;
+  if (const auto d = opening_share_check(s, symbol, signed_shares, price, terms, events); !d.ok()) return d;
+  const auto before = measure(s);
+  if (!before.valuation_complete)
+    return failure(Reason::STALE_QUOTE, "All held positions need fresh marks before opening shares");
+  if (const auto d = loss_check(s, before); !d.ok()) return d;
+  if (const auto limit = trade_risk_limit(s, before.equity)) {
+    const auto magnitude_shares = signed_shares < 0 ? -signed_shares : signed_shares;
+    // To its stop, a bracketed entry risks the move there; without one, a long
+    // risks its whole value and a short an unlimited loss.
+    std::optional<Money> loss;
+    if (terms.stop) loss = (signed_shares > 0 ? std::max(Money{}, price - *terms.stop) : std::max(Money{}, *terms.stop - price)) * magnitude_shares;
+    else if (signed_shares > 0) loss = price * signed_shares;
+    if (!loss || *loss > *limit)
+      return {Reason::MAX_TRADE_RISK, terms.exercise ? "Exercise delivers shares whose risk before fees exceeds the plan's trade limit"
+                                                     : "Share entry risk before fees exceeds the plan limit",
+              loss ? std::optional(loss->dollars()) : std::nullopt, limit->dollars(), "trade"};
+  }
+  State projected = s;
+  project(projected);
+  return check_exposure(measure(projected).risk, before.risk);
+}
+
 /// Trade shares at `price` after the entry checks and those an opening trade takes at
 /// its price: the stop requirement, hedging, complete marks, the loss and trade-risk
 /// limits and exposure, and then buying power. The caller has checked the session and
@@ -76,33 +119,12 @@ Decision opening_share_check(const State& s, const std::string& symbol, Quantity
 Decision trade_shares_checked(State& s, const std::string& symbol, Quantity signed_shares, Money price,
                               const ShareTerms& terms, Events& events) {
   if (const auto d = share_entry_checks(s, symbol, signed_shares, terms); !d.ok()) return d;
-  const auto shares = shares_held(s, symbol);
-  const bool reduces = shares != 0 && (shares > 0) != (signed_shares > 0) &&
-                       (shares > 0 ? -signed_shares <= shares : signed_shares <= -shares);
+  const bool reduces = reduces_shares(s, symbol, signed_shares);
   if (!reduces) {
-    if (s.config.rules.require_stop_loss && !terms.stop)
-      return failure(Reason::STOP_REQUIRED, terms.order ? "This plan requires a stop-loss: enter shares with a bracket stop_loss"
-                                                        : "This plan requires a stop-loss; share entries do not support brackets");
-    if (const auto d = hedging_direction_check(s, symbol, static_cast<double>(signed_shares) * price.dollars()); !d.ok()) return d;
-    if (const auto d = opening_share_check(s, symbol, signed_shares, price, terms, events); !d.ok()) return d;
-    const auto before = measure(s);
-    if (!before.valuation_complete)
-      return failure(Reason::STALE_QUOTE, "All held positions need fresh marks before opening shares");
-    if (const auto d = loss_check(s, before); !d.ok()) return d;
-    if (const auto limit = trade_risk_limit(s, before.equity)) {
-      const auto magnitude_shares = signed_shares < 0 ? -signed_shares : signed_shares;
-      // To its stop, a bracketed entry risks the move there; without one, a long
-      // risks its whole value and a short an unlimited loss.
-      std::optional<Money> loss;
-      if (terms.stop) loss = (signed_shares > 0 ? std::max(Money{}, price - *terms.stop) : std::max(Money{}, *terms.stop - price)) * magnitude_shares;
-      else if (signed_shares > 0) loss = price * signed_shares;
-      if (!loss || *loss > *limit)
-        return {Reason::MAX_TRADE_RISK, "Share entry risk before fees exceeds the plan limit",
-                loss ? std::optional(loss->dollars()) : std::nullopt, limit->dollars(), "trade"};
-    }
-    State projected = s;
-    trade_shares(projected, symbol, signed_shares, price, StockSource::Trade);
-    if (const auto d = check_exposure(measure(projected).risk, before.risk); !d.ok()) return d;
+    const auto d = opening_share_rules_check(s, symbol, signed_shares, price, terms, events, [&](State& projected) {
+      trade_shares(projected, symbol, signed_shares, price, StockSource::Trade);
+    });
+    if (!d.ok()) return d;
   }
   // Shares can cover options: selling the ones a short call is written against
   // leaves it naked, which may need more than the sale frees.
