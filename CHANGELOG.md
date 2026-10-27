@@ -1,25 +1,63 @@
 Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
 
-## Unreleased
+## 0.5.0 (2026-10-26)
+
+New market-data providers and feed failover, working share orders, splits, queue
+fills and real-fill calibration, prop-firm rule types, an Analyze tab with a strategy
+optimizer and hedge suggestions, historical stress and VaR, an option tape, outside
+portfolio analysis, Linux packages and a backup and upgrade guide. Providers marked
+"not yet run live" were tested against documentation-shaped samples or recorded
+responses only; reports from live use are welcome.
+
+### Upgrading
+
+Back up the data root first ([upgrade and backup](docs/upgrade-and-backup.md)). An
+older `openportd` cannot be assumed to read journals written by this release, and
+these formats and defaults changed:
+
+- **Recordings.** Providers that deliver a trade's venue (Databento, and ThetaData or
+  Databento imports) now write recording format version 5, which 0.4.0 refuses at
+  the header. Every other provider writes the same files as before. Daily
+  `--record-dir` files and a feed behind `--fallback-provider` carry the venue
+  header as well.
+- **Fills CSV.** Every earlier column stays in place; the export ends with three new
+  columns, `feed`, `stress_ticks` and `queued`. Fills in the API report the same
+  fields, and share fills name their order as `stock_order`.
+- **Named token files.** Each secret must be at least eight printable characters; a
+  shorter secret makes the file invalid, as a malformed line does. A `#` starts a
+  comment only at the start of a field, so a `#` inside a secret is part of it.
+  Token files reload live on change, `SIGHUP` or `POST /api/tokens/reload`.
+- **Journal maintenance.** `--compact-journals` and `--repair-journals` are separate
+  runs: `--compact-journals` refuses `--dry-run` and `--file`, which belong to repair
+  (a dry run used to compact for real). An empty write-token file no longer blocks
+  startup; it is replaced.
+- **Program rules.** Financing rates, pin risk, queue fills, stop stress and every new
+  prop-firm rule type are program rules: setting one drops a preset's `plan_id`, and
+  financing overrides on evaluation, verification and funded plans are refused with
+  `PLAN_LOCKED`. All of them are off by default and in no built-in preset, so existing
+  plans keep their journal bytes. Built-in presets are marked `illustrative` in
+  `GET /api/plans`.
+- **API responses.** The default exposure convention is named `long_calls_short_puts`
+  (`open_interest` is still accepted as a deprecated input); without a finite positive
+  spot, exposure totals and cells are null with `exposure.available=false` and a
+  reason instead of 0. Series and surface-history errors use the standard error body.
+  Account WebSocket events are versioned with bounded delivery. Outbound notification
+  channels keep their previous default events; `order_state` is opt-in.
+- **Docker and systemd.** The image starts through an entrypoint script that adds the
+  server settings only to a server start; `--backtest`, `--import-day` and
+  `--verify-run` run in the image without them. `docker-compose.yml` reads
+  `OPENPORT_IMAGE` and `OPENPORT_VOLUME`. The new Linux packages' systemd unit starts
+  with `--no-token-link`, so the token stays out of journald; open the terminal with
+  `openportd --print-url --open`.
+- **Python.** The client publishes to PyPI as `openport-client` (import name
+  `openport`; the PyPI name `openport` is an unrelated project), from `python-v*` tags
+  on `main` only.
+- **Build.** The Interactive Brokers adapter is behind `OPENPORT_WITH_IBKR` (on by
+  default). The build embeds the stress shocks and built-in scenarios and objectives
+  from `data/`.
 
 ### Providers and historical import
 
-- Add `openport-probe --certify` with redacted JSON/Markdown reports
-  for timed observations or a snapshot cycle, including event/contract coverage,
-  clock checks, Greek scale hints and errors. Add a provider report issue template;
-  demo/replay reports are explicitly labelled and do not claim live validation.
-- Preserve unknown ThetaData snapshot times; remove unused DXLink
-  Profile subscriptions and retain supplied Summary event times for open interest.
-- Map Tradier chain and DXLink session volume without inventing trades
-  or timestamps. Map documented ORATS/DXLink Greeks and ThetaData vega/rho scales;
-  ThetaData theta remains unknown. Sample/mock tested, not yet validated live.
-- **Import historical options from Massive (Polygon).** Historical contract discovery,
-  paginated quotes and trades preserve vendor timestamps. Tested with generated
-  saved-response fixtures; paid historical access has not been validated live.
-  Quote and trade pages grow up to Massive's 50,000-row maximum within the buffer cap.
-- **Import date ranges and resume.** All importers accept inclusive `--import-days`
-  ranges and repeated dates, skip calendar closures, report progress and skip only
-  matching complete recordings.
 - **Charles Schwab market data.** `--provider schwab` polls Trader API option
   chains with the underlying quote, open interest, volume, delta and gamma, using
   an OAuth refresh token from the environment. Health follows each response's
@@ -32,8 +70,7 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
 - **Interactive Brokers market data.** `--provider ibkr` reads Client Portal Web
   API snapshots through your logged-in local gateway: it keeps the session alive,
   maps contract ids to OSI symbols, paces requests and counts market-data lines.
-  Requires `--expiries` and `--window`. Build option `OPENPORT_WITH_IBKR` (on by
-  default). Not yet run live.
+  Requires `--expiries` and `--window`. Not yet run live.
 - **Feed failover.** `--fallback-provider NAME` switches an underlying to a second
   provider once the main one has been in error or silent for
   `--fallback-seconds` (default 30), and back once it has been fresh for as long.
@@ -42,181 +79,153 @@ Notable changes in each release. Older releases: https://github.com/38st/openpor
   symbol; the backup reports delayed with a fallback label in status and the
   terminal. Paper trading keeps its freshness checks, and every fill names the feed
   that priced it (`feed` in the fills API and journal).
+- **Published AM settlement values.** `--am-settlement cboe` fetches the special
+  opening quotations Cboe publishes for SPX, RUT, DJX and VIX (indices SET, RLS, DJS
+  and VRO, from Cboe's public daily history) and settles live AM positions only on
+  the history row for their exact expiry date, with source `published_soq`. Waiting
+  positions show `settle_by: "soq"` while the expiry date is within the fetcher's
+  14-day lookback, instead of turning `manual` at 17:00 ET on the expiry date; manual
+  import remains the fallback. The index's delayed quote is not used, because its
+  trade time cannot tell reliably when it shows the day's value. Options trading and
+  rollover wait while a position awaits settlement; Cboe's posting lag is unmeasured.
+  Tested with responses recorded on 2026-10-21.
+- **Import historical options from Massive (Polygon).** Historical contract discovery,
+  paginated quotes and trades preserve vendor timestamps. Quote and trade pages grow
+  up to Massive's 50,000-row maximum within the buffer cap. Tested with generated
+  saved-response fixtures; paid historical access has not been validated live.
+- **Import date ranges and resume.** All importers accept inclusive `--import-days`
+  ranges and repeated dates, skip calendar closures, report progress and skip only
+  matching complete recordings.
+- **Provider certification.** `openport-probe --certify` writes redacted JSON/Markdown
+  reports for timed observations or a snapshot cycle, including event/contract
+  coverage, clock checks, Greek scale hints and errors, for the new provider report
+  issue template. Demo/replay reports are labelled as such and do not claim live
+  validation.
+- **Greek and volume mappings.** Documented ORATS/DXLink Greeks and ThetaData vega/rho
+  scales are mapped; ThetaData theta remains unknown. Tradier chain and DXLink session
+  volume are mapped without inventing trades or timestamps, and Tradier volume from an
+  earlier trading date is withheld. Sample/mock tested, not yet validated live.
+- Option prints carry the printing venue where the provider gives one. Unknown
+  ThetaData snapshot times are preserved; unused DXLink Profile subscriptions are
+  gone, supplied Summary event times are kept for open interest, and tastytrade
+  subscribes only to the events it reads, raising the contracts its cap allows.
+  A ThetaData `Retry-After` outside 1-60 s, or a date, backs off instead of failing
+  the import. `/api/status` reports `provider.extended_hours_prints`, false for Cboe
+  and the demo market.
+- `--provider replay` without `--symbols` plays the recording's symbols.
 
 ### Recording and replay
 
 - **Record across trading dates.** `--record-dir` rolls at calendar boundaries and
   publishes only complete files, with optional oldest-first age/size retention that
-  protects active files. Replay lists trading dates, symbols and sources across providers.
-  Retention runs off the feed thread at rollover, reports files it cannot remove
-  instead of stopping recording, and counts stale staging folders toward the size cap.
-- **Preserve replay pacing across pauses.** Clarify consumption of accumulated paused
-  duration and cover multiple pauses/resumes before the pacing loop observes them.
-
-### Journal and practice
-
-- Journal: add entry-context edge reports, persisted mistake/setup picks and
-  with/without cost comparisons; transparent trade coach flags and an opt-in,
-  user-configured HTTP AI review hook.
-- Replay: start a fresh paused account from a reviewed entry with the original
-  source/seed/date/plan, and mark authored scenario events on review/equity charts.
-- Practice: grade declared objectives from journal states, retain scores and
-  personal bests, and offer spaced fresh-seed practice with completion streaks.
-- Scenarios: import/export packs and fixed challenges, including challenge inputs
-  and recomputed drill results in replay verification receipts. Morning crush,
-  Afternoon waterfall and Range bleed have objectives in a separate built-in
-  objectives file, so their sources and earlier runs' hashes are unchanged.
-
-### Terminal
-
-- Add keyboard help, symbol jump, chain contract navigation, buy/sell prefills,
-  review/cancel shortcuts and focused-position close through the existing ticket.
-- Remember chain settings per symbol and save named route/preference workspaces.
-- Add a subscribed-symbol watchlist and persistent local notification history with
-  unread counts, mark-all-read and clear; keep existing toasts.
-- Window large chains, reuse unchanged rows, and stack collapsible expiries.
-- Add SMA, EMA and Bollinger studies plus saved per-symbol horizontal lines and
-  trendlines, including price-alert creation. VWAP explicitly remains unavailable
-  on the current volume-free candle API; its math is tested with sample volumes.
-- Add chain, chart, positions and orders pop-outs, an optional wide-screen
-  positions/orders split, and phone calls/puts selection with bottom-sheet tickets.
-
-### Analyze
-
-- **Analyze tab.** Trade's new tab draws up to four candidate strategies' P&L by
-  price on today, a custom date and their first expiry, with or without the held
-  book, under an IV-shift slider; a price-slices table (% moves, prices, ±σ,
-  breakevens); strikes dragged on the chart or stepped per leg; and Send to ticket.
-  `GET /api/risk/profile` takes hypothetical `legs` and `held=false` so candidates
-  use the held book's own model.
-- **Strategy optimizer.** `GET /api/underlyings/{symbol}/optimizer` searches
-  verticals, iron condors, butterflies, calendars, singles and covered calls for a
-  target price, date and loss budget, ranked by expected P&L under the market's or
-  the user's shifted lognormal, probability of profit or return on risk. Candidate
-  counts are capped (an even sample past the cap) and searches run on a two-worker
-  pool that answers 503 `SEARCH_BUSY` when full, never on HTTP I/O threads; a search
-  stops early when its client disconnects or the server stops, and queued ones are
-  dropped at shutdown. A chain
-  without an at-the-money term structure uses the expiry's ATM IV over the time
-  (`variance_fallback`) rather than a zero-width distribution. Derived
-  estimates, not advice; fees and early exercise are not modelled.
-- **Hedge suggestions.** `GET /api/risk/hedges` gives the smallest share, ATM option
-  or SPX/SPY beta hedge bringing a bucket's delta, vega or worst grid cell back inside
-  its limit or above the floor, ranked by spread cost and residual risk. For a delta
-  target the SPY/SPX hedge is sized on the beta-weighted dollar delta to SPY (the risk
-  profile's betas, overridable with `betas=`) and reports the residual beta-weighted
-  delta; a missing beta is named and the hedge falls back to one for one. Positions
-  sends an option hedge to the what-if and then to its ticket.
-- Python `optimize_strategies`, `hedges` and `risk_profile(legs=, held=)` with
-  matching MCP tools.
-
-### Volatility
-
-- **Surface history:** persist per-expiry SVI parameters at scheduled intraday slots
-  and the close; compare the same expiry against the prior close, week and month.
-- **Event volatility:** derive an event variance premium from adjacent straddling
-  expiries using supplied labels and earnings/news calendars, including BMO/AMC.
-  Missing brackets and confounded solves remain explicit.
-- **Vol scanner:** batch API and sortable terminal view for every subscribed symbol,
-  with history coverage, feed timestamps, simulation labels and symbol navigation.
-- **Python/MCP:** read stored volatility/surface history and the batch scanner,
-  and select the account calendar for event estimates.
-- **Volatility history:** ranks, percentiles and population z-scores for signed skew
-  and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
-  Live comparison measurements remain pending.
-- **Volatility fixes:** surface history keeps one close per session on disk, loads
-  13 months and keeps 400 days in memory; range lists return at most 400 snapshots
-  with a `truncated` flag, and Python defaults to comparisons. Scanner rows are cached
-  per publication. Event estimates count one event per date and session, and an
-  event at a settlement instant now solves after that expiry.
-
-### Exposure
-
-- Add OI-weighted delta, daily charm and vomma exposure, per-strike and
-  expiry totals, signed walls and sticky-strike spot flips alongside GEX/VEX.
-- Expose positioning conventions and snapshot-date 0DTE/ex-0DTE slices
-  through the API, terminal, Python client/frames and MCP. Preserve the default
-  long-call/short-put convention; report customer flow as unavailable without
-  aggressor-side data. Document formulas, units, coverage and search limits.
-- Charm's carry and yield rates now use the floored exposure horizon, so a
-  small forward/spot gap near expiry no longer dominates 0DTE CEX. Flip searches
-  bisect only the brackets nearest spot and reprice one metric; a convention or
-  slice request copies only the selected expiries.
-- API: the default exposure convention is named `long_calls_short_puts` in
-  responses, the terminal, Python client and MCP. `open_interest` is still accepted
-  as a deprecated input for the same convention.
-- API: without a finite positive spot, exposure totals (`gex`, `vex` and the other
-  metrics) and per-strike and per-expiry cells are null instead of 0, with
-  `exposure.available=false` and a reason.
-
-### Risk
-
-- Cited historical stress scenarios and 1-day historical VaR/expected shortfall, with an observed ATM-IV-change variant when available.
-- Gamma, theta, reachable grid-loss and gross short-vega caps, with tag and playbook scopes and evaluation rollover discipline.
-- Account alerts for utilisation, grid loss, gamma and modelled floor-touch odds through existing notification channels.
-- Terminal: persist contemporaneous portfolio Greeks beside equity; chart risk intraday and across days without reconstructing old values.
-- API: read-only historical risk and scenario endpoints, with Python and MCP methods.
-- Beta-aware spot × volatility × time scenario explorer, with optional term scaling; existing rule grids retain their defaults.
-- Historical VaR/ES at 99% needs 100 observations (95% still needs 20); below that `var99`/`es99` are null and `tail99_reason` says why.
-- A tagged order that reduces an untagged book over its scope cap is no longer refused; the scope is valued over the same positions with and without the order.
-- Scenario grids for grid-loss caps and alerts are remembered by their exact inputs, so order checks stop repricing every open order's grid.
-- **See skew move with spot.** The spot × volatility grid and the risk profile can
-  reprice with sticky-moneyness or sticky-delta smiles along each underlying's
-  fitted SSVI surface (`dynamics=`), beside the default sticky strike. Underlyings
-  without a surface stay sticky strike and are named. Rules, margin and breach
-  estimates are unchanged. The choice applies to every Scenario explorer mode
-  (dated, beta-weighted and term-scaled), with a Smile selector there too.
+  protects active files. Replay lists trading dates, symbols and sources across
+  providers. Retention runs off the feed thread at rollover, reports files it cannot
+  remove instead of stopping recording, and counts stale staging folders toward the
+  size cap.
+- Replay pacing survives several pauses and resumes before the pacing loop observes
+  them. A replay stall no longer moves orders to another account, and a new replay
+  run drops the last run's market data in the terminal.
+- Backtests and replays: a damaged run or sidecar no longer blocks the rest, failed
+  resumes and cancelled checks lose nothing, listings resume, and rule codes and
+  archived modes stay straight. Replay CSV exports name the run as the account.
 
 ### Trading, financing and halts
 
-- Opt-in seeded expiry pin risk models contrary exercise near the strike and warns before expiry; existing plans remain unchanged.
-- Practice cash transfers, rollover credit/debit interest and stock-borrow fees are journaled and visible in Dashboard. Financing counts in equity and daily loss without adjusting its opening base.
-- Single-name scenario/replay halts pause one underlying; the replay API and Dashboard support halt drills with recorded, verifiable commands.
-- What-if accepts OTO/OCO chains and evaluates their current-quote fills and contingent orders on a private account copy.
-- Financing rates and pin risk are program rules: changing them drops the preset's `plan_id`, and financing overrides on evaluation, verification and funded plans are refused with `PLAN_LOCKED`.
-- What-if applies submission's opening gates (volume caps and other opening rules) to OTO/OCO parents and every child, as submit does.
-- Shares halted through the close roll over on their last pre-halt print, reported as `halted`; prints inside a simulated halt are no longer taken as marks.
-- **Splits and adjusted deliverables.** `--corporate-actions FILE` (`SYMBOL,YYYY-MM-DD,split,N:D`) splits held shares on their ex-date at the rollover, paying cash in lieu of a fraction, and adjusts the deliverable of every share-settled series on the underlying; settlement, exercise, assignment, strategy margin (lots of the adjusted deliverable), cash-account coverage and risk repricing follow it, and the desk quotes adjusted series from the standard series that pays the same. Listed adjusted series trade when their deliverable is supplied instead of `NONSTANDARD_UNSUPPORTED`. Positions report `deliverable`, accounts their `corporate_actions`; working share orders on a split stock end with `CORPORATE_ACTION`. Recorded runs keep the splits as an input.
-- **Working share orders.** Stock and ETF shares take resting market, limit, stop and stop-limit orders (`POST /api/stocks/orders`, `/preview`, `GET`, `DELETE /api/stocks/orders/{id}`), DAY or GTC, with extended-hours limits (premarket and after hours), brackets and OCO. Opening orders reserve buying power and see working sells in buy-only and cash-account checks; each fill takes the share checks, and a bracket stop satisfies `require_stop_loss`. The share ticket places them and lists working ones; the Python client adds `place_stock_order`, `preview_stock_order`, `stock_orders` and `cancel_stock_order`. Share fills record their order as `stock_order`. Buy-writes at one net price are not offered.
-- Extended-hours share limits fill only on prints fresh within premarket or after hours, not on the regular close, which outside the regular session keeps its own print time even from a current snapshot; resting share fills take `no_counter_positions` as option fills do; market share orders reserve buying power at the last price from acceptance and need one; equity-allocated copies skip an unmarked member with `STALE_QUOTE` instead of failing the copy.
-- A split that leaves a contract less than one share delivers cash only instead of a floored whole share (historical stress margins a short one at its discounted fixed payoff, as the account does); adjusted series no listed series pays the same as (after 3:2 or reverse splits), or whose listed equivalent never quotes, are valued by model from the strikes around them, floored at their deliverable's exercise value, reported as `modelled_mark`, never fill, and no longer stall the rollover.
-- Published AM settlement values from Cboe's delayed quote count only once computed 30 minutes after the open; the history row is preferred and never displaced by a quote.
-- **Published AM settlement values.** `--am-settlement cboe` fetches the special opening quotations Cboe publishes for SPX, RUT, DJX and VIX (indices SET, RLS, DJS and VRO, from Cboe's public daily history) and settles live AM positions only on the history row for their exact expiry date, with source `published_soq`; waiting positions show `settle_by: "soq"` until it appears, and manual import remains the fallback. The index's delayed quote is not used: its trade time cannot tell reliably when it shows the day's value. Tested with responses recorded on 2026-10-21.
-- An AM position awaiting a published Cboe value keeps `settle_by: "soq"` while its expiry date is within the fetcher's 14-day lookback, instead of turning `manual` at 17:00 ET on the expiry date while the fetcher still looks for the row. The docs say options trading and rollover wait while a position awaits settlement, and that Cboe's posting lag is unmeasured.
-- `/api/status` reports `provider.extended_hours_prints`, false for Cboe (which publishes only the close outside the session) and the demo market; the share ticket disables Extended hours with a caption while it is false, since an extended-hours limit could never fill there.
-- A modelled American series delivering cash only is marked at its undiscounted payoff, as it can be exercised now, and a modelled mark floored at the exercise value is that value in the session's own decimal arithmetic, so it never rounds below it and gives holders no below-intrinsic reason to assign.
+- **Working share orders.** Stock and ETF shares take resting market, limit, stop and
+  stop-limit orders (`POST /api/stocks/orders`, `/preview`, `GET`,
+  `DELETE /api/stocks/orders/{id}`), DAY or GTC, with extended-hours limits
+  (premarket and after hours), brackets and OCO. Opening orders reserve buying power
+  and see working sells in buy-only and cash-account checks; each fill takes the
+  share checks, and a bracket stop satisfies `require_stop_loss`. Market share orders
+  reserve buying power at the last price from acceptance and need one; resting share
+  fills take `no_counter_positions` as option fills do. The share ticket places them
+  and lists working ones; the Python client adds `place_stock_order`,
+  `preview_stock_order`, `stock_orders` and `cancel_stock_order`. Buy-writes at one
+  net price are not offered.
+- Extended-hours share limits fill only on prints fresh within premarket or after
+  hours, never on the regular close, which outside the regular session keeps its own
+  print time even from a current snapshot. The share ticket disables Extended hours
+  with a caption while the feed reports no extended-hours prints.
+- **Splits and adjusted deliverables.** `--corporate-actions FILE`
+  (`SYMBOL,YYYY-MM-DD,split,N:D`) splits held shares on their ex-date at the
+  rollover, paying cash in lieu of a fraction, and adjusts the deliverable of every
+  share-settled series on the underlying; settlement, exercise, assignment, strategy
+  margin (lots of the adjusted deliverable), cash-account coverage and risk repricing
+  follow it, and the desk quotes adjusted series from the standard series that pays
+  the same. Listed adjusted series trade when their deliverable is supplied instead
+  of `NONSTANDARD_UNSUPPORTED`. Positions report `deliverable`, accounts their
+  `corporate_actions`; working share orders on a split stock end with
+  `CORPORATE_ACTION`. Recorded runs keep the splits as an input.
+- Adjusted series no listed series pays the same as, or whose listed equivalent never
+  quotes, are valued by model from the strikes around them, floored at their
+  deliverable's exercise value in the session's own decimal arithmetic, reported as
+  `modelled_mark`, never fill, and no longer stall the rollover. A contract left with
+  less than one share delivers cash only and is worth that fixed payoff:
+  undiscounted for an American series, discounted for a European one, the discounted
+  value being what historical stress margins a short one at.
+- **Financing, pin risk and halts.** Practice cash transfers, rollover credit/debit
+  interest and stock-borrow fees are journaled and visible in Dashboard; financing
+  counts in equity and daily loss without adjusting its opening base. Opt-in seeded
+  expiry pin risk models contrary exercise near the strike and warns before expiry.
+  Single-name scenario/replay halts pause one underlying, with recorded, verifiable
+  halt-drill commands in the replay API and Dashboard. Shares halted through the
+  close roll over on their last pre-halt print, reported as `halted`; prints inside
+  a simulated halt are not taken as marks.
+- What-if accepts OTO/OCO chains, evaluates their current-quote fills and contingent
+  orders on a private account copy, and applies submission's opening gates (volume
+  caps and other opening rules) to parents and every child, as submit does.
+- Exercise of a defined-risk position never leaves short shares; starting cash must
+  be positive; early-close days have their own hold cutoffs; ETF scenario prices
+  settle at the 16:00 close; and expiry warns and alerts when share delivery would
+  overdraw the account.
+- **Copy and allocation trading.** Named account groups
+  (`PUT/DELETE /api/account-groups/{name}`, `GET /api/account-groups`, admin to
+  change) and `POST /api/orders/copy` (and `/preview`) mirror one order to every
+  member as its own submission, sized by fixed ratio or split by marked equity, each
+  with its own checks and journal; the reply lists each account's status and
+  response. An equity-allocated copy skips an unmarked member with `STALE_QUOTE`
+  instead of failing. The Python client adds `account_groups`, `put_account_group`,
+  `delete_account_group`, `copy_order` and `preview_copy_order`; Manage accounts
+  edits groups and the option ticket offers **Copy to group** with several live
+  accounts.
 
 ### Evaluation and prop rules
 
-All new rule types are off by default and in no built-in preset; plans without them keep
-their journal bytes. As AccountRules fields they are program rules: setting one drops a
-preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plans`.
+All new rule types are off by default and in no built-in preset.
 
 - Open-loss cap on one trade's marked loss, net across its legs (fixed, or a share of
   the start-of-day profit balance or drawdown room), that closes the whole trade (a
-  spread as one order, shorts first, never leaving a naked leg, with adds refused while
-  the close is pending), blocks adds or fails the attempt (`OPEN_LOSS_CAP`), journaled
-  as `open_loss_cap` events.
-- Balance drawdown basis: the floor follows and checks the closed balance, so it can be
-  set per phase; best-position cap on the profit one trade counts toward the target
-  (`BEST_POSITION` objective); opening-order cap on the last minute's option volume,
-  refused with `MINUTE_VOLUME` when that volume is unknown.
+  spread as one order, shorts first, never leaving a naked leg, with adds refused
+  while the close is pending), blocks adds or fails the attempt (`OPEN_LOSS_CAP`),
+  journaled as `open_loss_cap` events.
+- Balance drawdown basis: the floor follows and checks the closed balance, so it can
+  be set per phase; a static floor ignores the hidden lock balance. Best-position cap
+  on the profit one trade counts toward the target (`BEST_POSITION` objective);
+  opening-order cap on the last minute's option volume, refused with `MINUTE_VOLUME`
+  when that volume is unknown.
 - Payout reviews of short-held, oversized or open-loss trades (share round trips
-  included; a trade closed at a payout's own timestamp is reviewed by that payout only)
-  escalate warning, forfeit and cap, in the payout preview and the journaled payout; the floor after a payout can
-  stay, reset the account to a share of its starting balance, or move up to it.
-- `POST /api/account/rules-compare` replays the attempt's recorded days against presets
-  or custom rules side by side, adding back everything a payout took out (forfeits and
-  reset removals too); payout reviews and the floor after a payout are listed as not
-  replayed. The Rules page shows where each passes, fails or locks.
-- Versioned rule packs (`effective_from`, `source`, `verify`) validate through
-  `POST /api/rule-packs/validate`, which refuses `unlocked_by` cycles; the terminal imports, exports and starts custom
-  attempts from them, apart from the presets.
-- `pass-odds?economics=true` adds challenge economics: expected value and break-even pass
-  rate from each program step's odds, fees and resets and the first funded payout.
+  included; a trade closed at a payout's own timestamp is reviewed by that payout
+  only) escalate warning, forfeit and cap, in the payout preview and the journaled
+  payout. The floor after a payout can stay, reset the account to a share of its
+  starting balance, or move up to it; payout caps and margin follow the plan.
+- `POST /api/account/rules-compare` replays the attempt's recorded days against
+  presets or custom rules side by side, adding back everything a payout took out
+  (forfeits and reset removals too); payout reviews and the floor after a payout are
+  listed as not replayed. The Rules page shows where each passes, fails or locks.
+- Versioned rule packs (`effective_from`, compared with today's New York date,
+  `source`, `verify`) validate through `POST /api/rule-packs/validate`, which refuses
+  `unlocked_by` cycles; the terminal imports, exports and starts custom attempts from
+  them, apart from the presets.
+- `pass-odds?economics=true` adds challenge economics: expected value and break-even
+  pass rate from each program step's odds, fees and resets and the first funded
+  payout.
 - Opt-in discipline guardrails: a losing-streak cooldown and size-creep warnings or
-  blocks against the median of recent opening orders, journaled as `tilt_flag` events.
-- Python client and MCP: `rules_compare`, `validate_rule_pack` and economics on `pass_odds`.
+  blocks against the median of recent opening orders, journaled as `tilt_flag`
+  events.
+- The flat-time countdown knows weekends and market holidays. Plan imports keep edits
+  made meanwhile.
+- Python client and MCP: `rules_compare`, `validate_rule_pack` and economics on
+  `pass_odds`.
 
 ### Fill models and fill quality
 
@@ -235,11 +244,11 @@ preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plan
 - **Stop stress** (`stop_stress_ticks`, `stop_stress_percent`): stops reached while a
   contract's spread or quote rate is a chosen multiple of its normal slip extra ticks
   on their first fill attempt, never past a stop-limit's limit, reported on the order
-  and its fills. A stop-limit that rests after it fills later unstressed. Off by default.
-- Queue fills and stop stress are program rules: an attempt with either leaves its
-  preset, unlike latency, slippage, impact and inside fills. Daemon flags
-  `--paper-fill-model queue`, `--paper-queue-seed`, `--paper-stop-stress-ticks` and
-  `--paper-stop-stress-percent` seed a new main journal.
+  and its fills. A stop-limit that rests after it fills later unstressed. Off by
+  default.
+- Daemon flags `--paper-fill-model queue`, `--paper-queue-seed`,
+  `--paper-stop-stress-ticks` and `--paper-stop-stress-percent` seed a new main
+  journal. Latency, slippage, impact and inside fills stay outside the program rules.
 - **Fill quality** (`GET /api/fills/quality`, Journal): fills placed between the mid
   and the natural by time of day, spread width and DTE, with a heuristic
   Conservative calibration.
@@ -252,46 +261,222 @@ preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plan
   4 GiB and 20 seconds, newest first, stopping once every fill has a quote; `search`
   reports how far it got. Quantities above a million contracts are skipped. The
   broker layouts are tested on sample files, not live exports.
-- Fills report `stress_ticks` and `queued`. The fills CSV keeps every earlier column
-  in place and ends with `feed`, `stress_ticks`, `queued`.
+- Python `Client.fill_quality()` and `Client.calibrate_fills()`.
+
+### Risk
+
+- **Historical stress and VaR.** Cited historical stress scenarios and 1-day
+  historical VaR/expected shortfall, with an observed ATM-IV-change variant when
+  available. 99% VaR/ES needs 100 observations (95% still needs 20); below that
+  `var99`/`es99` are null and `tail99_reason` says why. Read-only historical risk and
+  scenario endpoints, with Python and MCP methods.
+- **Scenario explorer.** Beta-aware spot × volatility × time scenario grids, with
+  optional term scaling; existing rule grids retain their defaults. The spot ×
+  volatility grid and the risk profile can reprice with sticky-moneyness or
+  sticky-delta smiles along each underlying's fitted SSVI surface (`dynamics=`),
+  beside the default sticky strike, in every explorer mode with a Smile selector;
+  underlyings without a surface stay sticky strike and are named. Rules, margin and
+  breach estimates are unchanged.
+- **Caps and alerts.** Gamma, theta, reachable grid-loss and gross short-vega caps,
+  with tag and playbook scopes and evaluation rollover discipline. Account alerts
+  for utilisation, grid loss, gamma and modelled floor-touch odds through existing
+  notification channels. A tagged order that reduces an untagged book over its scope
+  cap is no longer refused: the scope is valued over the same positions with and
+  without the order. Scenario grids for grid-loss caps and alerts are remembered by
+  their exact inputs, so order checks stop repricing every open order's grid.
+- Portfolio Greeks persist beside equity, so the terminal charts risk intraday and
+  across days without reconstructing old values.
+
+### Analyze
+
+- **Analyze tab.** Trade's new tab draws up to four candidate strategies' P&L by
+  price on today, a custom date and their first expiry, with or without the held
+  book, under an IV-shift slider; a price-slices table (% moves, prices, ±σ,
+  breakevens); strikes dragged on the chart or stepped per leg; and Send to ticket.
+  `GET /api/risk/profile` takes hypothetical `legs` and `held=false` so candidates
+  use the held book's own model; leg quantities are bounded and doubled signs
+  refused.
+- **Strategy optimizer.** `GET /api/underlyings/{symbol}/optimizer` searches
+  verticals, iron condors, butterflies, calendars, singles and covered calls for a
+  target price, date and loss budget, ranked by expected P&L under the market's or
+  the user's shifted lognormal, probability of profit or return on risk. Candidate
+  counts are capped (an even sample past the cap) and searches run on a two-worker
+  pool that answers 503 `SEARCH_BUSY` when full, never on HTTP I/O threads; a search
+  stops early when its client disconnects or the server stops, and queued ones are
+  dropped at shutdown. A chain without an at-the-money term structure uses the
+  expiry's ATM IV over the time (`variance_fallback`) rather than a zero-width
+  distribution. Derived estimates, not advice; fees and early exercise are not
+  modelled.
+- **Hedge suggestions.** `GET /api/risk/hedges` gives the smallest share, ATM option
+  or SPX/SPY beta hedge bringing a bucket's delta, vega or worst grid cell back
+  inside its limit or above the floor, ranked by spread cost and residual risk. For
+  a delta target the SPY/SPX hedge is sized on the beta-weighted dollar delta to SPY
+  (the risk profile's betas, overridable with `betas=`) and reports the residual
+  beta-weighted delta; a missing beta is named and the hedge falls back to one for
+  one. Positions sends an option hedge to the what-if and then to its ticket.
+- Python `optimize_strategies`, `hedges` and `risk_profile(legs=, held=)` with
+  matching MCP tools.
+
+### Volatility
+
+- **Surface history.** Per-expiry SVI parameters persist at scheduled intraday slots
+  and the close, one close per session on disk, loading 13 months and keeping 400
+  days in memory; compare the same expiry against the prior close, week and month.
+  Range lists return at most 400 snapshots with a `truncated` flag, and Python
+  defaults to comparisons.
+- **Event volatility.** An event variance premium is derived from adjacent straddling
+  expiries using supplied labels and earnings/news calendars, including BMO/AMC;
+  missing brackets and confounded solves remain explicit. Estimates count one event
+  per date and session, and an event at a settlement instant solves after that
+  expiry.
+- **Vol scanner.** Batch API and sortable terminal view for every subscribed symbol,
+  with history coverage, feed timestamps, simulation labels and symbol navigation;
+  rows are cached per publication.
+- **Volatility history.** Ranks, percentiles and population z-scores for signed skew
+  and term ratios, plus a same-session VIX-minus-MFIV tracking line when observed.
+  Live comparison measurements remain pending.
+- Python and MCP read stored volatility and surface history and the batch scanner,
+  and select the account calendar for event estimates.
+- Deep in the money, time value at the price's rounding noise is reported as below
+  intrinsic instead of solved to a wrong volatility.
+
+### Exposure
+
+- OI-weighted delta, daily charm and vomma exposure, per-strike and expiry totals,
+  signed walls and sticky-strike spot flips alongside GEX/VEX.
+- Positioning conventions and snapshot-date 0DTE/ex-0DTE slices through the API,
+  terminal, Python client/frames and MCP. The default long-call/short-put convention
+  is preserved and named `long_calls_short_puts`; customer flow is reported as
+  unavailable without aggressor-side data. Formulas, units, coverage and search
+  limits are documented.
+- Charm's carry and yield rates use the floored exposure horizon, so a small
+  forward/spot gap near expiry no longer dominates 0DTE CEX. Flip searches bisect
+  only the brackets nearest spot and reprice one metric; a convention or slice
+  request copies only the selected expiries.
+
+### Pricing models
+
+- **Closed-form American models.** `--american-model bs2002|baw` removes the early
+  exercise premium with Bjerksund-Stensland (2002) or Barone-Adesi-Whaley instead of
+  the 31-step Leisen-Reimer tree. The tree stays the default: measured against a
+  converged tree it was more accurate, and no slower. Expiries with cash dividends
+  always use the tree; each expiry reports its `eep_model`.
+- **SABR beside SVI.** The Volatility view can overlay per-expiry SABR fits (Hagan
+  lognormal, β fixed at 1 or ½, or fitted) with their parameters, RMSE and the same
+  butterfly and calendar checks. The surface API fits them only when asked
+  (`sabr_beta`, 0 to 1 in steps of 0.1, or `fit`; at most 60 expiries), so nothing
+  changes for analytics or other readers.
+- **Heston calibration (research, API only).** `GET /api/underlyings/{symbol}/heston`
+  fits one Heston parameter set to the leading expiries and reports it beside each
+  expiry's SVI and SSVI RMSE. Its parameters are weakly identified on real smiles;
+  nothing else uses it. Heston and SABR fits run on a background worker, one per
+  snapshot at a time, so they never stall other API reads; a request for a snapshot
+  already fitting gets 503 with `Retry-After`.
+
+### Flow, earnings and outside portfolios
+
+- **Option tape.** A Flow tab on Trade shows time and sales from feeds that deliver
+  option trades (Databento, and recordings or imports that hold them), each print
+  classified at the bid, at the ask, mid or outside. Sweeps, blocks and best-effort
+  multi-leg groups are inferred, and net premium is summed by expiry and strike.
+  Feeds without trades say so plainly; only the demo market adds prints, labelled
+  simulated and never grouped into spreads. `GET /api/underlyings/{symbol}/flow`.
+- **Earnings moves.** For each earnings event in the event calendar, the front
+  straddle's implied move before the news and the realized move after it build a
+  history on the Volatility page, with how often the straddle priced more than came.
+  Past quarters can be imported from a CSV and stay labelled imported.
+  `GET /api/earnings`.
+- **Outside portfolios.** Import a positions CSV (generic columns, or tastytrade,
+  Schwab or IBKR exports) into an analysis-only portfolio and see its Greeks, risk
+  profile, scenario grid, historical stress tests and one-day historical
+  VaR/expected shortfall on your feed, without the floor or paper margin an account
+  would have. It is not a paper account and can never be traded. Every route, reads
+  included, needs admin; imports may be up to 4 MiB. `/api/analysis/portfolios`.
+- The Python client and MCP server read the tape, the earnings history and analysis
+  portfolios.
+
+### Journal and practice
+
+- Journal: entry-context edge reports, persisted mistake/setup picks and
+  with/without cost comparisons; transparent trade coach flags and an opt-in,
+  user-configured HTTP AI review hook. A journal fill-quality panel.
+- Replay: start a fresh paused account from a reviewed entry with the original
+  source/seed/date/plan, and mark authored scenario events on review/equity charts.
+  Drill eligibility derives from the hash chain.
+- Practice: grade declared objectives from journal states, retain scores and
+  personal bests, and offer spaced fresh-seed practice with completion streaks.
+- Scenarios: import/export packs and fixed challenges, including challenge inputs
+  and recomputed drill results in replay verification receipts. Morning crush,
+  Afternoon waterfall and Range bleed have objectives in a separate built-in
+  objectives file, so their sources and earlier runs' hashes are unchanged. Two user
+  scenario files with one id are reported.
+
+### Terminal
+
+- Keyboard help, symbol jump, chain contract navigation, buy/sell prefills,
+  review/cancel shortcuts and focused-position close through the existing ticket.
+  Enter on buttons and quotes acts on their own side; Escape keeps strategy legs and
+  any mode change clears tickets.
+- Chain settings remembered per symbol, named route/preference workspaces, a
+  subscribed-symbol watchlist, and persistent local notification history with unread
+  counts, mark-all-read and clear beside the existing toasts.
+- Large chains are windowed with unchanged rows reused and collapsible stacked
+  expiries; the chain steps and scrolls from the expiry shown, and chain legs quote
+  outside the strike window.
+- SMA, EMA and Bollinger studies plus saved per-symbol horizontal lines and
+  trendlines, including price-alert creation; plan levels draw as dashed lines and
+  slow swipes pan. VWAP remains unavailable on the current volume-free candle API;
+  its math is tested with sample volumes.
+- Chain, chart, positions and orders pop-outs, an optional wide-screen
+  positions/orders split, and phone calls/puts selection with bottom-sheet tickets.
+- Orders: edits follow the live order, corrected orders and exits go out under a new
+  client order ID with take-profits on the entry's side, picks drop closed legs,
+  rolls name the chosen strike, and trade risk reads in dollars. Backtests drop
+  deleted runs and balance targets measure the balance.
+- Alerts: the opt-in update check runs on plain HTTP, price alerts wait for a price
+  and stay in step across tabs, a new attempt alerts again, and saved alert claims
+  and brief levels stay current. A socket blip keeps the account scope; a slow
+  browser socket keeps the newest frame of each tick stream, so live status no
+  longer freezes behind a replay.
+- A `#token=` link opened in a tab already showing the terminal is adopted there.
 
 ### API, Python and automation
 
-- **Copy and allocation trading.** Named account groups (`PUT/DELETE /api/account-groups/{name}`, `GET /api/account-groups`, admin to change) and `POST /api/orders/copy` (and `/preview`) mirror one order to every member as its own submission, sized by fixed ratio or split by marked equity, each with its own checks and journal; the reply lists each account's status and response. The Python client adds `account_groups`, `put_account_group`, `delete_account_group`, `copy_order` and `preview_copy_order`; Manage accounts edits groups and the option ticket offers **Copy to group**.
-
-- Versioned account WebSocket events with bounded delivery and typed Python iteration.
-  The stream dispatches only to the addressed account's subscribers and sends `floor`
-  only on entering or leaving the warning band.
-- Outbound notification channels keep their previous default events; `order_state`
-  is opt-in.
-- `openport.bot` strategy hooks for live paper, replay and saved history, with REST fallback.
+- Versioned account WebSocket events with bounded delivery and typed Python
+  iteration; the stream dispatches only to the addressed account's subscribers and
+  sends `floor` only on entering or leaving the warning band.
+- `openport.bot` strategy hooks for live paper, replay and saved history, with REST
+  fallback.
 - Inbound playbook signals: webhook senders use a per-playbook, per-account secret
   (issued, rotated and revoked by an admin, stored only as SHA-256) as an HMAC
   signature with a ±300 s timestamp window, or in the body over HTTPS for senders
   such as TradingView that cannot set headers; bearer clients use
   `POST /api/playbooks/{id}/evaluate`. Nonces and rate limits are per secret, and
-  saved manual/automatic modes remain authoritative.
-- `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as for single runs.
-- Bounded backtest parameter sweeps with exact variant reports and historical ranking.
-- Optional Arrow/Parquet exports preserving money text, with an offline example notebook.
-- Python sdist/wheel release workflow using tag-triggered PyPI trusted publishing (OIDC),
-  as the `openport-client` distribution (import name `openport`; the PyPI name
-  `openport` is an unrelated project). Only tags on `main` publish, and the publish
-  action is pinned to a commit SHA.
-- Python client coverage for every documented HTTP operation, with a contract parity guard.
-- `Client.fill_quality()` and `Client.calibrate_fills()` for the fill-quality report and real-fill calibration.
-- MCP tools for playbooks, staged orders, backtests, alerts, journals, what-if,
-  market views and order changes, retaining account scopes and preview guidance.
+  saved manual/automatic modes remain authoritative. Removing an account or expiring
+  a sandbox ends its forward tests and playbook modes.
+- Bounded backtest parameter sweeps with exact variant reports and historical
+  ranking; `DELETE /api/backtests/sweeps/{id}?purge=true` removes a saved sweep, as
+  for single runs. Optional sweep fields and comparison IDs are validated.
+- Optional Arrow/Parquet exports preserving money text, with an offline example
+  notebook.
+- Python client coverage for every documented HTTP operation, with a contract parity
+  guard; MCP `place_order` returns the client order id it sent, and `Fill` carries
+  the optional feed. MCP tools for playbooks, staged orders, backtests, alerts,
+  journals, what-if, market views and order changes retain account scopes and
+  preview guidance.
+- Server: open HTTP connections are capped at 512, a failed accept waits instead of
+  spinning, browser sockets accept legacy tokens with spaces or UTF-8, a failed HTTP
+  retry closes its connection, and CSV exports neutralise cells a spreadsheet would
+  run as formulas.
 
 ### Install, access and support
 
 - **Open the terminal without hunting for a token.** `openportd --open` launches
   the browser after startup; `--print-url [--open]` reads existing token settings
-  and exits. Homebrew caveats and installation examples use the helper.
-  `--no-token-link` prints the `--print-url` command instead of the token link at
-  startup; the systemd unit uses it so the token stays out of journald. `--open`
+  and exits, and `--address localhost` names the host as given. The startup link
+  percent-encodes its token, so tokens with `&`, `#` or `%` work. `--no-token-link`
+  prints the `--print-url` command instead of the token link at startup. `--open`
   documents, and on Linux warns, that the launcher's arguments are visible in `ps`.
-  `--print-url --address localhost` names the host as given instead of failing.
 - **Install on more platforms.** Release automation packages Linux amd64/arm64
   `.deb` and `.rpm` assets with a private systemd service. Intel Macs build the
   release tag through Homebrew; Windows Docker Desktop/WSL2 paths are documented.
@@ -303,61 +488,31 @@ preset's `plan_id`. Built-in presets are marked `illustrative` in `GET /api/plan
   Discussions templates cover questions and ideas.
 - **Prepare a hosted demo.** `deploy/demo` runs simulated prices and bounded
   sandboxes behind authenticated HTTPS, with container resource limits. The site
-  keeps its browser-demo button hidden until a real URL is configured. Nothing
-  is hosted or published by this change.
+  keeps its browser-demo button hidden until a real URL is configured. Nothing is
+  hosted or published by this change.
 - **Share diagnostics deliberately.** Status copies version/build/platform,
   provider/feed and recent error categories into a reviewable bug report. Local
-  fatal signal logs contain no memory dump; there is no telemetry. `/api/status`
-  adds optional build metadata for clients.
+  fatal signal logs (`crash.log`) contain no memory dump; there is no telemetry.
+  `/api/status` adds optional build metadata for clients.
+- The demo market's scenario revision 9 covers seven underlyings, gives every strike
+  of an ETF monthly its monthly open interest, holds SPY option vols after the close
+  and an overnight index at `previous_close`, and makes an authored dividend its
+  quarter's only payment.
 
-### Flow, earnings and outside portfolios
+### Fixes
 
-- **Read the option tape.** A Flow tab on Trade shows time and sales from feeds
-  that deliver option trades (Databento, and recordings or imports that hold them),
-  each print classified at the bid, at the ask, mid or outside. Sweeps, blocks and
-  best-effort multi-leg groups are inferred, and net premium is summed by expiry and
-  strike. Feeds without trades say so plainly; only the demo market adds prints,
-  labelled simulated. `GET /api/underlyings/{symbol}/flow`.
-- **Keep a record of earnings moves.** For each earnings event in the event
-  calendar, the front straddle's implied move before the news and the realized move
-  after it build a history on the Volatility page, with how often the straddle
-  priced more than came. Past quarters can be imported from a CSV and stay
-  labelled imported. `GET /api/earnings`.
-- **Analyse a portfolio held elsewhere.** Import a positions CSV (generic columns,
-  or tastytrade, Schwab or IBKR exports) into an analysis-only portfolio and see its
-  Greeks, risk profile and scenario grid on your feed. It is not a paper account and
-  can never be traded. Every route, reads included, needs admin; imports may be up
-  to 4 MiB. `/api/analysis/portfolios`.
-  Its risk views include the historical stress tests and one-day historical
-  VaR/expected shortfall (`risk/stress`, `risk/var`), without the floor or paper
-  margin an account would have.
-- Option prints now carry the printing venue where the provider gives one.
-  Recordings from such providers (Databento, and ThetaData or Databento imports)
-  use format version 5, which older builds refuse at the header; every other
-  provider writes the same files as before. Daily `--record-dir` files and a
-  feed behind `--fallback-provider` carry the venue header as well.
-- The Python client and MCP server can read the tape, the earnings history and
-  analysis portfolios.
-
-### Pricing and volatility models
-
-- **Choose a closed-form American model.** `--american-model bs2002|baw` removes
-  the early exercise premium with Bjerksund-Stensland (2002) or Barone-Adesi-Whaley
-  instead of the 31-step Leisen-Reimer tree. The tree stays the default: measured
-  against a converged tree it was more accurate, and no slower. Expiries with cash
-  dividends always use the tree; each expiry reports its `eep_model`.
-- **Compare SABR with SVI.** The Volatility view can overlay per-expiry SABR fits
-  (Hagan lognormal, β fixed at 1 or ½, or fitted) with their parameters, RMSE and
-  the same butterfly and calendar checks. The surface API fits them only when
-  asked (`sabr_beta`, 0 to 1 in steps of 0.1, or `fit`; at most 60 expiries), so
-  nothing changes for analytics or other readers.
-- **Compare a Heston calibration (research, API only).**
-  `GET /api/underlyings/{symbol}/heston` fits one Heston parameter set to the
-  leading expiries and reports it beside each expiry's SVI and SSVI RMSE. Its
-  parameters are weakly identified on real smiles; nothing else uses it. Heston
-  and SABR fits run on a background worker, one per snapshot at a time, so they
-  never stall other API reads; a request for a snapshot already fitting gets 503
-  with `Retry-After`.
+- A clean shutdown no longer sends a feed-stalled notification for every
+  underlying.
+- Playbooks saved under the 8 MiB limit are written within it, so startup accepts
+  them; a journal failure behind an automatic playbook cancel or close fails only
+  that account instead of the engine thread.
+- A holding window ending at `24:00` is midnight of the next day, so hold
+  restrictions are enforced. The Cboe holiday listing drops an upcoming closure it
+  no longer lists.
+- Imported fill quantities stay within a million contracts and paper outcomes sum
+  whole blocks, so misread columns cannot overflow totals.
+- Market-halt state is synced before rename and a failed write is retried; sandbox
+  notes, alerts and trade grouping share the order rate limit.
 
 ## 0.4.0 (2026-10-06)
 
