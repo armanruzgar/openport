@@ -8,7 +8,7 @@ Read the [architecture](architecture.md) for the data flow and the
 ## Live certification reports
 
 Run a provider locally and attach the redacted reports to a
-[provider report issue](https://github.com/38st/openport/issues/new?template=provider-report.yml).
+[provider report issue](https://github.com/armanruzgar/openport/issues/new?template=provider-report.yml).
 Set credentials in the usual environment variables; never put them in the command.
 
 ```sh

@@ -1,6 +1,6 @@
 # OpenPort
 
-[![CI](https://github.com/38st/openport/actions/workflows/ci.yml/badge.svg)](https://github.com/38st/openport/actions/workflows/ci.yml)
+[![CI](https://github.com/armanruzgar/openport/actions/workflows/ci.yml/badge.svg)](https://github.com/armanruzgar/openport/actions/workflows/ci.yml)
 
 [![OpenPort, the open-source options trading simulator: practise prop-style evaluations on real option chains, with analytics you can check](site/social-preview.png)](https://openport.markets/)
 
@@ -94,7 +94,7 @@ On delayed data, a pass is practice, not proof of real-time performance.
 On a Mac, with Homebrew (Intel builds from source):
 
 ```bash
-brew tap 38st/openport https://github.com/38st/openport
+brew tap armanruzgar/openport https://github.com/armanruzgar/openport
 brew install openport
 brew services start openport
 openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"
@@ -106,7 +106,7 @@ session, use `openportd --open`.
 Anywhere with Docker (Cboe delayed SPX, SPY, QQQ, IWM and DIA, no key needed):
 
 ```bash
-docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport
+docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/armanruzgar/openport
 ```
 
 Then open the link it prints. The `openport` volume keeps your accounts and chart
@@ -148,7 +148,7 @@ recording and hosting a public demo.
 Every provider but Cboe, Demo and Replay is tested against sample responses and has
 not yet been run live with a key. Run `openport-probe --certify PROVIDER SYMBOL`
 and attach its redacted JSON/Markdown reports to a
-[provider report issue](https://github.com/38st/openport/issues/new?template=provider-report.yml).
+[provider report issue](https://github.com/armanruzgar/openport/issues/new?template=provider-report.yml).
 [Certification commands and limits](docs/providers.md#live-certification-reports).
 The broker adapters read market data only.
 `--fallback-provider NAME` keeps a second feed ready to take over an underlying while
@@ -177,7 +177,7 @@ the main one is stale or failing.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull requests, and
 [SECURITY.md](SECURITY.md) to report a vulnerability privately.
 Ask setup questions, share practice workflows and discuss ideas in
-[GitHub Discussions](https://github.com/38st/openport/discussions).
+[GitHub Discussions](https://github.com/armanruzgar/openport/discussions).
 
 ## License
 

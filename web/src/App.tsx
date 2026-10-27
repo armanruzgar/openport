@@ -153,7 +153,7 @@ export function App() {
         <Welcome onNavigate={(next) => navigate({ view: next })} />
         <footer className="border-t border-border px-4 py-2 text-[11px] text-faint">
           OpenPort · open-source options analytics and a paper-trading simulator on your own market data · simulated fills, no order routing · not investment advice ·{" "}
-          <a className="underline decoration-dotted hover:text-muted" href="https://github.com/38st/openport">
+          <a className="underline decoration-dotted hover:text-muted" href="https://github.com/armanruzgar/openport">
             source
           </a>{" "}·{" "}
           <button type="button" className="underline decoration-dotted hover:text-muted" onClick={() => welcome.show()}>

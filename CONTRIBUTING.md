@@ -3,7 +3,7 @@
 Bug reports, fixes and features are welcome. For anything larger than a fix, open an
 issue first to agree on the approach.
 
-Use [GitHub Discussions](https://github.com/38st/openport/discussions) for setup
+Use [GitHub Discussions](https://github.com/armanruzgar/openport/discussions) for setup
 questions, practice workflows and early ideas. Bug and feature issue forms are in
 `.github/ISSUE_TEMPLATE`; Status → Copy diagnostics can prefill the bug form without
 sharing credentials or account data. Discussion forms cover the `Q&A` and `Ideas`
@@ -120,7 +120,7 @@ workflow skips the deployment with a notice. Link previews use
 ## Releasing
 
 Publishing a GitHub release builds the image for amd64 and arm64 and pushes it to
-`ghcr.io/38st/openport`, and attaches Linux archives plus `.deb`/`.rpm` packages
+`ghcr.io/armanruzgar/openport`, and attaches Linux archives plus `.deb`/`.rpm` packages
 for amd64 and arm64. The packages include the web terminal and a private systemd
 service, which is not started automatically. The release-assets workflow builds
 them with CPack, inspects both formats and runs the extracted native binary before

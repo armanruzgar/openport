@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security problems privately, through GitHub's
-[private vulnerability reporting](https://github.com/38st/openport/security/advisories/new)
+[private vulnerability reporting](https://github.com/armanruzgar/openport/security/advisories/new)
 (the repository's **Security** tab, then **Report a vulnerability**), not in a public
 issue. Include what you ran, what happened and what an attacker could gain. Confirmed
 problems are fixed on `main` and disclosed in a GitHub security advisory.

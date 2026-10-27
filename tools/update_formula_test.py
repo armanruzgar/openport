@@ -86,7 +86,7 @@ class UpdateFormulaTest(unittest.TestCase):
         curl.chmod(0o755)
         self.env["PATH"] = f"{fake_bin}{os.pathsep}{self.env['PATH']}"
         self.assertEqual(self.run_script(local=False).returncode, 0)
-        self.assertIn("https://github.com/38st/openport/releases/download/v0.3.0/SHA256SUMS",
+        self.assertIn("https://github.com/armanruzgar/openport/releases/download/v0.3.0/SHA256SUMS",
                       (self.root / "curl-args").read_text().splitlines())
 
     def test_failed_download_leaves_formula_unchanged(self):

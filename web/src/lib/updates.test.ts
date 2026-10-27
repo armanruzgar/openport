@@ -39,7 +39,7 @@ describe("browser update checks", () => {
     expect(fetcher).toHaveBeenCalledExactlyOnceWith(releaseEndpoint, {
       credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", cache: "no-store", signal: expect.any(AbortSignal),
     })
-    expect(store.get().release?.url).toBe("https://github.com/38st/openport/releases/tag/v0.4.0")
+    expect(store.get().release?.url).toBe("https://github.com/armanruzgar/openport/releases/tag/v0.4.0")
     store.setEnabled(false)
     expect(create().get().enabled).toBe(false)
   })
@@ -133,7 +133,7 @@ describe("browser update checks", () => {
     fetcher.mockResolvedValue(new Response(JSON.stringify({ tag_name: "v0.4.0", html_url: "javascript:bad()", draft: false, prerelease: false })))
     store.setEnabled(true)
     await store.check("0.3.0")
-    expect(store.get().release?.url).toBe("https://github.com/38st/openport/releases/tag/v0.4.0")
+    expect(store.get().release?.url).toBe("https://github.com/armanruzgar/openport/releases/tag/v0.4.0")
     store.dismiss("v0.4.0")
     expect(create().get().dismissed).toBe("v0.4.0")
     advance(updateInterval)

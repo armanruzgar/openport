@@ -86,7 +86,7 @@ and `-_.!~*'()` (a generated token is hex and needs none). Protect both logs and
 The service does not record the feed by default; the usual recording flags apply
 when running the daemon yourself.
 
-`docker compose up -d` uses `ghcr.io/38st/openport:latest`, publishes port 8080 only
+`docker compose up -d` uses `ghcr.io/armanruzgar/openport:latest`, publishes port 8080 only
 on `127.0.0.1`, and keeps data in the named `openport` volume at `/var/lib/openport`.
 `docker compose logs openport` shows the token link. Provider environment variables
 and an example provider command are commented in `docker-compose.yml`. The restart
@@ -104,7 +104,7 @@ Enable **Check for updates** under **Status → Updates** in the terminal. The s
 is saved in browser storage, separately from server configuration and journals.
 
 Update checks are opt-in and off by default. When on, the web terminal itself, not
-the server, asks `https://api.github.com/repos/38st/openport/releases/latest` at most
+the server, asks `https://api.github.com/repos/armanruzgar/openport/releases/latest` at most
 once a day. It compares that release with the running version from `GET /api/status`,
 and shows a small dismissible notice with a link to the release when it is newer.
 Nothing else is sent. A network failure stays silent.

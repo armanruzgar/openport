@@ -1,6 +1,23 @@
-Notable changes in each release. Older releases: https://github.com/38st/openport/releases.
+Notable changes in each release. Older releases: https://github.com/armanruzgar/openport/releases.
 
 ## Unreleased
+
+### Upgrading
+
+- **New project home.** The GitHub account moved from `38st` to `armanruzgar`. The
+  image is now `ghcr.io/armanruzgar/openport`, which holds every earlier release tag;
+  `ghcr.io/38st/openport` no longer pulls. The repository's Compose files default to
+  the new path, but an older checkout, a `.env` or an `OPENPORT_IMAGE` naming the old
+  path needs the new one. A Homebrew tap added as `38st/openport` keeps working
+  through GitHub's redirect; `brew tap --custom-remote 38st/openport
+  https://github.com/armanruzgar/openport` points it at the new home. The update
+  check, issue links and the server's User-Agent use the new address.
+
+### Fixes
+
+- Homebrew: `brew services start openport` failed on current Homebrew, whose service
+  block has no `opt_share`; the service now passes `opt_pkgshare/"web"` as its web
+  root. The fix reached 0.5.0 installs through the tap.
 
 ## 0.5.0 (2026-10-26)
 

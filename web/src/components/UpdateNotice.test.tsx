@@ -48,7 +48,7 @@ describe("update settings and notice", () => {
     await optIn()
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(host.querySelector("[role=status]")?.textContent).toContain("OpenPort v0.4.0 is available")
-    expect(host.querySelector("a")?.href).toBe("https://github.com/38st/openport/releases/tag/v0.4.0")
+    expect(host.querySelector("a")?.href).toBe("https://github.com/armanruzgar/openport/releases/tag/v0.4.0")
     expect(host.querySelector("a")?.rel).toBe("noopener noreferrer")
     await optIn()
     expect(host.querySelector("[role=status]")).toBeNull()

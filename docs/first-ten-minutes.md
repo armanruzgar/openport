@@ -10,7 +10,7 @@ machine. Everything is simulated, and a pass on generated prices is practice.
 With Docker:
 
 ```bash
-docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport
+docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/armanruzgar/openport
 ```
 
 With Homebrew on an Apple Silicon Mac, follow the [quick start](../README.md#quick-start)

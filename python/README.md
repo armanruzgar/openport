@@ -306,7 +306,7 @@ The workflow file cannot enforce GitHub's environment protection. Before the fir
 release, a repository admin must configure the `pypi` environment under
 Settings > Environments with a deployment tag rule that allows only `python-v*`
 tags and at least one required reviewer. The package owner must also register
-`openport-client` on PyPI with a trusted publisher for repository `38st/openport`,
+`openport-client` on PyPI with a trusted publisher for repository `armanruzgar/openport`,
 workflow `python-release.yml` and environment `pypi`. No package has been
 published and no GitHub settings were changed as part of this change.
 

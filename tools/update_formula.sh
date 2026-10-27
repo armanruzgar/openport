@@ -14,7 +14,7 @@ version="${1#v}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 formula="$root/Formula/openport.rb"
 asset="openport-$version-darwin-arm64.tar.gz"
-release="https://github.com/38st/openport/releases/download/v$version"
+release="https://github.com/armanruzgar/openport/releases/download/v$version"
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
 if [ "$#" = 2 ]; then
@@ -38,7 +38,7 @@ sha="$(awk -v asset="$asset" '
 
 awk -v url="$release/$asset" -v version="$version" -v sha="$sha" '
   /^    url .*releases\/download/ { print "    url \"" url "\""; urls++; next }
-  /^    url .*openport\.git/ { print "    url \"https://github.com/38st/openport.git\", tag: \"v" version "\""; tags++; next }
+  /^    url .*openport\.git/ { print "    url \"https://github.com/armanruzgar/openport.git\", tag: \"v" version "\""; tags++; next }
   /^  version / { print "  version \"" version "\""; versions++; next }
   /^    sha256 / { print "    sha256 \"" sha "\""; sums++; next }
   { print }

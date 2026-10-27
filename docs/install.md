@@ -10,7 +10,7 @@ every flag.
 On a Mac, with Homebrew:
 
 ```bash
-brew tap 38st/openport https://github.com/38st/openport
+brew tap armanruzgar/openport https://github.com/armanruzgar/openport
 brew install openport
 brew services start openport
 openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/write-token"
@@ -49,7 +49,7 @@ With Docker (Cboe delayed SPX, SPY, QQQ, IWM and DIA, no key needed), from the
 published image for amd64 and arm64:
 
 ```bash
-docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport
+docker run --rm --name openport -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/armanruzgar/openport
 ```
 
 Then open the link it prints, `http://localhost:8080/#token=…`. Inside the container the
@@ -60,14 +60,14 @@ terminal offers the demo market, which needs no data at all. To use your own pro
 pass its key and arguments:
 
 ```bash
-docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport -e DATABENTO_API_KEY ghcr.io/38st/openport --provider databento --symbols SPX,QQQ
+docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport -e DATABENTO_API_KEY ghcr.io/armanruzgar/openport --provider databento --symbols SPX,QQQ
 ```
 
 `docker build -t openport .` builds the same image from a checkout.
 
 The commands that run once and exit, `--verify-run FILE`, `--backtest` and
 `--import-day`, use the same image and get only the arguments you pass, for example
-`docker run --rm -v openport:/var/lib/openport ghcr.io/38st/openport --verify-run /var/lib/openport/paper-journal.jsonl`.
+`docker run --rm -v openport:/var/lib/openport ghcr.io/armanruzgar/openport --verify-run /var/lib/openport/paper-journal.jsonl`.
 Add `--paper-journal /var/lib/openport/paper-journal.jsonl` to a backtest to use the
 server's playbooks, and write its `--out` report inside the volume.
 
@@ -139,7 +139,7 @@ and [Docker's WSL2 setup](https://docs.docker.com/desktop/features/wsl/).
 
 ## Release archives and source
 
-Each [release](https://github.com/38st/openport/releases) has archives for Linux
+Each [release](https://github.com/armanruzgar/openport/releases) has archives for Linux
 (amd64 and arm64) and macOS (Apple Silicon).
 
 From source (CMake 3.25+, a C++20 compiler, Boost 1.83+, OpenSSL 3, zlib, zstd and
@@ -189,7 +189,7 @@ from live ones, including when you supply a path. With Docker, use a separate vo
 
 ```bash
 docker run --rm -p 127.0.0.1:8080:8080 -v openport-demo:/var/lib/openport \
-  ghcr.io/38st/openport --provider demo --sandboxes 100 \
+  ghcr.io/armanruzgar/openport --provider demo --sandboxes 100 \
     --allowed-origin https://terminal.example.com --allowed-host terminal.example.com
 ```
 

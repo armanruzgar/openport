@@ -140,7 +140,7 @@ previous="$(git describe --tags --abbrev=0 2>/dev/null || true)"
   echo "## Install"
   echo
   # Publishing the release pushes the image (image.yml) and attaches both Linux archives (release-assets.yml).
-  echo "- Docker (amd64 and arm64): \`docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/38st/openport:$version\`, then open the link it prints, which carries its write token; or \`docker build -t openport .\` from this tag."
+  echo "- Docker (amd64 and arm64): \`docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport ghcr.io/armanruzgar/openport:$version\`, then open the link it prints, which carries its write token; or \`docker build -t openport .\` from this tag."
   echo "- Linux archives (amd64 and arm64): need OpenSSL 3, zlib and zstd (\`apt install libssl3t64 zlib1g libzstd1\` on Ubuntu 24.04). Unpack one and run \`bin/openportd\`."
   echo "- macOS archive (Apple silicon): needs nothing installed. Unpack it with \`tar -xzf\` and run \`bin/openportd\`. Unpacked in Finder, macOS may refuse to run it as from an unidentified developer; \`xattr -dr com.apple.quarantine\` on the folder allows it."
   echo
