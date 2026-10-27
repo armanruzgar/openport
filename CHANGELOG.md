@@ -178,6 +178,10 @@ these formats and defaults changed:
   be positive; early-close days have their own hold cutoffs; ETF scenario prices
   settle at the 16:00 close; and expiry warns and alerts when share delivery would
   overdraw the account.
+- Exercise opens shares through the plan's share-entry rules (entry windows,
+  `require_stop_loss`, hedging, `max_trade_risk`, exposure) as a share trade does;
+  shares that only reduce a holding are unaffected. A session refuses a size-scaling
+  maximum below its starting balance at construction, as a reset does.
 - **Copy and allocation trading.** Named account groups
   (`PUT/DELETE /api/account-groups/{name}`, `GET /api/account-groups`, admin to
   change) and `POST /api/orders/copy` (and `/preview`) mirror one order to every
