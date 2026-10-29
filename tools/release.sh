@@ -131,7 +131,8 @@ fi
 rm -rf "$dist/stage"
 (cd "$dist" && sha *.tar.gz > SHA256SUMS)
 
-previous="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+# Release tags only: the Python client's python-v* tags share the history.
+previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
 {
   echo "# openport $version"
   echo
