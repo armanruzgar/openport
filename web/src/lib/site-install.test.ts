@@ -17,6 +17,8 @@ it("keeps Docker available without JavaScript and points Docs at the first ten m
 
 it("switches the command and explanation with mouse and keyboard using one tab stop", () => {
   start()
+  // site.js reveals the tabs, as it does every [data-js] control; a hidden tab cannot take focus.
+  document.querySelector<HTMLElement>('[role="tablist"]')!.hidden = false
   const brew = document.getElementById("install-homebrew")!
   brew.click()
   expect(document.getElementById("install-command")!.textContent).toContain("openportd --print-url --open")
