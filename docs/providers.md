@@ -212,7 +212,7 @@ sample-response tests but have not yet been run live with credentials.
 | [tastytrade](../src/providers/tastytrade.cpp) | OAuth refresh uses JSON and environment credentials. Nested chains supply canonical OSI definitions and streamer-symbol mappings; instrument responses supply index streamer names. `TastytradeMapper` applies filters and maps Quote, Greeks, Summary OI and Trade session volume/underlying prices. Unused Profile subscriptions are omitted. `DxlinkProtocol` implements the handshake, accepted COMPACT field order, keepalive and paced add/remove subscriptions independently of `net::WebSocket`. Reconnect repeats the handshake with the retained subscription set. Summary uses a supplied `eventTime`, otherwise zero. DXLink Greeks use the documented per-point/day units; the timestamp option can withhold clocks if their millisecond units are unconfirmed. No complete snapshots or inferred trades are emitted. |
 | [Charles Schwab](../src/providers/schwab.cpp) | `SchwabApi` refreshes OAuth with a form body and Basic client credentials, keeps a rotated refresh token in memory and retries a 401 once. `parse_schwab_chain()` walks `callExpDateMap`/`putExpDateMap`, checks each padded OSI symbol against its side, strike and expiry key, keeps `quoteTimeInLong` and the underlying's own clocks, reads an option's prices from the published schema's `bidPrice`/`askPrice` (falling back to `bid`/`ask`, which some clients read; sizes, `totalVolume`, `openInterest` and the underlying's fields already match it), and maps OI, `totalVolume`, delta and gamma (`-999` is unavailable). `/expirationchain` selects the nearest dates for `fromDate`/`toDate`. `isDelayed` decides `Live`, `Delayed` or, when absent, `Stale`. |
 | [Alpaca](../src/providers/alpaca.cpp) | `parse_alpaca_option_page()` reads one page of option snapshots keyed by compact OCC symbol; `parse_alpaca_stock_snapshot()` the underlying's latest trade or quote. RFC 3339 times must carry a zone. Pages are followed by `next_page_token` before publication; the strike window becomes request bounds widened to defined strikes. Index underlyings are rejected. The indicative feed reports `Delayed`; OPRA `Live`. |
-| [Interactive Brokers](../src/providers/ibkr.cpp) | Client Portal Web API via the local gateway. `/tickle` keeps the session and reports its authentication; search, strikes and info map conids to OSI from trading class, maturity, right and strike, cached for the day. `parse_ibkr_snapshot()` reads display strings (`1.2K`, `C` closes) and `_updated` clocks; first snapshots of a contract only warm its line. One `RequestBudget` paces requests; market-data lines are counted across underlyings. |
+| [Interactive Brokers](../src/providers/ibkr.cpp) | Client Portal Web API via the local gateway. `/tickle` keeps the session and reports its authentication; search, strikes and info map conids to OSI from trading class, maturity, right and strike, cached for the day. `parse_ibkr_snapshot()` reads display strings (`1.2K`, `C` closes) and `_updated` clocks, and the day's volume (7762) only from real-time rows; first snapshots of a contract only warm its line. One `RequestBudget` paces requests; market-data lines are counted across underlyings. |
 
 The broker adapters allowlist their REST paths and use non-redirecting HTTP calls.
 OAuth refreshes and the Interactive Brokers keepalive are the only POSTs.
@@ -258,7 +258,13 @@ has `prevDayVolume`, not `dayVolume`: OpenPort never substitutes yesterday's cou
 A negotiated Summary extension carrying `dayVolume` is accepted with `eventTime`.
 Summary OI uses [embedded event creation time](https://docs.dxfeed.com/dxfeed/api/com/dxfeed/event/market/MarketEvent.html#getEventTime--)
 when present; this is not an OI effective-date claim. Network events may supply
-zero; OpenPort keeps it unknown. All these volume mappings still need live validation.
+zero; OpenPort keeps it unknown. Interactive Brokers'
+[field 7762](https://www.interactivebrokers.com/docs/web-api/ws/streaming-data) is
+the day's volume at full precision; field 87 rounds the same count to `K`/`M`. Only a
+real-time row's count is stamped with its `_updated` time: delayed rows arrive 15-20
+minutes late and frozen rows hold the last close's values. A positive count beside a
+`C` (previous close) or halted last price, or with no last, stays unknown, since it
+may be an earlier session's. All these volume mappings still need live validation.
 
 ## Failover
 

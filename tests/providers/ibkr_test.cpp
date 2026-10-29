@@ -58,10 +58,10 @@ struct Gateway {
     if (path.starts_with("/iserver/marketdata/snapshot?conids=")) {
       if (!warm) return {200, R"([{"conid":706000,"conidEx":"706000"},{"conid":806000,"conidEx":"806000"}])"};
       return {200, R"([{"conid":706000,"conidEx":"706000","_updated":1790263800000,"31":"C2.95","84":"3.10",
-                      "86":"3.20","88":"1,200","85":"1.2K","7308":"0.512","7309":"0.071","7638":"4,321","6509":")" +
-                       availability + R"("},
-                     {"conid":806000,"conidEx":"806000","_updated":1790263798000,"84":"2.80","86":"2.90",
-                      "88":"15","85":"9","6509":")" + availability + R"("}])"};
+                      "86":"3.20","88":"1,200","85":"1.2K","7308":"0.512","7309":"0.071","7638":"4,321",
+                      "7762":"56","6509":")" + availability + R"("},
+                     {"conid":806000,"conidEx":"806000","_updated":1790263798000,"31":"2.85","84":"2.80",
+                      "86":"2.90","88":"15","85":"9","7762":"1,234","6509":")" + availability + R"("}])"};
     }
     return {404, "{}"};
   }
@@ -131,10 +131,33 @@ TEST(Ibkr, SnapshotRowsDistinguishWarmingLinesAndKeepTheUpdateClock) {
   EXPECT_DOUBLE_EQ(rows[0].open_interest, 4321);
   EXPECT_DOUBLE_EQ(rows[0].delta, 0.512);
   EXPECT_EQ(rows[0].availability, 'R');
+  EXPECT_LT(rows[0].volume, 0);  // beside a previous close, 56 may be an earlier session's
   EXPECT_LT(rows[1].open_interest, 0);
   EXPECT_TRUE(std::isnan(rows[1].delta));
+  EXPECT_DOUBLE_EQ(rows[1].volume, 1234);
   EXPECT_THROW((void)providers::parse_ibkr_snapshot(R"([{"conid":1,"84":"1.00"}])"), std::runtime_error);
   EXPECT_THROW((void)providers::parse_ibkr_snapshot(R"([{"84":"1.00"}])"), std::runtime_error);
+}
+
+TEST(Ibkr, VolumeComesFromRealTimeRowsAndAPositiveCountNeedsACurrentTrade) {
+  const auto rows = providers::parse_ibkr_snapshot(R"([
+    {"conid":1,"_updated":1790263800000,"31":"2.85","7762":12,"6509":"RpB"},
+    {"conid":2,"_updated":1790263800000,"31":"C2.95","7762":"0","6509":"RpB"},
+    {"conid":3,"_updated":1790263800000,"84":"2.80","7762":"0","6509":"RpB"},
+    {"conid":4,"_updated":1790263800000,"84":"2.80","7762":"12","6509":"RpB"},
+    {"conid":5,"_updated":1790263800000,"31":"H2.85","7762":"12","6509":"RpB"},
+    {"conid":6,"_updated":1790263800000,"31":"2.85","7762":"12","6509":"DpB"},
+    {"conid":7,"_updated":1790263800000,"31":"2.85","7762":"12","6509":"ZpB"},
+    {"conid":8,"_updated":1790263800000,"31":"2.85","7762":"12","6509":"YpB"},
+    {"conid":9,"_updated":1790263800000,"31":"2.85","7762":"1.2K","6509":"RpB"},
+    {"conid":10,"_updated":1790263800000,"31":"2.85","7762":"12.5","6509":"RpB"},
+    {"conid":11,"_updated":1790263800000,"31":"2.85","7762":"-1","6509":"RpB"},
+    {"conid":12,"_updated":1790263800000,"31":"2.85","6509":"RpB"}])");
+  ASSERT_EQ(rows.size(), 12u);
+  EXPECT_DOUBLE_EQ(rows[0].volume, 12);
+  EXPECT_EQ(rows[1].volume, 0);  // no trade yet today, and none counted
+  EXPECT_EQ(rows[2].volume, 0);
+  for (std::size_t i = 3; i < rows.size(); ++i) EXPECT_LT(rows[i].volume, 0) << rows[i].conid;
 }
 
 TEST(Ibkr, TickleReportsAuthenticationAndCompetingSessions) {
@@ -167,7 +190,8 @@ TEST(Ibkr, FirstPollMapsConidsWithinPacingAndWarmsLinesWithoutInventingQuotes) {
   for (const auto& url : http.urls) EXPECT_EQ(url.find("OCT26"), std::string::npos);
   EXPECT_NE(http.urls[5].find("strike=600&right=C"), std::string::npos);
   EXPECT_NE(http.urls[6].find("strike=600&right=P"), std::string::npos);
-  EXPECT_NE(http.urls.back().find("conids=706000,806000&fields=31,84,85,86,88,7308,7309,7638,6509"), std::string::npos);
+  EXPECT_NE(http.urls.back().find("conids=706000,806000&fields=31,84,85,86,88,7308,7309,7638,7762,6509"),
+            std::string::npos);
   EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 2u);
   EXPECT_TRUE(sink.all<md::VendorGreeks>().empty());
   for (const auto& quote : sink.all<md::OptionQuote>()) {
@@ -200,6 +224,10 @@ TEST(Ibkr, LaterPollsReuseTheMappingAndPublishQuotesOnTheUpdateClock) {
   EXPECT_DOUBLE_EQ(quotes[0].bid, 3.10);
   EXPECT_DOUBLE_EQ(quotes[0].bid_size, 1200);
   EXPECT_EQ(sink.all<md::OpenInterest>().size(), 1u);
+  const auto volumes = sink.all<md::OptionVolume>();
+  ASSERT_EQ(volumes.size(), 1u);  // 706000's count sits beside a previous close
+  EXPECT_EQ(volumes[0].ts, 1790263798000LL * 1'000'000);
+  EXPECT_DOUBLE_EQ(volumes[0].contracts, 1234);
   ASSERT_EQ(sink.all<md::VendorGreeks>().size(), 1u);
   EXPECT_TRUE(std::isnan(sink.all<md::VendorGreeks>()[0].iv));
   EXPECT_EQ(sink.all<md::SnapshotComplete>().at(0).ts, kNow);
@@ -217,6 +245,7 @@ TEST(Ibkr, DelayedAndFrozenAvailabilityAreReportedAsSuch) {
     test::BrokerSink sink;
     provider.poll_once(http, "SPY", kSubscription, sink);
     EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).state, state) << code;
+    EXPECT_TRUE(sink.all<md::OptionVolume>().empty()) << code;
   }
 }
 

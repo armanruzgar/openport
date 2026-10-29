@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -11,8 +12,9 @@
 namespace openport::providers {
 namespace {
 using namespace broker;
-// Last, bid, ask size, ask, bid size, delta, gamma, option open interest, availability.
-constexpr std::string_view kFields = "31,84,85,86,88,7308,7309,7638,6509";
+// Last, bid, ask size, ask, bid size, delta, gamma, option open interest, the day's
+// volume, availability.
+constexpr std::string_view kFields = "31,84,85,86,88,7308,7309,7638,7762,6509";
 constexpr std::size_t kSnapshotBatch = 50;
 constexpr const char* kMonths[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
@@ -28,6 +30,15 @@ double value(const Json& item, std::string_view key, bool price) {
   const auto& raw = field(item, key);
   if (raw.is_number()) return number(raw);
   return raw.is_string() ? parse_ibkr_number(raw.get<std::string>(), price) : missing;
+}
+
+/// Field 7762, the day's volume at full precision, as a whole count, or -1. A rounded
+/// display value such as 87's "1.2K" is not a count.
+double day_volume(const Json& item) {
+  const auto& raw = field(item, "7762");
+  if (raw.is_string() && raw.get<std::string>().find_first_of("KM") != std::string::npos) return -1;
+  const double count = value(item, "7762", false);
+  return std::isfinite(count) && count >= 0 && count == std::floor(count) ? count : -1;
 }
 
 /// "OCT26" -> its year and month, to order months and drop past ones.
@@ -169,6 +180,13 @@ std::vector<IbkrQuote> parse_ibkr_snapshot(std::string_view json) {
     quote.gamma = value(item, "7309", false);
     const auto availability = str(field(item, "6509"));
     quote.availability = availability.empty() ? 0 : availability.front();
+    // Only a real-time row's count is current at _updated: a delayed row's arrives
+    // 15-20 minutes late and a frozen row's is the last close's. A positive count
+    // also needs a current trade beside it; beside a previous close it may be an
+    // earlier session's, and OpenPort never stamps that with today's clock.
+    const double volume = day_volume(item);
+    if (quote.availability == 'R' && volume >= 0 && (volume == 0 || quote.last > 0))
+      quote.volume = volume;
     if (quote.fields && quote.ts == 0 && (quote.bid > 0 || quote.ask > 0 || quote.last > 0))
       throw std::runtime_error("IBKR: snapshot time missing or units unconfirmed");
     result.push_back(quote);
@@ -390,6 +408,7 @@ std::string IbkrProvider::poll(net::HttpClient& http, const std::string& underly
     seen.insert(instrument);
     publisher_.quote(instrument, quote.ts, quote.bid, quote.ask, quote.bid_size, quote.ask_size, sink);
     if (quote.open_interest >= 0) publisher_.open_interest(instrument, 0, quote.open_interest, sink);
+    if (quote.volume >= 0) publisher_.volume(instrument, quote.ts, quote.volume, sink);
     if (std::isfinite(quote.delta) || std::isfinite(quote.gamma))
       publisher_.greeks(md::VendorGreeks{instrument, quote.ts, missing, quote.delta, quote.gamma, missing, missing, missing}, sink);
   }
