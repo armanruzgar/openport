@@ -52,8 +52,11 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
 ```
 
 A tap added before the project moved, as `38st/openport`, still updates through
-GitHub's redirect. Point it at the new home with `brew tap --custom-remote
-38st/openport https://github.com/armanruzgar/openport`.
+GitHub's redirect, which holds only while nobody else owns that name. Point it at
+the new home with `brew tap --custom-remote 38st/openport
+https://github.com/armanruzgar/openport`. The update check in 0.5.0 still asks the
+old address and refuses the redirect, so it never reports a newer release; upgrade
+0.5.0 by hand.
 
 For the repository's Compose file, run these commands beside `docker-compose.yml`.
 They use the default `openport` volume; substitute your volume name if customized.
