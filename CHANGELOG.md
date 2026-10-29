@@ -1,6 +1,9 @@
 Notable changes in each release. Older releases: https://github.com/armanruzgar/openport/releases.
 
-## Unreleased
+## 0.5.1 (2026-10-28)
+
+The project's new home on GitHub, a Homebrew service that starts, and patch updates
+to the web terminal's dependencies.
 
 ### Upgrading
 
