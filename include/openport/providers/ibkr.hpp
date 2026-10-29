@@ -34,6 +34,7 @@ struct IbkrQuote {
   double bid = 0, ask = 0, bid_size = 0, ask_size = 0;
   double last = 0;  ///< 0 for a closing ("C") or halted ("H") price
   double open_interest = -1;
+  double volume = -1;  ///< 7762, the day's count, from real-time rows; -1 when unknown
   double delta = std::numeric_limits<double>::quiet_NaN();
   double gamma = std::numeric_limits<double>::quiet_NaN();
   char availability = 0;  ///< 6509's first letter: R real-time, D delayed, Z/Y frozen, N none

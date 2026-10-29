@@ -399,14 +399,14 @@ adapter counts lines across all subscribed underlyings and refuses a chain that
 would exceed the limit, naming the count needed. Contracts already defined keep
 updating, so they count too until the next date.
 
-Snapshots ask for fields 31, 84, 85, 86, 88, 7308, 7309, 7638 and 6509: last,
-bid, ask size, ask, bid size, delta, gamma, open interest and availability. A
-contract's first snapshot only subscribes its line; until data arrives it is left
-unpriced and the status counts the contracts still warming up. Quote times are
-the row's `_updated` time, when IBKR last updated it. Prices marked `C` (a
-previous close) or `H` (halted) are not used as current. Availability `R` reports
-`Live`, `D` `Delayed`, and `Z`/`Y` (frozen values from the last session) `Stale`.
-Size suffixes such as `1.2K` and thousands separators are expanded; implied
+Snapshots ask for fields 31, 84, 85, 86, 88, 7308, 7309, 7638, 7762 and 6509:
+last, bid, ask size, ask, bid size, delta, gamma, open interest, the day's volume
+and availability. A contract's first snapshot only subscribes its line; until data
+arrives it is left unpriced and the status counts the contracts still warming up.
+Quote times are the row's `_updated` time, when IBKR last updated it. Prices marked
+`C` (a previous close) or `H` (halted) are not used as current. Availability `R`
+reports `Live`, `D` `Delayed`, and `Z`/`Y` (frozen values from the last session)
+`Stale`. Size suffixes such as `1.2K` and thousands separators are expanded; implied
 volatility and the other Greeks stay NaN.
 
 All five broker adapters are tested with generated fixtures shaped like broker
@@ -486,7 +486,10 @@ With `trades=off`, volume is unknown. Tradier maps chain `volume` using
 Summary `dayVolume` extensions using `eventTime`. Both are cumulative session
 counts, not inferred trades, and are not yet validated live.
 Schwab maps `totalVolume` at the option's quote time and Alpaca its daily bar's
-volume at the latest trade's time. Interactive Brokers does not yet emit volume.
+volume at the latest trade's time. Interactive Brokers maps field 7762 at the row's
+`_updated` time, from real-time rows only; a positive count also needs a current last
+price in the same row, so one beside a previous close stays unknown. These are not
+yet validated live either.
 
 The chain shows volume, `(ask - bid) / ((ask + bid) / 2)` and a liquidity cue per
 side. Hover volume for volume/OI; zero or unknown OI leaves the ratio unknown.

@@ -1,5 +1,15 @@
 Notable changes in each release. Older releases: https://github.com/armanruzgar/openport/releases.
 
+## Unreleased
+
+### Providers
+
+- **Interactive Brokers option volume.** Snapshots also ask for field 7762, the day's
+  volume, and keep it from real-time rows at their `_updated` time. Delayed and frozen
+  rows, and a positive count beside a previous close or halted price or with no last
+  price, leave volume unknown. The extra field takes no extra market-data line. Not
+  yet run live with an account; reports welcome.
+
 ## 0.5.1 (2026-10-28)
 
 The project's new home on GitHub, a Homebrew service that starts, and patch updates
