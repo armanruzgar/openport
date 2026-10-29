@@ -1,18 +1,18 @@
 class Openport < Formula
   desc "Options analytics and paper-trading simulator"
   homepage "https://github.com/armanruzgar/openport"
-  version "0.5.0"
+  version "0.5.1"
   license "MIT"
 
   depends_on :macos
 
   on_arm do
-    url "https://github.com/armanruzgar/openport/releases/download/v0.5.0/openport-0.5.0-darwin-arm64.tar.gz"
-    sha256 "a1375f048b52faebb962946fb00d30b73338b546a10ca9873ac599178ed0a4cb"
+    url "https://github.com/armanruzgar/openport/releases/download/v0.5.1/openport-0.5.1-darwin-arm64.tar.gz"
+    sha256 "2757841951a36a24c6d90f0ba1e9ae018b5440fc5d3f3366cceb634be733712c"
   end
 
   on_intel do
-    url "https://github.com/armanruzgar/openport.git", tag: "v0.5.0"
+    url "https://github.com/armanruzgar/openport.git", tag: "v0.5.1"
     depends_on "cmake" => :build
     depends_on "node" => :build
     depends_on "boost" => :build
