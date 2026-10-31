@@ -2,6 +2,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ## Unreleased
 
+### Upgrading
+
+- **The Python client is not on PyPI.** 0.5.0 said it would publish there as
+  `openport-client`; it never did, and the PyPI release workflow is gone. A PyPI
+  package of that name is not from this project. Install a `python-v*` tag from
+  GitHub into a virtual environment, as the
+  [client's README](python/README.md#python-releases) shows.
+
 ### Providers
 
 - **Interactive Brokers option volume.** Snapshots also ask for field 7762, the day's
