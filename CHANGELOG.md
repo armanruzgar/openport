@@ -32,6 +32,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   built, so the request never answered and its connection was held for good; 512 of
   them shut the server to new connections. It now answers 422
   `ARITHMETIC_OVERFLOW`, and a request whose handler drops it unanswered gets 500.
+- **One account's overflow stays on that account.** A balance near the largest amount
+  an account holds, with an in-the-money option expiring today, overflowed the
+  expiry-delivery projection behind the risk warnings. That stopped the feed for every
+  account, answered a committed fill as an error and made `openportd` exit at each
+  start. The account now shows a `WARNINGS_UNAVAILABLE` warning in their place.
 
 ## 0.5.1 (2026-10-28)
 

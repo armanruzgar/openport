@@ -20258,7 +20258,7 @@
       },
       "RiskWarning": {
         "type": "object",
-        "description": "Something about the held book worth acting on. actual and limit depend on the code: DELTA_LIMIT and VEGA_LIMIT the exposure and its limit; DELTA_HEADROOM the signed percent move that takes dollar delta to a limit and the threshold it is within; SOFT_FLOOR and SOFT_FLOOR_ROLLOVER equity and the soft floor; FLOOR_RATCHET the floor tomorrow and today; EXPIRY_DELIVERY buying power once the options expiring in the money today deliver, and zero; EARLY_ASSIGNMENT the mark and intrinsic value, or the time value and the dividend; EX_DIVIDEND the dividend a share. EXPIRY_DELIVERY names the strike delivery cost and projected buying power including fees and working reservations; it is warning whenever that buying power is negative, even before the pre-expiry cutoff, otherwise info. Before the cutoff it names the time for closing at market; only contracts still held because a close cannot fill deliver. On buying-power-enforced plans it explains that openings consuming unavailable buying power are refused until resolved, while closes that free buying power remain allowed.",
+        "description": "Something about the held book worth acting on. actual and limit depend on the code: DELTA_LIMIT and VEGA_LIMIT the exposure and its limit; DELTA_HEADROOM the signed percent move that takes dollar delta to a limit and the threshold it is within; SOFT_FLOOR and SOFT_FLOOR_ROLLOVER equity and the soft floor; FLOOR_RATCHET the floor tomorrow and today; EXPIRY_DELIVERY buying power once the options expiring in the money today deliver, and zero; EARLY_ASSIGNMENT the mark and intrinsic value, or the time value and the dividend; EX_DIVIDEND the dividend a share; WARNINGS_UNAVAILABLE neither (the account's warnings could not be computed, for example a balance near the money range overflowing the expiry-delivery projection, and stand in its place). EXPIRY_DELIVERY names the strike delivery cost and projected buying power including fees and working reservations; it is warning whenever that buying power is negative, even before the pre-expiry cutoff, otherwise info. Before the cutoff it names the time for closing at market; only contracts still held because a close cannot fill deliver. On buying-power-enforced plans it explains that openings consuming unavailable buying power are refused until resolved, while closes that free buying power remain allowed.",
         "properties": {
           "code": {
             "type": "string",
@@ -20272,7 +20272,8 @@
               "EXPIRY_DELIVERY",
               "EARLY_ASSIGNMENT",
               "EX_DIVIDEND",
-              "SOFT_FLOOR_UNUSED"
+              "SOFT_FLOOR_UNUSED",
+              "WARNINGS_UNAVAILABLE"
             ]
           },
           "severity": {

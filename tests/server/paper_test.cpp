@@ -6597,3 +6597,40 @@ TEST(PaperStocks, AdjustedSeriesWithoutAListedEquivalentAreModelledAndTheDaysRol
   EXPECT_EQ(read(engine, "/api/portfolio")["positions"][0]["modelled_mark"], true);
   engine.stop();
 }
+
+namespace {
+TEST(PaperPublication, AWarningThatOverflowsIsReportedOnItsAccountAndLeavesTheFeedAndTheFillAlone) {
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, paper_options());
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  // In the money and expiring today: warnings() simulates its share delivery.
+  const auto put = *md::parse_osi("SPY260922P00600000");
+  const auto now = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  provider.sink->publish(md::ContractDefinition{0, put});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", now, 589.9, 590.1, 590});
+  provider.sink->publish(md::OptionQuote{0, now, 9.9, 10.1, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == now; }));
+  engine.synchronize().get();
+  const auto deposit = write(engine, "POST", "/api/account/cash-flows", {{"client_id", "big"}, {"amount", "9223371936854.77"}});
+  ASSERT_EQ(deposit.status, 200) << deposit.body;
+  const auto traded = write(engine, "POST", "/api/orders",
+      {{"client_order_id", "put"}, {"symbol", put.osi_symbol()}, {"side", "buy"}, {"type", "market"},
+       {"quantity", 1}, {"time_in_force", "ioc"}});
+  // The fill is committed and answered as one.
+  ASSERT_EQ(traded.status, 201) << traded.body;
+  EXPECT_EQ(read(engine, "/api/portfolio")["positions"].size(), 1);
+  const auto warnings = engine.trading_view()->warnings;
+  ASSERT_EQ(warnings.size(), 1);
+  EXPECT_EQ(warnings[0].code, "WARNINGS_UNAVAILABLE");
+  // The next batch still flows.
+  const auto later = now + md::kNanosPerSecond;
+  provider.sink->publish(md::UnderlyingQuote{"SPY", later, 589.8, 590.0, 589.9});
+  provider.sink->publish(md::OptionQuote{0, later, 10, 10.2, 10, 10});
+  ASSERT_TRUE(wait_for([&] { return engine.metrics("SPY") && engine.metrics("SPY")->as_of == later; }));
+  engine.synchronize().get();
+  EXPECT_NE(engine.status().feed_state, md::FeedState::Error) << engine.status().feed_message;
+  EXPECT_TRUE(engine.trading_view()->snapshot->time >= later);
+  engine.stop();
+}
+}  // namespace

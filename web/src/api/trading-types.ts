@@ -451,7 +451,7 @@ export interface AttemptSummary {
  * delivery applies only to contracts still held if a close cannot fill.
  */
 export interface RiskWarning {
-  code: "DELTA_LIMIT" | "VEGA_LIMIT" | "DELTA_HEADROOM" | "SOFT_FLOOR" | "SOFT_FLOOR_ROLLOVER" | "SOFT_FLOOR_UNUSED" | "FLOOR_RATCHET" | "EXPIRY_DELIVERY" | "EARLY_ASSIGNMENT" | "EX_DIVIDEND"
+  code: "DELTA_LIMIT" | "VEGA_LIMIT" | "DELTA_HEADROOM" | "SOFT_FLOOR" | "SOFT_FLOOR_ROLLOVER" | "SOFT_FLOOR_UNUSED" | "FLOOR_RATCHET" | "EXPIRY_DELIVERY" | "EARLY_ASSIGNMENT" | "EX_DIVIDEND" | "WARNINGS_UNAVAILABLE"
   severity: "warning" | "info"
   /** The underlying, or "aggregate" for the account. */
   scope: string

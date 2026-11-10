@@ -1057,9 +1057,22 @@ void Desk::publish_trading() {
       std::map<std::string, double> vols;
       for (const auto& [underlying, bucket] : view->snapshot->risk.underlyings)
         if (const auto variance = close_variance(metrics(underlying))) vols[underlying] = *variance;
-      view->breach = session.breach(vols);
-      view->warnings = session.warnings(vols, dividends_);
-      if (!account.archived && account.failure.empty()) sample_equity(account);
+      // What the publication derives must not undo what it publishes: one account's
+      // overflow (a balance near the money range, say) stays on that account, and a
+      // command already committed is still answered as committed.
+      try {
+        view->breach = session.breach(vols);
+        view->warnings = session.warnings(vols, dividends_);
+      } catch (const std::exception& error) {
+        view->breach = {};
+        view->warnings = {{"WARNINGS_UNAVAILABLE", "warning", "aggregate", {},
+            std::string("Risk warnings could not be computed for this account: ") + error.what(), {}, {}}};
+      }
+      try {
+        if (!account.archived && account.failure.empty()) sample_equity(account);
+      } catch (const std::exception&) {
+        // The sample is skipped; the next publication tries again.
+      }
       if (account.equity) {
         view->equity_samples = account.equity->samples();
         view->equity_error = account.equity->error();

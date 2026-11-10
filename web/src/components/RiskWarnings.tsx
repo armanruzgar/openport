@@ -6,6 +6,7 @@ const titles: Record<RiskWarning["code"], string> = {
   SOFT_FLOOR: "At the soft floor", SOFT_FLOOR_ROLLOVER: "Soft floor at rollover", FLOOR_RATCHET: "Floor rises tonight",
   SOFT_FLOOR_UNUSED: "Percent floor unused",
   EXPIRY_DELIVERY: "Delivery at expiry", EARLY_ASSIGNMENT: "Early assignment", EX_DIVIDEND: "Ex-dividend",
+  WARNINGS_UNAVAILABLE: "Warnings unavailable",
 }
 /** The held book's warnings, most urgent first, as the server words them; nothing when there are none. */
 export function RiskWarnings({ warnings }: { warnings?: readonly RiskWarning[] }) {
