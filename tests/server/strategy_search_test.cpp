@@ -149,8 +149,8 @@ TEST(StrategySearch, CoversEveryStructureButNeverNakedShortCalls) {
   EXPECT_GT(covered["candidates"][0]["net"].get<double>(), 400);
   // Valued at its call's expiry, a covered call is the short put of its strike: its
   // net is spot less the bid, charged once.
-  const auto find = [](const json& result, const std::string& name) {
-    for (const auto& c : result["candidates"]) if (c["name"] == name) return c;
+  const auto find = [](const json& searched, const std::string& name) {
+    for (const auto& c : searched["candidates"]) if (c["name"] == name) return c;
     return json();
   };
   const auto near_expiry = std::map<std::string, std::string>{{"target", "510"}, {"budget", "1000000"}, {"limit", "100"},
