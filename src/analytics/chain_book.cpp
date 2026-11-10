@@ -63,8 +63,10 @@ OptionState* ChainBook::defined(md::InstrumentId id) noexcept {
 
 void ChainBook::on_definition(const md::ContractDefinition& e) {
   if (e.id >= options_.size()) {
-    options_.resize(e.id + 1);
-    defined_.resize(e.id + 1, false);
+    // Widened first: e.id + 1 in 32 bits wraps to 0 at the largest ID.
+    const auto size = static_cast<std::size_t>(e.id) + 1;
+    options_.resize(size);
+    defined_.resize(size, false);
   }
   if (!defined_[e.id]) ++defined_count_;
   if (defined_[e.id] && !options_[e.id].contract.standard) --nonstandard_count_;

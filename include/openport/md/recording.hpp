@@ -23,6 +23,11 @@ struct RecordingHeader {
   bool trade_venues = false;    ///< version 5: option trades may carry a venue
 };
 
+/// Contract IDs a recording may define: below the most contracts a recording or an
+/// import holds. Providers number contracts densely from zero, and readers size
+/// tables by ID, so a larger one in a file is refused rather than allocated.
+inline constexpr InstrumentId kRecordingContractIdLimit = 500'000;
+
 struct RecordedEvent {
   Timestamp received = 0;
   Event event;

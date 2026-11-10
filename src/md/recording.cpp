@@ -260,6 +260,8 @@ RecordedEvent decode_event(std::span<const char> bytes, std::uint32_t version) {
     case 0: {
       ContractDefinition v;
       v.id = d.number<InstrumentId>();
+      if (v.id >= kRecordingContractIdLimit)
+        invalid("contract id " + std::to_string(v.id) + " is not below " + std::to_string(kRecordingContractIdLimit));
       auto& c = v.contract;
       c.root = d.string();
       c.underlying = d.string();

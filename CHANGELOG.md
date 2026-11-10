@@ -49,6 +49,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   Latin-1 (Excel on Windows) loaded without a word, then volatility and
   `GET /api/calendar/events` answered 500 for the whole run. `openportd` now refuses
   such a file at startup, naming the file and line.
+- **Replay refuses impossible contract IDs.** A recording that defined a contract
+  with ID 4294967295 crashed `openportd` when replayed, and a very large ID made it
+  allocate gigabytes. A definition's ID must now be below 500,000, the most
+  contracts a recording holds; a file with a larger one is reported as malformed.
 
 ## 0.5.1 (2026-10-28)
 

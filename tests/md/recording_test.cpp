@@ -39,7 +39,8 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
   contract.expiry = {std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), -1};
   const auto id = std::numeric_limits<md::InstrumentId>::max();
   std::vector<md::Event> events{
-      md::ContractDefinition{id, contract},
+      // Definitions stop below the reader's contract ID limit; other events keep the widest ID.
+      md::ContractDefinition{md::kRecordingContractIdLimit - 1, contract},
       md::OptionQuote{id, hi, nan, -0.0, tiny, inf},
       md::OptionTrade{id, lo, -inf, -huge},
       md::OptionTrade{id, hi, 1.25, 7, std::numeric_limits<std::uint16_t>::max()},
@@ -131,6 +132,30 @@ TEST(Recording, TradeVenuesWriteVersionFiveAndOthersKeepTheirEarlierBytes) {
     ASSERT_TRUE(unchanged);
     EXPECT_EQ(std::get<md::OptionTrade>(unchanged->event).venue, 0);
     EXPECT_TRUE(reader.diagnostic().empty() && old.diagnostic().empty());
+  }
+}
+
+TEST(Recording, ContractIdsAtOrPastTheLimitAreRefusedWhenRead) {
+  // Readers size tables by ID: the largest u32 wrapped a size to zero, and a large
+  // one cost gigabytes.
+  for (const md::InstrumentId id : {md::kRecordingContractIdLimit - 1, md::kRecordingContractIdLimit,
+                                    md::InstrumentId{20'000'000}, std::numeric_limits<md::InstrumentId>::max()}) {
+    SCOPED_TRACE(id);
+    test::RecordingFile file;
+    test::EventCollector downstream;
+    {
+      md::RecordingSink sink(file.path, test::recording_header(), downstream, {});
+      sink.publish(md::ContractDefinition{id, *md::parse_osi("SPY261016P00500000")});
+      sink.close();
+    }
+    md::RecordingReader reader(file.path);
+    if (id < md::kRecordingContractIdLimit) {
+      const auto event = reader.next();
+      ASSERT_TRUE(event);
+      EXPECT_EQ(std::get<md::ContractDefinition>(event->event).id, id);
+    } else {
+      EXPECT_THROW((void)reader.next(), std::exception);
+    }
   }
 }
 

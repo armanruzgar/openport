@@ -773,8 +773,9 @@ A zero record length is the clean-end marker, written only after all publishers
 stop and all accepted events drain. It must finish the final frame; bytes after
 that frame are rejected. Headers and record payloads are limited to 1 MiB;
 decoder zstd windows are limited to 16 MiB. Unknown versions/tags, invalid enums,
-invalid lengths, extra fields and corrupt/checksum-failed frames are explicit
-errors. The reader streams with bounded buffers rather than loading the file.
+invalid lengths, extra fields, a contract definition whose ID is not below 500,000
+(providers number contracts from zero, and a recording holds at most 500,000) and
+corrupt/checksum-failed frames are explicit errors. The reader streams with bounded buffers rather than loading the file.
 Physical EOF without a clean marker, including a torn final compressed frame,
 returns all recoverable complete records and a `recording truncated` diagnostic.
 A partial final record is discarded; a recovered incomplete frame cannot have
