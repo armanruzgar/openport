@@ -147,6 +147,40 @@ TEST(StrategySearch, CoversEveryStructureButNeverNakedShortCalls) {
       {"date", "2026-10-23"}, {"structures", "covered"}}));
   EXPECT_EQ(covered["candidates"][0]["shares"], 100);
   EXPECT_GT(covered["candidates"][0]["net"].get<double>(), 400);
+  // Valued at its call's expiry, a covered call is the short put of its strike: its
+  // net is spot less the bid, charged once.
+  const auto find = [](const json& result, const std::string& name) {
+    for (const auto& c : result["candidates"]) if (c["name"] == name) return c;
+    return json();
+  };
+  const auto near_expiry = std::map<std::string, std::string>{{"target", "510"}, {"budget", "1000000"}, {"limit", "100"},
+                                                       {"date", "2026-10-23"}, {"expiry_ids", "2026-10-23PM"}};
+  auto query = near_expiry;
+  query["structures"] = "covered";
+  const auto calls = server::search_strategies(metrics, parse(query));
+  const auto call = find(calls, "Covered call 510 Oct 23");
+  ASSERT_TRUE(call.is_object()) << calls["candidates"].size();
+  const double spot = calls["spot"].get<double>(), bid = call["legs"][0]["bid"].get<double>();
+  EXPECT_NEAR(call["net"].get<double>(), spot - bid, 1e-9);
+  // The price grid starts at 0.01% of spot rather than zero.
+  EXPECT_NEAR(call["max_loss"].get<double>(), (spot - bid) * 100, spot * 1e-4 * 100 + 1e-6);
+  EXPECT_NEAR(call["max_profit"].get<double>(), (510 - spot + bid) * 100, 1e-6);
+  ASSERT_EQ(call["breakevens"].size(), 1U);
+  EXPECT_NEAR(call["breakevens"][0].get<double>(), spot - bid, 1e-4);
+  EXPECT_GT(call["pop"]["risk_neutral"].get<double>(), 0);
+  EXPECT_GT(call["pop"]["user"].get<double>(), 0);
+  query["structures"] = "single";
+  const auto put = find(server::search_strategies(metrics, parse(query)), "Short put 510 Oct 23");
+  ASSERT_TRUE(put.is_object());
+  EXPECT_NEAR(call["expected"]["risk_neutral"].get<double>(), put["expected"]["risk_neutral"].get<double>(), 1);
+  EXPECT_NEAR(call["expected"]["user"].get<double>(), put["expected"]["user"].get<double>(), 1);
+  EXPECT_LT(call["expected"]["risk_neutral"].get<double>(), 0);
+  EXPECT_GT(call["expected"]["risk_neutral"].get<double>(), -20);
+  // Its true loss fits a budget of 100 × spot.
+  query = near_expiry;
+  query["structures"] = "covered";
+  query["budget"] = std::to_string(static_cast<int>(std::ceil(spot * 100)));
+  EXPECT_TRUE(find(server::search_strategies(metrics, parse(query)), "Covered call 510 Oct 23").is_object());
   const auto calendar = server::search_strategies(metrics, parse({{"target", "500"}, {"budget", "1000000"}, {"limit", "1"},
       {"date", "2026-10-23"}, {"structures", "calendar"}}));
   const auto& spread = calendar["candidates"][0];
