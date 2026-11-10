@@ -117,7 +117,8 @@ struct Valuer {
   double spot = 0, net = 0, shift = 0;
   md::Timestamp at = 0;
   double operator()(double price) const {
-    double total = candidate.shares * (price - spot) - net * 100;
+    // net is the whole debit, the shares' cost at spot included, so the shares add only their value.
+    double total = candidate.shares * price - net * 100;
     for (const auto& leg : candidate.legs) {
       const auto& slice = *leg.expiry->slice;
       const double life = std::max(0.0, md::years_between(at, slice.expiry_time));

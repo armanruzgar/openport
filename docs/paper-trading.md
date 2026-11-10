@@ -3845,7 +3845,8 @@ valued, so every structure and expiry keeps its share, and `truncated` is true.
 ```text
 at = min(target date's close, first leg's expiry)
 leg value(S) = Black76(S*(S0 + (F - S0) T'/T)/S0, K, T', IV_strike + shift, D^(T'/T)), or intrinsic once expired
-P&L(S) = sum(±ratio * 100 * value) + shares * (S - S0) - net * 100
+P&L(S) = sum(±ratio * 100 * value) + shares * S - net * 100
+net    = shares * S0 / 100 + sum(±ratio * price)   (per unit, debit positive; shown as `net`)
 v = implied_variance_until(at)                   (as the probability route's)
     or, without a term structure, IV_atm^2 * t   (first searched expiry settling at or after at)
 market:  ln S_at ~ N(ln S0 - v/2, v)             (forward at spot)

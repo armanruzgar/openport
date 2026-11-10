@@ -20,6 +20,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Covered calls in the strategy optimizer.** A covered call's share cost was charged
+  twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
+  `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the
+  `quantity`, and over budget for any budget between the true and the doubled loss.
+  The shares are now charged once, through `net`; a covered call to expiry loses at
+  most (spot − bid) × 100 and breaks even at spot − bid.
 - **Builds from source on a Mac with Homebrew's simdjson 5.** Homebrew installs its own
   simdjson, nlohmann-json and googletest headers in the directory Boost comes from,
   and the build searched it before the pinned copies, so the code compiled against
