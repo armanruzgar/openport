@@ -43,6 +43,32 @@ INSTANTIATE_TEST_SUITE_P(NonFunded, TradePhases,
       return param.param == Phase::Verification ? "Verification" : "Evaluation";
     });
 
+TEST_P(TradePhases, EquityTargetWaitsForClosedTradesUnderProfitCaps) {
+  for (const bool microscalp : {false, true}) {
+    for (const bool revised : {false, true}) {
+      ScriptedMarket f;
+      AccountRules rules; rules.phase = GetParam(); rules.profit_target = m("50");
+      rules.max_drawdown = m("1000");
+      if (microscalp) { rules.microscalp_seconds = 60; rules.microscalp_percent = 10; }
+      else rules.trade_consistency_percent = 30;
+      TradingSession s(config(rules), f.time);
+      s.set_revised_evaluation(revised);
+      f.seed(s);
+      ASSERT_TRUE(s.submit(f.market("winner"), f.time).decision.ok());
+      f.time += 5 * md::kNanosPerSecond; ++f.observation;
+      f.seed(s, "5.00", "5.20");
+      EXPECT_EQ(s.snapshot()->evaluation.status, revised ? EvaluationStatus::Active : EvaluationStatus::Passed);
+      if (revised) {
+        EXPECT_FALSE(s.snapshot()->positions.empty());
+        EXPECT_FALSE(evaluation_objectives(s.snapshot()->evaluation, rules, plan_inputs(*s.snapshot())).front().met);
+        ASSERT_TRUE(s.submit(f.market("close", 1, Side::Sell), f.time).decision.ok());
+        EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Active);
+        EXPECT_FALSE(evaluation_objectives(s.snapshot()->evaluation, rules, plan_inputs(*s.snapshot())).back().met);
+      }
+    }
+  }
+}
+
 TEST_P(TradePhases, TradeConsistencyUsesExactProfitAndHoldsWithoutAProfitableTrade) {
   AccountRules rules; rules.phase = GetParam(); rules.trade_consistency_percent = 50;
   Evaluation e; e.starting_balance = m("10000");

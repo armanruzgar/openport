@@ -79,6 +79,7 @@ class Desk {
     /// Driver 6 labels automatic time-stop cancellations. Drivers 1–5 retain
     /// USER_CANCEL, including their journal bytes during offline verification.
     bool playbook_cancel_labels = true;
+    bool revised_evaluation = true; ///< Driver 7 fixes evaluation and payout rules.
     /// Optional run-start capability. Absent on older runs, preserving their fills.
     bool opening_rule_checks = true;
     /// Optional run-start capability: older runs journal the entire input maps.

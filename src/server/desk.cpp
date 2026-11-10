@@ -695,6 +695,7 @@ void Desk::start_trading() {
       }
       if (!file.empty()) account.equity = std::make_unique<EquityStore>(file.string() + ".equity.csv", account.damaged.has_value());
       account.session->set_exact_margin(options_.exact_margin);
+      account.session->set_revised_evaluation(options_.revised_evaluation);
       account.session->set_actor("system");
       account.sampled_snapshot = account.session->snapshot();
     } catch (const TradingError& error) {
@@ -762,7 +763,7 @@ void Desk::start_trading() {
         {"calendar", md::scheduled_days()}, {"analytics", options_.analytics}, {"dividends", dividends_}, {"symbols", subscription_.underlyings}};
     // Written only when a run has splits, so other runs keep their bytes.
     if (!corporate_actions_.empty()) start["corporate_actions"] = corporate_actions_;
-    if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? 6 : 5) : 4) : 3;
+    if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? (options_.revised_evaluation ? 7 : 6) : 5) : 4) : 3;
     if (options_.exact_margin) start["exact_margin"] = true;
     if (options_.run_start_at) start["start_at"] = *options_.run_start_at;
     if (options_.opening_rule_checks) start["opening_rule_checks"] = true;
@@ -868,6 +869,7 @@ void Desk::create_account(const TradingCommand& c, TradingReply& reply) {
     account.journal = journal;
     account.session = std::make_unique<TradingSession>(config, market_time_, account.journal, c.actor);
     account.session->set_exact_margin(options_.exact_margin);
+    account.session->set_revised_evaluation(options_.revised_evaluation);
     account.session->set_actor("system");
     account.equity = std::make_unique<EquityStore>(file.string() + ".equity.csv");
   } catch (const TradingError& error) {
@@ -2283,6 +2285,7 @@ Desk::Desk(std::string provider, md::Capabilities capabilities, md::Subscription
     if (!inputs.empty()) {
       const auto start = nlohmann::json::parse(inputs.front());
       options_.exact_margin = start.value("exact_margin", false);
+      options_.revised_evaluation = start.value("driver", 1) >= 7;
       options_.opening_rule_checks = start.value("opening_rule_checks", false);
       options_.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);
       options_.run_start_at = start.contains("start_at") ? std::optional(start.at("start_at").get<md::Timestamp>()) : std::nullopt;

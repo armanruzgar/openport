@@ -1328,7 +1328,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     if (inputs.empty() || inputs.front().at("kind") != "start") return refuse("The journal has no reproducible-run metadata");
     const auto& start = inputs.front();
     // The run re-executes on this build's driver; one recorded on an older driver would differ.
-    if (start.value("driver", 1) != 6) return refuse("The run was recorded by an older build's driver; verify it with --verify-run");
+    if (start.value("driver", 1) != 7) return refuse("The run was recorded by an older build's driver; verify it with --verify-run");
     md::Timestamp target = 0;
     for (const auto& input : inputs) {
       if (input.at("kind") == "source") return refuse("A run that changed its recording part way cannot resume yet");

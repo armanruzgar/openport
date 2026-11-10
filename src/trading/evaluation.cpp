@@ -106,8 +106,10 @@ std::vector<Objective> objectives_with(const Evaluation& e, const AccountRules& 
   std::vector<Objective> out;
   const auto profit = attempt_profit(e, rules, now);
   const bool balance = rules.profit_basis == ProfitBasis::Balance;
+  const bool closed_caps = e.revised_rules && rules.phase != Phase::Funded &&
+      (rules.trade_consistency_percent > 0 || rules.microscalp_percent > 0);
   if (rules.profit_target > Money{}) {
-    Objective o{Reason::PROFIT_TARGET, profit >= rules.profit_target && (!balance || now.flat),
+    Objective o{Reason::PROFIT_TARGET, profit >= rules.profit_target && (!(balance || closed_caps) || now.flat),
                 profit.dollars(), rules.profit_target.dollars(), {}};
     const auto target = e.starting_balance + rules.profit_target;
     const auto measured = balance ? "The closed balance " + dollars(now.balance) : "Equity " + dollars(now.equity);

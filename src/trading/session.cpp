@@ -1569,6 +1569,7 @@ Money whole_cents(Money value) {
 std::string dollars(Money value) { return (value < Money{} ? "-$" + (-value).str() : "$" + value.str()); }
 Evaluation fresh_evaluation(const State& s, std::uint64_t attempt) {
   Evaluation e;
+  e.revised_rules = s.evaluation.revised_rules;
   e.attempt = attempt;
   e.started = s.time;
   e.starting_balance = s.ledger.account().cash;
@@ -5883,6 +5884,10 @@ TradingSession::~TradingSession() = default;
 void TradingSession::set_actor(std::string actor) { impl_->actor = std::move(actor); }
 void TradingSession::set_exact_margin(bool exact) {
   impl_->state.exact_margin = exact;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
+void TradingSession::set_revised_evaluation(bool revised) {
+  impl_->state.evaluation.revised_rules = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {

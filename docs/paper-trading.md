@@ -2570,6 +2570,8 @@ The best trade is reported as `best_trade: {id, pnl}` (null before one qualifies
 with the earliest opening fill breaking ties. Objective `actual` is its percentage
 of attempt profit (null while profit is nonpositive), `required` is the limit, and
 the message names the trade and its net P&L. A breach only holds the pass back.
+With trade consistency enabled, even an equity target requires every option and
+share position flat, so the winning trade is judged before the attempt passes.
 Funded plans ignore this objective, like day consistency and minimum days. Pass
 odds retain the attempt's best trade and simulate no additional closed trades.
 
@@ -2602,7 +2604,8 @@ Partial closes wait for the final close; holding exactly the threshold is not sh
 Protective and system closures are included. A pass needs
 `short_profit × 100 <= microscalp_percent × attempt profit` under `profit_basis`,
 using exact integer micro-dollar products. Zero short profit satisfies the condition;
-a breach only holds the pass back. Objective actual/required are percentages (actual
+a breach only holds the pass back. With microscalping enabled, even an equity target
+requires every option and share position flat before a pass. Objective actual/required are percentages (actual
 null while attempt profit is nonpositive); `short_profit` reports the dollar sum,
 null when disabled. Funded plans ignore this objective. Set both microscalp fields
 together; percent zero disables (the threshold may be retained). Pass odds keep short profit so far and add no simulated

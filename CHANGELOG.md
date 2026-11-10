@@ -132,6 +132,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Evaluation profit caps.** Equity targets now require a flat account when trade
+  consistency or microscalping is enabled, so the winning trade cannot escape those
+  checks by remaining open until automatic target liquidation. Replay drivers 1–6
+  retain their original decisions; new runs use driver 7.
 - **Covered calls in the strategy optimizer.** A covered call's share cost was charged
   twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
   `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the

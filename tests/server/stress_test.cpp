@@ -188,7 +188,7 @@ TEST(StressReplay, AuthoredHaltMessagesVerifyWithDriverSix) {
     replay.verify();
     const auto inputs = server::run_inputs(trading::FileJournal::read((replay.file.directory / "run.jsonl").string()));
     ASSERT_FALSE(inputs.empty());
-    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 6);
+    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 7);
   }
 }
 

@@ -448,7 +448,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     // Driver 6 also labels playbook time-stop cancellations.
     // Older runs replay as they were recorded.
     const auto driver = start.value("driver", 1);
-    if (driver < 1 || driver > 6) throw std::runtime_error("Unsupported run driver version");
+    if (driver < 1 || driver > 7) throw std::runtime_error("Unsupported run driver version");
     const bool instants = driver >= 2;
     auto batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, instants);
     // Every build that writes a driver version also attributes every record, so only a
@@ -462,6 +462,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     options.inputs_first = driver >= 4;
     options.opening_settlement = driver >= 5;
     options.playbook_cancel_labels = driver >= 6;
+    options.revised_evaluation = driver >= 7;
     options.exact_margin = start.value("exact_margin", false);
     options.opening_rule_checks = start.value("opening_rule_checks", false);
     options.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);

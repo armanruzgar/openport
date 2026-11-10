@@ -444,6 +444,8 @@ class TradingSession {
   void set_actor(std::string actor);
   /// Re-execute older run drivers with their recorded bounded margin allocator.
   void set_exact_margin(bool exact);
+  /// Preserve evaluation behavior when verifying replay drivers 1–6.
+  void set_revised_evaluation(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.
