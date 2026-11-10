@@ -163,3 +163,45 @@ TEST(RequestBodies, ReplayRoutesCalledDirectlyRefuseBodiesThatAreNotUtf8) {
 }
 
 }  // namespace
+
+namespace {
+
+TEST(RequestBodies, ACompletionDroppedUncalledAnswers500AndFreesTheSession) {
+  server::WebServer web("127.0.0.1", 0, {},
+      [](const server::ApiRequest& request, server::ApiCompletion complete) {
+        if (request.target == "/api/status") complete({200, "{}"});
+        // Otherwise the completion is destroyed without being called.
+      });
+  web.start(1);
+  const auto dropped = send(web.port(), http::verb::post, "/api/orders", "{}");
+  EXPECT_EQ(dropped.status, 500) << dropped.body;
+  EXPECT_EQ(json::parse(dropped.body).at("error").at("code"), "INTERNAL_ERROR");
+  EXPECT_EQ(send(web.port(), http::verb::get, "/api/status", {}).status, 200);
+  web.stop();
+}
+
+TEST(RequestBodies, AShareOrderPreviewWhoseCostOverflowsIsAnswered) {
+  server::Engine::Options options;
+  options.analytics_interval = std::chrono::milliseconds(0);
+  QuietProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
+  engine.start();
+  for (const auto& order : {json{{"client_order_id", "a1"}, {"symbol", "ZZZZ"}, {"side", "buy"}, {"type", "limit"},
+                                 {"shares", 10000000}, {"limit_price", "1000000"}},
+                            json{{"client_order_id", "a2"}, {"symbol", "SPY"}, {"side", "sell"}, {"type", "stop"},
+                                 {"shares", 10000000}, {"stop_price", "1000000"}}}) {
+    SCOPED_TRACE(order.dump());
+    auto done = std::make_shared<std::promise<server::ApiResponse>>();
+    auto result = done->get_future();
+    server::ApiRequest request{"POST", "/api/stocks/orders/preview", order.dump()};
+    request.content_type = "application/json";
+    server::handle_api_async(request, engine, [done](server::ApiResponse response) { done->set_value(std::move(response)); });
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(30)), std::future_status::ready);
+    const auto response = result.get();
+    ASSERT_EQ(response.status, 422) << response.body;
+    EXPECT_EQ(json::parse(response.body).at("error").at("code"), "ARITHMETIC_OVERFLOW");
+  }
+  engine.stop();
+}
+
+}  // namespace

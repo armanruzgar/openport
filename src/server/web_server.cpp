@@ -999,7 +999,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
     // The gate severs late engine completions during stop. No executor or socket
     // may outlive the server's io_context, even when a command is still queued.
-    auto complete = [gate = completion_gate_, version = request.version(), keep_alive = request.keep_alive(),
+    auto deliver = [gate = completion_gate_, version = request.version(), keep_alive = request.keep_alive(),
                      token_file = shared_.write_policy.token_file, status = api.target == "/api/status"](ApiResponse response) {
       if (status && token_file && response.status == 200) {
         const auto loaded = token_file->snapshot();
@@ -1017,6 +1017,11 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
         self->send_api(std::move(response), version, keep_alive);
       });
     };
+    // A handler that drops its completion without calling it (an exception on the
+    // engine thread, say) would hold this session, and one of the capped session
+    // slots, forever: the last copy's destruction answers 500 instead.
+    auto answer = std::make_shared<Answer<decltype(deliver)>>(std::move(deliver));
+    auto complete = [answer](ApiResponse response) { answer->send(std::move(response)); };
     cancelled_ = std::make_shared<std::atomic_bool>(false);
     api.cancelled = cancelled_;
     watch_disconnect(cancelled_);
@@ -1109,6 +1114,24 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   struct CompletionGate {
     std::mutex mutex;
     std::weak_ptr<HttpSession> session;
+  };
+  /// Delivers a request's response once: the first send, or 500 when the last
+  /// reference goes without one.
+  template <class Deliver> class Answer {
+   public:
+    explicit Answer(Deliver deliver) : deliver_(std::move(deliver)) {}
+    Answer(const Answer&) = delete;
+    Answer& operator=(const Answer&) = delete;
+    ~Answer() {
+      try { send(api_error(500, "INTERNAL_ERROR", "Internal error: the request was dropped without a response")); } catch (...) {}
+    }
+    void send(ApiResponse response) {
+      if (sent_.exchange(true)) return;
+      deliver_(std::move(response));
+    }
+   private:
+    Deliver deliver_;
+    std::atomic_bool sent_{false};
   };
   std::shared_ptr<CompletionGate> completion_gate_ = std::make_shared<CompletionGate>();
   std::shared_ptr<HttpSession> awaiting_;

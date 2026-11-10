@@ -1533,7 +1533,21 @@ int reason_status(Reason reason) {
       reason == Reason::JOURNAL_LOCKED) return 503;
   return 422;
 }
-ApiResponse command_response(const TradingCommand& command, const TradingReply& reply) {
+ApiResponse command_body(const TradingCommand& command, const TradingReply& reply);
+/// A command's HTTP answer. It runs inside the engine's completion, where nothing
+/// may throw: an exception there would leave the request unanswered. A share
+/// order's cost past the money range answers 422 ARITHMETIC_OVERFLOW, as the
+/// reducer answers its own overflows.
+ApiResponse command_response(const TradingCommand& command, const TradingReply& reply) noexcept {
+  try {
+    return command_body(command, reply);
+  } catch (const TradingError& error) {
+    return api_error(reason_status(error.code()), std::string(to_string(error.code())), error.what());
+  } catch (...) {
+    return api_error(500, "INTERNAL_ERROR", "Internal error");
+  }
+}
+ApiResponse command_body(const TradingCommand& command, const TradingReply& reply) {
   if (!reply.error_code.empty())
     return api_error(reply.error_code == "INVALID_REQUEST" ? 400 : reply.error_code == "ACCOUNT_PROTECTED" ? 403 :
                      reply.error_code == "ACCOUNT_DAMAGED" || reply.error_code == "ACCOUNT_ARCHIVED" || reply.error_code == "ACCOUNT_NOT_EMPTY" ||

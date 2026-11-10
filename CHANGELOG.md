@@ -27,6 +27,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   not UTF-8 or nested more than 64 deep gets 400 `INVALID_REQUEST`. A byte that is
   not UTF-8 sent to `/api/replay` or `/api/replay/packs` used to end the process;
   routes that answered 500 for a body they could not parse now answer 400.
+- **Every request is answered.** A share-order preview whose cost passed the money
+  range (10,000,000 shares at a $1,000,000 limit) threw while its answer was being
+  built, so the request never answered and its connection was held for good; 512 of
+  them shut the server to new connections. It now answers 422
+  `ARITHMETIC_OVERFLOW`, and a request whose handler drops it unanswered gets 500.
 
 ## 0.5.1 (2026-10-28)
 
