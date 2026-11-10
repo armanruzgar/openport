@@ -137,14 +137,16 @@ jobs:
       - name: Test
         run: ./build/tests/openport_tests
       # A crash ends the single test process without a stack, and the runner keeps
-      # no crash report: run the same suites again under lldb and print every
-      # thread's stack where it stops.
+      # no crash report: print the toolchain, then run the crashed test alone under
+      # lldb with the crashing frame's code and the loaded libraries.
       - name: Stacks of a crashed test run
         if: failure()
-        timeout-minutes: 40
-        run: >
-          lldb --batch -o run -k "thread backtrace all" -k "quit 1"
-          -- ./build/tests/openport_tests
+        timeout-minutes: 10
+        run: |
+          sw_vers; xcodebuild -version; xcrun --show-sdk-version; c++ --version
+          otool -l build/tests/openport_tests | grep -A4 LC_BUILD_VERSION
+          lldb --batch -o run -k "thread backtrace all" -k "frame select 1" -k "disassemble -f" -k "image list" -k "quit 1" \
+            -- ./build/tests/openport_tests --gtest_filter='Cboe.ParsesTheChainDocument'
       # The release archive is built this way; it must run on a Mac without Homebrew.
       - name: Links only macOS's own libraries
         run: |
