@@ -105,3 +105,22 @@ if(OPENPORT_BUILD_PROVIDERS)
   find_package(ZLIB REQUIRED)
   find_package(Threads REQUIRED)
 endif()
+
+# Package managers install their own copies of several of these libraries beside
+# Boost and OpenSSL (Homebrew puts simdjson, nlohmann-json and googletest headers in
+# the same include directory as Boost), often at another version. Compiling against
+# those headers while linking the pinned library breaks its ABI: with Homebrew's
+# simdjson 5 a parser's destructor jumped through a vtable from simdjson 4. A
+# target's own include directories come before those of the libraries it links,
+# so naming the pinned headers here puts them ahead of every system prefix.
+foreach(pinned IN ITEMS nlohmann_json::nlohmann_json simdjson::simdjson unordered_dense::unordered_dense
+                        databento::databento GTest::gtest GTest::gmock benchmark::benchmark)
+  if(NOT TARGET ${pinned})
+    continue()
+  endif()
+  get_target_property(real ${pinned} ALIASED_TARGET)
+  if(NOT real)
+    set(real ${pinned})
+  endif()
+  include_directories(SYSTEM "$<TARGET_PROPERTY:${real},INTERFACE_INCLUDE_DIRECTORIES>")
+endforeach()

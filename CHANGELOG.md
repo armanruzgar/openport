@@ -20,6 +20,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Builds from source on a Mac with Homebrew's simdjson 5.** Homebrew installs its own
+  simdjson, nlohmann-json and googletest headers in the directory Boost comes from,
+  and the build searched it before the pinned copies, so the code compiled against
+  Homebrew's headers but linked the pinned library. With simdjson 5 installed (it
+  comes with Homebrew's Node) the result crashed parsing Cboe's chain. The pinned
+  headers now come first.
 - **Back-to-back fill calibrations.** A `POST /api/fills/calibration` sent as soon as
   the previous one was answered could get 503 `CALIBRATION_BUSY`, because the worker
   answered before marking itself free. It now frees itself first.
