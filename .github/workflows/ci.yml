@@ -136,6 +136,23 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ./build/tests/openport_tests
+      # A crash ends the single test process without a stack; macOS writes one.
+      - name: Show crash reports
+        if: failure()
+        run: |
+          shopt -s nullglob
+          for report in ~/Library/Logs/DiagnosticReports/openport_tests*; do
+            echo "::group::$report"
+            cat "$report"
+            echo "::endgroup::"
+          done
+      - name: Keep crash reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-crash-reports
+          path: ~/Library/Logs/DiagnosticReports/openport_tests*
+          if-no-files-found: ignore
       # The release archive is built this way; it must run on a Mac without Homebrew.
       - name: Links only macOS's own libraries
         run: |
