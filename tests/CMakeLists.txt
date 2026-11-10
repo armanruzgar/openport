@@ -140,8 +140,8 @@ target_link_libraries(openport_tests PRIVATE openport::trading nlohmann_json::nl
 
 include(GoogleTest)
 gtest_discover_tests(openport_tests DISCOVERY_TIMEOUT 60)
-if(OPENPORT_SANITIZE)
-  # Run after discovery so COST can refer to the individual GoogleTest names.
-  set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
-    "${CMAKE_CURRENT_SOURCE_DIR}/CTestCosts.cmake")
-endif()
+# Run after discovery so COST can refer to the individual GoogleTest names. In
+# every build a parallel ctest starts the historically expensive tests first, so
+# they do not finish last.
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/CTestCosts.cmake")

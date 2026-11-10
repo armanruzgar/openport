@@ -29,9 +29,15 @@ cd web && npm ci && npx tsc -p tsconfig.json && npx vitest run && npm run build
 CI runs on every push and pull request: the C++ suite with GCC 13 on Ubuntu 24.04 and
 Apple Clang on macOS, both with `-DOPENPORT_WERROR=ON`, again under AddressSanitizer
 and UndefinedBehaviorSanitizer with GCC 13, the web checks, the Python client and a
-Docker smoke test. The sanitizer job uses four parallel runners, each running
-every fourth discovered CTest test with four local processes, using checked-in
-CTest cost hints to start expensive tests first. Under `OPENPORT_SANITIZE`, the
+Docker smoke test. A second Ubuntu job runs the same suite at the same time with
+`OPENPORT_VERIFY_REVIEWS=1` and `OPENPORT_VERIFY_JOURNAL=1`. Every C++ job runs
+each test in its own process through CTest, in parallel, starting the expensive
+ones first from the checked-in cost hints in `tests/CTestCosts.cmake` (local
+`ctest` runs use them too). The Release builds on Ubuntu and macOS each restore a
+zstd-compressed ccache capped at 1 GB, so a commit recompiles only what it
+touched; on a crash, the macOS job reruns each failed test under `lldb` and
+prints every thread's stack. The sanitizer job uses four parallel runners, each
+running every fourth discovered CTest test with four local processes. Under `OPENPORT_SANITIZE`, the
 slow generated-feed, multi-session replay and backtest fixtures sample intraday
 snapshots while retaining openings, event edges and session boundaries; legacy
 recording checks sample fewer days and the seeded margin sweep uses fewer trials.

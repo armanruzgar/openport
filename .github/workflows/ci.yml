@@ -29,33 +29,68 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The Release build is cached with ccache, one cache per operating system, so a
+  # commit recompiles only what it touched. The plain suite and the suite with
+  # incremental reviews and journal changes checked against full rebuilds run
+  # side by side on the same cached build instead of one after the other.
   cpp:
-    name: C++ (GCC 13, Ubuntu 24.04, warnings as errors)
+    name: ${{ matrix.verify && 'C++ (GCC 13, Ubuntu 24.04, reviews and journal checked against rebuilds)' || 'C++ (GCC 13, Ubuntu 24.04, warnings as errors)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        verify: [false, true]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: 1G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
     steps:
       - uses: actions/checkout@v7
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build libboost-dev libssl-dev zlib1g-dev libzstd-dev
+            build-essential cmake ninja-build ccache libboost-dev libssl-dev zlib1g-dev libzstd-dev
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-release-${{ runner.os }}-
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF
       - name: Build
         run: cmake --build build
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s
+      - name: Save compiler cache
+        # Both entries build the same code; only one saves the shared key.
+        if: always() && !matrix.verify
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ runner.os }}-${{ github.sha }}
+      # Each test runs in its own process; tests/CTestCosts.cmake starts the
+      # expensive ones first so they do not finish last.
       - name: Test
+        if: ${{ !matrix.verify }}
         env:
           TMPDIR: ${{ runner.temp }}
-        run: ctest --test-dir build -j 4 --output-on-failure --timeout 1500
+        run: ctest --test-dir build -j 6 --output-on-failure --timeout 1500
       - name: Test incremental reviews and journal changes against full rebuilds
+        if: matrix.verify
         env:
           TMPDIR: ${{ runner.temp }}
           OPENPORT_VERIFY_REVIEWS: 1
           OPENPORT_VERIFY_JOURNAL: 1
-        run: ctest --test-dir build -j 4 --output-on-failure --timeout 1500
+        run: ctest --test-dir build -j 6 --output-on-failure --timeout 1500
 
   cpp-sanitize:
     name: C++ (GCC 13, ASan + UBSan, shard ${{ matrix.shard }}/4)
@@ -122,31 +157,59 @@ jobs:
   cpp-macos:
     name: C++ (Apple Clang, macOS 15, warnings as errors)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: 1G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
     steps:
       - uses: actions/checkout@v7
       - name: Install dependencies
-        run: brew install ninja boost openssl@3 zstd
+        run: brew install ninja ccache boost openssl@3 zstd
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-release-${{ runner.os }}-
       - name: Configure
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF -DOPENPORT_STATIC_DEPS=ON
           -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
       - name: Build
         run: cmake --build build
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ runner.os }}-${{ github.sha }}
+      # Each test in its own process, in parallel, as on Linux: a crash in one test
+      # no longer ends the rest of the suite.
       - name: Test
-        run: ./build/tests/openport_tests
-      # A crash ends the single test process without a stack, and the runner keeps
-      # no crash report: print the toolchain, then run the crashed test alone under
-      # lldb with the crashing frame's code and the loaded libraries.
-      - name: Stacks of a crashed test run
+        run: ctest --test-dir build -j 4 --output-on-failure --timeout 1500
+      # ctest names a crashed test but prints no stack: run each failed test again
+      # under lldb, which prints every thread's backtrace where it stops.
+      - name: Stacks of failed tests
         if: failure()
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
-          sw_vers; xcodebuild -version; xcrun --show-sdk-version; c++ --version
-          otool -l build/tests/openport_tests | grep -A4 LC_BUILD_VERSION
-          lldb --batch -o run -k "thread backtrace all" -k "frame select 1" -k "disassemble -f" -k "image list" -k "quit 1" \
-            -- ./build/tests/openport_tests --gtest_filter='Cboe.ParsesTheChainDocument'
+          failed=build/Testing/Temporary/LastTestsFailed.log
+          [ -f "$failed" ] || exit 0
+          sw_vers; c++ --version
+          cut -d: -f2- "$failed" | head -n 5 | while read -r test; do
+            echo "::group::$test"
+            lldb --batch -o run -k "thread backtrace all" -k "quit 1" \
+              -- ./build/tests/openport_tests --gtest_filter="$test" < /dev/null || true
+            echo "::endgroup::"
+          done
       # The release archive is built this way; it must run on a Mac without Homebrew.
       - name: Links only macOS's own libraries
         run: |
