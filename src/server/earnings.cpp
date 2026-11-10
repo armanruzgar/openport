@@ -1,4 +1,5 @@
 #include "openport/server/earnings.hpp"
+#include "openport/md/utf8.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -269,7 +270,11 @@ EarningsStore::Import EarningsStore::import_csv(std::string_view text) {
     move.realized = percent(fields[4]);
     if (!move.implied || *move.implied <= 0 || *move.implied > 5 || !move.realized || std::abs(*move.realized) > 5)
       throw std::invalid_argument(where + ": moves are percents: implied above 0, both at most 500");
-    if (fields.size() == 6) move.label = fields[5].substr(0, 64);
+    if (fields.size() == 6) {
+      // Every list and the saved file print labels as JSON, which needs UTF-8 throughout.
+      if (!md::valid_utf8(fields[5])) throw std::invalid_argument(where + ": label must be UTF-8 text");
+      move.label = std::string(md::utf8_prefix(fields[5], 64));
+    }
     move.source = "imported";
     rows.push_back(std::move(move));
   }

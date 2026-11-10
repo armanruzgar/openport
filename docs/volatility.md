@@ -218,7 +218,8 @@ symbol,date,session,implied_move,realized_move,label
 AAPL,2026-07-30,after_close,4.1,-2.3,Q3 FY26
 ```
 
-Moves are percents (a trailing `%` is allowed); the label is optional. Imported
+Moves are percents (a trailing `%` is allowed); the label is optional, UTF-8, and
+kept to its first 64 bytes without splitting a character. Imported
 rows are labelled `imported` everywhere and never replace a recorded one for the
 same symbol and date; the import reports them as skipped. A malformed file adds
 nothing. `DELETE /api/earnings/imported` removes them all.

@@ -41,6 +41,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   with bytes that are not UTF-8 (a UTF-16 or Latin-1 save) ended `openportd` seconds
   after it started, with a message that named no file. The server now keeps
   running and reports the file's path and the byte where it stopped being JSON.
+- **Earnings labels.** An imported label longer than 64 bytes was cut inside a
+  multi-byte character, after which `GET /api/earnings` answered 500 and
+  `earnings.json` stopped being saved. Labels are now cut on a character boundary,
+  and a label that is not UTF-8 is refused with its line number.
 
 ## 0.5.1 (2026-10-28)
 

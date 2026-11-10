@@ -138,3 +138,27 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
 }
 
 }  // namespace
+
+namespace {
+TEST(Earnings, ALongLabelIsCutOnACharacterBoundaryAndOnlyUtf8IsImported) {
+  const auto file = std::filesystem::temp_directory_path() / ("openport-earnings-labels-" + std::to_string(::getpid()) + ".json");
+  std::filesystem::remove(file);
+  const std::string header = "symbol,date,session,implied_move,realized_move,label\n";
+  {
+    server::EarningsStore store(file);
+    // An accented letter straddles byte 64.
+    EXPECT_EQ(store.import_csv(header + "AAPL,2026-07-30,after_close,4.1,-2.3," + std::string(63, 'x') + "\xc3\xa9 and more\n").added, 1u);
+    EXPECT_THROW(store.import_csv(header + "NVDA,2026-08-27,after_close,6,3,Q2 \xe9\n"), std::invalid_argument);
+    ASSERT_EQ(store.moves().size(), 1u);
+    EXPECT_EQ(store.moves()[0].label, std::string(63, 'x'));
+    EXPECT_TRUE(store.error().empty()) << store.error();
+    const auto response = server::earnings_request({"GET", "/api/earnings"}, store);
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->status, 200) << response->body;
+  }
+  server::EarningsStore reopened(file);
+  ASSERT_EQ(reopened.moves().size(), 1u);
+  EXPECT_EQ(reopened.moves()[0].label, std::string(63, 'x'));
+  std::filesystem::remove(file);
+}
+}  // namespace
