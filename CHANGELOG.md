@@ -18,6 +18,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   price, leave volume unknown. The extra field takes no extra market-data line. Not
   yet run live with an account; reports welcome.
 
+### Fixes
+
+- **A request body cannot end the server.** A JSON body nested a few thousand levels
+  deep overflowed an HTTP thread's stack on four routes (what-if, closing positions,
+  rules comparison and rule-pack validation) and ended `openportd`. Every POST, PUT
+  and PATCH body is now checked once before any route reads it: one that is not JSON,
+  not UTF-8 or nested more than 64 deep gets 400 `INVALID_REQUEST`. A byte that is
+  not UTF-8 sent to `/api/replay` or `/api/replay/packs` used to end the process;
+  routes that answered 500 for a body they could not parse now answer 400.
+
 ## 0.5.1 (2026-10-28)
 
 The project's new home on GitHub, a Homebrew service that starts, and patch updates

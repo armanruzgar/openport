@@ -55,8 +55,19 @@ inline constexpr int kInboxRetrySeconds = 1;
 
 using ApiCompletion = std::function<void(ApiResponse)>;
 
+/// Never throws: a message that is not valid UTF-8 is sent with U+FFFD in place of
+/// each bad byte.
 [[nodiscard]] ApiResponse api_error(int status, std::string code, std::string message,
-                                    const trading::Decision& evidence = {});
+                                    const trading::Decision& evidence = {}) noexcept;
+/// The deepest nesting of objects and arrays a request body may have. Copying or
+/// printing a JSON value recurses once per level, so an unbounded body could
+/// exhaust an HTTP thread's stack.
+inline constexpr int kRequestJsonDepthMax = 64;
+/// The transport's check of every POST, PUT and PATCH body before any route reads
+/// it: nullopt for an empty body or well-formed UTF-8 JSON nested at most
+/// kRequestJsonDepthMax deep, otherwise a 400 INVALID_REQUEST that names the problem
+/// without echoing the body.
+[[nodiscard]] std::optional<ApiResponse> check_request_json(std::string_view body);
 /// Splits a query ("a=1&b=2", without the "?") into percent-decoded keys and values;
 /// "+" stays "+" unless `plus_is_space` (form encoding). A pair without "=" has an
 /// empty value. nullopt when an escape is malformed or a decoded key repeats. Every

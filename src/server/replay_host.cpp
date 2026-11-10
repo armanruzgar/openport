@@ -71,6 +71,7 @@ ApiResponse ok(const json& body, int status = 200) { return {status, body.dump()
 
 json parse_body(const ApiRequest& request, std::initializer_list<std::string_view> allowed) {
   if (request.body.size() > 64 * 1024) throw std::invalid_argument("Body exceeds 64 KiB");
+  if (auto rejected = check_request_json(request.body)) throw std::invalid_argument("Request body must be a JSON object nested at most " + std::to_string(kRequestJsonDepthMax) + " levels, in UTF-8");
   auto body = request.body.empty() ? json::object() : json::parse(request.body);
   if (!body.is_object()) throw std::invalid_argument("Expected a JSON object");
   for (auto it = body.begin(); it != body.end(); ++it)
@@ -957,9 +958,21 @@ void ReplayHost::work() {
       job.complete(api_error(503, "ENGINE_STOPPING", "The replay host is stopping"));
       continue;
     }
-    if (std::string_view(job.request.target).starts_with("/api/replay/history/")) history(job.request, job.complete);
-    else if (std::string_view(job.request.target).starts_with("/api/replay/packs")) packs(job.request, job.complete);
-    else control(job.request, job.complete);
+    // Nothing may escape this thread (that would end the process), and every job
+    // answers exactly once even when a handler throws after or instead of answering.
+    auto answered = std::make_shared<bool>(false);
+    ApiCompletion complete = [answered, inner = std::move(job.complete)](ApiResponse response) {
+      if (*answered) return;
+      *answered = true;
+      inner(std::move(response));
+    };
+    try {
+      if (std::string_view(job.request.target).starts_with("/api/replay/history/")) history(job.request, complete);
+      else if (std::string_view(job.request.target).starts_with("/api/replay/packs")) packs(job.request, complete);
+      else control(job.request, complete);
+    } catch (...) {
+      try { complete(api_error(500, "INTERNAL_ERROR", "Internal error")); } catch (...) {}
+    }
   }
 }
 

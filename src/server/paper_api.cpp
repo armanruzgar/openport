@@ -2201,7 +2201,10 @@ void fee_model(const json& body, AccountRules& rules) {
 json strict_json(const std::string& body) {
   // JSON parsers normally keep the last duplicate key; that is ambiguous for orders.
   std::vector<std::set<std::string>> keys;
-  return json::parse(body, [&](int, json::parse_event_t event, json& parsed) {
+  return json::parse(body, [&](int depth, json::parse_event_t event, json& parsed) {
+    // The transport checks depth first (check_request_json); this keeps direct callers bounded too.
+    if (depth >= kRequestJsonDepthMax && (event == json::parse_event_t::object_start || event == json::parse_event_t::array_start))
+      throw std::invalid_argument("Request body nests deeper than " + std::to_string(kRequestJsonDepthMax) + " levels");
     if (event == json::parse_event_t::object_start) keys.emplace_back();
     if (event == json::parse_event_t::key && !keys.back().insert(parsed.get<std::string>()).second)
       throw std::invalid_argument("Duplicate JSON field");
@@ -2455,8 +2458,11 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
       auto& requests = command.candidates.emplace_back();
       for (std::size_t i = 0; i < orders.size(); ++i) {
         // Each order is parsed as a submission parses it; a client ID is optional here.
+        // Checked before the copy: copying a value recurses once per nesting level.
+        if (!orders[i].is_object())
+          throw std::invalid_argument(where + ".orders[" + std::to_string(i) + "]: An order is an object");
         auto order = orders[i];
-        if (order.is_object() && !order.contains("client_order_id"))
+        if (!order.contains("client_order_id"))
           order["client_order_id"] = "what-if-" + std::to_string(c + 1) + "-" + std::to_string(i + 1);
         ApiRequest single;
         single.method = "POST";
@@ -2658,8 +2664,11 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
   if (path == "/api/positions/close" || path == "/api/positions/close/preview") {
     command.kind = path.ends_with("/preview") ? TradingCommand::Kind::PreviewClose : TradingCommand::Kind::ClosePositions;
     fields(body, {}, {"underlying", "type", "limit_ticks"});
-    auto scope = body;
-    scope.erase("type"); scope.erase("limit_ticks");
+    // Only the scope is copied, and only once it is known to be a string.
+    if (body.contains("underlying") && !body.at("underlying").is_string())
+      throw std::invalid_argument("underlying must be a string");
+    json scope = json::object();
+    if (body.contains("underlying")) scope["underlying"] = body.at("underlying");
     command.underlying = scope_field(scope);
     const auto type = body.contains("type") ? string_field(body, "type") : std::string("market");
     if (type != "market" && type != "limit") throw std::invalid_argument("type must be market or limit");
@@ -2839,14 +2848,52 @@ json attribution_json(const trading::Attribution& a) {
           {"total", number(total / scale)}, {"fallback", a.fallback}};
 }
 
-ApiResponse api_error(int status, std::string code, std::string message, const Decision& evidence) {
-  // Some reducer checks identify a single contract. The HTTP contract exposes
-  // risk scope as the underlying, while the order itself carries the OSI.
-  json error{{"code", code}, {"message", message},
-      {"actual", evidence_value(evidence, false)},
-      {"limit", evidence_value(evidence, true)}, {"scope", scope_json(evidence.scope)}};
-  if (evidence.evidence) error["evidence"] = rule_evidence_json(*evidence.evidence);
-  return {status, json{{"error", std::move(error)}}.dump()};
+ApiResponse api_error(int status, std::string code, std::string message, const Decision& evidence) noexcept {
+  // A message may quote a parser or a file; printing it must not throw on a byte
+  // that is not UTF-8, since a throw here escapes the error path itself.
+  try {
+    // Some reducer checks identify a single contract. The HTTP contract exposes
+    // risk scope as the underlying, while the order itself carries the OSI.
+    json error{{"code", code}, {"message", message},
+        {"actual", evidence_value(evidence, false)},
+        {"limit", evidence_value(evidence, true)}, {"scope", scope_json(evidence.scope)}};
+    if (evidence.evidence) error["evidence"] = rule_evidence_json(*evidence.evidence);
+    return {status, json{{"error", std::move(error)}}.dump(-1, ' ', false, json::error_handler_t::replace)};
+  } catch (...) {
+    return {status, R"({"error":{"code":"INTERNAL_ERROR","message":"Internal error","actual":null,"limit":null,"scope":null}})"};
+  }
+}
+
+namespace {
+/// Accepts the whole body through nlohmann's own lexer (which also checks UTF-8)
+/// without building a value, and stops at the first level past the limit.
+struct RequestJsonCheck final : json::json_sax_t {
+  int depth = 0;
+  bool too_deep = false;
+  bool open() { too_deep = ++depth > kRequestJsonDepthMax; return !too_deep; }
+  bool null() override { return true; }
+  bool boolean(bool) override { return true; }
+  bool number_integer(number_integer_t) override { return true; }
+  bool number_unsigned(number_unsigned_t) override { return true; }
+  bool number_float(number_float_t, const string_t&) override { return true; }
+  bool string(string_t&) override { return true; }
+  bool binary(binary_t&) override { return true; }
+  bool start_object(std::size_t) override { return open(); }
+  bool key(string_t&) override { return true; }
+  bool end_object() override { --depth; return true; }
+  bool start_array(std::size_t) override { return open(); }
+  bool end_array() override { --depth; return true; }
+  bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override { return false; }
+};
+}  // namespace
+
+std::optional<ApiResponse> check_request_json(std::string_view body) {
+  if (body.empty()) return std::nullopt;
+  RequestJsonCheck check;
+  if (json::sax_parse(body, &check)) return std::nullopt;
+  if (check.too_deep)
+    return api_error(400, "INVALID_REQUEST", "Request body nests deeper than " + std::to_string(kRequestJsonDepthMax) + " levels");
+  return api_error(400, "INVALID_REQUEST", "Request body must be valid JSON in UTF-8");
 }
 json order_request_json(const OrderRequest& order) {
   json body{{"client_order_id", order.client_order_id}, {"type", order.type == OrderType::Limit ? "limit" : "market"},
@@ -3676,7 +3723,8 @@ ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source
       if (!plans.is_array()) throw std::invalid_argument("plans must be an array of preset IDs");
       for (const auto& id : plans) {
         const auto* plan = id.is_string() ? find_plan(id.get<std::string>()) : nullptr;
-        if (!plan) throw std::invalid_argument("Unknown plan preset: " + id.dump());
+        if (!id.is_string()) throw std::invalid_argument("plans must be an array of preset IDs");
+        if (!plan) throw std::invalid_argument("Unknown plan preset: " + id.dump(-1, ' ', false, json::error_handler_t::replace));
         sets.push_back({plan->name, plan->id, plan->initial_cash, plan->rules});
       }
     }
@@ -3801,8 +3849,8 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
         if (find_plan_named(plan_name)) throw std::invalid_argument("\"" + plan_name + "\" is a built-in preset's name; pack plans keep their own");
         const auto cash = decimal_field(plan, "initial_cash");
         if (cash <= Money{}) throw std::invalid_argument("initial_cash must be positive");
+        if (!plan.at("rules").is_object()) throw std::invalid_argument("rules must be an object");
         auto rules_body = plan.at("rules");
-        if (!rules_body.is_object()) throw std::invalid_argument("rules must be an object");
         rules_body["plan"] = plan_name;
         auto rules = parse_rules(rules_body);
         normalize_event_rules(rules);

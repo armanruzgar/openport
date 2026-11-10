@@ -59,6 +59,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/surface_history_test.cpp
     server/equity_test.cpp
     server/web_policy_test.cpp
+    server/request_body_test.cpp
     server/sandboxes_test.cpp
     server/engine_test.cpp
     server/notifications_test.cpp

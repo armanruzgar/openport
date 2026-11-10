@@ -968,6 +968,12 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
     if (auto rejection = check_api_write(api, shared_.write_policy, &api.actor, &api.access))
       return send_api(std::move(*rejection), request.version(), request.keep_alive());
+    // One check for every route: no handler sees a body it cannot parse, print or
+    // copy within an HTTP thread's stack.
+    if (api.method == "POST" || api.method == "PUT" || api.method == "PATCH") {
+      if (auto rejection = check_request_json(api.body))
+        return send_api(std::move(*rejection), request.version(), request.keep_alive());
+    }
     if (api.target.starts_with("/api/signals/")) {
       if (auto rejection = shared_.signals->check(api))
         return send_api(std::move(*rejection), request.version(), request.keep_alive());
