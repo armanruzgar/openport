@@ -569,12 +569,12 @@ int run(int argc, char** argv) {
       std::ifstream file(value);
       if (!file) return usage(("--events: cannot read " + value).c_str());
       try { settings.events = analytics::parse_events(file); }
-      catch (const std::exception& e) { return usage(e.what()); }
+      catch (const std::exception& e) { return usage(("--events " + value + ": " + e.what()).c_str()); }
     } else if (arg == "--event-calendar") {
       std::ifstream file(value);
       if (!file) return usage(("--event-calendar: cannot read " + value).c_str());
       try { settings.event_calendar = trading::parse_event_calendar(file); }
-      catch (const std::exception& error) { return usage(error.what()); }
+      catch (const std::exception& error) { return usage(("--event-calendar " + value + ": " + error.what()).c_str()); }
     } else if (arg == "--corporate-actions") {
       std::ifstream file(value);
       if (!file) return usage(("--corporate-actions: cannot read " + value).c_str());

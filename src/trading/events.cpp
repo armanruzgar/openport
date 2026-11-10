@@ -1,4 +1,5 @@
 #include "openport/trading/events.hpp"
+#include "openport/md/utf8.hpp"
 
 #include <algorithm>
 #include <array>
@@ -47,6 +48,7 @@ void validate_event_rules(const AccountRules& r) {
   for (const auto& e : r.events) {
     if (e.kind != "news" && e.kind != "earnings" && e.kind != "ex_dividend" && e.kind != "split")
       invalid("event kind must be news, earnings, ex_dividend or split");
+    if (!md::valid_utf8(e.label)) invalid("event label must be UTF-8 text");
     if (std::count_if(e.label.begin(), e.label.end(), [](unsigned char c) { return (c & 0xc0) != 0x80; }) > 64) invalid("event label must be at most 64 characters");
     if ((!e.symbol.empty() || e.kind != "news") && !symbol_ok(e.symbol))
       invalid("event symbol must be 1-12 uppercase letters, digits or dots; only news may omit it");

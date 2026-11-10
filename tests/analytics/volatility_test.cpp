@@ -369,7 +369,9 @@ TEST(VolEvents, ValidatesLabelsDatesAndDuplicateDates) {
   ASSERT_EQ(events.size(), 2u);
   EXPECT_EQ(events[0].label, "Quarter end, rebalance");
   EXPECT_EQ(events[1].date, (md::Date{2026, 10, 2}));
-  for (const auto* text : {"2026-02-30,Wrong", "2026-09-30,", "no comma", "9999-01-01,Far", "2026-09-30,A\n2026-09-30,B"}) {
+  // A Latin-1 save (Excel on Windows): responses could not print these labels.
+  for (const auto* text : {"2026-02-30,Wrong", "2026-09-30,", "no comma", "9999-01-01,Far", "2026-09-30,A\n2026-09-30,B",
+                           "2026-11-10,CPI \xe9t\xe9", "2026-11-10,CPI \xff"}) {
     std::istringstream bad(text);
     EXPECT_THROW((void)parse_events(bad), std::invalid_argument) << text;
   }

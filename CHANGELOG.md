@@ -45,6 +45,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   multi-byte character, after which `GET /api/earnings` answered 500 and
   `earnings.json` stopped being saved. Labels are now cut on a character boundary,
   and a label that is not UTF-8 is refused with its line number.
+- **Event files must be UTF-8.** An `--events` or `--event-calendar` file saved as
+  Latin-1 (Excel on Windows) loaded without a word, then volatility and
+  `GET /api/calendar/events` answered 500 for the whole run. `openportd` now refuses
+  such a file at startup, naming the file and line.
 
 ## 0.5.1 (2026-10-28)
 

@@ -1490,7 +1490,7 @@ does not add CORS response headers.
 `--events FILE` loads `YYYY-MM-DD,Label` lines for the volatility API's session-move
 table. It accepts blank lines, comments beginning with `#` and a `date,label`
 header. Dates must be valid and representable; labels are 1–160 bytes without
-control characters. Duplicate dates are rejected with a line number. Labels apply
+control characters, in UTF-8. Duplicate dates are rejected with a line number. Labels apply
 to every underlying, are read at startup, and do not affect pricing or trading.
 No event dates are bundled. See [volatility metrics](volatility.md).
 
@@ -1878,7 +1878,7 @@ columns are required (no quoted commas). Errors name the line. News timestamps
 must be exact UTC ISO-8601 ending in Z; other times are YYYY-MM-DD. Earnings
 sessions are before_open (empty defaults to it) or after_close; other kinds leave
 session empty. News may leave symbol empty; other kinds require an uppercase
-underlying. Labels have at most 64 characters; at most 256 entries. The read-scope route
+underlying. Labels are UTF-8 with at most 64 characters; at most 256 entries. The read-scope route
 `GET /api/calendar/events` serves this sorted/deduplicated catalogue for import.
 This option is separate from `--events`, the volatility API’s session-move labels.
 

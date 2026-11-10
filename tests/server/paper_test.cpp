@@ -5585,6 +5585,15 @@ TEST(EventCalendarApi, CsvAndFilteredReadRoute) {
   std::istringstream bad("# comment\nkind,time,symbol,session,label\nsplit,2026-02-30,SPY,,bad\n");
   try { (void)trading::parse_event_calendar(bad); FAIL() << "expected line error"; }
   catch (const std::invalid_argument& error) { EXPECT_NE(std::string(error.what()).find("line 3"), std::string::npos); }
+  // A label saved as Latin-1 is refused with its line, so no response is left unprintable.
+  for (const auto* text : {"news,2026-11-10T13:30:00Z,,,CPI \xff\n", "earnings,2026-11-12,AAPL,after_close,Q4 \xe9\n"}) {
+    std::istringstream latin1(std::string("kind,time,symbol,session,label\n") + text);
+    try { (void)trading::parse_event_calendar(latin1); FAIL() << "expected a UTF-8 error"; }
+    catch (const std::invalid_argument& error) {
+      EXPECT_NE(std::string(error.what()).find("line 2"), std::string::npos) << error.what();
+      EXPECT_NE(std::string(error.what()).find("UTF-8"), std::string::npos) << error.what();
+    }
+  }
 }
 }  // namespace
 

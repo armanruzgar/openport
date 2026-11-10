@@ -1,4 +1,5 @@
 #include "openport/analytics/volatility.hpp"
+#include "openport/md/utf8.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -351,6 +352,8 @@ std::vector<EventLabel> parse_events(std::istream& input) {
     if (label.empty() || label.size() > 160 ||
         std::any_of(label.begin(), label.end(), [](unsigned char c) { return c < 32 || c == 127; }))
       throw fail("label must contain 1 to 160 bytes without control characters");
+    // Responses print labels as JSON, which needs UTF-8 (a Latin-1 save is not).
+    if (!md::valid_utf8(label)) throw fail("label must be UTF-8 text; save the file as UTF-8");
     const auto day = md::new_york_time(*parsed).date;
     if (!seen.insert(day).second) throw fail("date listed twice: " + date);
     out.push_back({day, label});

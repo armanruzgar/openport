@@ -186,7 +186,8 @@ YYYY-MM-DD,Label
 
 Blank lines, `#` comments and an optional `date,label` header are allowed. Dates
 must be valid and representable in the market timestamp range. Labels are trimmed,
-1–160 bytes, with no control characters; commas after the first belong to the
+1–160 bytes of UTF-8 text, with no control characters (save the file as UTF-8, not
+Latin-1); commas after the first belong to the
 label. Duplicate dates are rejected with a line number. Labels are read at startup
 and only shown on matching sessions. No event dates ship with OpenPort.
 
