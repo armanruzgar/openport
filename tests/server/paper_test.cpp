@@ -406,6 +406,17 @@ TEST_F(PaperEngine, FillQualityAndRealFillCalibrationReadWithoutTrading) {
   expect_error(write(*engine, "POST", "/api/fills/calibration", {{"format", "generic"}}), 400, "INVALID_REQUEST");
 }
 
+TEST_F(PaperEngine, ACalibrationAnsweredIsNoLongerBusyForTheNextOne) {
+  // The worker frees itself before it answers, so a client that sends the next
+  // calibration as soon as one is answered is never told the worker is busy.
+  const auto time = md::format_timestamp(market.time);
+  const json body{{"csv", "time,symbol,side,quantity,price\n" + time + "," + market.symbol() + ",buy,1,4.10\n"}, {"format", "generic"}};
+  for (int i = 0; i < 200; ++i) {
+    const auto answer = write(*engine, "POST", "/api/fills/calibration", body);
+    ASSERT_EQ(answer.status, 200) << "request " << i << ": " << answer.body;
+  }
+}
+
 TEST(FillCalibrationSearch, ReadsTheNewestDayFirstAndStopsOnceEveryFillHasAQuoteOrAtItsLimits) {
   test::ScriptedMarket market;
   test::RecordingFile recorded;
@@ -454,22 +465,25 @@ TEST(FillCalibrationSearch, ReadsTheNewestDayFirstAndStopsOnceEveryFillHasAQuote
 }
 
 TEST(FillCalibrationSearch, OneCalibrationRunsAtATimeAndStoppingCancelsIt) {
+  using Answer = std::function<void()>;
   std::promise<void> release;
   std::promise<void> finished;
   auto worker = std::make_unique<server::CalibrationWorker>();
   ASSERT_TRUE(worker->start([&, gate = release.get_future().share()](const std::atomic_bool&) {
     gate.wait();
-    finished.set_value();
+    // The answer runs once the worker is free: a caller answered can start the next.
+    return Answer([&] { finished.set_value(); });
   }));
-  EXPECT_FALSE(worker->start([](const std::atomic_bool&) {})) << "A second waits for the first";
+  EXPECT_FALSE(worker->start([](const std::atomic_bool&) { return Answer{}; })) << "A second waits for the first";
   release.set_value();
   finished.get_future().wait();
-  ASSERT_TRUE(wait_for([&] { return worker->start([](const std::atomic_bool&) {}); }));
+  EXPECT_TRUE(worker->start([](const std::atomic_bool&) { return Answer{}; })) << "Free once its caller is answered";
   std::atomic_bool saw_cancel{false};
   ASSERT_TRUE(wait_for([&] {
     return worker->start([&](const std::atomic_bool& cancel) {
       while (!cancel) std::this_thread::sleep_for(std::chrono::milliseconds(1));
       saw_cancel = true;
+      return Answer{};
     });
   }));
   worker.reset();

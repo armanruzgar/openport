@@ -57,7 +57,10 @@ class CalibrationWorker {
   CalibrationWorker(const CalibrationWorker&) = delete;
   CalibrationWorker& operator=(const CalibrationWorker&) = delete;
   /// Starts `job` with the cancel flag it should poll; false while one is running.
-  bool start(std::function<void(const std::atomic_bool& cancel)> job);
+  /// The job returns what answers its caller, which runs once the worker is free
+  /// again, so a caller that starts the next job as soon as it is answered is not
+  /// refused as busy.
+  bool start(std::function<std::function<void()>(const std::atomic_bool& cancel)> job);
 
  private:
   std::mutex mutex_;

@@ -4384,19 +4384,22 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
       return;
     }
     static CalibrationWorker worker;
+    // The job builds the answer; the worker sends it once it is free for the next one.
     auto job = [parsed = std::move(parsed), age, directory = source.recordings_directory(), complete](const std::atomic_bool& cancel) {
+      ApiResponse response;
       try {
         const auto recorded = recorded_quotes(directory, parsed.fills, age, {}, &cancel);
         if (recorded.search.stopped == "cancelled") {
-          complete(api_error(503, "ENGINE_STOPPING", "The server is stopping"));
-          return;
+          response = api_error(503, "ENGINE_STOPPING", "The server is stopping");
+        } else {
+          auto body = calibration_json(calibrate(parsed, recorded.quotes));
+          body["search"] = {{"files", recorded.search.files}, {"bytes", recorded.search.bytes}, {"stopped", recorded.search.stopped}};
+          response = {200, body.dump()};
         }
-        auto body = calibration_json(calibrate(parsed, recorded.quotes));
-        body["search"] = {{"files", recorded.search.files}, {"bytes", recorded.search.bytes}, {"stopped", recorded.search.stopped}};
-        complete({200, body.dump()});
       } catch (const std::exception& error) {
-        complete(api_error(400, "INVALID_REQUEST", error.what()));
+        response = api_error(400, "INVALID_REQUEST", error.what());
       }
+      return std::function<void()>([complete, response = std::move(response)]() mutable { complete(std::move(response)); });
     };
     if (!worker.start(std::move(job))) {
       auto busy = api_error(503, "CALIBRATION_BUSY", "Another fill calibration is running; retry when it finishes");

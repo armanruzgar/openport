@@ -141,16 +141,22 @@ CalibrationWorker::~CalibrationWorker() {
   if (thread_.joinable()) thread_.join();
 }
 
-bool CalibrationWorker::start(std::function<void(const std::atomic_bool& cancel)> job) {
+bool CalibrationWorker::start(std::function<std::function<void()>(const std::atomic_bool& cancel)> job) {
   const std::lock_guard lock(mutex_);
   if (running_) return false;
   if (thread_.joinable()) thread_.join();
   running_ = true;
   try {
     thread_ = std::thread([this, job = std::move(job)] {
-      try { job(cancel_); } catch (...) {}
-      const std::lock_guard done(mutex_);
-      running_ = false;
+      std::function<void()> answer;
+      try { answer = job(cancel_); } catch (...) {}
+      {
+        const std::lock_guard done(mutex_);
+        running_ = false;
+      }
+      if (answer) {
+        try { answer(); } catch (...) {}
+      }
     });
   } catch (...) {
     running_ = false;

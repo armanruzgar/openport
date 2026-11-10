@@ -20,6 +20,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Back-to-back fill calibrations.** A `POST /api/fills/calibration` sent as soon as
+  the previous one was answered could get 503 `CALIBRATION_BUSY`, because the worker
+  answered before marking itself free. It now frees itself first.
 - **A request body cannot end the server.** A JSON body nested a few thousand levels
   deep overflowed an HTTP thread's stack on four routes (what-if, closing positions,
   rules comparison and rule-pack validation) and ended `openportd`. Every POST, PUT
