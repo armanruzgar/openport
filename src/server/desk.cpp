@@ -6,6 +6,7 @@
 #include "openport/pricing/black.hpp"
 #include "openport/providers/demo.hpp"
 #include "openport/trading/format.hpp"
+#include "openport/md/utf8.hpp"
 #include "openport/server/run.hpp"
 #include "metric_cache.hpp"
 #include "run_json.hpp"
@@ -1128,7 +1129,8 @@ void Desk::publish_trading() {
 }
 
 void Desk::fail_trading(PaperAccount& account, std::string reason) {
-  account.failure = std::move(reason);
+  // Reasons can quote files and parsers, and every status prints them as JSON.
+  account.failure = md::utf8_replaced(reason);
   publish_trading();
 }
 
@@ -1268,8 +1270,11 @@ void Desk::load_circuit_breaker() {
     recovered.symbol = breaker_.symbol;
     breaker_ = std::move(recovered);
     market_time_ = std::max(market_time_, breaker_.market_time);
+  } catch (const nlohmann::json::parse_error& error) {
+    // The parser's text quotes the offending byte; the status that shows this must print it.
+    breaker_.error = md::utf8_replaced("market halts: cannot read " + file.string() + ": not valid JSON at byte " + std::to_string(error.byte));
   } catch (const std::exception& error) {
-    breaker_.error = "market halts: cannot read " + file.string() + ": " + error.what();
+    breaker_.error = md::utf8_replaced("market halts: cannot read " + file.string() + ": " + error.what());
   }
 }
 

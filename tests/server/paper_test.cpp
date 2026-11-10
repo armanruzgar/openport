@@ -1657,6 +1657,30 @@ TEST(CircuitBreakers, BadRecoveryAndFailedWritesReportStorageErrorsWithoutStoppi
   }
 }
 
+TEST(CircuitBreakers, StateFilesThatAreNotUtf8AreReportedByPathAndTheServerKeepsServing) {
+  for (const std::string name : {"market-halts.json", "playbooks.json"}) {
+    SCOPED_TRACE(name);
+    auto options = paper_options();
+    options.paper_journal = paper_path();
+    const auto file = options.paper_journal.parent_path() / name;
+    { std::ofstream out(file, std::ios::binary); out << std::string("\xff\xfe\x00garbage", 10); }
+    {
+      PaperProvider provider;
+      server::Engine engine(provider, {{"SPX"}}, options);
+      engine.start();
+      const auto response = server::handle_api({"GET", "/api/status"}, engine);
+      ASSERT_EQ(response.status, 200) << response.body;
+      const auto status = json::parse(response.body);
+      const auto reason = name == "market-halts.json" ? status["circuit_breaker"]["error"].get<std::string>()
+                                                      : status["trading"]["reason"].get<std::string>();
+      EXPECT_NE(reason.find(file.string()), std::string::npos) << reason;
+      EXPECT_NE(reason.find("not valid JSON"), std::string::npos) << reason;
+      EXPECT_FALSE(server::tick_message(engine).empty());
+    }
+    std::filesystem::remove_all(options.paper_journal.parent_path());
+  }
+}
+
 TEST_F(PaperEngine, ARetriedOrderGetsItsFirstAnswer) {
   seed();
   const auto first = write(*engine, "POST", "/api/orders", order(market, "retry", "4.20"));

@@ -439,8 +439,12 @@ Playbooks::Playbooks(std::filesystem::path file, Json initial) : file_(std::move
   else if (!file_.empty() && std::filesystem::exists(file_)) {
     if (std::filesystem::file_size(file_) > 8 * 1024 * 1024) invalid("playbooks.json exceeds 8 MiB");
     std::ifstream input(file_);
-    if (!input) invalid("Cannot read playbooks.json");
-    catalogue_ = json::parse(input);
+    if (!input) invalid("Cannot read " + file_.string());
+    try {
+      catalogue_ = json::parse(input);
+    } catch (const json::parse_error& error) {
+      invalid(file_.string() + " is not valid JSON at byte " + std::to_string(error.byte));
+    }
   }
   strict_keys(catalogue_, {"schema", "definitions", "modes", "forward_tests"});
   if (catalogue_.at("schema") != 1 || !catalogue_.at("definitions").is_object() || !catalogue_.at("modes").is_object()) invalid("Invalid playbooks.json schema");

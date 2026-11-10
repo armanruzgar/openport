@@ -37,6 +37,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   expiry-delivery projection behind the risk warnings. That stopped the feed for every
   account, answered a committed fill as an error and made `openportd` exit at each
   start. The account now shows a `WARNINGS_UNAVAILABLE` warning in their place.
+- **Unreadable state files are named.** A `market-halts.json` or `playbooks.json`
+  with bytes that are not UTF-8 (a UTF-16 or Latin-1 save) ended `openportd` seconds
+  after it started, with a message that named no file. The server now keeps
+  running and reports the file's path and the byte where it stopped being JSON.
 
 ## 0.5.1 (2026-10-28)
 
