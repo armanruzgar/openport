@@ -684,6 +684,42 @@ TEST(WebServer, StopSeversLateCommandCompletionBeforeDestroyingExecutor) {
   }
   EXPECT_NO_THROW(complete({200, "{}"}));
 }
+
+TEST(WebServer, CompletionsDroppedAfterStopNeverReachTheStoppedServer) {
+  // A completion dropped unanswered answers 500, but not once the server has
+  // stopped: its io_context takes no more work, whichever thread drops it.
+  std::vector<server::ApiCompletion> kept;
+  std::mutex mutex;
+  std::atomic<int> received{0};
+  {
+    server::WebServer web("127.0.0.1", 0, {},
+        [&](const server::ApiRequest&, server::ApiCompletion callback) {
+          const std::lock_guard lock(mutex);
+          kept.push_back(std::move(callback));
+          ++received;
+        });
+    web.start(2);
+    asio::io_context io;
+    std::vector<beast::tcp_stream> connections;
+    for (int i = 0; i < 8; ++i) {
+      auto& connection = connections.emplace_back(io);
+      connection.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+      http::request<http::string_body> request{http::verb::post, "/api/risk/kill", 11};
+      request.set(http::field::host, "localhost");
+      request.set(http::field::content_type, "application/json");
+      request.body() = "{}"; request.prepare_payload();
+      http::write(connection, request);
+    }
+    const auto until = std::chrono::steady_clock::now() + std::chrono::minutes(1);
+    while (received < 8 && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    ASSERT_EQ(received, 8);
+    web.stop();
+  }
+  std::vector<std::thread> droppers;
+  for (auto& completion : kept) droppers.emplace_back([completion = std::move(completion)]() mutable { completion = nullptr; });
+  for (auto& thread : droppers) thread.join();
+  SUCCEED();
+}
 }  // namespace
 
 namespace {

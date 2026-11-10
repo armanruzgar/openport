@@ -738,8 +738,17 @@ void Hub::broadcast(const std::shared_ptr<const std::string>& message) {
   });
 }
 
+/// Whether the server's io_context still accepts work. Completions can outlive the
+/// server (an engine thread, a worker, or a pending handler destroyed with the
+/// io_context), so they post to a session only while this says so.
+struct ServerLife {
+  std::mutex mutex;
+  bool alive = true;
+};
+
 struct Shared {
   std::filesystem::path web_root;
+  std::shared_ptr<ServerLife> life = std::make_shared<ServerLife>();
   AsyncApiHandler api;
   std::chrono::steady_clock::duration read_timeout;
   WritePolicy write_policy;
@@ -999,7 +1008,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
     // The gate severs late engine completions during stop. No executor or socket
     // may outlive the server's io_context, even when a command is still queued.
-    auto deliver = [gate = completion_gate_, version = request.version(), keep_alive = request.keep_alive(),
+    auto deliver = [gate = completion_gate_, life = shared_.life, version = request.version(), keep_alive = request.keep_alive(),
                      token_file = shared_.write_policy.token_file, status = api.target == "/api/status"](ApiResponse response) {
       if (status && token_file && response.status == 200) {
         const auto loaded = token_file->snapshot();
@@ -1007,6 +1016,8 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
         body["tokens"] = {{"loaded_at", loaded->loaded_at}, {"count", loaded->tokens.size()}};
         response.body = body.dump();
       }
+      const std::lock_guard alive(life->mutex);
+      if (!life->alive) return;
       const std::lock_guard lock(gate->mutex);
       const auto self = gate->session.lock();
       if (!self) return;
@@ -1275,6 +1286,11 @@ void WebServer::stop() {
   if (impl_->threads.empty()) impl_->io.run();
   for (std::thread& thread : impl_->threads) thread.join();
   impl_->threads.clear();
+  {
+    // From here no completion posts to a session: the io_context runs no more work.
+    const std::lock_guard lock(impl_->shared.life->mutex);
+    impl_->shared.life->alive = false;
+  }
   impl_->io.stop();
   impl_->listener.reset();
 }
