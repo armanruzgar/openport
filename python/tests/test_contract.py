@@ -1,5 +1,6 @@
 # Copyright (c) 2026 OpenPort contributors. MIT License.
 import copy
+import re
 
 import jsonschema
 import pytest
@@ -18,6 +19,46 @@ def test_schema_references_and_required_types():
         elif isinstance(value, list):
             for item in value: walk(item)
     walk(SPEC)
+
+
+def test_every_path_template_variable_is_a_declared_path_parameter():
+    # Strict OpenAPI validators and client generators need each {name} declared "in: path";
+    # three archived-run mirrors were bare $refs that never declared run_id.
+    contract = Contract("", None, SPEC)
+    for path, raw in SPEC["paths"].items():
+        item = contract.resolve(raw)
+        variables = set(re.findall(r"\{(\w+)\}", path))
+        for method in ("get", "post", "put", "patch", "delete"):
+            if method in item:
+                parameters = [contract.resolve(p) for p in item.get("parameters", []) + item[method].get("parameters", [])]
+                declared = {p["name"] for p in parameters if p.get("in") == "path"}
+                assert declared == variables, f"{method.upper()} {path} declares {sorted(declared)}"
+
+
+def test_fields_the_server_always_sends_are_in_the_contract():
+    # Status.series, the volatility history fields, the breach scan bounds, a sandbox's
+    # idle lifetime and a history run's flags were sent but not in the contract.
+    schemas = SPEC["components"]["schemas"]
+    assert "series" in schemas["Status"]["required"]
+    assert {"scan_down_percent", "scan_up_percent"} <= set(schemas["Breach"]["required"])
+    assert "sandbox_idle_seconds" in schemas["AccountListItem"]["properties"]
+    assert {"imported", "simulated"} <= set(schemas["ReplayHistory"]["properties"])
+    contract = Contract("", None, SPEC)
+
+    def check(field, value):
+        jsonschema.Draft202012Validator({"$ref": "urn:openport#/components/schemas/Volatility/properties/" + field},
+                                        registry=contract.registry).validate(value)
+
+    check("history_sessions", 3)
+    check("proxy", {"name": "VIX", "used": True, "start": "2026-01-02"})
+    check("history_basis", {"current": "own_mfiv", "own_sessions": 2, "proxy_sessions": 1, "window": 252})
+    check("history_values", [{"date": "2026-09-01", "value": 0.15, "source": "own"}])
+    check("ex_post_vrp", None)
+    check("ex_post_vrp", {"proxy": False, "implied_source": "a", "realized_source": "b", "convention": "c", "summaries": [],
+                          "points": [{"date": "2026-08-01", "end": "2026-08-29", "implied": 0.03, "realized": None,
+                                      "variance": None, "vol_points": None, "source": "own"}]})
+    with pytest.raises(jsonschema.ValidationError):
+        check("history_basis", {"current": "proxy", "own_sessions": 2, "proxy_sessions": 1, "window": 252})
 
 
 def test_signed_volatility_history_and_tracking_contract():

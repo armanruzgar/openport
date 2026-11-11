@@ -51,6 +51,33 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Live-only routes under the replay mirror.** `/api/replay/X` forwarded every route
+  to the replay's engine, which shares the live server's account-group store, so
+  `PUT` or `DELETE /api/replay/account-groups/...` edited the live groups. Account
+  groups, copied orders and fill calibration now answer 404 under `/api/replay`;
+  the mirrors meant to work (share orders, Heston, rules comparison, rule-pack
+  validation) are now in `docs/openapi.yaml`.
+- **WebSocket refusals.** An upgrade to `/ws` or `/ws/events` that a token, scope or
+  account check refused always answered 403 with the JSON error as plain text, so a
+  malformed `account` was 403 where REST says 400. It now carries the REST status and
+  `application/json`; the other refusals stay plain text, as the contract now says.
+- **Analysis imports that net to zero.** A holding whose lots net to zero was dropped
+  without a word, though the docs said it was listed as skipped; it now is
+  (`line 2 SPY: its lots net to zero`).
+- **Hints and help that pointed the wrong way.** The Python client's missing-extra
+  errors said to install `openport[pandas]`, `[arrow]` or `[ws]`, which pip resolves
+  to an unrelated PyPI project; they now name `openport-client` and `./python[...]`.
+  `openportd --help` placed earnings and analysis portfolios in `~/.openport` (they
+  are beside `--candle-dir`), called Tradier's contract sizes and tastytrade's
+  millisecond times opt-in (they are the defaults) and gave the demo revisions as
+  1–8 (default 8); it now follows the generator's revision, 9. A sandbox past its
+  order budget is told that alerts, notes and grouping count too.
+- **OpenAPI gaps.** `Status.series`, the volatility history fields
+  (`history_values`, `history_basis`, `history_sessions`, `ex_post_vrp`, `proxy`),
+  the breach scan bounds, `AccountListItem.sandbox_idle_seconds` and a history run's
+  `imported` and `simulated` were sent but not in the contract, and three archived-run
+  mirrors never declared their `run_id` path parameter. A Python test now checks
+  every path's parameters.
 - **Warming-up and unknown underlyings.** Right after startup, before an underlying's
   first snapshot, its summary, chain and analytics answered 404 "no data for SPX yet",
   exactly as for an underlying the server does not carry (`ZZZ`, or `spx` for `SPX`),

@@ -48,6 +48,18 @@ describe("checked API core types", () => {
     const exits = /export type TradeExit = ([^\n]+)/.exec(source)![1]!
     expect(normalize(`${exits} | null`)).toBe(wireType(spec.components.schemas.Trade!.properties!.closed_by!))
   })
+  it("documents the status, volatility history, account list and run fields the terminal reads", () => {
+    const schemas = spec.components.schemas
+    expect(source).toMatch(/series\?: \{ enabled: boolean;/)
+    expect(schemas.Status!.required).toContain("series")
+    for (const field of ["history_sessions", "history_basis", "proxy", "history_values", "ex_post_vrp"]) {
+      expect(source).toMatch(new RegExp(`\\b${field}\\?: `))
+      expect(schemas.Volatility!.properties![field], field).toBeDefined()
+    }
+    expect(wireType(schemas.Volatility!.properties!.ex_post_vrp!)).toBe(normalize("ExPostVrp | null"))
+    expect(wireType(schemas.AccountListItem!.properties!.sandbox_idle_seconds!)).toBe("integer")
+    for (const field of ["imported", "simulated"]) expect(wireType(schemas.ReplayHistory!.properties![field]!)).toBe("boolean")
+  })
   it("account margin fields match the rules and both request contracts", () => {
     const rules = spec.components.schemas.AccountRules!.properties!
     expect(wireType(rules.account_type!)).toBe(normalize('"margin" | "cash" | "ira"'))

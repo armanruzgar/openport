@@ -891,7 +891,7 @@
             }
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1576,7 +1576,7 @@
             }
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1632,7 +1632,7 @@
             "$ref": "#/components/responses/Error"
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1696,7 +1696,7 @@
             "$ref": "#/components/responses/Error"
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1810,7 +1810,7 @@
             }
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3131,6 +3131,55 @@
         }
       }
     },
+    "/api/replay/history/{run_id}/stocks/orders": {
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/components/parameters/account"
+        }
+      ],
+      "get": {
+        "summary": "GET /api/stocks/orders",
+        "description": "Share orders, newest first; status=open lists only open ones.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StockOrdersResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "open"
+              ],
+              "default": "all"
+            }
+          }
+        ]
+      }
+    },
     "/api/replay/fills": {
       "$ref": "#/paths/~1api~1fills"
     },
@@ -3990,8 +4039,13 @@
             "description": "WebSocket upgrade. JSON messages use the Tick schema; latest snapshots replace queued ticks."
           },
           "default": {
-            "description": "Upgrade rejected (plain text)",
+            "description": "Upgrade refused. A token or scope check refuses it as the REST routes do, with their status and JSON error; otherwise the reason is plain text: 403 for an Origin that does not match Host, 400 for a query string, and 503 with Retry-After when the session table is full. A GET without an upgrade is not this route; it gets the terminal's index.html, as an unknown path does.",
             "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
               "text/plain": {
                 "schema": {
                   "type": "string"
@@ -5331,7 +5385,7 @@
             "$ref": "#/components/responses/Error"
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5400,7 +5454,7 @@
             }
           },
           "429": {
-            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 order requests per rolling minute, including submissions, previews, what-if requests, modifications, share trades and their previews. Cancels, flatten and share closes remain available.",
+            "description": "SANDBOX_ORDER_RATE: sandbox accounts share a limit of 60 requests per rolling minute, counted before the body is checked: submissions, previews, what-if requests, modifications, share trades and working share orders with their previews, and alerts, trade and day notes and trade grouping. Cancels, flatten, share closes and the other exits have a budget of their own.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5433,6 +5487,15 @@
     },
     "/api/replay/stocks/trade/preview": {
       "$ref": "#/paths/~1api~1stocks~1trade~1preview"
+    },
+    "/api/replay/stocks/orders": {
+      "$ref": "#/paths/~1api~1stocks~1orders"
+    },
+    "/api/replay/stocks/orders/preview": {
+      "$ref": "#/paths/~1api~1stocks~1orders~1preview"
+    },
+    "/api/replay/stocks/orders/{id}": {
+      "$ref": "#/paths/~1api~1stocks~1orders~1{id}"
     },
     "/api/alerts": {
       "parameters": [
@@ -6523,7 +6586,19 @@
             "description": "WebSocket upgrade"
           },
           "default": {
-            "$ref": "#/components/responses/Error"
+            "description": "Upgrade refused. A token, scope or account check refuses it as the REST routes do, with their status and JSON error: 400 INVALID_REQUEST for a malformed account, 403 for a missing token or scope, 404 UNKNOWN_ACCOUNT for another visitor's sandbox. Otherwise the reason is plain text: 403 for an Origin that does not match Host or an unavailable source, 400 for a missing or wrong version or an unknown parameter, 503 without an event channel, and 503 with Retry-After when the session table is full. An account that does not exist yet opens normally: EventStreamReady.exists is false. A GET without an upgrade is not this route; it gets the terminal's index.html, as an unknown path does.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "x-messages": [
@@ -7353,16 +7428,208 @@
       "$ref": "#/paths/~1api~1volatility~1scanner"
     },
     "/api/replay/history/{run_id}/volatility/scanner": {
-      "$ref": "#/paths/~1api~1volatility~1scanner"
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Batch volatility metrics for all subscribed symbols",
+        "description": "Batch volatility metrics for all subscribed symbols. Each row has its own market as_of and feed state; absent snapshots have null metrics. IV30 uses MFIV30 else ATM30, with the same basis for IV minus completed 21-session RV. IV rank/percentile use 252 completed session slots, including named proxies before local history; RR25 rank uses local signed values only. term_ratio is MFIV9/MFIV30. Today requires an unexpired same-day expiry. All volatility, RR and VRP values are vol points; ranks are fractions and moves are percent/points. Simulated feeds are explicitly labelled.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VolatilityScanner"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/api/replay/underlyings/{symbol}/surface-history": {
       "$ref": "#/paths/~1api~1underlyings~1{symbol}~1surface-history"
     },
+    "/api/replay/underlyings/{symbol}/heston": {
+      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1heston"
+    },
+    "/api/replay/account/rules-compare": {
+      "$ref": "#/paths/~1api~1account~1rules-compare"
+    },
+    "/api/replay/rule-packs/validate": {
+      "$ref": "#/paths/~1api~1rule-packs~1validate"
+    },
     "/api/replay/history/{run_id}/underlyings/{symbol}/surface-history": {
-      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1surface-history"
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "compare",
+          "in": "query",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "Stored SVI parameters at actual market sample times",
+        "description": "Stored SVI parameters at actual market sample times. Default range is the last 45 days; from/to accept ISO timestamps or New York dates, ordered and at most 366 days. The range list holds at most `limit` (400) snapshots, the newest ones; `truncated` is true when older snapshots in the range were left out. compare=true omits the range list and returns the prior close, one calendar week and one calendar month targets, rolled back over non-sessions. Missing target sessions are null; no nearest stored date is substituted. Close snapshots appear only once the session is complete at market as_of. Failed fits and finite-grid diagnostics remain visible.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SurfaceHistory"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/api/replay/history/{run_id}/underlyings/{symbol}/series": {
-      "$ref": "#/paths/~1api~1underlyings~1{symbol}~1series"
+      "parameters": [
+        {
+          "name": "run_id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "symbol",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "fields",
+          "in": "query",
+          "required": false,
+          "description": "Comma-separated, without repeats: spot, forward, mfiv9, mfiv30, mfiv93, mfiv182, mfiv365, atm7, atm30, atm60, atm90, atm180, rr25, bf25, rr10, bf10, ratio9_30, ratio30_93, gex, gamma_flip, call_wall, put_wall, and for 1d also proxy_iv30, rv21, vix and vix_minus_mfiv. Default: all applicable fields.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "interval",
+          "in": "query",
+          "required": false,
+          "schema": {
+            "enum": [
+              "1m",
+              "1d"
+            ],
+            "default": "1d"
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive start: Unix seconds, an ISO timestamp or a New York date (its midnight). Default: 1 day (1m) or 366 days (1d) before to.",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive end: Unix seconds, an ISO timestamp or a New York date (its whole day). Default: the current snapshot's market time, or server time before any snapshot.",
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "summary": "GET /api/underlyings/{symbol}/series",
+        "description": "Metric history from the local series store, oldest first: 1d completed sessions (up to 3,660 days) or 1m samples (up to 7 days), at most 10,000 rows. Fields are stored series names; proxy_iv30, rv21, vix and vix_minus_mfiv are daily only. VIX tracking requires same-session SPX/SPY and VIX observations, without substituting proxy history. sample_time is the local market sample; vix_sample_time is the source daily bar start. Replays and demo engines have no series store, so their own-metric fields are null.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VolatilitySeries"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown, duplicate or daily-only field; bad interval, from or to; a reversed or too-long range; or over 10,000 rows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown underlying, or a source with no market data such as a finished replay's archive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
     },
     "/api/fills/quality": {
       "parameters": [
@@ -8807,13 +9074,64 @@
           "tokens": {
             "$ref": "#/components/schemas/TokenStatus",
             "description": "Last successful named-token load, when --token-file is configured. No credentials or names."
+          },
+          "series": {
+            "type": "object",
+            "description": "Local minute volatility history (--series-dir): whether it records, where, the rows written today and the latest write and error; disabled for replays, the demo and --no-series.",
+            "required": [
+              "enabled",
+              "directory",
+              "rows_today",
+              "last_write",
+              "last_error"
+            ],
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "directory": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rows_today": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "last_write": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "last_error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
           }
         },
         "required": [
           "provider",
           "feed",
           "underlyings",
-          "engine"
+          "engine",
+          "series"
         ]
       },
       "SpotSource": {
@@ -10803,6 +11121,14 @@
             "type": "string",
             "format": "date-time",
             "description": "Actual completion wall time, distinct from simulated market time."
+          },
+          "imported": {
+            "type": "boolean",
+            "description": "Historical provider import; absent on older servers."
+          },
+          "simulated": {
+            "type": "boolean",
+            "description": "A generated market (demo or scenario), not recorded quotes; absent on older servers."
           }
         },
         "required": [
@@ -12251,6 +12577,116 @@
             "items": {
               "$ref": "#/components/schemas/EventVolatility"
             }
+          },
+          "history_sessions": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Sessions behind iv_rank, own and proxy."
+          },
+          "history_basis": {
+            "type": "object",
+            "description": "What the current value and the ranked sessions are: own model-free or ATM IV, and how many sessions are the underlying's own.",
+            "required": [
+              "current",
+              "own_sessions",
+              "proxy_sessions",
+              "window"
+            ],
+            "properties": {
+              "current": {
+                "enum": [
+                  "own_mfiv",
+                  "own_atm",
+                  "missing"
+                ]
+              },
+              "own_sessions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "proxy_sessions": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "window": {
+                "type": "integer"
+              }
+            }
+          },
+          "proxy": {
+            "type": "object",
+            "description": "The volatility index standing in for sessions without own history.",
+            "required": [
+              "name",
+              "used",
+              "start"
+            ],
+            "properties": {
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "used": {
+                "type": "boolean"
+              },
+              "start": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "history_values": {
+            "type": "array",
+            "description": "The daily observations iv_rank ranks, oldest first, each with its source.",
+            "items": {
+              "type": "object",
+              "required": [
+                "date",
+                "value",
+                "source"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "ex_post_vrp": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExPostVrp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null except for SPX and SPY."
           }
         },
         "required": [
@@ -19158,6 +19594,11 @@
           },
           "journal_size": {
             "$ref": "#/components/schemas/JournalSize"
+          },
+          "sandbox_idle_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Present only for a visible sandbox account; idle lifetime in seconds."
           }
         },
         "required": [
@@ -19816,6 +20257,14 @@
                 "soft_up"
               ]
             }
+          },
+          "scan_down_percent": {
+            "type": "number",
+            "description": "The scanned range's bound, the largest fall, in percent (-99.75)."
+          },
+          "scan_up_percent": {
+            "type": "number",
+            "description": "The scanned range's bound, the largest rise, in percent (1000)."
           }
         },
         "required": [
@@ -19823,7 +20272,9 @@
           "soft_room",
           "complete",
           "model",
-          "underlyings"
+          "underlyings",
+          "scan_down_percent",
+          "scan_up_percent"
         ]
       },
       "PriceRange": {
@@ -36951,6 +37402,186 @@
           "series"
         ],
         "description": "A split applied on its ex-date: shares held before and after, cash paid for a fraction of a share, and each option series it adjusted."
+      },
+      "ExPostVrp": {
+        "type": "object",
+        "description": "Ex-post variance risk premium for SPX (and SPY, as its proxy): 30-day implied variance against the realized variance of the following 21 sessions.",
+        "required": [
+          "proxy",
+          "points",
+          "summaries",
+          "implied_source",
+          "realized_source",
+          "convention"
+        ],
+        "properties": {
+          "proxy": {
+            "type": "boolean",
+            "description": "True for SPY, which reports SPX's premium."
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "date",
+                "end",
+                "implied",
+                "realized",
+                "variance",
+                "vol_points",
+                "source"
+              ],
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "end": {
+                  "type": "string"
+                },
+                "implied": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "realized": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "variance": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "vol_points": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "summaries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "years",
+                "observations",
+                "proxy_observations",
+                "from",
+                "to",
+                "mean_variance",
+                "median_variance",
+                "mean_vol_points",
+                "median_vol_points",
+                "positive_share"
+              ],
+              "properties": {
+                "years": {
+                  "type": "integer"
+                },
+                "observations": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "proxy_observations": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "mean_variance": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "median_variance": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "mean_vol_points": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "median_vol_points": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "positive_share": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "implied_source": {
+            "type": "string"
+          },
+          "realized_source": {
+            "type": "string"
+          },
+          "convention": {
+            "type": "string"
+          }
+        }
       }
     }
   }
