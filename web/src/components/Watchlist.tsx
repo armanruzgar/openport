@@ -6,6 +6,7 @@ import type { UnderlyingSnapshot } from "../api/types"
 import { barDay, expectedMove } from "../lib/candles"
 import { defaultExpiry } from "../lib/expiry"
 import { fixed, isNum, pct, price, vol } from "../lib/format"
+import { timestampET } from "../lib/freshness"
 import { matchingPayload } from "../lib/payload"
 import { Dialog } from "./Dialog"
 
@@ -36,7 +37,7 @@ function WatchSymbol({ underlying, onSelect }: { underlying: UnderlyingSnapshot;
       <div><dt className="text-muted">IV rank</dt><dd title={volatility?.proxy?.used ? `Includes ${volatility.proxy.name ?? "index"} proxy history` : "Own available history"}>{pct(rank, 1)}{volatility?.proxy?.used ? " · proxy" : ""}</dd></div>
       <div><dt className="text-muted">Derived ±1σ move</dt><dd>{price(expectedMove(spot, expiry?.atm_iv, expiry?.days))}</dd></div>
     </dl>
-    <p className="mt-2 break-words text-[10px] text-faint">{as_of ? `Market data: ${as_of}` : "Market time unavailable"}{expiry ? ` · ${expiry.id}` : ""}</p>
+    <p className="mt-2 break-words text-[10px] text-faint">{as_of ? `Market data: ${timestampET(as_of)}` : "Market time unavailable"}{expiry ? ` · ${expiry.id}` : ""}</p>
   </li>
 }
 export function Watchlist({ onSymbol }: { onSymbol: (symbol: string) => void }) {

@@ -153,6 +153,9 @@ describe("ticket logic", () => {
   it("mirrors the matcher's far-side marketability", () => {
     expect(marketability("buy", "limit", "4.60", quote)).toMatchObject({ marketable: true, price: 4.6, size: 3 })
     expect(marketability("buy", "limit", "4.55", quote).message).toBe("Rests below the ask ($4.60). Fills when the ask reaches $4.55.")
+    // Both prices at one precision, a sub-dollar limit included.
+    expect(marketability("buy", "limit", "0.5", { ...quote, ask: 1.5 }).message).toBe("Rests below the ask ($1.50). Fills when the ask reaches $0.50.")
+    expect(marketability("buy", "limit", "0.505", { ...quote, ask: 1.5 }).message).toBe("Rests below the ask ($1.500). Fills when the ask reaches $0.505.")
     expect(marketability("sell", "limit", "4.50", quote).message).toBe("Marketable: fills now at the bid $4.50, up to 10 displayed.")
     expect(marketability("sell", "market", "", quote).message).toBe("Fills now at the bid $4.50, up to 10 displayed; any remainder cancels.")
     expect(marketability("buy", "limit", "", quote).message).toBe("Enter a limit price.")

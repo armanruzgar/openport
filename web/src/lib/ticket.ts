@@ -44,8 +44,15 @@ export function marketability(side: Side, type: "limit" | "market", limit: strin
     return { marketable: false, price: far, size: size ?? null, message: "Enter a limit price." }
   if (buy ? far <= value : far >= value)
     return { marketable: true, price: far, size: size ?? null, message: `Marketable: fills now at the ${book} $${formatPrice(far)}${depth}.` }
+  const [quoted, limited] = samePrecision(far, value)
   return { marketable: false, price: far, size: size ?? null,
-    message: `Rests ${buy ? "below the ask" : "above the bid"} ($${formatPrice(far)}). Fills when the ${book} reaches $${formatPrice(value)}.` }
+    message: `Rests ${buy ? "below the ask" : "above the bid"} ($${quoted}). Fills when the ${book} reaches $${limited}.` }
+}
+/** Two prices in one sentence at one precision: cents, or to the tenth of a cent when either has one. */
+function samePrecision(a: number, b: number): [string, string] {
+  const subCent = (x: number) => Math.abs(x * 100 - Math.round(x * 100)) > 1e-6
+  const digits = subCent(a) || subCent(b) ? 3 : 2
+  return [a.toFixed(digits), b.toFixed(digits)]
 }
 
 export type Direction = "at_or_below" | "at_or_above"

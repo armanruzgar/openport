@@ -24,7 +24,7 @@ import { WhatIfPanel } from "../components/WhatIfPanel"
 import { ScenarioPanel } from "../components/ScenarioGrid"
 import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
 import { Badge, Empty, PageHeader, Panel, Tile, toneOf, toneText } from "../components/ui"
-import { fixed, signedPercent } from "../lib/format"
+import { fixed, isNum, signedPercent } from "../lib/format"
 import { timestampET } from "../lib/freshness"
 import { attributionParts, describeAttribution } from "../lib/attribution"
 import { matchingPayload } from "../lib/payload"
@@ -34,6 +34,9 @@ import { closingLegs } from "../lib/strategy"
 import { describeTrigger } from "../lib/ticket"
 import { deliversShares, formatMoney, paperNotice, ratio, signedMoney, subtractMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
+
+/** Dollar Greeks as the money beside them: "+$57,422.55", "−$104.64". */
+const dollars = (value: number | null | undefined) => isNum(value) ? signedMoney(value.toFixed(2)) : "—"
 
 /** Right-aligned numeric table; the first `left` columns are labels, aligned left. */
 export function Table({ label, headers, children, left = 1 }: { label: string; headers: string[]; children: ReactNode; left?: number }) {
@@ -153,7 +156,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
         <RealizedCell realised={position.realised} fees={position.fees} lifetime={position.lifetime} />
         <td className={toneText[toneOf(position.attribution?.total)]} title={position.attribution ? describeAttribution(position.attribution) : "Explained from this contract's next fill or rollover"}>
           {position.attribution ? signedMoney(position.attribution.total.toFixed(2)) : "—"}</td>
-        <td>{fixed(position.greeks.dollar_delta, 2)}</td><td>{fixed(position.greeks.vega_dollars, 2)}</td><td>{fixed(position.greeks.theta_dollars, 2)}</td>
+        <td>{dollars(position.greeks.dollar_delta)}</td><td>{dollars(position.greeks.vega_dollars)}</td><td>{dollars(position.greeks.theta_dollars)}</td>
         <td><div className="flex justify-end gap-1.5">
           {onExercise && position.quantity > 0 && !position.awaiting_settlement && deliversShares(position.underlying) &&
             <button type="button" className="trade-button" aria-label={`Exercise ${position.symbol}`} onClick={() => onExercise(position)}>Exercise</button>}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { extent, labelRows, linear, niceTicks } from "../charts/scale"
 import { flashDirection } from "./flash"
-import { count, days, expiryLabel, fixed, price, vol } from "./format"
+import { count, days, expiryLabel, fixed, money, price, vol } from "./format"
 import { formatRoute, parseRoute } from "./route"
 
 describe("route", () => {
@@ -40,6 +40,12 @@ describe("format", () => {
       expect(fixed(value)).toBe("—")
       expect(vol(value)).toBe("—")
     }
+  })
+
+  it("signs compact money with the typographic minus, as signed money does", () => {
+    expect(money(-2.65e9)).toBe("−$2.65B")
+    expect(money(1_500)).toBe("$1.5K")
+    expect(money(null)).toBe("—")
   })
 
   it("preserves received zero quotes and open interest", () => {

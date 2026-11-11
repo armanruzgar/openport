@@ -901,6 +901,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   tracked though ignored, so anything that put `python/src` on `sys.path`, as the
   Python tests do, saw a phantom `openport` 0.1.0 beside `openport-client`. It is no
   longer tracked, and a test keeps such metadata out.
+- **Numbers and times read the same on every page.** The positions table showed
+  dollar Greeks as bare numbers (`57422.55`, `-104.64`) beside money columns; compact
+  dollars such as GEX used an ASCII hyphen where signed money uses a minus sign; the
+  Orders and Fills time column was on a 12-hour clock with no zone; the expanded
+  watchlist showed its market time as a raw UTC timestamp; and a resting limit's hint
+  could state one price to the cent and the other to the tenth of a cent ("$1.50" and
+  "$0.500"). Dollar Greeks are now money, compact dollars take the minus sign, order
+  and fill times are on the 24-hour New York clock with "ET", the watchlist time is in
+  New York time, and both prices of a hint share one precision.
 
 ## 0.5.1 (2026-10-28)
 

@@ -73,7 +73,9 @@ describe("working orders", () => {
     const walking = { ...order, walk: { step: "0.10", seconds: 10, limit: "5.00" },
       next_walk: { time: "2026-09-22T14:00:10.000Z", limit_price: "4.70" } }
     const table = render(<OrdersView />, [walking])
-    expect(table).toContain("Walk · $4.70 at 10:00:10 AM ET")
+    expect(table).toContain("Walk · $4.70 at 10:00:10 ET")
+    // The time column is on the same 24-hour New York clock.
+    expect(render(<OrdersView />, [{ ...walking, accepted_at: "2026-09-22T18:33:15Z" }])).toContain(">14:33:15 ET</td>")
     const edit = render(<EditOrderDialog order={walking} trading={trading} onClose={() => {}} onDone={() => {}} />)
     expect(edit).toContain("Walk cap ($)")
     expect(edit).toContain('value="5.00"')

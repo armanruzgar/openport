@@ -33,8 +33,9 @@ export function vol(x: Value, digits = 2): string {
   return isNum(x) ? (x * 100).toFixed(digits) : dash
 }
 
+/// Compact dollars with the typographic minus signed money uses: -2.65e9 -> "−$2.65B".
 export function money(x: Value): string {
-  return isNum(x) ? compactMoney.format(x) : dash
+  return isNum(x) ? compactMoney.format(x).replace("-", "−") : dash
 }
 
 export function count(x: Value): string {

@@ -22,7 +22,9 @@ const statusTone: Record<Order["status"], Tone> = {
 const statusLabel: Record<Order["status"], string> = {
   working: "Working", partially_filled: "Partial", filled: "Filled", cancelled: "Cancelled", rejected: "Rejected", armed: "Armed",
 }
-const timeFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", second: "2-digit" })
+/** "09:33:15 ET": the 24-hour New York clock the header, Dashboard and Positions use. */
+const timeFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+const timeET = (iso: string) => Number.isFinite(Date.parse(iso)) ? `${timeFormat.format(Date.parse(iso))} ET` : "—"
 const dayFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", month: "short", day: "numeric", year: "numeric" })
 /** A multi-leg net price: "$1.20 db" or "$0.80 cr". */
 export function netLabel(value: string): string {
@@ -123,7 +125,7 @@ function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[];
       {groupByDay(orders, (o) => o.accepted_at).flatMap((group) => [
         <tr key={`day-${group.day}`} className="bg-raised/40"><td colSpan={9} className="!py-1 text-[10px] uppercase tracking-wide text-muted">{group.label}</td></tr>,
         ...group.items.map((order) => <tr key={order.id}>
-          <td className="text-muted">{Number.isFinite(Date.parse(order.accepted_at)) ? timeFormat.format(Date.parse(order.accepted_at)) : "—"}</td>
+          <td className="text-muted">{timeET(order.accepted_at)}</td>
           <td className="!text-left"><div className="flex items-center gap-1.5 font-medium">{orderLabel(order)}
               {order.legs && <Badge tone="accent">{order.legs.length} legs</Badge>}
               {order.role && <Badge tone={order.role === "stop_loss" ? "negative" : "positive"}>{order.role === "stop_loss" ? "Stop" : "Target"}</Badge>}
@@ -139,7 +141,7 @@ function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[];
           <td>{order.filled_quantity} / {order.quantity}</td>
           <td>{order.limit_price ? order.legs ? netLabel(order.limit_price) : formatMoney(order.limit_price) : "MKT"}
             {order.walk && <div className="text-[11px] text-muted" title={order.next_walk?.time}>Walk · {order.next_walk
-              ? `${formatMoney(order.next_walk.limit_price)} at ${timeFormat.format(Date.parse(order.next_walk.time))} ET` : isOpen(order) ? "resting" : "ended"}</div>}
+              ? `${formatMoney(order.next_walk.limit_price)} at ${timeET(order.next_walk.time)}` : isOpen(order) ? "resting" : "ended"}</div>}
           </td>
           <td>{order.legs && order.average_fill_price ? netLabel(order.average_fill_price) : formatMoney(order.average_fill_price)}</td>
           <td><div className="flex flex-col items-end gap-1">
@@ -172,7 +174,7 @@ function FillsTable({ fills }: { fills: Fill[] }) {
     {groupByDay(fills, (f) => f.time).flatMap((group) => [
       <tr key={`day-${group.day}`} className="bg-raised/40"><td colSpan={8} className="!py-1 text-[10px] uppercase tracking-wide text-muted">{group.label}</td></tr>,
       ...group.items.map((fill) => <tr key={fill.id}>
-        <td className="text-muted">{Number.isFinite(Date.parse(fill.time)) ? timeFormat.format(Date.parse(fill.time)) : "—"}</td>
+        <td className="text-muted">{timeET(fill.time)}</td>
         <td className="!text-left font-medium">{osiLabel(fill.symbol, fill.underlying)}</td>
         <td className={fill.side === "buy" ? "text-bullish" : "text-bearish"}>{fill.side.toUpperCase()}</td>
         <td>{fill.quantity}</td><td>{formatMoney(fill.price)}</td><td><FillBook fill={fill} /></td><td>{<FeeAmount fee={fill.fee} fees={fill.fees} />}</td><td>#{fill.order_id}<div className="text-[10px] text-faint">{fill.actor ?? "unknown"}</div></td>
