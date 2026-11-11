@@ -110,8 +110,10 @@ describe("socket recovery", () => {
     cleanups.push(connectLive("ws://localhost/ws", client, onTick, onConnection))
     const first = Socket.instances[0]!
     first.open()
-    await vi.waitFor(() => expect(observer.getCurrentResult().data).toBe("first connection"))
-    expect(client.getQueryState(inactiveKey)?.isInvalidated).toBe(true)
+    // The first open follows the page's own first requests: nothing is cancelled or asked again.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(queryFn).not.toHaveBeenCalled()
+    expect(client.getQueryState(inactiveKey)?.isInvalidated).toBe(false)
     first.message(tick)
     expect(onTick).toHaveBeenLastCalledWith(tick)
     first.close()
@@ -123,7 +125,8 @@ describe("socket recovery", () => {
     const second = Socket.instances[1]!
     second.open()
     await vi.waitFor(() => expect(observer.getCurrentResult().data).toBe(server))
-    expect(queryFn).toHaveBeenCalledTimes(2)
+    expect(client.getQueryState(inactiveKey)?.isInvalidated).toBe(true)
+    expect(queryFn).toHaveBeenCalledTimes(1)
     expect(onConnection).toHaveBeenLastCalledWith("open")
     first.message(tick)
     first.close()
@@ -145,7 +148,13 @@ describe("socket recovery", () => {
     const onConnection = vi.fn()
     const cleanup = connectLive("ws://localhost/ws", client, onTick, onConnection)
     cleanups.push(cleanup)
-    const socket = Socket.instances[0]!
+    const first = Socket.instances[0]!
+    first.open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(signal?.aborted).toBe(false)
+    first.close()
+    await vi.advanceTimersByTimeAsync(500)
+    const socket = Socket.instances[1]!
     socket.open()
     await request
     expect(signal?.aborted).toBe(true)
@@ -156,12 +165,31 @@ describe("socket recovery", () => {
     socket.message(tick)
     socket.open()
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(Socket.instances).toHaveLength(1)
+    expect(Socket.instances).toHaveLength(2)
     expect(onTick).not.toHaveBeenCalled()
     expect(onConnection).not.toHaveBeenCalled()
   })
 })
 
+
+it("refetches on the first open after a failed attempt, when the server may have restarted", async () => {
+  vi.useFakeTimers()
+  vi.stubGlobal("WebSocket", Socket)
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, gcTime: Infinity, retry: false } } })
+  cleanups.push(() => client.clear())
+  const key = ["summary", "SPX", 1]
+  client.setQueryData(key, "before the restart")
+  const queryFn = vi.fn(async () => "after the restart")
+  const observer = new QueryObserver<string>(client, { queryKey: key, queryFn })
+  cleanups.push(observer.subscribe(() => {}))
+  cleanups.push(connectLive("ws://localhost/ws", client, () => {}, () => {}))
+  // The server is down at first: the attempt closes without opening.
+  Socket.instances[0]!.close()
+  await vi.advanceTimersByTimeAsync(500)
+  Socket.instances[1]!.open()
+  await vi.waitFor(() => expect(observer.getCurrentResult().data).toBe("after the restart"))
+  expect(queryFn).toHaveBeenCalledOnce()
+})
 
 it("authenticates browser sockets through subprotocols without putting tokens in the URL", () => {
   vi.stubGlobal("WebSocket", Socket)

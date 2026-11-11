@@ -1247,6 +1247,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   asked to "Load the far chain", which nothing would load. The dialog now says that no
   later expiry is listed or that one must be chosen, and a recalled preset whose far
   expiry has passed starts from the first later one.
+- **Loading the terminal sends its first requests once.** The WebSocket opening a few
+  milliseconds after the page's first requests cancelled them and sent them again,
+  status and the replay listing included, on every load and reload. The socket's first
+  open now leaves them alone; a reconnect, or an open after a failed attempt, still
+  refreshes everything, since the server may have restarted.
 
 ## 0.5.1 (2026-10-28)
 

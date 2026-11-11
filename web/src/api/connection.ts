@@ -17,6 +17,9 @@ export function connectLive(
   let timer: ReturnType<typeof setTimeout> | undefined
   let disposed = false
   let replayState: string | undefined
+  // Until this connection first opens or fails, the cache holds only what the page has
+  // just asked for (LiveProvider invalidates everything on mount and on a new token).
+  let fresh = true
 
   const connect = () => {
     const token = writeToken.get()
@@ -28,6 +31,9 @@ export function connectLive(
       retry = 0
       onTick(null)
       onConnection("open")
+      // The first open comes moments after the page's own first requests: cancelling
+      // and sending them again would only repeat them.
+      if (fresh) { fresh = false; return }
       // A restarted server may reuse old version numbers. Invalidate every key,
       // including inactive ones, and cancel responses from the previous session.
       void queryClient.cancelQueries().then(() => {
@@ -53,6 +59,7 @@ export function connectLive(
     }
     current.onclose = () => {
       if (disposed || socket !== current) return
+      fresh = false
       onTick(null)
       onReplayTick(null)
       onConnection("closed")
