@@ -169,6 +169,34 @@ TEST(Series, EvictedMinutesKeepDuplicateAndForceSemanticsAndUpdateTheDailyClose)
   EXPECT_EQ(restored.rows("SPX", samples.front().time, samples.back().time, true).front().values[3], 80);
 }
 
+// I-39: a backfill into a month older than the minutes kept in memory parses that
+// month once, not twice for every minute; its own appends and outside changes to the
+// file still count.
+TEST(Series, BackfillIntoAnOldMonthKeepsItsRowsAndFollowsItsFile) {
+  test::RecordingFile temp;
+  const auto directory = temp.directory / "series";
+  server::SeriesStore store(directory);
+  ASSERT_TRUE(store.insert("SPX", row(ny(15, 59, {2026, 11, 2}))));
+  std::vector<server::SeriesRow> august;
+  for (int minute = 9 * 60 + 30; minute <= 16 * 60; ++minute) august.push_back(row(ny(minute / 60, minute % 60, {2026, 8, 4})));
+  for (const auto& sample : august) {
+    ASSERT_FALSE(store.contains("SPX", sample.time));
+    ASSERT_TRUE(store.insert("SPX", sample));
+    ASSERT_TRUE(store.contains("SPX", sample.time));
+  }
+  EXPECT_EQ(store.cached_minutes("SPX"), 1u);
+  EXPECT_FALSE(store.insert("SPX", august.front()));
+  EXPECT_FALSE(store.insert("SPX", august.front(), true));
+  auto changed = august.front();
+  changed.values[3] = 80;
+  EXPECT_TRUE(store.insert("SPX", changed, true));
+  EXPECT_FALSE(store.insert("SPX", changed, true));
+  EXPECT_EQ(store.rows("SPX", changed.time, changed.time).front().values[3], 80);
+  // A file removed outside is looked at again, not answered from what was kept.
+  std::filesystem::remove(directory / "SPX-2026-08.csv");
+  EXPECT_FALSE(store.contains("SPX", august.back().time));
+}
+
 TEST(Series, OnDemandReadsUseLoaderDamageHandlingAndKeepTheValidPrefix) {
   test::RecordingFile temp;
   const auto directory = temp.directory / "series";

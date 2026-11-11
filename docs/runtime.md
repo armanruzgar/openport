@@ -1699,7 +1699,10 @@ openportd --series-dir ./series --backfill-series monday.oprec --force
 
 The first complete snapshot of a minute is sampled. Repeating an unchanged
 recording writes nothing. `--force` appends only changed values. Demo recordings
-are refused. A recording without `SnapshotComplete` events cannot be backfilled.
+are refused. A month older than the 45 days of minutes kept in memory is read once
+and kept (a few months at a time) while the backfill writes into it, so rebuilding
+older history into a directory that has been recording live takes as long as
+writing it. A recording without `SnapshotComplete` events cannot be backfilled.
 Cboe proxy closes share the existing in-memory daily-bar cache; they are fetched
 again after restart, and `--no-history` disables that fetch. They are never
 written into the local metric CSVs. [Definitions and API](volatility.md#local-history).

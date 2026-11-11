@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <thread>
@@ -79,6 +80,15 @@ class SeriesStore {
   void read_file(const std::filesystem::path& path, const std::function<void(const SeriesRow&)>& visit) const;
   [[nodiscard]] std::map<md::Timestamp, SeriesRow> read_minutes(const std::string& symbol,
       md::Timestamp from, md::Timestamp to) const;
+  /// The row a month file holds for `minute`, one older than the minutes kept in
+  /// memory. Each month is parsed once and kept, a few at a time, while its file keeps
+  /// the size this store last saw: a backfill into an old month then parses it once,
+  /// not twice for every minute it writes.
+  [[nodiscard]] std::optional<SeriesRow> archived_row(const std::string& symbol, md::Timestamp minute) const;
+  struct ArchivedMonth {
+    std::uintmax_t bytes = 0;
+    std::map<md::Timestamp, SeriesRow> rows;
+  };
   void remember(const std::string& symbol, const SeriesRow& row);
   void index_daily(const std::string& symbol, const SeriesRow& row) const;
   void refresh_calendar() const;
@@ -87,6 +97,7 @@ class SeriesStore {
   std::map<std::string, std::map<md::Timestamp, SeriesRow>> rows_;
   mutable std::map<std::string, std::map<md::Date, SeriesRow>> daily_;
   std::map<std::string, std::map<std::string, std::filesystem::path>> files_;
+  mutable std::map<std::pair<std::string, std::string>, ArchivedMonth> archived_;  ///< by symbol and month
   mutable std::vector<md::ScheduledDay> calendar_;
   mutable std::set<std::filesystem::path> damaged_;
   md::Timestamp last_write_ = 0;

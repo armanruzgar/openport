@@ -150,12 +150,10 @@ bool SeriesStore::insert(const std::string& symbol, const SeriesRow& row, bool f
   }
   auto& series = rows_[symbol];
   const auto found = series.find(row.time);
-  std::map<md::Timestamp, SeriesRow> archived;
-  if (found == series.end() && (series.empty() || row.time <= series.rbegin()->first - kSeriesMinuteRetention)) {
-    archived = read_minutes(symbol, row.time, row.time);
-  }
-  const SeriesRow* previous = !archived.empty() ? &archived.begin()->second
-      : found != series.end() ? &found->second : nullptr;
+  std::optional<SeriesRow> archived;
+  if (found == series.end() && (series.empty() || row.time <= series.rbegin()->first - kSeriesMinuteRetention))
+    archived = archived_row(symbol, row.time);
+  const SeriesRow* previous = archived ? &*archived : found != series.end() ? &found->second : nullptr;
   if (previous && (!force || line_of(*previous) == line_of(row))) return false;
   try {
     refresh_calendar();
@@ -171,6 +169,13 @@ bool SeriesStore::insert(const std::string& symbol, const SeriesRow& row, bool f
         throw std::runtime_error("cannot write " + path.string());
       }
       files_[symbol][month] = path;
+      // A kept month follows this store's own appends; any other change to its file reloads it.
+      if (const auto kept = archived_.find({symbol, month}); kept != archived_.end()) {
+        std::error_code size_error;
+        kept->second.rows[row.time] = row;
+        kept->second.bytes = std::filesystem::file_size(path, size_error);
+        if (size_error) archived_.erase(kept);
+      }
     }
     remember(symbol, row);
     return true;
@@ -184,7 +189,35 @@ bool SeriesStore::contains(const std::string& symbol, md::Timestamp minute) cons
     if (found->second.contains(minute)) return true;
     if (minute > found->second.rbegin()->first - kSeriesMinuteRetention) return false;
   }
-  return !read_minutes(symbol, minute, minute).empty();
+  return archived_row(symbol, minute).has_value();
+}
+
+std::optional<SeriesRow> SeriesStore::archived_row(const std::string& symbol, md::Timestamp minute) const {
+  const auto month = month_of(minute);
+  const auto symbol_files = files_.find(symbol);
+  if (symbol_files == files_.end()) return std::nullopt;
+  const auto file = symbol_files->second.find(month);
+  if (file == symbol_files->second.end()) return std::nullopt;
+  const std::pair<std::string, std::string> key{symbol, month};
+  std::error_code size_error;
+  const auto bytes = std::filesystem::file_size(file->second, size_error);
+  if (size_error) {
+    archived_.erase(key);
+    read_file(file->second, [](const SeriesRow&) {});  // reports why it cannot be read, as before
+    return std::nullopt;
+  }
+  auto kept = archived_.find(key);
+  if (kept == archived_.end() || kept->second.bytes != bytes) {
+    // A backfill works through one month and then the next: keep only a few.
+    if (kept == archived_.end() && archived_.size() >= 4) archived_.clear();
+    auto& loaded = archived_[key];
+    loaded = ArchivedMonth{bytes, {}};
+    read_file(file->second, [&](const SeriesRow& row) { loaded.rows[row.time] = row; });
+    kept = archived_.find(key);
+  }
+  const auto row = kept->second.rows.find(minute);
+  if (row == kept->second.rows.end()) return std::nullopt;
+  return row->second;
 }
 
 void SeriesStore::index_daily(const std::string& symbol, const SeriesRow& row) const {

@@ -1369,6 +1369,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   losing every other holding, though dividend reinvestment and fractional trading put
   such rows in most exports. The whole shares are now imported and the fraction is
   listed as skipped; an option quantity must still be whole.
+- **Backfilling an older month of the minute series no longer slows down as it goes.**
+  For a minute more than 45 days before the newest one kept, `--backfill-series` read
+  and parsed that month's whole CSV twice per minute it wrote, so ten sessions into a
+  series directory that had been recording live took minutes instead of
+  milliseconds. Such a month is now parsed once and kept while its file is unchanged.
 
 ## 0.5.1 (2026-10-28)
 
