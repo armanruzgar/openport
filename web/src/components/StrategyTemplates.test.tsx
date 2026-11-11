@@ -11,6 +11,7 @@ import { templateChain as chain, farTemplateChain as far } from "../test/templat
 import { renderTimeout, waitForRender } from "../test/render"
 import { account, order, portfolio, status, summary } from "../test/trading-fixtures"
 import { ChainView } from "../views/ChainView"
+import { StrategyTemplates } from "./StrategyTemplates"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 vi.mock("../api/trading", async (original) => ({ ...await original<typeof import("../api/trading")>(), useRefreshTrading: () => vi.fn() }))
@@ -167,7 +168,7 @@ describe("strategy template review", { timeout: renderTimeout }, () => {
     await openTemplates()
     await field("Template", "calendar")
     expect(button("Review in ticket").disabled).toBe(true)
-    expect(host.textContent).toContain(`Load the far chain (${far.expiry.id})`)
+    expect(host.textContent).toContain(`Loading the far chain (${far.expiry.id})…`)
     expect(api.chain).toHaveBeenCalledWith("SPX", far.expiry.id, 0, expect.any(AbortSignal))
     await act(async () => resolveFar(far))
     await readyToReview()
@@ -178,6 +179,34 @@ describe("strategy template review", { timeout: renderTimeout }, () => {
     expect(host.textContent).toContain("Estimated P&L at the Oct 16 expiry")
     expect(host.textContent).toContain("call-calendar-atm")
     expect(api.submitOrder).not.toHaveBeenCalled()
+  })
+  it("says what a calendar's far leg lacks instead of waiting for a chain that never loads", async () => {
+    const templates = (expiries: Chain["expiry"][]) => act(async () => root.render(<QueryClientProvider client={client}>
+      <StrategyTemplates near={chain} expiries={expiries} onApply={() => {}} onClose={() => {}} />
+    </QueryClientProvider>))
+    await templates([chain.expiry])
+    await field("Template", "calendar")
+    expect(host.textContent).toContain(`No expiry after ${chain.expiry.expiry} is listed, so this template has no far leg.`)
+    expect(button("Review in ticket").disabled).toBe(true)
+    await templates([chain.expiry, far.expiry])
+    expect(host.textContent).toContain("Choose a later expiry for the far leg.")
+    await field("Far expiry", far.expiry.id)
+    await readyToReview()
+    await field("Far expiry", "")
+    expect(host.textContent).toContain("Choose a later expiry for the far leg.")
+    expect(button("Review in ticket").disabled).toBe(true)
+  })
+  it("recalls a calendar preset whose far expiry has passed with the first later one", async () => {
+    localStorage.setItem("openport.strategy-presets.SPX", JSON.stringify([{ name: "Old calendar",
+      template: { kind: "calendar", type: "call", target: { mode: "atm" }, farExpiry: "2026-09-18AM", offset: 0 } }]))
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <StrategyTemplates near={chain} expiries={[chain.expiry, far.expiry]} onApply={() => {}} onClose={() => {}} />
+    </QueryClientProvider>))
+    await field("Saved preset", "Old calendar")
+    const farExpiry = [...host.querySelectorAll("label")].find((node) => node.firstChild?.textContent === "Far expiry")!.querySelector("select")!
+    expect(farExpiry.value).toBe(far.expiry.id)
+    expect(host.textContent).not.toContain("2026-09-18AM")
+    await readyToReview()
   })
   it("requests the surface prefix containing a later selected expiry", async () => {
     client.setQueryData(["chain", "SPX", far.expiry.id, .05, 1], far)

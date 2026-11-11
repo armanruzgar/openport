@@ -58,8 +58,13 @@ export function StrategyTemplates({ near, expiries, onApply, onClose, onStockStr
     enabled: farId == null || far != null,
     retry: false,
   })
-  const setup = selection.data ?? { reason: selection.error ? selection.error.message : farId && !far
-    ? `Load the far chain (${farId}) before building this template.` : "Selecting listed contracts…" }
+  // A calendar or diagonal needs a listed later expiry: none chosen, or one no longer
+  // listed (an old preset's), loads nothing, so say what is missing rather than wait.
+  const farListed = farId != null && later.some((e) => e.id === farId)
+  const setup = selection.data ?? { reason: selection.error ? selection.error.message
+    : farId != null && !farListed ? (later.length ? "Choose a later expiry for the far leg."
+      : `No expiry after ${near.expiry.expiry} is listed, so this template has no far leg.`)
+    : farId && !far ? `Loading the far chain (${farId})…` : "Selecting listed contracts…" }
   const modes: TemplateTarget["mode"][] = template.kind === "vertical" ? ["delta", "points", "moves"]
     : template.kind === "condor" ? ["delta", "moves"] : template.kind === "butterfly" ? ["atm", "strike"] : ["atm", "delta"]
   const save = () => {
@@ -83,7 +88,12 @@ export function StrategyTemplates({ near, expiries, onApply, onClose, onStockStr
       {presets.length > 0 && <label className="trade-label">Saved preset
         <select className="trade-input" value="" onChange={(e) => {
           const saved = presets.find((p) => p.name === e.target.value)
-          if (saved) { setTemplate(saved.template); setPresetName(saved.name); setStorageMessage("") }
+          if (!saved) return
+          // A preset's far expiry may have expired since: start from the first later one instead.
+          const recalled = saved.template
+          const farExpiry = "farExpiry" in recalled ? recalled.farExpiry : null
+          setTemplate("farExpiry" in recalled && !later.some((option) => option.id === farExpiry) ? { ...recalled, farExpiry: later[0]?.id ?? "" } : recalled)
+          setPresetName(saved.name); setStorageMessage("")
         }}><option value="">Choose a preset for {near.symbol}</option>{presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}</select>
       </label>}
       <div className="grid grid-cols-2 gap-3">

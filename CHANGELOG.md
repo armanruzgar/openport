@@ -1241,6 +1241,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   a button, so after clicking a sidebar page, a tab or any other button the advertised
   "1-9 Switch sidebar page" did nothing until focus moved. Digits now switch pages from
   a focused button; the left and right arrows still stay with it.
+- **Calendar and diagonal templates say what their far leg lacks.** On the last listed
+  expiry, or with **Choose a later expiry** picked, the strategy templates showed
+  "Selecting listed contracts…" forever; a saved preset whose far expiry had passed
+  asked to "Load the far chain", which nothing would load. The dialog now says that no
+  later expiry is listed or that one must be chosen, and a recalled preset whose far
+  expiry has passed starts from the first later one.
 
 ## 0.5.1 (2026-10-28)
 
