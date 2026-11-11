@@ -1,7 +1,11 @@
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <iterator>
+#include <stdexcept>
+#include <string>
 #include <sys/stat.h>
 #include "openport/server/equity.hpp"
 #include "support/scripted_market.hpp"
@@ -10,11 +14,27 @@ namespace openport::server {
 namespace {
 using trading::Money;
 Money m(std::string_view value) { return Money::parse(value); }
+// Made by mkdtemp: a name from the clock alone was shared by test processes that
+// CTest started in the same microsecond, which then read or deleted each other's rows.
 struct Directory {
-  std::filesystem::path path = std::filesystem::temp_directory_path() / ("openport-equity-" + std::to_string(md::now()));
-  Directory() { std::filesystem::create_directories(path); }
+  std::filesystem::path path = make();
   ~Directory() { std::error_code ignored; std::filesystem::remove_all(path, ignored); }
+  static std::filesystem::path make() {
+    auto pattern = (std::filesystem::temp_directory_path() / "openport-equity-XXXXXX").string();
+    if (!::mkdtemp(pattern.data())) throw std::runtime_error("cannot create an equity test directory");
+    return pattern;
+  }
 };
+std::string bytes_of(const std::filesystem::path& file) {
+  std::ifstream input(file, std::ios::binary);
+  return std::string(std::istreambuf_iterator<char>(input), {});
+}
+std::size_t lines_of(const std::filesystem::path& file) {
+  std::ifstream input(file);
+  std::size_t count = 0;
+  for (std::string row; std::getline(input, row);) ++count;
+  return count;
+}
 TEST(EquityStore, PersistsMinuteAndFillSamplesReloadsAndLeavesGaps) {
   Directory dir;
   const auto file = dir.path / "account.jsonl.equity.csv";
@@ -60,6 +80,104 @@ TEST(EquityStore, CompactsOldAttemptsButKeepsCurrentAndDoesNotThrowOnStorageFail
   EXPECT_NO_THROW(failed.append(sample));
   EXPECT_FALSE(failed.error().empty());
   EXPECT_EQ(EquityStore(file).samples().size(), 2U);
+}
+// Compaction keeps the current attempt however old it is: removing that rule wiped a
+// long-running account's whole curve at its next restart, which compacts on open.
+TEST(EquityStore, CompactionKeepsTheCurrentAttemptHoweverOld) {
+  Directory dir;
+  const auto file = dir.path / "history.csv";
+  const auto time = md::new_york_to_utc({2026, 1, 2}, 10, 0);
+  EquitySample sample{time, 1, m("10000"), {}, m("10000"), {}, {}, 0};
+  {
+    EquityStore store(file);
+    store.append(sample);
+    sample.time += 100 * md::kNanosPerDay;
+    store.append(sample);
+  }
+  EquityStore reopened(file);
+  ASSERT_EQ(reopened.samples().size(), 2U);
+  EXPECT_EQ(reopened.samples()[0].time, time);
+  // A new attempt drops only the earlier one's rows from more than 90 days before it.
+  sample.attempt = 2;
+  sample.time += md::kNanosPerMinute;
+  reopened.append(sample);
+  ASSERT_EQ(reopened.samples().size(), 2U);
+  EXPECT_EQ(reopened.samples()[0].time, time + 100 * md::kNanosPerDay);
+  EXPECT_EQ(reopened.samples()[0].attempt, 1U);
+  EXPECT_EQ(reopened.samples()[1].attempt, 2U);
+  EXPECT_EQ(EquityStore(file).samples().size(), 2U);
+}
+// At most 100,000 samples of earlier attempts stay, the newest of them, even inside 90 days.
+TEST(EquityStore, KeepsTheNewestHundredThousandSamplesOfEarlierAttempts) {
+  Directory dir;
+  const auto file = dir.path / "history.csv";
+  const auto start = md::new_york_to_utc({2026, 1, 2}, 10, 0);
+  constexpr int kEarlier = 100'010;  // minutes: about 69 days
+  {
+    std::ofstream out(file);
+    for (int i = 0; i < kEarlier; ++i)
+      out << start + i * md::kNanosPerMinute << ",1,100000000000,null,100000000000,null,null,0,0\n";
+  }
+  EquityStore store(file);
+  ASSERT_EQ(store.samples().size(), static_cast<std::size_t>(kEarlier));  // all the current attempt
+  store.append({start + kEarlier * md::kNanosPerMinute, 2, m("10000"), {}, m("10000"), {}, {}, 0});
+  ASSERT_EQ(store.samples().size(), 100'001U);
+  EXPECT_EQ(store.samples().front().time, start + 10 * md::kNanosPerMinute);
+  EXPECT_EQ(store.samples()[99'999].attempt, 1U);
+  EXPECT_EQ(store.samples().back().attempt, 2U);
+  EXPECT_TRUE(store.error().empty()) << store.error();
+  EXPECT_EQ(lines_of(file), 100'001U);
+  EXPECT_EQ(EquityStore(file).samples().size(), 100'001U);
+}
+// Between resets, every 4096th line written compacts the file too, so a long attempt
+// does not carry an earlier attempt's old rows until the next restart or reset.
+TEST(EquityStore, EveryFourThousandNinetySixthLineCompactsTheHistory) {
+  Directory dir;
+  const auto file = dir.path / "history.csv";
+  const auto start = md::new_york_to_utc({2026, 1, 2}, 10, 0);
+  EquityStore store(file);
+  store.append({start, 1, m("10000"), {}, m("10000"), {}, {}, 0});
+  // The reset compacts and keeps attempt 1's recent row: two lines.
+  store.append({start + md::kNanosPerMinute, 2, m("10000"), {}, m("10000"), {}, {}, 0});
+  ASSERT_EQ(store.samples().size(), 2U);
+  // 91 days on, that row is old, but only a compaction drops it.
+  const auto later = start + 91 * md::kNanosPerDay;
+  for (int i = 0; i < 4093; ++i)
+    store.append({later + i * md::kNanosPerMinute, 2, m("10000"), {}, m("10000"), {}, {}, 0});
+  ASSERT_EQ(store.samples().size(), 4095U);
+  EXPECT_EQ(store.samples().front().attempt, 1U);
+  EXPECT_EQ(lines_of(file), 4095U);
+  store.append({later + 4093 * md::kNanosPerMinute, 2, m("10000"), {}, m("10000"), {}, {}, 0});  // line 4096
+  ASSERT_EQ(store.samples().size(), 4095U);
+  EXPECT_EQ(store.samples().front().attempt, 2U);
+  EXPECT_EQ(lines_of(file), 4095U);
+  EXPECT_TRUE(store.error().empty()) << store.error();
+  EXPECT_EQ(EquityStore(file).samples().size(), 4095U);
+}
+// A damaged account's history is opened read-only (Desk::open_journal), and openportd
+// leaves a damaged account's files alone until --repair-journals: no compaction of
+// its torn row, no appended samples. Read-write, the same open rewrites the file.
+TEST(EquityStore, AReadOnlyHistoryIsNeverRewrittenOrAppended) {
+  Directory dir;
+  const auto file = dir.path / "damaged.jsonl.equity.csv";
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  {
+    EquityStore store(file);
+    store.append({time, 1, m("10000"), {}, m("10000"), {}, {}, 0});
+    store.append({time + md::kNanosPerMinute, 1, m("10010"), {}, m("10010"), {}, {}, 0});
+  }
+  { std::ofstream out(file, std::ios::app); out << "torn"; }
+  const auto before = bytes_of(file);
+  EquityStore store(file, true);
+  EXPECT_EQ(store.samples().size(), 2U);
+  EXPECT_EQ(store.error(), "equity: ignored an invalid row");
+  store.append({time + 2 * md::kNanosPerMinute, 1, m("10020"), {}, m("10020"), {}, {}, 0});
+  store.append({time + 3 * md::kNanosPerMinute, 2, m("10000"), {}, m("10000"), {}, {}, 0});  // a reset
+  EXPECT_EQ(store.samples().size(), 2U);
+  EXPECT_EQ(bytes_of(file), before);
+  const EquityStore writable(file);
+  EXPECT_EQ(writable.samples().size(), 2U);
+  EXPECT_NE(bytes_of(file), before);
 }
 // An account's equity, floor and risk curve, beside its owner-only journal. Under a
 // shell's umask 022 appends used to create it 0644.
