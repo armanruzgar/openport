@@ -768,3 +768,12 @@ daily P&L. Incomplete variants are excluded from ranking. Sweeps share the batch
 job/retention budget, have separate listing routes, and need replay scope. These
 are in-sample simulated results; selecting the best parameters does not establish
 future performance.
+
+The terminal has no controls for either. Issue, rotate or revoke a playbook's webhook
+secret (`issue_signal_secret`, `revoke_signal_secret`, or
+`POST`/`DELETE /api/playbooks/{id}/signal-secret`, admin scope; the secret is shown
+once), evaluate a playbook now (`Client.signal(id)`, the MCP `evaluate_playbook` tool
+or `POST /api/playbooks/{id}/evaluate`), and start, follow or cancel sweeps
+(`start_sweep`, `get_sweep`, `list_sweeps`, the MCP sweep tools or
+`/api/backtests/sweeps`) from Python, an MCP client or the HTTP API. Sweeps are not
+listed on the Backtest page, which shows single backtests only.

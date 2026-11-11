@@ -634,6 +634,8 @@ it with REST reconciliation, polling fallback and recorded-history hooks. Inboun
 signals evaluate named playbooks without overriding their mode, authenticated by a
 bearer token or by a webhook secret scoped to one playbook and account. Bounded
 parameter sweeps preserve variant reports and rank historical simulated results.
+Signal secrets, evaluate-now and sweeps are API, Python and MCP features: the
+terminal has no controls for them ([playbooks](playbooks.md#signals-and-parameter-sweeps)).
 Optional Arrow/Parquet exports preserve decimal money strings, and a tag-triggered
 OIDC workflow prepares Python package releases without stored publishing tokens.
 See [API programmability](api.md#paper-event-stream-v1).
