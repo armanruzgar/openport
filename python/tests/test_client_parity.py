@@ -12,6 +12,9 @@ EXCLUSIONS = {
     ("GET", "/{path}"): "Static assets, not the JSON client",
     ("GET", "/ws/events"): "openport.stream.events owns typed WebSocket events",
     ("GET", "/ws"): "openport.stream owns WebSocket transport",
+    # Documented because the replay mirror answers them; clients compute on the live routes.
+    ("POST", "/api/replay/account/rules-compare"): "rules_compare compares a live account's attempt",
+    ("POST", "/api/replay/rule-packs/validate"): "Validation reads only the pack; validate_rule_pack uses the live route",
 }
 
 # Arguments are synthetic. Calls run through the public methods into _request.
