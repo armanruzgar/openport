@@ -459,10 +459,7 @@ keep their own market times, so a delayed backup behind a real-time main feed le
 orders waiting, and every fill records the feed that priced it (`feed` in
 `GET /api/fills`, the order views and the journal).
 
-Adapters that report `Stale` while healthy count as failing: Tradier's index
-subscriptions (timing unconfirmed), a Schwab response without `isDelayed`, and
-Interactive Brokers' frozen values. Pair such a feed with a backup only if that is the
-intent. Recordings name both feeds in their provider (`tradier+cboe`) and keep the
+Recordings name both feeds in their provider (`tradier+cboe`) and keep the
 status messages, but not the per-quote feed. `openport-probe` takes one provider.
 
 ## Chain volume and liquidity

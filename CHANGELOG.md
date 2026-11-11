@@ -20,6 +20,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Feed failover and `Stale` feeds.** A paragraph of the
+  [runtime guide](docs/runtime.md#feed-failover) still said a feed that reports `Stale`
+  while healthy counts as failing. Failover judges freshness apart from that label:
+  such a feed keeps its underlyings while its snapshots advance, as the rest of the
+  section and the providers guide say. The paragraph is gone.
 - **Stop-required plans and share entries.** The plan rules in
   [paper trading](docs/paper-trading.md) said a stop-required plan refuses every share
   entry. It refuses an immediate share trade, which cannot carry a bracket; a working
