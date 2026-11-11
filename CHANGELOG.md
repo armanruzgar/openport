@@ -1286,6 +1286,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   every control disabled, still titled with the position that no longer existed. Those
   tickets now offer **Done** once the order is accepted, and **Another order** only
   after a refusal or failure, when the position is still there to trade.
+- **`--compact-journals` syncs each rewrite once.** The temporary rewrite was synced
+  to disk after every record it wrote, one full drive flush per transaction (minutes
+  for tens of thousands of records), though it is read back and must recover the same
+  account before it replaces the journal. It is now synced once, when whole.
 
 ## 0.5.1 (2026-10-28)
 

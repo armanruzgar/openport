@@ -327,8 +327,10 @@ struct JournalCompaction {
 /// records carry whole states (schemas 1 and 2) in the compact schema. Each takes the
 /// writer's lock, so a running openportd's journals are refused. The rewrite
 /// must recover to the same account before it replaces the journal, and the
-/// original stays beside it as FILE.bak.
+/// original stays beside it as FILE.bak. A rewrite is synced once, when whole, not
+/// once per record. `hooks`: injectable journal I/O for tests.
 [[nodiscard]] std::vector<JournalCompaction> compact_paper_journals(
-    const std::filesystem::path& journal, const std::filesystem::path& accounts);
+    const std::filesystem::path& journal, const std::filesystem::path& accounts,
+    const trading::FileJournal::Hooks& hooks = {});
 
 }  // namespace openport::server

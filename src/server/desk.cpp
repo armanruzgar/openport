@@ -588,7 +588,7 @@ trading::Decision paper_acceptance(std::string_view underlying, md::Timestamp ma
 
 namespace {
 /// Rewrite one journal (see compact_paper_journals).
-JournalCompaction compact_journal(const std::filesystem::path& file) {
+JournalCompaction compact_journal(const std::filesystem::path& file, const FileJournal::Hooks& hooks) {
   JournalCompaction result{file, 0, 0, {}, {}};
   const auto temporary = std::filesystem::path(file.string() + ".compacting");
   try {
@@ -606,8 +606,16 @@ JournalCompaction compact_journal(const std::filesystem::path& file) {
     std::filesystem::remove(temporary);  // Left by a run that stopped part way.
     std::string expected;
     {
-      const auto out = FileJournal::create(temporary.string());
+      // The rewrite needs to reach the disk once, whole, before it is read back and
+      // renamed over the journal, not once per record: batched, with one sync at the
+      // end, which reports a failure the destructor's would swallow.
+      FileJournal::Options batched;
+      batched.sync_policy = FileJournal::SyncPolicy::Batched;
+      batched.sync_interval = std::chrono::hours(24);
+      batched.hooks = hooks;
+      const auto out = FileJournal::create(temporary.string(), std::move(batched));
       expected = TradingSession::compact(recovery, *out);
+      out->flush();
     }
     if (TradingSession::recover(FileJournal::read(temporary.string())).snapshot_json() != expected)
       throw TradingError(Reason::JOURNAL_CORRUPT, "the rewrite does not recover to the same account");
@@ -632,22 +640,23 @@ JournalCompaction compact_journal(const std::filesystem::path& file) {
 }  // namespace
 
 std::vector<JournalCompaction> compact_paper_journals(const std::filesystem::path& journal,
-                                                      const std::filesystem::path& accounts) {
+                                                      const std::filesystem::path& accounts,
+                                                      const trading::FileJournal::Hooks& hooks) {
   std::vector<JournalCompaction> results;
   std::error_code ec;
-  if (!journal.empty() && std::filesystem::exists(journal, ec)) results.push_back(compact_journal(journal));
+  if (!journal.empty() && std::filesystem::exists(journal, ec)) results.push_back(compact_journal(journal, hooks));
   if (!accounts.empty() && std::filesystem::is_directory(accounts, ec)) {
     std::vector<std::filesystem::path> files;
     for (const auto& entry : std::filesystem::directory_iterator(accounts, ec))
       if (entry.path().extension() == ".jsonl" && account_id(entry.path().stem().string())) files.push_back(entry.path());
     std::sort(files.begin(), files.end(), by_account_id);
-    for (const auto& file : files) results.push_back(compact_journal(file));
+    for (const auto& file : files) results.push_back(compact_journal(file, hooks));
   }
   if (!journal.empty()) {
     const auto replays = std::filesystem::absolute(journal).parent_path() / "replays";
     if (std::filesystem::is_directory(replays, ec)) {
       for (const auto& entry : std::filesystem::directory_iterator(replays, ec))
-        if (entry.is_regular_file(ec) && entry.path().extension() == ".jsonl") results.push_back(compact_journal(entry.path()));
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".jsonl") results.push_back(compact_journal(entry.path(), hooks));
     }
   }
   return results;

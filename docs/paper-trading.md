@@ -4310,7 +4310,8 @@ a journal in use is left as it is with `JOURNAL_LOCKED`; keeps every transaction
 sequence, time, type, events and decision; reads each rewritten record back before
 writing it; and must recover to the same account before it replaces the journal. A
 final schema 1 record stays as it is, since recovery completes that journal's
-evaluation from it. The original stays beside it as `FILE.bak` (then `.bak2` and so
+evaluation from it. The rewrite is synced to disk once, when it is whole, rather than
+after every record. The original stays beside it as `FILE.bak` (then `.bak2` and so
 on): move it back to undo, or delete it once you are satisfied. The rewrite has a
 new hash chain, so replace any head you persisted to anchor the old one.
 `TradingSession::expand` does the reverse, writing every state and snapshot whole

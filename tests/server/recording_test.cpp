@@ -1436,10 +1436,17 @@ TEST(ReplayHost, OlderJournalRecordsNeedNoReplayFieldsAndStillCompactAndRepair) 
   EXPECT_FALSE(history[0].contains("error")) << history;
   EXPECT_EQ(history[0]["result"], "open");
   EXPECT_EQ(call(host, "GET", "/api/replay/history/older/account").status, 200);
-  const auto compacted = server::compact_paper_journals(options.paper_journal, {});
+  // I-27: the rewrite syncs when it is whole (and once at its first record), not once
+  // per record.
+  const auto records = trading::FileJournal::read(journal.string()).records.size();
+  int syncs = 0;
+  trading::FileJournal::Hooks counted;
+  counted.sync = [&](int) { ++syncs; return true; };
+  const auto compacted = server::compact_paper_journals(options.paper_journal, {}, counted);
   ASSERT_EQ(compacted.size(), 1U);
-  EXPECT_TRUE(compacted[0].error.empty());
+  EXPECT_TRUE(compacted[0].error.empty()) << compacted[0].error;
   EXPECT_FALSE(compacted[0].backup.empty());
+  EXPECT_LE(syncs, 2) << records << " records";
   EXPECT_EQ(trading::TradingSession::recover(trading::FileJournal::read(journal.string())).snapshot_json(), expected);
   { std::ofstream tail(journal, std::ios::app); tail << "{torn"; }
   const auto repaired = trading::FileJournal::repair(journal.string());
