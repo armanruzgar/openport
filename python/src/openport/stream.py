@@ -35,12 +35,13 @@ def _connect():
     try:
         from websockets.asyncio.client import connect
     except ImportError as error:
-        raise ImportError("Install openport[ws] to stream ticks or events") from error
+        raise ImportError("Streaming ticks or events needs websockets: install openport-client with its ws extra "
+                          "(./python[ws] from a checkout; see python/README.md)") from error
     return connect
 
 
 async def ticks(url: str = "ws://127.0.0.1:8080/ws", *, token: str | None = None):
-    """Yield tick/replay_tick dictionaries. Requires openport[ws]."""
+    """Yield tick/replay_tick dictionaries. Requires the client's ws extra."""
     headers = {"Authorization": "Bearer " + token} if token else None
     async with _connect()(url, additional_headers=headers) as socket:
         async for message in socket:

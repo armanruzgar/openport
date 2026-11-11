@@ -7,7 +7,9 @@ def _pandas():
     try:
         import pandas
     except ImportError as error:
-        raise ImportError("Install openport[pandas] to use frame helpers") from error
+        # The distribution is openport-client; "openport" on PyPI is another project.
+        raise ImportError("Frame helpers need pandas: install openport-client with its pandas extra "
+                          "(./python[pandas] from a checkout; see python/README.md)") from error
     return pandas
 
 
@@ -15,7 +17,8 @@ def _arrow():
     try:
         import pyarrow
     except ImportError as error:
-        raise ImportError("Install openport[arrow] to use Arrow/Parquet helpers") from error
+        raise ImportError("Arrow and Parquet helpers need pyarrow: install openport-client with its arrow extra "
+                          "(./python[arrow] from a checkout; see python/README.md)") from error
     return pyarrow
 
 

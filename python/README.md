@@ -9,8 +9,9 @@ The client supports Python 3.10+ and has no runtime dependencies. It is not on
 PyPI: install a tagged version from GitHub, as [Python releases](#python-releases)
 shows, or a checkout with `python -m pip install ./python`. The distribution is
 `openport-client` and the import name `openport`. Optional extras are `./python[pandas]`
-for frames, `./python[ws]` for WebSockets, and `./python[mcp]` for the MCP server
-(`mcp>=2.2,<3`). A source checkout also works with `PYTHONPATH=python/src`.
+for frames, `./python[arrow]` for Arrow and Parquet exports, `./python[ws]` for
+WebSockets, and `./python[mcp]` for the MCP server (`mcp>=2.2,<3`); `./python[dev]`
+adds everything the tests need. A source checkout also works with `PYTHONPATH=python/src`.
 
 ```python
 from openport import Client, ApiError
@@ -164,9 +165,13 @@ refuses any token it does not know, a placeholder included.
 The last-hour example requires an SPX scenario that spans those times. Quotes,
 liquidity, the plan and session can reject these examples; no result is promised.
 
-From the repository root, using the prepared environment:
+From the repository root, create the git-ignored `.venv-py` once with the `dev`
+extra (pytest, jsonschema, pyyaml, pandas, pyarrow, websockets and MCP), then run
+the tests and the contract check:
 
 ```sh
+python3 -m venv .venv-py
+.venv-py/bin/pip install -e './python[dev]'
 .venv-py/bin/python -m pytest python/tests
 .venv-py/bin/python tools/contract_test.py http://127.0.0.1:8080 --token "$OPENPORT_WRITE_TOKEN" --spec docs/openapi.yaml
 ```
@@ -275,8 +280,11 @@ See [event semantics](../docs/api.md#paper-event-stream-v1).
 uses the previewed spread example on a synthetic replay once it has fast-forwarded
 to its start, leaving a finished run paused and stopping one that failed.
 
-Install `openport[pandas]` for `fills_frame`, `trades_frame`, `equity_frame`,
-`backtest_frame`, `chain_frame` and `smile_frame`. Install `openport[arrow]` for
+The `pandas` extra (`./python[pandas]` from a checkout, or `openport-client[pandas]`
+from a tag as [Python releases](#python-releases) shows) adds `fills_frame`,
+`trades_frame`, `equity_frame`, `backtest_frame`, `chain_frame` and `smile_frame`;
+never `openport[pandas]`, which pip resolves to an unrelated PyPI project. The
+`arrow` extra adds
 `arrow_table(data, kind)`, `write_parquet(data, path, kind)` and
 `write_arrow(data, path, kind)`, which do not need pandas. Kinds are `fills`,
 `trades`, `equity`, `backtest`, `chain`; backtests take `section="days"` or

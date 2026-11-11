@@ -4,7 +4,7 @@ import json
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from openport import ApiError, Client, chain_frame, smile_frame, ticks, trades_frame
+from openport import ApiError, Client, arrow_table, chain_frame, smile_frame, ticks, trades_frame
 from conftest import TIME
 
 
@@ -167,15 +167,22 @@ def test_missing_optional_dependencies_are_explicit(monkeypatch):
     import builtins
     original = builtins.__import__
     def blocked(name, *args, **kwargs):
-        if name == "pandas" or name.startswith("websockets"):
+        if name in ("pandas", "pyarrow") or name.startswith("websockets"):
             raise ImportError("not installed")
         return original(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", blocked)
-    with pytest.raises(ImportError, match=r"openport\[pandas\]"):
+    # The hints name this project's distribution and its extras, never "openport[...]":
+    # pip would fetch the unrelated "openport" project from PyPI for that.
+    with pytest.raises(ImportError, match=r"openport-client .*\./python\[pandas\]") as missing:
         trades_frame({"trades": []})
+    assert "openport[" not in str(missing.value)
+    with pytest.raises(ImportError, match=r"openport-client .*\./python\[arrow\]") as missing:
+        arrow_table({"fills": []}, "fills")
+    assert "openport[" not in str(missing.value)
     async def read():
-        with pytest.raises(ImportError, match=r"openport\[ws\]"):
+        with pytest.raises(ImportError, match=r"openport-client .*\./python\[ws\]") as missing:
             await anext(ticks())
+        assert "openport[" not in str(missing.value)
     asyncio.run(read())
 
 
