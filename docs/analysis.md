@@ -20,7 +20,8 @@ left out and listed as skipped; a symbol starting with `/` is a future. Fraction
 shares (dividend reinvestment, fractional trading) keep their whole shares, toward
 zero, and the fraction is listed as skipped; an option quantity must be a whole
 number of contracts. A file that cannot be read is refused with the line and the
-reason.
+reason. The server keeps at most 32 analysis portfolios: another import is refused
+with 400 `INVALID_IMPORT` until one is deleted.
 
 Layouts are read by their column names, case and punctuation ignored. The broker
 layouts use those exports' usual column names and are tested against hand-written

@@ -85,8 +85,11 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--events FILE` | Supplied `YYYY-MM-DD,Label` lines for the implied-session-move table; no event dates are bundled ([volatility](volatility.md)) |
 | `--no-cboe-holidays` | Don't read Cboe's published holiday schedule, which lets a special closure it announces apply without a new build ([calendar](runtime.md#product-sessions-and-cboe-clocks)) |
 
-Every value is range-checked; `openportd --help` lists every flag, and the
-[runtime notes](runtime.md) cover the details.
+Every value is range-checked. This table has the main flags, not all of them:
+`openportd --help` lists every flag, and the [runtime notes](runtime.md) cover the
+rest, such as the paper fill models and stop stress
+([paper execution flags](runtime.md#paper-execution-startup-flags)), AM settlement,
+corporate actions, the event calendar and journal compaction.
 
 `--plan` accepts `practice`; `intraday-*`, `eod-*`, `static-*`, `locking-*`,
 `two-step-*`, `two-step-verify-*`, `two-step-funded-*`, `funded-intraday-*` and

@@ -3,7 +3,7 @@
 OpenPort is one `openportd` process that serves the web terminal on port 8080.
 Install it with Homebrew on macOS, with Docker, from a release
 archive or from source. [Configuration](configuration.md) lists the providers and
-every flag.
+the main flags; `openportd --help` lists every flag.
 
 ## Homebrew
 
@@ -124,9 +124,9 @@ can pin a release/digest and `OPENPORT_VOLUME` can select a restored volume.
 ## Linux packages
 
 The release workflow builds `.deb` and `.rpm` packages for amd64 and arm64,
-alongside the archives, with `SHA256SUMS`. Use assets from a release that includes
-them; this change does not publish packages for existing releases. Verify the
-checksum, then install the file for your machine:
+alongside the archives, with `SHA256SUMS`. Releases from v0.5.0 on carry them;
+earlier releases have archives only. Verify the checksum, then install the file for
+your machine:
 
 ```sh
 sudo apt install ./openport-VERSION-linux-amd64.deb
@@ -174,7 +174,8 @@ Each [release](https://github.com/armanruzgar/openport/releases) has archives fo
 (amd64 and arm64) and macOS (Apple Silicon, macOS 15 Sequoia or later).
 
 From source (CMake 3.25+, a C++20 compiler, Boost 1.83+, OpenSSL 3, zlib, zstd and
-Node 22+; everything else is fetched and pinned by checksum):
+Node 22.12+, which the terminal's build tools need; everything else is fetched and
+pinned by checksum):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -186,9 +187,11 @@ cmake --build build -j3
 To install it, `cmake --install build --component openport --prefix ~/.local` puts
 `openportd` in `bin/` and the terminal in `share/openport/web`, where it finds it on
 its own. The scenario library is compiled into the binary and needs no installed
-files. A release archive has the same layout: unpack it and run `bin/openportd` (Linux
-needs OpenSSL 3, zlib and zstd; the macOS archive, for Apple silicon and macOS 15 or
-later, needs nothing installed). The macOS archive is built for macOS 15 whatever Mac
+files. A release archive has the same layout: unpack it and run `bin/openportd`. The
+Linux archives are built on Ubuntu 24.04, so besides OpenSSL 3, zlib and zstd they
+need glibc 2.39+ and libstdc++ 13+ (Ubuntu 24.04, Debian 13, Fedora 40, RHEL 10 or
+newer); on an older distribution use Docker or build from source. The macOS archive,
+for Apple silicon and macOS 15 or later, needs nothing installed. The macOS archive is built for macOS 15 whatever Mac
 builds it: `OPENPORT_MACOS_FLOOR` in `CMakeLists.txt` sets the deployment target of
 a build with `-DOPENPORT_STATIC_DEPS=ON`, and the OpenSSL and zstd it links must be
 built for that macOS too. `openportd --version` prints the version. The terminal opens with a short

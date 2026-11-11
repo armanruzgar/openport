@@ -13,7 +13,8 @@ slugs (`q-a`, `ideas`) for the forms to appear.
 ## Building and testing
 
 You need CMake 3.25+, a C++20 compiler (CI uses GCC 13 and Apple Clang), Boost 1.83+, OpenSSL 3,
-zlib, zstd and Node 22+. Other dependencies are fetched and pinned by checksum.
+zlib, zstd and Node 22.12+ to build the terminal; its tests (Vitest and jsdom) need
+Node 22.22.2+, 24.15+ or 26+, and CI uses 26. Other dependencies are fetched and pinned by checksum.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPENPORT_WERROR=ON
@@ -78,9 +79,12 @@ missing build fails them instead of skipping them.
 ## Python and API contract
 
 The Python package uses Python 3.10+. Its tests need pytest, jsonschema, pyyaml,
-pandas, pyarrow, websockets and MCP 2.x. With the prepared development environment:
+pandas, pyarrow, websockets and MCP 2.x, which the package's `dev` extra installs.
+From the repository root, create the git-ignored `.venv-py` once, then run them:
 
 ```sh
+python3 -m venv .venv-py
+.venv-py/bin/pip install -e './python[dev]'
 .venv-py/bin/python -m pytest python/tests
 .venv-py/bin/python tools/contract_test.py http://127.0.0.1:8080 --token "$OPENPORT_WRITE_TOKEN" --spec docs/openapi.yaml
 ```

@@ -70,8 +70,10 @@ with generated prices labelled as simulated on every page:
   is closed, with limit flatten overnight and in curb. EXTO/GTC_EXTO, timestamp GTD
   and conditions on another symbol, a study or the time of day support entries and exits.
 - **Fills and fees**: displayed-size fills, optional Conservative latency and impact,
-  inside fills, [walking limits](docs/paper-trading.md#walking-limits) and
-  [itemized fees](docs/paper-trading.md#fees). These do not simulate queue position.
+  inside fills, an optional seeded [queue model](docs/paper-trading.md#queue-fills)
+  for resting limits, [walking limits](docs/paper-trading.md#walking-limits) and
+  [itemized fees](docs/paper-trading.md#fees). These estimate depth and queue from the
+  displayed quotes and prints, not an exchange's real queue position.
 - **Margin and shares**: cash, IRA and margin accounts, strategy or portfolio margin,
   house requirements and optional IV shocks; share trades for hedges, covered calls
   and collars, with buying-power previews.
@@ -114,7 +116,7 @@ history between runs, and when nothing is trading the terminal offers the demo m
 [docker-compose.yml](docker-compose.yml) runs the same image as a service.
 
 From source (CMake 3.25+, a C++20 compiler, Boost 1.83+, OpenSSL 3, zlib, zstd and
-Node 22+):
+Node 22.12+):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -153,7 +155,8 @@ and attach its redacted JSON/Markdown reports to a
 The broker adapters read market data only.
 `--fallback-provider NAME` keeps a second feed ready to take over an underlying while
 the main one is stale or failing.
-[Configuration](docs/configuration.md) has each provider's details and every flag.
+[Configuration](docs/configuration.md) has each provider's details and the main
+flags; `openportd --help` lists every flag.
 
 ## Documentation
 
