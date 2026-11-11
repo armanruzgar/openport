@@ -368,3 +368,65 @@ def test_arguments_the_client_refuses_are_named_and_not_sent(stub, name, argumen
     assert response["error"]["code"] == "INVALID_REQUEST" and response["error"]["status"] == 400
     assert detail in response["error"]["message"]
     assert all(request[0] == "GET" for request in stub.requests)
+
+
+def test_tools_say_whether_they_read_add_or_destroy(stub):
+    tools = {tool.name: tool for tool in asyncio.run(create_server(Client(stub.url, "secret")).list_tools())}
+    assert all(tool.annotations is not None for tool in tools.values())
+    reads = {name for name, tool in tools.items() if tool.annotations.read_only_hint}
+    destroys = {name for name, tool in tools.items()
+                if tool.annotations.read_only_hint is False and tool.annotations.destructive_hint is True}
+    adds = {name for name, tool in tools.items()
+            if tool.annotations.read_only_hint is False and tool.annotations.destructive_hint is False}
+    assert reads | destroys | adds == set(tools)
+    # Previews and what-ifs change nothing, though they need a write token.
+    assert {"status", "chain", "positions", "orders", "fills", "equity", "calendar_events", "get_backtest",
+            "preview_order", "preview_stock", "preview_change", "what_if", "validate_rule_pack"} <= reads
+    assert {"place_order", "trade_stock", "start_replay", "step_replay", "create_alert", "create_playbook",
+            "start_backtest", "start_sweep", "send_staged_order", "evaluate_playbook"} <= adds
+    assert {"flatten", "cancel_order", "stop_replay", "archive_playbook", "delete_alert", "cancel_backtest",
+            "cancel_sweep", "dismiss_staged_order", "modify_order", "note", "day_note"} <= destroys
+
+
+def test_a_refusal_keeps_the_servers_evidence(stub):
+    from urllib.parse import urlsplit
+    refusals = [
+        (422, {"error": {"code": "PRICE_BAND", "message": "Price is outside the configured band around mid",
+                         "actual": "72.95", "limit": "14.6", "scope": "SPX", "evidence": {"mid": "4.10"}}}),
+        (422, {"error": {"code": "BUYING_POWER", "message": "Not enough buying power",
+                         "actual": None, "limit": None, "scope": None}}),
+    ]
+    original = stub.respond
+    def respond(method, target, headers, body):
+        status, value = original(method, target, headers, body)
+        if method == "POST" and urlsplit(target).path == "/api/orders":
+            return refusals.pop(0)
+        return status, value
+    stub.respond = respond
+    server = create_server(Client(stub.url, "secret"))
+    order = {"quantity": 1, "type": "limit", "time_in_force": "day", "symbol": "SPXW  261022P05000000",
+             "side": "buy", "limit_price": "72.95"}
+    response = call(server, "place_order", account="practice", order=order)
+    assert response["error"] == {"code": "PRICE_BAND", "message": "PRICE_BAND: Price is outside the configured band around mid",
+                                 "status": 422, "actual": "72.95", "limit": "14.6", "scope": "SPX",
+                                 "evidence": {"mid": "4.10"}}
+    # Evidence the server leaves null is left out.
+    response = call(server, "place_order", account="practice", order=order)
+    assert response["error"] == {"code": "BUYING_POWER", "message": "BUYING_POWER: Not enough buying power", "status": 422}
+
+
+def test_calendar_events_reads_the_servers_own_calendar(stub):
+    from urllib.parse import parse_qs, urlsplit
+    server = create_server(Client(stub.url, "secret"))
+    tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+    # Neither an account nor a replay selects anything here, so the tools do not offer them.
+    assert set(tools["calendar_events"].input_schema["properties"]) == {"start", "end"}
+    for name in ("candles", "surface", "strategy_template"):
+        assert "account" not in tools[name].input_schema["properties"]
+    response = call(server, "calendar_events", start="2026-10-01", end="2026-10-31")
+    assert "error" not in response
+    assert [urlsplit(target).path for _method, target, *_ in stub.requests] == ["/api/status", "/api/calendar/events"]
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"from": ["2026-10-01"], "to": ["2026-10-31"]}
+    assert response["feed"]["provider"] == stub.provider["name"]
+    call(server, "candles", symbol="SPX", replay=True)
+    assert urlsplit(stub.requests[-1][1]).path == "/api/replay/underlyings/SPX/candles"

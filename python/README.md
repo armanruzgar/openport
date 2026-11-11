@@ -131,12 +131,22 @@ replay account. Placed and previewed orders carry `agent:NAME`. The authenticate
 token's name is the journal actor; an agent tag is descriptive, not authentication.
 
 Every tool returns its failures as an `error` with a code, never as a bare tool
-error. `UNREACHABLE` means openportd did not answer before the tool sent anything.
+error. A refusal keeps the server's evidence beside its code and message: `actual`,
+`limit` and `scope` when the server sends them, and `evidence` for the checks that
+give it, so an agent can correct an order without another call.
+`UNREACHABLE` means openportd did not answer before the tool sent anything.
 `NO_RESPONSE` means a request was sent and its answer was lost (a timeout, a
 dropped connection) or could not be read: a command may have been applied, so
 check before repeating it, or repeat a placed order with its `client_order_id`.
 `INVALID_REQUEST` with status 400 names arguments the client refused before
 sending, such as a playbook definition without its `id`.
+
+Each tool carries MCP annotations for clients that decide what to approve: reads,
+previews and what-ifs are read-only; orders, replays, runs, alerts and playbook
+definitions are additive writes; cancelling, flattening, stopping, archiving,
+deleting, modifying an order and replacing a note are destructive. The event
+calendar tool reads openportd's own calendar, the same for every account and
+replay, so it takes no account or replay.
 
 The MCP server defaults to stdio. It delegates scope enforcement to openportd and
 does not have any broker or live-trading connection.

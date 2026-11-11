@@ -11,6 +11,7 @@ from urllib.error import URLError
 import uuid
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
 from openport import ApiError, Client
 from openport.types import ExposureConvention, ExposureSlice
 
@@ -98,9 +99,33 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         "Error code UNREACHABLE means nothing was sent; NO_RESPONSE is an uncertain response, after which a command may have been applied. "
         "Reuse client_order_id if repeating an order after an uncertain response."))
 
+    # Hints for a client deciding what to approve. Reads change nothing (previews and
+    # what-ifs included); writes add orders, replays, runs, alerts or definitions; the
+    # destructive ones cancel, close, stop, archive, remove or replace what exists.
+    def reads():
+        return server.tool(annotations=ToolAnnotations(read_only_hint=True))
+
+    def writes():
+        return server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+
+    def destroys():
+        return server.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+
     def selected(account: str | None = None, replay: bool = False):
         return Client(client.base_url, client.token, account, client.timeout,
                       retries=client.retries, backoff=client.backoff, replay=replay)
+
+    def refusal(error: ApiError) -> dict:
+        # The server's evidence goes with its code, so an agent can correct the order:
+        # the value found (actual), the limit, where it applies (scope) and any details.
+        found = {"code": error.code, "message": str(error), "status": error.status}
+        for field in ("actual", "limit", "scope"):
+            if getattr(error, field) is not None:
+                found[field] = getattr(error, field)
+        detail = error.body.get("error") if isinstance(error.body, dict) else None
+        if isinstance(detail, dict) and detail.get("evidence") is not None:
+            found["evidence"] = detail["evidence"]
+        return found
 
     def result(target, action, command=False):
         # Every failure is returned as an error the agent can read: MCP reports an
@@ -125,7 +150,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         try:
             data = action()
         except ApiError as error:
-            envelope["error"] = {"code": error.code, "message": str(error), "status": error.status}
+            envelope["error"] = refusal(error)
             return envelope
         except (OSError, HTTPException, JSONDecodeError, UnicodeDecodeError) as error:
             # A timeout, a dropped connection or an unreadable answer, perhaps after openportd acted.
@@ -176,35 +201,35 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         response["paper"] = True
         return response
 
-    @server.tool()
+    @writes()
     def trade_stock(symbol: str, side: Literal["buy", "sell"], shares: int, account: str | None = None, replay: bool = False) -> dict:
         """Trade shares at the fresh stock-session price. Not idempotent: inspect positions after an uncertain response."""
         return write(account, replay, lambda target: target.trade_stock(symbol, side, shares))
 
-    @server.tool()
+    @reads()
     def preview_stock(symbol: str, side: Literal["buy", "sell"], shares: int, account: str | None = None, replay: bool = False) -> dict:
         """Preview shares, including cost, buying power and dollar delta; does not trade."""
         return write(account, replay, lambda target: target.preview_stock(symbol, side, shares), command=False)
 
-    @server.tool()
+    @reads()
     def status(replay: bool = False) -> dict:
         """Feed health and market time."""
         target = selected(replay=replay)
         return result(target, target.status)
 
-    @server.tool()
+    @reads()
     def symbols(replay: bool = False) -> dict:
         """Subscribed underlying symbols."""
         target = selected(replay=replay)
         return result(target, target.symbols)
 
-    @server.tool()
+    @reads()
     def summary(symbol: str, replay: bool = False) -> dict:
         """Underlying and expiry analytics."""
         target = selected(replay=replay)
         return result(target, lambda: target.summary(symbol))
 
-    @server.tool()
+    @reads()
     def chain(symbol: str, expiry: str | None = None, window: float = 0.03, replay: bool = False) -> dict:
         """A chain within 3% of spot by default; maximum window 10%."""
         target = selected(replay=replay)
@@ -222,40 +247,40 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             return data
         return result(target, read)
 
-    @server.tool()
+    @reads()
     def volatility(symbol: str, replay: bool = False, account: str | None = None) -> dict:
         """IV, skew, history ranks and derived event premiums from the selected account's calendar."""
         target = selected(account, replay)
         return result(target, lambda: target.volatility(symbol))
 
-    @server.tool()
+    @reads()
     def volatility_history(symbol: str, fields: list[str] | None = None, interval: Literal["1m", "1d"] = "1d",
                            from_: str | None = None, to: str | None = None, replay: bool = False) -> dict:
         """Stored volatility observations; missing sessions stay missing. Dates or ISO times bound the range."""
         target = selected(replay=replay)
         return result(target, lambda: target.volatility_history(symbol, fields=fields, interval=interval, from_=from_, to=to))
 
-    @server.tool()
+    @reads()
     def surface_history(symbol: str, compare: bool = True, from_: str | None = None,
                         to: str | None = None, replay: bool = False) -> dict:
         """Recorded SVI parameters, by default only prior-close, week and month comparisons. Missing captures remain null."""
         target = selected(replay=replay)
         return result(target, lambda: target.surface_history(symbol, compare=compare, from_=from_, to=to))
 
-    @server.tool()
+    @reads()
     def volatility_scanner(replay: bool = False) -> dict:
         """IV, rank, VRP, skew, term and today's implied move for all subscriptions; each row has its own market time."""
         target = selected(replay=replay)
         return result(target, target.volatility_scanner)
 
-    @server.tool()
+    @reads()
     def probability(symbol: str, days: list[float] | None = None, prices: list[float] | None = None,
                     replay: bool = False) -> dict:
         """Implied probability cones by horizon (days; 0 is today's close) and odds of finishing beyond or touching prices."""
         target = selected(replay=replay)
         return result(target, lambda: target.probability(symbol, days, prices))
 
-    @server.tool()
+    @reads()
     def flow(symbol: str, limit: int = 50, type: Literal["call", "put"] | None = None,
              only: Literal["sweep", "block", "multi_leg"] | None = None, replay: bool = False) -> dict:
         """Recent option prints classified at bid/ask/mid/outside, with net premium by expiry and strike.
@@ -263,17 +288,17 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         target = selected(replay=replay)
         return result(target, lambda: target.flow(symbol, limit, type, only=only))
 
-    @server.tool()
+    @reads()
     def earnings(symbol: str | None = None) -> dict:
         """Earnings implied (front straddle) versus realized moves and how often the straddle priced more."""
         return result(client, lambda: client.earnings(symbol))
 
-    @server.tool()
+    @reads()
     def analysis_portfolios() -> dict:
         """Imported outside portfolios (needs an admin token). Analysis only: they are not paper accounts and cannot be traded."""
         return result(client, client.analysis_portfolios)
 
-    @server.tool()
+    @reads()
     def analysis_risk(portfolio: str, view: Literal["holdings", "profile", "grid", "stress", "var"] = "holdings",
                       underlying: str | None = None) -> dict:
         """An imported portfolio's holdings and Greeks, risk profile, scenario grid, historical stress tests
@@ -283,7 +308,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         params = {"underlying": underlying} if view == "profile" and underlying else {}
         return result(client, lambda: client.analysis_risk(portfolio, view, **params))
 
-    @server.tool()
+    @reads()
     def optimize_strategies(symbol: str, target: float, budget: float, date: str | None = None,
                             expiries: list[str] | None = None, structures: list[str] | None = None,
                             rank: Literal["expected", "risk_neutral", "pop", "return_on_risk"] = "expected",
@@ -297,7 +322,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             symbol, target, budget, date=date, expiries=expiries, structures=structures, rank=rank,
             vol_points=vol_points, price=price, limit=limit))
 
-    @server.tool()
+    @reads()
     def exposure(symbol: str, replay: bool = False, convention: ExposureConvention = "long_calls_short_puts",
                  slice: ExposureSlice = "all", expiries: int = 8, window: float = 0.08) -> dict:
         """Derived OI-weighted GEX, VEX, DEX, daily charm and vomma, with walls/flips.
@@ -310,37 +335,37 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.exposure(symbol, expiries, window,
                                                       convention=convention, slice=slice))
 
-    @server.tool()
+    @reads()
     def account(account: str | None = None, replay: bool = False) -> dict:
         """Paper account rules and evaluation."""
         target = selected(account, replay)
         return result(target, target.account)
 
-    @server.tool()
+    @reads()
     def positions(account: str | None = None, replay: bool = False) -> dict:
         """Paper positions, cash and equity."""
         target = selected(account, replay)
         return result(target, target.portfolio)
 
-    @server.tool()
+    @reads()
     def orders(account: str | None = None, replay: bool = False) -> dict:
         """Working paper orders."""
         target = selected(account, replay)
         return result(target, lambda: target.orders("open"))
 
-    @server.tool()
+    @reads()
     def risk(account: str | None = None, replay: bool = False) -> dict:
         """Paper account limits, Greeks and breach estimates."""
         target = selected(account, replay)
         return result(target, target.risk)
 
-    @server.tool()
+    @reads()
     def risk_history(account: str | None = None, replay: bool = False) -> dict:
         """Derived historical stress P&L, margin and floor breaches, and one-day historical VaR/ES."""
         target = selected(account, replay)
         return result(target, target.risk_history)
 
-    @server.tool()
+    @reads()
     def risk_scenarios(account: str | None = None, mode: str = "parallel", days: list[float] | None = None,
                        benchmark: str | None = None, vols: list[float] | None = None,
                        term_scaled: bool = False, dynamics: str | None = None, replay: bool = False) -> dict:
@@ -349,7 +374,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         target = selected(account, replay)
         return result(target, lambda: target.risk_scenarios(mode, days, benchmark, vols, term_scaled, dynamics=dynamics))
 
-    @server.tool()
+    @reads()
     def risk_profile(account: str | None = None, underlying: str | None = None, benchmark: str | None = None,
                      days: list[float | str] | None = None, iv: float | None = None,
                      dynamics: str | None = None, legs: dict[str, int] | None = None, held: bool = True,
@@ -362,7 +387,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.risk_profile(underlying, benchmark, days, iv, dynamics=dynamics,
                                                           legs=legs, held=held))
 
-    @server.tool()
+    @reads()
     def hedges(target: Literal["delta", "vega", "grid"], account: str | None = None, scope: str = "aggregate",
                utilisation: float | None = None, betas: dict[str, float] | None = None, replay: bool = False) -> dict:
         """The smallest hedge (shares, an ATM option, or an SPY/SPX beta hedge for the aggregate) bringing a risk
@@ -382,12 +407,12 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         body["tags"] = tags
         return body
 
-    @server.tool()
+    @reads()
     def preview_order(order: Order, account: str | None = None, replay: bool = False) -> dict:
         """Preview a paper order without changing the account."""
         return write(account, replay, lambda target: target.preview_order(order_body(order)), command=False)
 
-    @server.tool()
+    @writes()
     def place_order(order: Order, account: str | None = None, replay: bool = False) -> dict:
         """Place a paper order tagged with this agent's name. Every result names the
         client_order_id sent: repeat it to retry after an uncertain response."""
@@ -399,18 +424,18 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         response["client_order_id"] = body["client_order_id"]
         return response
 
-    @server.tool()
+    @destroys()
     def cancel_order(order_id: str, account: str | None = None, replay: bool = False) -> dict:
         """Cancel one paper order."""
         return write(account, replay, lambda target: target.cancel_order(order_id))
 
-    @server.tool()
+    @destroys()
     def flatten(account: str | None = None, underlying: str | None = None, replay: bool = False,
                 type: Literal["market", "limit"] = "market", limit_ticks: int | None = None) -> dict:
         """Close paper positions in one underlying, or the whole named account."""
         return write(account, replay, lambda target: target.flatten(underlying, type=type, limit_ticks=limit_ticks))
 
-    @server.tool()
+    @reads()
     def list_scenarios() -> dict:
         """Available simulated scenarios and recorded sessions, with their source labels."""
         def listing():
@@ -422,7 +447,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             return data
         return result(client, listing)
 
-    @server.tool()
+    @writes()
     def start_replay(account: str, scenario: str | None = None, file: str | None = None,
                      seed: str | None = None, plan: str = "practice", start_at: str | None = None) -> dict:
         """Start a paused scenario or recording. Its isolated paper account is main."""
@@ -434,7 +459,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             return target.start_replay(**_body({"scenario": scenario, "file": file, "seed": seed, "plan": plan, "start_at": start_at, "paused": True}))
         return write(account, False, start)
 
-    @server.tool()
+    @writes()
     def replay_from_trade(account: str, run_id: str, trade_id: str) -> dict:
         """Start a fresh paused paper account before a source trade; unchanged source data is required."""
         def start(target):
@@ -443,7 +468,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             return target.replay_from_trade(run_id, trade_id)
         return write(account, False, start)
 
-    @server.tool()
+    @reads()
     def scenario_packs() -> dict:
         """Export simulated scenario packs, seeds, plans and declared objectives."""
         response = result(client, client.scenario_packs)
@@ -451,12 +476,14 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         response["simulated"] = True
         return response
 
-    @server.tool()
+    @writes()
     def import_scenario_pack(account: str, pack: dict) -> dict:
-        """Import a local JSON scenario pack. Requires replay scope and writable storage."""
+        """Import a local JSON scenario pack. Requires replay scope and writable storage. pack is one as
+        scenario_packs exports it: version (1), scenario (a complete scenario document with id, title and
+        date), seed, plan and an optional challenge."""
         return write(account, False, lambda target: target.import_scenario_pack(pack))
 
-    @server.tool()
+    @writes()
     def start_scenario_pack(account: str, pack_id: str) -> dict:
         """Start a fixed pack or challenge paused, in the isolated main paper account."""
         def start(target):
@@ -465,7 +492,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             return target.start_scenario_pack(pack_id)
         return write(account, False, start)
 
-    @server.tool()
+    @writes()
     def step_replay(account: str, until: str) -> dict:
         """Step the scenario to a time, then pause.
 
@@ -475,24 +502,24 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         """
         return write(account, True, lambda target: target.step_replay(until))
 
-    @server.tool()
+    @destroys()
     def stop_replay(account: str) -> dict:
         """Stop the replay; its journal remains available in history."""
         return write(account, True, lambda target: target.stop_replay())
 
-    @server.tool()
+    @reads()
     def fills(account: str | None = None, replay: bool = False) -> dict:
         """Paper fills, including exact prices and observed quote times."""
         target = selected(account, replay)
         return result(target, lambda: target.fills())
 
-    @server.tool()
+    @reads()
     def trades(status: str = "all", account: str | None = None, replay: bool = False) -> dict:
         """Journal trades and their notes."""
         target = selected(account, replay)
         return result(target, lambda: target.trades(status))
 
-    @server.tool()
+    @reads()
     def equity(start: str | None = None, end: str | None = None, limit: int = 500, cursor: str | None = None,
                account: str | None = None, replay: bool = False) -> dict:
         """Account equity samples, oldest first, at most limit (1–2000); money stays decimal text.
@@ -501,37 +528,37 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         target = selected(account, replay)
         return result(target, lambda: target.equity(start, end, limit=limit, cursor=cursor))
 
-    @server.tool()
-    def candles(symbol: str, interval: str = "5m", limit: int = 500, account: str | None = None, replay: bool = False) -> dict:
+    @reads()
+    def candles(symbol: str, interval: str = "5m", limit: int = 500, replay: bool = False) -> dict:
         """Observed OHLC bars, oldest first, with market timestamps."""
-        target = selected(account, replay)
+        target = selected(replay=replay)
         return result(target, lambda: target.candles(symbol, interval, limit))
 
-    @server.tool()
-    def surface(symbol: str, expiries: int = 4, window: float = 0.1, account: str | None = None, replay: bool = False) -> dict:
+    @reads()
+    def surface(symbol: str, expiries: int = 4, window: float = 0.1, replay: bool = False) -> dict:
         """Volatility surface and fit diagnostics; missing estimates stay null."""
-        target = selected(account, replay)
+        target = selected(replay=replay)
         return result(target, lambda: target.surface(symbol, expiries, window))
 
-    @server.tool()
-    def calendar_events(start: str | None = None, end: str | None = None, account: str | None = None, replay: bool = False) -> dict:
-        """Supplied calendar events; no inferred event times."""
-        target = selected(account, replay)
-        return result(target, lambda: target.calendar_events(start, end))
+    @reads()
+    def calendar_events(start: str | None = None, end: str | None = None) -> dict:
+        """The event calendar openportd was started with (--event-calendar); no inferred event times.
+        It is the server's own, the same for every account and replay; start and end are New York dates."""
+        return result(client, lambda: client.calendar_events(start, end))
 
-    @server.tool()
+    @reads()
     def playbooks(account: str | None = None, replay: bool = False) -> dict:
         """Versioned playbooks, modes, stages and forward reports. Review a stage before sending it."""
         target = selected(account, replay)
         return result(target, lambda: target.playbooks())
 
-    @server.tool()
+    @reads()
     def get_playbook(playbook_id: str, version: int | None = None, account: str | None = None, replay: bool = False) -> dict:
         """Read a playbook definition, optionally an older version."""
         target = selected(account, replay)
         return result(target, lambda: target.get_playbook(playbook_id, version))
 
-    @server.tool()
+    @reads()
     def pass_odds(days: int = 20, samples: int = 1000, playbook: str | None = None, seed: str | None = None, account: str | None = None, replay: bool = False,
                   economics: bool = False, payout_odds: float | None = None, payout: str | None = None) -> dict:
         """Seeded historical pass estimate, not a prediction. Requires sufficient history. economics=True adds expected value and a break-even pass rate."""
@@ -539,97 +566,108 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.pass_odds(days, samples, playbook=playbook, seed=seed, economics=economics,
                                                        payout_odds=payout_odds, payout=payout))
 
-    @server.tool()
+    @reads()
     def rules_compare(plans: list[str] | None = None, rules: list[dict] | None = None, include_current: bool = True,
                       account: str | None = None) -> dict:
         """Replay the live account's recorded attempt against presets or custom rule sets side by side. Read-only."""
         target = selected(account, False)
         return result(target, lambda: target.rules_compare(plans, rules, include_current=include_current))
 
-    @server.tool()
+    @reads()
     def validate_rule_pack(pack: dict) -> dict:
         """Check a versioned rule pack (openport.rule-pack) and return it normalized. Nothing is stored."""
         target = selected(None, False)
         return result(target, lambda: target.validate_rule_pack(pack))
 
-    @server.tool()
-    def strategy_template(symbol: str, expiry: str, template: dict, account: str | None = None, replay: bool = False) -> dict:
+    @reads()
+    def strategy_template(symbol: str, expiry: str, template: dict, replay: bool = False) -> dict:
         """Select option legs without placing an order. Preview the resulting order before sending."""
-        target = selected(account, replay)
+        target = selected(replay=replay)
         return result(target, lambda: target.strategy_template(symbol, expiry, template))
 
-    @server.tool()
+    @reads()
     def alerts(account: str | None = None, replay: bool = False) -> dict:
         """Account alert definitions and trip history."""
         target = selected(account, replay)
         return result(target, lambda: target.alerts())
 
-    @server.tool()
+    @reads()
     def what_if(candidates: list[dict], account: str | None = None, replay: bool = False) -> dict:
-        """Compare up to six candidate adjustments on private copies; never trades."""
+        """Compare up to six candidate adjustments on private copies; never trades. Each candidate is
+        {"name": optional label of 1-64 bytes, "orders": [1-4 orders, each as preview_order takes it]}."""
         return write(account, replay, lambda target: target.what_if(candidates), command=False)
 
-    @server.tool()
+    @reads()
     def preview_change(order_id: str, change: dict, account: str | None = None, replay: bool = False) -> dict:
-        """Preview changed order terms before calling modify_order."""
+        """Preview changed order terms before calling modify_order. change takes the keys modify_order
+        takes, at least one of quantity, limit_price and trigger_level, plus floor_share, the share of
+        the floor room that sizes max_units, in (0, 1] (default 0.5)."""
         return write(account, replay, lambda target: target.preview_change(order_id, **change), command=False)
 
-    @server.tool()
+    @destroys()
     def modify_order(order_id: str, change: dict, account: str | None = None, replay: bool = False) -> dict:
-        """Modify a paper order. Call preview_change with the same terms first."""
+        """Modify a paper order. Call preview_change with the same terms first. change takes quantity
+        (the new total, filled contracts included), limit_price and trigger_level (decimal text),
+        time_in_force ("day" or "gtc", resting limits) and walk ({"step", "seconds", "limit"}, or null
+        to remove it); omitted keys keep their value."""
         return write(account, replay, lambda target: target.modify_order(order_id, **change))
 
-    @server.tool()
+    @destroys()
     def note(trade_id: str, note: str = "", tags: list[str] | None = None, account: str | None = None, replay: bool = False) -> dict:
         """Save a trade journal note and tags."""
         return write(account, replay, lambda target: target.note(trade_id, note, tags))
 
-    @server.tool()
+    @destroys()
     def day_note(day: str, plan: str = "", review: str = "", account: str | None = None, replay: bool = False) -> dict:
         """Save a New York trading day plan and review."""
         return write(account, replay, lambda target: target.day_note(day, plan, review))
 
-    @server.tool()
+    @writes()
     def create_alert(scope: str, metric: str, direction: str, level: str, terms: dict | None = None, account: str | None = None, replay: bool = False) -> dict:
-        """Create a paper account, contract, spread or underlying alert."""
+        """Create a paper account, contract, spread or underlying alert. terms takes label (up to 100
+        characters), symbol (a registered OSI for contract, the underlying for underlying), legs
+        (2-4 order legs for spread) and repeat (true fires again each time the condition returns)."""
         return write(account, replay, lambda target: target.create_alert(scope, metric, direction, level, **(terms or {})))
 
-    @server.tool()
+    @destroys()
     def delete_alert(alert_id: str, account: str | None = None, replay: bool = False) -> dict:
         """Remove an account alert."""
         return write(account, replay, lambda target: target.delete_alert(alert_id))
 
-    @server.tool()
+    @writes()
     def create_playbook(definition: dict, account: str | None = None, replay: bool = False) -> dict:
-        """Create a versioned definition; requires admin scope and starts off."""
+        """Create a versioned definition; requires admin scope and starts off. definition is a playbook as
+        get_playbook returns it: id, name, underlyings, window, conditions, structure, sizing, management
+        and guardrails (docs/playbooks.md)."""
         return write(account, replay, lambda target: target.create_playbook(definition))
 
-    @server.tool()
+    @writes()
     def version_playbook(definition: dict, account: str | None = None, replay: bool = False) -> dict:
-        """Save a new version using the current version as concurrency guard; admin scope."""
+        """Save a new version using the current version as concurrency guard; admin scope. definition is
+        the whole playbook, as create_playbook takes it, with its id and the version it replaces."""
         return write(account, replay, lambda target: target.version_playbook(definition))
 
-    @server.tool()
+    @destroys()
     def archive_playbook(playbook_id: str, version: int, account: str | None = None, replay: bool = False) -> dict:
         """Archive a playbook at its current version; admin scope."""
         return write(account, replay, lambda target: target.archive_playbook(playbook_id, version))
 
-    @server.tool()
+    @writes()
     def playbook_mode(playbook_id: str, mode: Literal["off", "stage", "auto"], account: str | None = None, replay: bool = False) -> dict:
         """Set mode; auto permits future paper orders. Requires admin scope. Prefer stage for review."""
         return write(account, replay, lambda target: target.playbook_mode(playbook_id, mode))
 
-    @server.tool()
+    @writes()
     def send_staged_order(stage_id: str, account: str | None = None, replay: bool = False) -> dict:
         """Send a reviewed stage through fresh engine risk checks. Read playbooks and preview its order first."""
         return write(account, replay, lambda target: target.send_staged_order(stage_id))
 
-    @server.tool()
+    @destroys()
     def dismiss_staged_order(stage_id: str, account: str | None = None, replay: bool = False) -> dict:
         """Dismiss a staged playbook order."""
         return write(account, replay, lambda target: target.dismiss_staged_order(stage_id))
 
-    @server.tool()
+    @reads()
     def notifications() -> dict:
         """Nonsecret delivery status; no destinations or credentials."""
         return result(client, client.notifications)
@@ -642,52 +680,54 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         response["simulated"] = True
         return response
 
-    @server.tool()
+    @reads()
     def list_backtests(playbook: str | None = None) -> dict:
         """Saved simulated batch runs, optionally filtered by playbook ID/version."""
         return batch(result(client, lambda: client.list_backtests(playbook)))
 
-    @server.tool()
+    @reads()
     def get_backtest(run_id: str) -> dict:
         """Progress and saved report for a simulated batch."""
         return batch(result(client, lambda: client.get_backtest(run_id)))
 
-    @server.tool()
+    @reads()
     def compare_backtests(run_ids: list[str]) -> dict:
         """Compare 2–8 saved runs; mismatched input/plan warnings remain visible."""
         return batch(result(client, lambda: client.compare_backtests(run_ids)))
 
-    @server.tool()
+    @writes()
     def start_backtest(playbook: str | list[str], plan: str | dict, settings: dict | None = None) -> dict:
-        """Start a simulated batch; requires replay scope. settings supplies days/scenarios, seed and workers."""
+        """Start a simulated batch; requires replay scope. settings takes one of days (1-252 of
+        {"file": recording} or {"scenario", "date", "seed"}) and scenarios (1-252 generated days, with
+        seed and an optional scenario ID), plus workers (1-16, default 4)."""
         return batch(write("main", False, lambda target: target.start_backtest(playbook, plan, **(settings or {}))))
 
-    @server.tool()
+    @destroys()
     def cancel_backtest(run_id: str) -> dict:
         """Cancel a running batch; requires replay scope."""
         return batch(write("main", False, lambda target: target.cancel_backtest(run_id)))
 
-    @server.tool()
+    @writes()
     def start_sweep(playbook: str, plan: str | dict, parameter_grid: dict, settings: dict | None = None) -> dict:
         """Start 2–8 simulated variants over JSON-pointer playbook fields; replay scope required."""
         return batch(write("main", False, lambda target: target.start_sweep(playbook, plan, parameter_grid, **(settings or {}))))
 
-    @server.tool()
+    @reads()
     def list_sweeps() -> dict:
         """Saved simulated parameter sweeps."""
         return batch(result(client, client.list_sweeps))
 
-    @server.tool()
+    @reads()
     def get_sweep(run_id: str) -> dict:
         """Sweep progress, exact variant definitions and historical ranking; not a prediction."""
         return batch(result(client, lambda: client.get_sweep(run_id)))
 
-    @server.tool()
+    @destroys()
     def cancel_sweep(run_id: str) -> dict:
         """Cancel an active parameter sweep; replay scope required."""
         return batch(write("main", False, lambda target: target.cancel_sweep(run_id)))
 
-    @server.tool()
+    @writes()
     def evaluate_playbook(playbook_id: str, account: str) -> dict:
         """Evaluate a live paper playbook now with the bearer token's trade scope (not a webhook
         secret, which this server never handles). Respects off/stage/auto; auto may trade. Never retries."""

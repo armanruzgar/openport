@@ -872,6 +872,18 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   instead of $39.32. It also read "Realized", like the Realized tile and the sidebar,
   which show P&L before fees, so one label had two meanings. The column is now "Net
   realized", subtracted exactly, and its tooltip gives the gross, the fees and the net.
+- **MCP refusals keep the server's evidence, and tools say what they change.** A
+  refused order came back from the MCP tools with its code and message only, though
+  the server sends `actual`, `limit`, `scope` and, for some checks, `evidence`, so an
+  agent told `PRICE_BAND` could not see the band or the price without another call.
+  Those fields now go with the error. Every tool also carries MCP annotations (reads,
+  previews and what-ifs read-only; cancel, flatten, stop, archive, delete, modify and
+  note replacement destructive), the tools that take a `change`, `terms`,
+  `definition`, `pack`, `settings` or `candidates` object list the keys they accept,
+  and `calendar_events`, which reads openportd's own calendar, no longer takes an
+  `account` or `replay` it ignored, nor labels that calendar with a running replay's
+  feed and time. `candles`, `surface` and `strategy_template` drop an `account` they
+  never sent.
 
 ## 0.5.1 (2026-10-28)
 
