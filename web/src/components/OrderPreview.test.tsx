@@ -59,6 +59,7 @@ describe("order preview", () => {
     vi.mocked(useLive).mockReturnValue(moved(2))
     await view()
     await act(async () => { await vi.advanceTimersByTimeAsync(previewQuoteRefreshMs) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10) })
     expect(request).toHaveBeenCalledTimes(2)
     expect(host.textContent).toContain("$9,499.00")
     expect(host.textContent).not.toContain("Checking order")
@@ -72,6 +73,7 @@ describe("order preview", () => {
     }
     expect(request).toHaveBeenCalledTimes(2)
     await act(async () => { await vi.advanceTimersByTimeAsync(previewQuoteRefreshMs) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10) })
     expect(request).toHaveBeenCalledTimes(3)
   })
   it("shows failure without guessing and disables size", async () => {
