@@ -65,19 +65,66 @@ export function openOrdersIn(orders: readonly Order[], underlying: string | null
   return orders.filter((o) => isOpen(o) && (underlying == null || o.underlying === underlying))
 }
 
+/** When a contract expires; the date and settlement where an older server sends no time. */
+function expiryTime(position: Position): number {
+  const time = position.expiry_time ? Date.parse(position.expiry_time) : Number.NaN
+  return Number.isFinite(time) ? time : Date.parse(`${position.expiry}T${position.settlement === "AM" ? "13:30" : "20:00"}:00Z`)
+}
+
+/**
+ * Contracts of longs a flatten leaves alone, by symbol, because they cover a short that
+ * has expired: they stay until it settles. Pairs shorts with their covers as the server
+ * does (plan_closes in src/trading/session.cpp): per underlying and type, the
+ * latest-expiring shorts first, each taking longs that expire with it or later, the
+ * nearest expiry and then the nearest strike first.
+ */
+export function heldForSettlement(positions: readonly Position[]): Map<string, number> {
+  const books = new Map<string, { shorts: Position[]; longs: Position[] }>()
+  for (const position of positions) {
+    if (position.quantity === 0) continue
+    const key = `${position.underlying} ${position.type}`
+    const book = books.get(key) ?? { shorts: [], longs: [] }
+    ;(position.quantity < 0 ? book.shorts : book.longs).push(position)
+    books.set(key, book)
+  }
+  const held = new Map<string, number>()
+  const milli = (strike: number) => Math.round(strike * 1000)
+  for (const { shorts, longs } of books.values()) {
+    const left = new Map(longs.map((p) => [p.symbol, p.quantity]))
+    for (const sold of [...shorts].sort((a, b) => expiryTime(b) - expiryTime(a))) {
+      let need = -sold.quantity
+      const covers = longs.filter((p) => expiryTime(p) >= expiryTime(sold)).sort((a, b) => expiryTime(a) - expiryTime(b) ||
+        Math.abs(milli(a.strike) - milli(sold.strike)) - Math.abs(milli(b.strike) - milli(sold.strike)))
+      for (const cover of covers) {
+        const n = Math.min(need, left.get(cover.symbol) ?? 0)
+        if (n <= 0) continue
+        need -= n
+        left.set(cover.symbol, (left.get(cover.symbol) ?? 0) - n)
+        if (sold.awaiting_settlement && !cover.awaiting_settlement) held.set(cover.symbol, (held.get(cover.symbol) ?? 0) + n)
+      }
+    }
+  }
+  return held
+}
+
 /**
  * What flattening does, as the server will: cancel the open orders in scope but the
  * bracket exits (`exits` of them, kept until the position they protect is flat) and
  * the account's own closes, then close each position in scope that can still trade,
- * short positions first.
+ * short positions first. A long covering a short that has expired stays until it
+ * settles: `held` lists it with the contracts kept, and `closing` has only the rest.
  */
 export function flattenPlan(positions: readonly Position[], orders: readonly Order[], underlying: string | null) {
   const inScope = (symbol: string) => underlying == null || symbol === underlying
-  const closing = positions.filter((p) => p.quantity !== 0 && !p.awaiting_settlement && inScope(p.underlying))
+  const scoped = positions.filter((p) => p.quantity !== 0 && inScope(p.underlying))
+  const kept = heldForSettlement(scoped)
+  const held = scoped.flatMap((p) => kept.has(p.symbol) ? [{ ...p, quantity: kept.get(p.symbol)! }] : [])
+  const closing = scoped.filter((p) => !p.awaiting_settlement)
+    .flatMap((p) => { const quantity = p.quantity - (kept.get(p.symbol) ?? 0); return quantity ? [quantity === p.quantity ? p : { ...p, quantity }] : [] })
     .sort((a, b) => Number(a.quantity > 0) - Number(b.quantity > 0))
   const open = openOrdersIn(orders, underlying)
   const cancelling = open.filter((o) => o.role == null && o.origin !== "system")
-  return { closing, cancelling, exits: open.filter((o) => o.role != null).length }
+  return { closing, cancelling, exits: open.filter((o) => o.role != null).length, held }
 }
 
 /** Underlyings with something to act on, in the order they first appear. */
@@ -128,13 +175,17 @@ function termPrice(value: Money | null, multi: boolean): string {
   const n = Number(value)
   return n === 0 ? "even" : `${formatMoney(value.replace("-", ""))} ${n > 0 ? "db" : "cr"}`
 }
-/** The terms a change asked for, each beside the one before: "quantity 3 → 5, limit $4.00 → $4.10". */
-export function changeText(change: OrderChangeRecord, multi = false): string {
+/**
+ * The terms a change asked for, each beside the one before: "quantity 3 → 5, limit $4.00 → $4.10".
+ * A multi-leg order's limit is a net; its trigger level is one only for a combo trigger
+ * (`comboTrigger`), and otherwise a price of the underlying or an option.
+ */
+export function changeText(change: OrderChangeRecord, multi = false, comboTrigger = multi): string {
   const parts: string[] = []
   if (change.quantity != null) parts.push(`quantity ${change.previous.quantity} → ${change.quantity}`)
   if (change.limit_price != null) parts.push(`limit ${termPrice(change.previous.limit_price, multi)} → ${termPrice(change.limit_price, multi)}`)
   if (change.trigger_level != null)
-    parts.push(`trigger ${termPrice(change.previous.trigger_level, multi)} → ${termPrice(change.trigger_level, multi)}`)
+    parts.push(`trigger ${termPrice(change.previous.trigger_level, comboTrigger)} → ${termPrice(change.trigger_level, comboTrigger)}`)
   if (change.time_in_force) parts.push(`${(change.previous.time_in_force ?? "?").toUpperCase()} → ${change.time_in_force.toUpperCase()}`)
   if (change.walk !== undefined) parts.push(change.walk ? `walk ${formatMoney(change.walk.step)} every ${change.walk.seconds}s to ${termPrice(change.walk.limit, multi)}` : "walk removed")
   return parts.length ? parts.join(", ") : "no new terms"
@@ -152,14 +203,15 @@ const at = (time: string | null) => time == null ? Number.POSITIVE_INFINITY : Da
  */
 export function orderTimeline(order: Order): TimelineEntry[] {
   const multi = order.legs != null
+  const combo = multi && order.trigger?.source === "combo"
   const reason = order.reason ? `${order.reason.message}${reasonEvidence(order.reason) ? ` (${reasonEvidence(order.reason)})` : ""}` : undefined
   if (order.status === "rejected") return [{ time: order.ended_at ?? order.accepted_at, text: "Rejected", detail: reason, tone: "negative" }]
   const entries: TimelineEntry[] = [{ time: order.accepted_at, text: "Accepted" }]
   if (order.triggered_at) entries.push({ time: order.triggered_at, text: "Triggered" })
   for (const change of order.changes ?? []) {
     entries.push(change.applied
-      ? { time: change.time, text: `Changed: ${changeText(change, multi)}`, detail: `by ${change.actor}` }
-      : { time: change.time, text: `Change refused: ${changeText(change, multi)}`, tone: "negative",
+      ? { time: change.time, text: `Changed: ${changeText(change, multi, combo)}`, detail: `by ${change.actor}` }
+      : { time: change.time, text: `Change refused: ${changeText(change, multi, combo)}`, tone: "negative",
           detail: change.reason ? `${change.reason.code}: ${change.reason.message}${reasonEvidence(change.reason) ? ` (${reasonEvidence(change.reason)})` : ""}` : undefined })
   }
   entries.sort((a, b) => at(a.time) - at(b.time))

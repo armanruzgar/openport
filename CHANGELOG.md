@@ -706,6 +706,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   press searches again. Switching to another symbol whose summary was already loaded
   kept the form and searched the new symbol at once with the old symbol's target
   price (SPY valued for 7000); another symbol now starts a new form.
+- **A multi-leg order's underlying trigger in its history.** Changing the trigger of a
+  closing combo armed on the underlying showed the index level as a net price in the
+  order's history: "trigger $5,800.00 db → $5,790.00 db". Only a combo trigger's level
+  is a debit or credit now; others read "$5,800.00 → $5,790.00".
+- **Close all lists only what it will close.** Between an option's expiry and its
+  settlement, a long that covers an expired short stays until that short settles, and
+  the server sends no order for it. The Close all and Flatten dialog still listed it as
+  "Sell N at market" and counted it on the button, which did nothing when it was the
+  only position. It now pairs shorts with their covers as the server does, lists only
+  the contracts that will close, and says which longs wait for the short to settle.
 
 ## 0.5.1 (2026-10-28)
 

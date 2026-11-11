@@ -62,6 +62,26 @@ describe("flatten", () => {
     expect(closingAction(long)).toBe("Sell 2")
   })
 
+  it("leaves a long covering an expired short to settle, as the server holds it back", () => {
+    const expiredShort: Position = { ...long, symbol: "SPXW  260922P04990000", type: "put", strike: 4990, expiry: "2026-09-22", quantity: -1, awaiting_settlement: true }
+    const cover: Position = { ...long, symbol: "SPXW  261022P05000000", type: "put", strike: 5000, expiry: "2026-10-22", quantity: 1 }
+    let plan = flattenPlan([expiredShort, cover], [], null)
+    expect(plan.closing).toEqual([])
+    expect(plan.held).toEqual([{ ...cover, quantity: 1 }])
+    // Only the contracts that cover it stay; the rest close.
+    plan = flattenPlan([expiredShort, { ...cover, quantity: 3 }], [], "SPX")
+    expect(plan.closing).toEqual([{ ...cover, quantity: 2 }])
+    expect(plan.held.map((p) => [p.symbol, p.quantity])).toEqual([[cover.symbol, 1]])
+    // A live short expiring later takes the cover first, and the two close together.
+    const later: Position = { ...cover, symbol: "SPXW  261022P04990000", strike: 4990, quantity: -1 }
+    plan = flattenPlan([expiredShort, later, cover], [], null)
+    expect(plan.closing.map((p) => p.symbol)).toEqual([later.symbol, cover.symbol])
+    expect(plan.held).toEqual([])
+    // A call does not cover a put, and another underlying is out of scope.
+    expect(flattenPlan([expiredShort, { ...cover, type: "call" }], [], null).held).toEqual([])
+    expect(flattenPlan([expiredShort, cover], [], "XSP")).toMatchObject({ closing: [], held: [] })
+  })
+
   it("can take one underlying at a time", () => {
     const plan = flattenPlan([long, short, xsp], [order, { ...order, id: "11", underlying: "XSP" }], "XSP")
     expect(plan.closing).toEqual([xsp])
@@ -117,6 +137,14 @@ describe("an order's history", () => {
     expect(orderTimeline(order).at(-1)).toEqual({ time: order.day_end, text: "Lasts until, unless it fills or is cancelled" })
     expect(changeText({ ...changed.changes![0]!, limit_price: "-1.10", previous: { quantity: 1, limit_price: "-1.20", trigger_level: null } }, true))
       .toBe("limit $1.20 cr → $1.10 cr")
+    // A combo trigger's level is a net; an underlying trigger's is the index level.
+    const level = { ...changed.changes![0]!, limit_price: null, trigger_level: "5790.00", previous: { quantity: 1, limit_price: null, trigger_level: "5800.00" } }
+    const closing: Order = { ...spread, status: "armed", type: "market", limit_price: null, changes: [level],
+      trigger: { source: "underlying", direction: "at_or_below", level: "5790.00" } }
+    expect(orderTimeline(closing).map((entry) => entry.text)).toContain("Changed: trigger $5,800.00 → $5,790.00")
+    expect(orderTimeline({ ...closing, trigger: { source: "combo", direction: "at_or_below", level: "-1.10" },
+      changes: [{ ...level, trigger_level: "-1.10", previous: { ...level.previous, trigger_level: "-1.20" } }] }).map((entry) => entry.text))
+      .toContain("Changed: trigger $1.20 cr → $1.10 cr")
     // Older servers send no changes or end time.
     expect(orderTimeline({ ...order, status: "filled" }).at(-1)).toMatchObject({ time: null, text: "Filled" })
   })

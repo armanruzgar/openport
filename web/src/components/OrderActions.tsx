@@ -391,6 +391,8 @@ export function FlattenDialog({ positions, stocks = [], orders, trading, initial
           {refused.map(({ symbol, notice }) => <p key={symbol} role="status" className="text-sm text-warn">
             {notice}. Its positions and orders stay as they are.</p>)}
           {waiting > 0 && <p className="text-xs text-muted">{waiting === 1 ? "1 expired position waits" : `${waiting} expired positions wait`} for settlement.</p>}
+          {plan.held.length > 0 && <p className="text-xs text-muted">{plan.held.map((p) => `${p.quantity} ${contractLabel(p)}`).join(", ")} {plan.held.length === 1
+            ? "stays until the expired short it covers settles" : "stay until the expired shorts they cover settle"}.</p>}
           {type === "market" && limitOnly.length > 0 && <p role="status" className="text-sm text-warn">
             {limitOnly.join(", ")} {limitOnly.length === 1 ? "is" : "are"} outside the regular session, which takes limit orders only.
             Choose Limit to flatten in this session.</p>}
