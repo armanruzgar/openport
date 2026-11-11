@@ -184,6 +184,32 @@ TEST(AmericanApproximation, DispatchFallsBackToTheLattice) {
   EXPECT_EQ(used, AmericanModel::BaroneAdesiWhaley);
 }
 
+TEST(AmericanApproximation, BjerksundStenslandLeavesADegenerateBoundaryToTheLattice) {
+  // b*T + 2*sigma*sqrt(T) <= 0 in the call form (the put's carry is negated): the
+  // trigger fell below the strike, at-the-money spots priced at intrinsic, and the
+  // premium read 0 against a converged tree's 3.61, 1.08 and 0.45.
+  const BsmInputs degenerate[] = {{kCall, 100, 100, 5, 0.02, 0.2, 0.2},
+                                  {kCall, 100, 100, 2, 0.04, 0.2, 0.1},
+                                  {kPut, 100, 100, 2, 0.06, 0, 0.04}};
+  for (const auto& in : degenerate) {
+    SCOPED_TRACE(testing::Message() << static_cast<int>(in.type) << " T=" << in.expiry << " r=" << in.rate
+                                    << " q=" << in.dividend << " vol=" << in.vol);
+    EXPECT_TRUE(std::isnan(bjerksund_stensland_price(in)));
+    AmericanModel used = AmericanModel::BjerksundStensland2002;
+    const double premium = early_exercise_premium(in, AmericanModel::BjerksundStensland2002, 31, {}, &used);
+    EXPECT_EQ(used, AmericanModel::LeisenReimer);
+    EXPECT_EQ(premium, binomial_early_exercise_premium(in, 31));
+    EXPECT_GT(premium, 0.1);
+  }
+  // Just inside the domain the closed form still prices, close to the tree.
+  const BsmInputs inside{kCall, 100, 100, 1, 0.045, 0.2, 0.15};
+  ASSERT_TRUE(std::isfinite(bjerksund_stensland_price(inside)));
+  AmericanModel used = AmericanModel::LeisenReimer;
+  const double premium = early_exercise_premium(inside, AmericanModel::BjerksundStensland2002, 31, {}, &used);
+  EXPECT_EQ(used, AmericanModel::BjerksundStensland2002);
+  EXPECT_NEAR(premium, binomial_early_exercise_premium(inside, 1001), 0.05);
+}
+
 TEST(AmericanApproximation, ParsesModelNames) {
   using openport::pricing::parse_american_model;
   for (auto model : {AmericanModel::LeisenReimer, AmericanModel::BjerksundStensland2002, AmericanModel::BaroneAdesiWhaley})

@@ -28,7 +28,10 @@ enum class AmericanModel : std::uint8_t {
 /// never pay (calls with q <= 0, puts with r <= 0) this is the BSM price. The
 /// result is floored at the BSM and intrinsic values (both lower bounds of the
 /// American price; the flat-boundary strategy can be worse than holding for short,
-/// volatile options). NaN for invalid inputs or where the formula is undefined.
+/// volatile options). NaN for invalid inputs or where the formula is undefined,
+/// including where its boundary degenerates: b*T + 2*sigma*sqrt(T) <= 0 in the call
+/// form (carry strongly negative against vol over a long tenor), which puts the
+/// exercise trigger at or below its floor.
 [[nodiscard]] double bjerksund_stensland_price(const BsmInputs& in) noexcept;
 
 /// Barone-Adesi and Whaley (1987) quadratic approximation, with the critical

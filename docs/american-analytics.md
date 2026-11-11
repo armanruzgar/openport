@@ -242,7 +242,10 @@ is solved by Newton's method from Haug's seed. Puts use the put-call
 transformation. Both prices are floored at the BSM and intrinsic values. The tree
 remains in use wherever the closed forms do not apply: an expiry with known cash
 dividends before expiry, a nonpositive rate, zero vol or time, or a non-finite
-result. Each expiry reports the model that actually removed its EEP as
+result. BS2002 is also undefined where carry is strongly negative against vol over
+the tenor (b·T + 2σ√T ≤ 0 in its call form, b the call's cost of carry and the put's
+negated): its exercise trigger then falls to or below its floor, so it would price
+at intrinsic and report no premium, and the tree takes those expiries. Each expiry reports the model that actually removed its EEP as
 `eep_model` (`leisen_reimer`, `bjerksund_stensland_2002` or `barone_adesi_whaley`;
 null when not de-Americanised). Run records include the choice only when it is not
 the default, so existing recordings keep their bytes and verify unchanged.

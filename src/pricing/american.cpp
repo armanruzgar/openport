@@ -53,6 +53,12 @@ double psi(double s, double t2, double gamma, double h, double i2, double i1, do
 
 double bs2002_call(double s, double k, double t, double r, double b, double v) noexcept {
   if (b >= r) return carry_call(s, k, t, r, b, v);  // never optimal to exercise early
+  // With carry this negative against vol over the tenor, h(T) is no longer negative
+  // and the trigger I falls to or below its floor B0 (below the strike when B0 = K):
+  // spots that should be held price at intrinsic, and the premium reads as zero. The
+  // flat boundary does not apply there; NaN hands the contract to the lattice.
+  // (I1 uses t1 < T, so it stays above B0 whenever I2 does.)
+  if (!(b * t + 2 * v * std::sqrt(t) > 0)) return kNaN;
   const double v2 = v * v;
   const double t1 = 0.5 * (std::sqrt(5.0) - 1) * t;
   const double beta = (0.5 - b / v2) + std::sqrt((b / v2 - 0.5) * (b / v2 - 0.5) + 2 * r / v2);

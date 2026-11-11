@@ -53,6 +53,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   and the MCP tool send `compare=true` with the range they are given, so an agent that
   narrowed it got every comparison as null. Each target session is now read on its own,
   up to the market's time.
+- **`--american-model bs2002` with strongly negative carry.** Where b·T + 2σ√T ≤ 0 in
+  the formula's call form (a 20% dividend yield over two to five years, or a put at a
+  high rate and low vol), Bjerksund-Stensland's exercise trigger fell below the strike,
+  at-the-money contracts priced at intrinsic, and their early exercise premium was
+  reported as 0 by `bjerksund_stensland_2002` instead of the tree's 0.45 to 3.61. The
+  closed form is undefined there and those expiries now fall back to the Leisen-Reimer
+  tree, as `eep_model` reports.
 - **Retried copies to an equity-split group.** `POST /api/orders/copy` recomputed an
   equity split on every request, and after the first copy filled, the paying member's
   slightly lower equity moved the remainder unit to another member. A retry with the
