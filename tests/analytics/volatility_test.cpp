@@ -444,6 +444,20 @@ TEST(VolEvents, ValidatesLabelsDatesAndDuplicateDates) {
     std::istringstream bad(text);
     EXPECT_THROW((void)parse_events(bad), std::invalid_argument) << text;
   }
+  // Excel's "CSV UTF-8" leads with a byte-order mark, and a header may be written in
+  // any case or spacing: these stopped openportd at line 1 over an invisible byte.
+  for (const auto* text : {"\xEF\xBB\xBF" "date,label\n2026-10-02,Payrolls\n", "\xEF\xBB\xBF" "2026-10-02,Payrolls\n",
+                           "DATE,LABEL\n2026-10-02,Payrolls\n", "date, label\n2026-10-02,Payrolls\n",
+                           " Date ,Label\r\n2026-10-02,Payrolls\r\n"}) {
+    std::istringstream input(text);
+    const auto parsed = parse_events(input);
+    ASSERT_EQ(parsed.size(), 1u) << text;
+    EXPECT_EQ(parsed[0].date, (md::Date{2026, 10, 2})) << text;
+    EXPECT_EQ(parsed[0].label, "Payrolls") << text;
+  }
+  // Only the file's first bytes can be a byte-order mark.
+  std::istringstream later("2026-10-01,Jobless claims\n\xEF\xBB\xBF" "2026-10-02,Payrolls\n");
+  EXPECT_THROW((void)parse_events(later), std::invalid_argument);
 }
 }  // namespace
 
@@ -506,5 +520,33 @@ TEST(VolDerived, ConeImpliedMaturityUsesBusinessSessionCloses) {
   EXPECT_NEAR(implied.vol, 20, 1e-12);
   EXPECT_TRUE(implied.proxy);
   EXPECT_TRUE(std::isnan(session_implied_vol(v, as_of, 252).vol));
+}
+
+TEST(VolDerived, AConeHorizonEndingAtAnExpiryIsThatTenorAtAnyAsOf) {
+  // A weekly-only underlying after Friday's close: the fifth session closes at the next
+  // Friday's PM settlement. With as_of off whole minutes the horizon, rounded twice as
+  // days, landed one step below that expiry's knot about one time in ten, and the cone's
+  // implied vol came back null as target_not_bracketed.
+  UnderlyingMetrics m;
+  for (const auto& [expiry, sigma] : {std::pair{md::Date{2026, 11, 13}, .2}, std::pair{md::Date{2026, 11, 20}, .18}}) {
+    auto slice = flat_chain(sigma);
+    slice.expiry = expiry;
+    slice.expiry_time = md::new_york_to_utc(expiry, 16, 0);
+    m.slices.push_back(slice);
+  }
+  const auto until = md::new_york_to_utc({2026, 11, 9}, 9, 0);
+  int checked = 0;
+  for (auto as_of = md::new_york_to_utc({2026, 11, 6}, 16, 0) + md::kNanosPerSecond; as_of < until;
+       as_of += 7 * md::kNanosPerMinute + 123457) {
+    m.as_of = as_of;
+    const auto v = volatility_metrics(m);
+    const auto implied = session_implied_vol(v, as_of, 5);
+    ASSERT_TRUE(std::isfinite(implied.vol)) << md::format_timestamp(as_of) << ' ' << implied.reason;
+    EXPECT_EQ(implied.near, 0u);
+    EXPECT_EQ(implied.next, 0u);
+    EXPECT_NEAR(implied.vol, v.expiries[0].smile.atm, 1e-9);
+    ++checked;
+  }
+  EXPECT_GT(checked, 500);
 }
 }  // namespace

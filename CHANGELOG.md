@@ -60,6 +60,18 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   reported as 0 by `bjerksund_stensland_2002` instead of the tree's 0.45 to 3.61. The
   closed form is undefined there and those expiries now fall back to the Leisen-Reimer
   tree, as `eep_model` reports.
+- **Cone implied vol at an expiry's close.** `realized.cones[].implied_vol` in
+  `GET /api/underlyings/{symbol}/volatility` was null (`target_not_bracketed`) about one
+  time in ten when the cone's horizon closed exactly at the first expiry's settlement (a
+  weekly-only underlying after Friday's close, five sessions out), depending only on
+  the nanoseconds of the snapshot time: the horizon was rounded twice on its way to
+  minutes and could land a hair below that expiry. It is now computed as the expiries'
+  own minutes are, so it is that exact tenor.
+- **`--events` files from spreadsheets.** A file that began with a UTF-8 byte-order
+  mark (Excel's "CSV UTF-8"), or whose header was `DATE,LABEL` or `date, label`,
+  stopped openportd at startup with "events line 1: date must be YYYY-MM-DD", pointing
+  at an invisible byte. The mark is skipped, and the header is recognised in any case
+  and spacing.
 - **Retried copies to an equity-split group.** `POST /api/orders/copy` recomputed an
   equity split on every request, and after the first copy filled, the paying member's
   slightly lower equity moved the remainder unit to another member. A retry with the

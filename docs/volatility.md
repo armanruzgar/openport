@@ -191,7 +191,8 @@ a same-day expiry. A shared interval cannot isolate an event's premium.
 YYYY-MM-DD,Label
 ```
 
-Blank lines, `#` comments and an optional `date,label` header are allowed. Dates
+Blank lines, `#` comments, an optional `date,label` header (in any case and spacing)
+and a UTF-8 byte-order mark at the start of the file are allowed. Dates
 must be valid and representable in the market timestamp range. Labels are trimmed,
 1–160 bytes of UTF-8 text, with no control characters (save the file as UTF-8, not
 Latin-1); commas after the first belong to the

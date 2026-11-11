@@ -2,6 +2,7 @@
 #include "openport/md/utf8.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <map>
 #include <numeric>
@@ -214,10 +215,13 @@ SmileMetrics smile_metrics(const SliceMetrics& slice, const SviFit* fit, bool ve
   return out;
 }
 
-ConstantVol constant_vol(std::span<const VarianceKnot> knots, double days, double minimum_minutes) {
+namespace {
+/// constant_vol at a target in minutes. A caller that computes it as the knots were
+/// computed gets an exact tenor where its horizon ends at an expiry, not a value one
+/// rounding step either side of that knot.
+ConstantVol constant_vol_at(std::span<const VarianceKnot> knots, double days, double target, double minimum_minutes) {
   ConstantVol out;
   out.days = days;
-  const double target = days * 1440.0;
   std::vector<std::size_t> order;
   for (std::size_t i = 0; i < knots.size(); ++i)
     if (positive(knots[i].minutes) && knots[i].minutes >= minimum_minutes) order.push_back(i);
@@ -243,6 +247,11 @@ ConstantVol constant_vol(std::span<const VarianceKnot> knots, double days, doubl
                   (target - a.minutes) / (b.minutes - a.minutes)) / target;
   out.vol = vol_of(out.variance);
   return out;
+}
+}  // namespace
+
+ConstantVol constant_vol(std::span<const VarianceKnot> knots, double days, double minimum_minutes) {
+  return constant_vol_at(knots, days, days * 1440.0, minimum_minutes);
 }
 
 VolatilityMetrics volatility_metrics(const UnderlyingMetrics& metrics, std::span<const SviFit> fits,
@@ -330,7 +339,11 @@ ConstantVol session_implied_vol(const VolatilityMetrics& volatility, md::Timesta
     out.reason = "no_session_horizon";
     return out;
   }
-  return constant_vol(knots, md::years_between(as_of, end) * 365);
+  // The target in minutes exactly as volatility_metrics computed each expiry's: a
+  // horizon that closes at an expiry's settlement is that tenor at any as_of. Days
+  // rounded twice could land one step below the first expiry and leave it unbracketed.
+  const double years = md::years_between(as_of, end);
+  return constant_vol_at(knots, years * 365, years * kMinutesPerYear, 0.0);
 }
 
 std::vector<EventLabel> parse_events(std::istream& input) {
@@ -341,14 +354,22 @@ std::vector<EventLabel> parse_events(std::istream& input) {
     const auto first = text.find_first_not_of(" \t\r");
     return first == std::string::npos ? std::string{} : text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
   };
+  // A header names its two columns, in any case and spacing.
+  auto named = [](const std::string& text, std::string_view name) {
+    return std::equal(text.begin(), text.end(), name.begin(), name.end(),
+                      [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
+  };
   for (int number = 1; std::getline(input, line); ++number) {
+    // Spreadsheets' "CSV UTF-8" starts the file with a byte-order mark.
+    if (number == 1 && line.starts_with("\xEF\xBB\xBF")) line.erase(0, 3);
     line = trim(line);
-    if (line.empty() || line.front() == '#' || line == "date,label" || line == "Date,Label") continue;
+    if (line.empty() || line.front() == '#') continue;
     auto fail = [&](const std::string& reason) { return std::invalid_argument("events line " + std::to_string(number) + ": " + reason); };
     const auto comma = line.find(',');
     if (comma == std::string::npos) throw fail("expected YYYY-MM-DD,Label");
     const auto date = trim(line.substr(0, comma));
     const auto label = trim(line.substr(comma + 1));
+    if (named(date, "date") && named(label, "label")) continue;
     const auto parsed = md::parse_datetime(date + " 12:00:00", md::Zone::NewYork);
     if (date.size() != 10 || !parsed) throw fail("date must be YYYY-MM-DD within the timestamp range");
     if (label.empty() || label.size() > 160 ||

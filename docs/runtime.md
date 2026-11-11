@@ -1563,8 +1563,9 @@ does not add CORS response headers.
 ## Volatility event labels
 
 `--events FILE` loads `YYYY-MM-DD,Label` lines for the volatility API's session-move
-table. It accepts blank lines, comments beginning with `#` and a `date,label`
-header. Dates must be valid and representable; labels are 1–160 bytes without
+table. It accepts blank lines, comments beginning with `#`, a `date,label` header
+in any case and spacing, and a UTF-8 byte-order mark at the start, as spreadsheets'
+"CSV UTF-8" writes. Dates must be valid and representable; labels are 1–160 bytes without
 control characters, in UTF-8. Duplicate dates are rejected with a line number. Labels apply
 to every underlying, are read at startup, and do not affect pricing or trading.
 No event dates are bundled. See [volatility metrics](volatility.md).
