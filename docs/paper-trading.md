@@ -1210,7 +1210,11 @@ dialog can select the put or call vertical of a condor or iron butterfly, a late
 expiry and new strikes. The resulting four-leg order closes that side and opens
 the new vertical together; the other side stays held. After a full side roll, the
 held view shows the two remaining verticals with their current position cost bases,
-not the roll’s combined closing and opening net.
+not the roll’s combined closing and opening net. Any roll the dialog builds (a
+straddle, strangle, risk reversal or ratio spread, or a whole condor as eight legs)
+keeps the legs it opened as one held strategy, on the same cost basis. Within one
+expiry no new strike may be one the strategy already holds (a vertical moved by
+exactly its width): one order cannot both close and open a contract.
 
 ## Changing, cancelling and flattening
 

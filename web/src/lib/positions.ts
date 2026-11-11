@@ -1,4 +1,4 @@
-import type { Fill, Order, Position, Side, Trade, WholeTrade } from "../api/trading-types"
+import type { Fill, Order, OrderLeg, Position, Side, Trade, WholeTrade } from "../api/trading-types"
 import type { ChainRow } from "../api/types"
 import { expiryLabel } from "./format"
 import { riskProfile, strategyLabel, type RiskProfile, type StrategyLeg } from "./strategy"
@@ -59,12 +59,31 @@ function title(underlying: string, legs: StrategyLeg[]): string {
   return `${underlying} ${when} ${strikes}${types.size === 1 ? ` ${[...types][0] === "call" ? "C" : "P"}` : ""}`
 }
 
+const legKey = (leg: OrderLeg) => `${leg.symbol} ${leg.side} ${leg.ratio}`
+const accepted = (a: Order, b: Order) => Date.parse(a.accepted_at) - Date.parse(b.accepted_at) || Number(a.id) - Number(b.id)
+
+/**
+ * The legs a roll opened, when `order` is one as the Roll dialog builds it: its first
+ * half reverses legs an earlier multi-leg order opened, its second half opens their
+ * replacements. Null for any other order.
+ */
+function rollOpening(order: Order, orders: readonly Order[]): OrderLeg[] | null {
+  const legs = order.legs ?? []
+  if (legs.length < 4 || legs.length % 2) return null
+  const closed = legs.slice(0, legs.length / 2).map((leg) => legKey({ ...leg, side: leg.side === "buy" ? "sell" : "buy" }))
+  const earlier = orders.some((o) => o !== order && o.legs && o.filled_quantity > 0 && accepted(o, order) < 0 &&
+    closed.every((key) => o.legs!.some((leg) => legKey(leg) === key)))
+  return earlier ? legs.slice(legs.length / 2) : null
+}
+
 /**
  * Strategies still held: each multi-leg order since `since` (the attempt's start)
  * claims, newest first, as many whole units as the positions still hold on every
- * leg with the order's sides. Positions legged in separately, or strategies
- * partly closed leg by leg, stay single contracts. A lens over the positions:
- * the per-contract table remains the account's record.
+ * leg with the order's sides. A roll claims the legs it opened. Positions legged in
+ * separately, or strategies partly closed leg by leg, stay single contracts, except
+ * that a condor's vertical still held when its other side was closed or rolled stays
+ * a vertical. A lens over the positions: the per-contract table remains the
+ * account's record.
  */
 export function strategyGroups(positions: readonly Position[], orders: readonly Order[], since: string | null): StrategyGroup[] {
   const held = new Map(positions.filter((p) => !p.awaiting_settlement).map((p) => [p.symbol, p]))
@@ -72,16 +91,21 @@ export function strategyGroups(positions: readonly Position[], orders: readonly 
   const start = since ? Date.parse(since) : NaN
   const combos = orders.filter((o) => o.legs && o.legs.length >= 2 && o.filled_quantity > 0 &&
       (!Number.isFinite(start) || Date.parse(o.accepted_at) >= start))
-    .sort((a, b) => Date.parse(b.accepted_at) - Date.parse(a.accepted_at) || Number(b.id) - Number(a.id))
+    .sort((a, b) => accepted(b, a))
   const groups: StrategyGroup[] = []
   for (const order of combos) {
     let legs = order.legs!
-    // A four-leg roll leaves only its new vertical held; rolling one side of a
-    // condor leaves the other vertical from its original order.
-    const matching = legs.filter((leg) => Math.sign(remaining.get(leg.symbol) ?? 0) === sign(leg.side))
-    if (legs.length === 4 && matching.length === 2) {
+    const holds = (leg: OrderLeg) => Math.sign(remaining.get(leg.symbol) ?? 0) === sign(leg.side)
+    const matching = legs.filter(holds)
+    if (matching.length < legs.length) {
+      // A roll leaves the legs it opened held: a straddle's, a ratio spread's or a whole
+      // condor's as much as a vertical's. Rolling or closing one side of a condor leaves
+      // the other vertical, from the order that opened it.
+      const opened = rollOpening(order, orders)
       const [a, b] = matching
-      if (held.get(a!.symbol)?.type === held.get(b!.symbol)?.type && a!.side !== b!.side && a!.ratio === b!.ratio)
+      if (opened?.every(holds)) legs = opened
+      else if ((legs.length === 4 || legs.length === 8) && matching.length === 2 &&
+          held.get(a!.symbol)?.type === held.get(b!.symbol)?.type && a!.side !== b!.side && a!.ratio === b!.ratio)
         legs = matching
     }
     let units = order.filled_quantity
@@ -166,6 +190,13 @@ export function rollPlan(group: StrategyGroup, target: { id: string; strikes: re
   }
   if (opening.some((leg, index) => leg.symbol === group.legs[index]!.leg.symbol))
     return { reason: "Choose new strikes for every leg to roll within the same expiry." }
+  // One order names each contract once: a new strike that another leg holds (a vertical
+  // moved by exactly its width) would close and open the same contract, which the server refuses.
+  const held = new Set(group.legs.map(({ leg }) => leg.symbol))
+  if (opening.some((leg) => held.has(leg.symbol)))
+    return { reason: "A new strike is one this strategy already holds: pick other strikes, or roll leg by leg." }
+  if (new Set(opening.map((leg) => leg.symbol)).size < opening.length)
+    return { reason: "Choose a different strike for each new leg." }
   return { units: group.units, legs: [...closingPlan(group).legs, ...opening] }
 }
 

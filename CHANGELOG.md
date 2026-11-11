@@ -179,6 +179,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   archived member dropped it without a word, and copied orders no longer reached it
   once unarchived. Such members now stay as checked rows marked archived; unchecking
   one is the way to remove it.
+- **Rolled strategies stay strategies.** After rolling a straddle, strangle, risk
+  reversal or ratio spread, or a whole condor as one eight-leg order, Positions no
+  longer showed the new legs as a strategy: they lost their label, net P&L, risk
+  profile and the Close, Roll and Exits buttons. Any roll the Roll dialog builds now
+  keeps the legs it opened together.
+- **Rolling a vertical by its width.** A same-expiry roll that moved a vertical by
+  exactly its width named one contract in two legs, which the server refused with a
+  generic message. The Roll dialog now says that a new strike is one the strategy
+  already holds before anything is sent.
 
 ## 0.5.1 (2026-10-28)
 

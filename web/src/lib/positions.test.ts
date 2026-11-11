@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { Fill, Order, Position, Trade, WholeTrade } from "../api/trading-types"
+import type { Fill, Order, OrderLeg, Position, Trade, WholeTrade } from "../api/trading-types"
 import type { ChainRow } from "../api/types"
 import { order, portfolio, quote, trades } from "../test/trading-fixtures"
 import { contractLabel, journalLabel, journalStats, tradeBuckets, wholeEntries } from "./journal"
@@ -89,6 +89,60 @@ describe("held strategies", () => {
       .toEqual({ reason: "Oct 16 lists no 6840 put." })
     expect(rollPlan(spread!, { id: "2026-10-16PM", strikes: [row(6850, false), row(6840)] }, undefined, [6850, 6840]))
       .toEqual({ reason: "The 6850 put is not tradable." })
+  })
+
+  it("refuse a same-expiry roll that would name one contract twice", () => {
+    // Moving a vertical by exactly its width makes a new strike the other held leg's.
+    const [spread] = strategyGroups([short, long], [combo("7", [[6900, "sell"], [6890, "buy"]], 2, "-1.20")], null)
+    const row = (strike: number): ChainRow => ({ strike, iv: 0.2, gex: null, vex: null, call: null,
+      put: { ...quote, symbol: `SPXW  261016P0${strike}000`, tradable: true, untradable_reason: null } })
+    const target = { id: "2026-10-16PM", strikes: [row(6910), row(6900), row(6890), row(6880)] }
+    const held = { reason: "A new strike is one this strategy already holds: pick other strikes, or roll leg by leg." }
+    expect(rollPlan(spread!, target, undefined, [6890, 6880])).toEqual(held)
+    expect(rollPlan(spread!, target, undefined, [6910, 6900])).toEqual(held)
+    expect(rollPlan(spread!, target, undefined, [6880, 6880])).toEqual({ reason: "Choose a different strike for each new leg." })
+    const wider = rollPlan(spread!, target, undefined, [6910, 6880])
+    expect("legs" in wider && wider.legs.map((l) => `${l.side} ${l.strike}`)).toEqual(["buy 6900", "sell 6890", "sell 6910", "buy 6880"])
+  })
+
+  it("keep a rolled straddle, a whole condor and the vertical a later side roll leaves as strategies", () => {
+    const leg = (p: Position, side: "buy" | "sell"): OrderLeg => ({ symbol: p.symbol, side, ratio: 1 })
+    const multi = (id: string, legs: OrderLeg[], at: string): Order => ({ ...combo(id, [], 1, "-1.00", at), legs })
+    const call = (p: Position): Position => ({ ...p, symbol: p.symbol.replace("261016P", "261016C"), type: "call" })
+    const later = (p: Position): Position => ({ ...p, expiry: "2026-10-23", symbol: p.symbol.replace("261016", "261023"), average_price: "3.50" })
+    // A short straddle, rolled a week out as one four-leg order.
+    const [p, c] = [put(6900, -1, "3.00"), call(put(6900, -1, "3.20"))]
+    const [p2, c2] = [later(p), later(c)]
+    const straddle = [multi("7", [leg(c, "sell"), leg(p, "sell")], "2026-09-23T15:00:00Z"),
+      multi("8", [leg(c, "buy"), leg(p, "buy"), leg(c2, "sell"), leg(p2, "sell")], "2026-09-23T16:00:00Z")]
+    const [rolled] = strategyGroups([c2, p2], straddle, null)
+    expect(rolled).toMatchObject({ label: "Short straddle", units: 1, cost: -7 })
+    expect(rolled!.order.id).toBe("8")
+    expect(rolled!.legs.map((m) => m.leg.symbol)).toEqual([c2.symbol, p2.symbol])
+    // An iron condor rolled whole as one eight-leg order: the new condor is the strategy.
+    const condor = [put(6880, 1, "2.00"), put(6890, -1, "2.50"), call(put(7100, -1, "2.40")), call(put(7110, 1, "1.90"))]
+    const next = condor.map(later)
+    const sides: ("buy" | "sell")[] = ["buy", "sell", "sell", "buy"]
+    const flip = (side: "buy" | "sell") => side === "buy" ? "sell" : "buy"
+    const opened = multi("9", condor.map((q, i) => leg(q, sides[i]!)), "2026-09-23T15:00:00Z")
+    const whole = multi("10", [...condor.map((q, i) => leg(q, flip(sides[i]!))), ...next.map((q, i) => leg(q, sides[i]!))], "2026-09-23T16:00:00Z")
+    const [rolledCondor] = strategyGroups(next, [opened, whole], null)
+    expect(rolledCondor).toMatchObject({ label: "Iron condor", units: 1 })
+    expect(rolledCondor!.legs.map((m) => m.leg.symbol)).toEqual(next.map((q) => q.symbol))
+    // Then its put side rolled down: that vertical, and the call side the eight-leg order opened.
+    const lower = [later(put(6860, 1, "1.50")), later(put(6870, -1, "1.80"))]
+    const side = multi("11", [leg(next[0]!, "sell"), leg(next[1]!, "buy"), leg(lower[0]!, "buy"), leg(lower[1]!, "sell")], "2026-09-23T17:00:00Z")
+    const both = strategyGroups([...lower, next[2]!, next[3]!], [opened, whole, side], null)
+    expect(both.map((g) => [g.order.id, g.legs.map((m) => m.leg.strike)])).toEqual([["11", [6860, 6870]], ["10", [7100, 7110]]])
+  })
+
+  it("leave a four-leg order shaped like a roll a set of single contracts when no earlier order opened its first half", () => {
+    const call = (p: Position): Position => ({ ...p, symbol: p.symbol.replace("261016P", "261016C"), type: "call" })
+    const longs = [put(6890, 1, "2.00"), call(put(7110, 1, "1.90"))]
+    // An iron condor sent shorts first, whose shorts were then bought back leg by leg.
+    const condor: Order = { ...combo("7", [], 1, "-1.00"), legs: [{ symbol: put(6900, -1, "3").symbol, side: "sell", ratio: 1 },
+      { symbol: call(put(7100, -1, "3")).symbol, side: "sell", ratio: 1 }, { symbol: longs[0]!.symbol, side: "buy", ratio: 1 }, { symbol: longs[1]!.symbol, side: "buy", ratio: 1 }] }
+    expect(strategyGroups(longs, [condor], null)).toEqual([])
   })
 
   it("settle AM contracts at the 09:30 open and PM ones at the 16:00 close, New York time", () => {
