@@ -66,9 +66,9 @@ to `docs/openapi.yaml` runs every job. On `main` every push gets its own complet
 run; on other branches a newer push cancels the run before it.
 The Python tests marked `cpp` run the built `openportd` and C++ test executable.
 When C++ changed, the plain Ubuntu C++ job runs them after CTest on its own build;
-otherwise the Python job builds the two from that job's compiler cache and runs
-them with the rest. CI sets `OPENPORT_REQUIRE_BUILD=1`, so there a missing build
-fails them instead of skipping them.
+otherwise the Python job builds the two from that job's compiler cache after its
+other tests and runs them last. CI sets `OPENPORT_REQUIRE_BUILD=1`, so there a
+missing build fails them instead of skipping them.
 
 ## Python and API contract
 
