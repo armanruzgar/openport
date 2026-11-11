@@ -72,6 +72,8 @@ class WebServer {
   void set_signal_secrets(std::shared_ptr<SignalSecrets> secrets);
   /// Caps open HTTP connections (kHttpSessionMax by default); set before start.
   void set_http_session_limit(std::size_t limit);
+  /// Caps open WebSocket sessions (kWebSocketSessionMax by default); set before start.
+  void set_websocket_session_limit(std::size_t limit);
 
   /// The bound port (useful when constructed with port 0).
   [[nodiscard]] unsigned short port() const noexcept;

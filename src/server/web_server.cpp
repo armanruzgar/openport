@@ -524,7 +524,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
 std::unique_ptr<WebSocketSlots::Lease> WebSocketSlots::acquire() {
   auto count = active_.load();
   do {
-    if (count >= kWebSocketSessionMax) return nullptr;
+    if (count >= limit_) return nullptr;
   } while (!active_.compare_exchange_weak(count, count + 1));
   try {
     return std::unique_ptr<Lease>(new Lease(*this));
@@ -940,13 +940,17 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
                             beast::bind_front_handler(&HttpSession::on_header, shared_from_this()));
   }
 
+  /// A broker's positions export is larger than any other body; the import still
+  /// caps it at kAnalysisMaxHoldings.
+  static bool portfolio_import(const http::request<http::string_body>& header) {
+    const auto target = std::string_view(header.target().data(), header.target().size());
+    return header.method() == http::verb::post && target.substr(0, target.find('?')) == "/api/analysis/portfolios";
+  }
+
   void on_header(beast::error_code ec, std::size_t bytes) {
     if (stopped_ || ec) return on_read(ec, bytes);
-    // A broker's positions export is larger than any other body; the import still
-    // caps it at kAnalysisMaxHoldings.
     const auto& header = parser_->get();
-    const auto target = std::string_view(header.target().data(), header.target().size());
-    if (header.method() == http::verb::post && target.substr(0, target.find('?')) == "/api/analysis/portfolios") {
+    if (portfolio_import(header)) {
       // Only a request this server would take may send that much: anyone else is
       // answered from the header, before the body is read, and the connection closes.
       // Otherwise every connection could hold 4 MiB until its read timed out.
@@ -967,8 +971,10 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   void on_read(beast::error_code ec, std::size_t) {
     if (stopped_ || ec == http::error::end_of_stream) return close();
     if (ec == http::error::body_limit) {
-      send_api(api_error(400, "INVALID_REQUEST",
-          body_limit_ == kImportBodyLimit ? "Body exceeds 4 MiB" : "Body exceeds 64 KiB"), 11, false);
+      // A declared length past even the import's 4 MiB fails as the header is read,
+      // before on_header has chosen the route's limit: the request line names it.
+      const bool importing = body_limit_ == kImportBodyLimit || portfolio_import(parser_->get());
+      send_api(api_error(400, "INVALID_REQUEST", importing ? "Body exceeds 4 MiB" : "Body exceeds 64 KiB"), 11, false);
       return;
     }
     if (ec) return;
@@ -1037,7 +1043,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
         // Sessions free up as other clients disconnect: ask this one to retry.
         if (!slot)
           return reject_upgrade(request, http::status::service_unavailable,
-                                "WebSocket session limit reached (" + std::to_string(kWebSocketSessionMax) +
+                                "WebSocket session limit reached (" + std::to_string(shared_.slots.limit()) +
                                 " open sessions); retry later", kWebSocketRetrySeconds);
         stream_.expires_never();
         auto session =
@@ -1577,6 +1583,7 @@ void WebServer::set_event_stream(std::shared_ptr<Notifications> events) {
 }
 
 void WebServer::set_http_session_limit(std::size_t limit) { impl_->shared.http_session_max = limit; }
+void WebServer::set_websocket_session_limit(std::size_t limit) { impl_->shared.slots.set_limit(limit); }
 
 unsigned short WebServer::port() const noexcept {
   return impl_->listener ? impl_->listener->port() : impl_->requested_port;

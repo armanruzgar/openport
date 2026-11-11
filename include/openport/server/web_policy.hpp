@@ -199,10 +199,15 @@ class WebSocketSlots {
     WebSocketSlots& owner_;
   };
 
+  explicit WebSocketSlots(std::size_t limit = kWebSocketSessionMax) : limit_(limit) {}
   [[nodiscard]] std::unique_ptr<Lease> acquire();
+  /// Set before any session opens.
+  void set_limit(std::size_t limit) { limit_ = limit; }
+  [[nodiscard]] std::size_t limit() const { return limit_; }
 
  private:
   std::atomic<std::size_t> active_{0};
+  std::size_t limit_;
 };
 
 }  // namespace openport::server

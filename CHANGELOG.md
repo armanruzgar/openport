@@ -1385,6 +1385,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   about 22 MB a year) into its new view, and each fill's sample scanned the whole
   history for a duplicate. The history is now shared copy-on-write between the store
   and its views, and a fill's sample is checked against the highest fill kept.
+- **Oversized portfolio imports name their 4 MiB limit.** A portfolio import over
+  4 MiB sent with `Content-Length`, as browsers and curl send it, was refused with
+  "Body exceeds 64 KiB", the limit of every other route; only a chunked one was told
+  4 MiB. Both now are, and the Analysis view says imports take up to 4 MiB, not 64 KiB.
 
 ## 0.5.1 (2026-10-28)
 

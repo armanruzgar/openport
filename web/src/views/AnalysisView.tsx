@@ -80,7 +80,7 @@ function ImportForm({ onImported }: { onImported: (id: string) => void }) {
         {error && <p role="alert" className="text-bearish">{error}</p>}
         <p className="text-[11px] text-muted">
           Generic files need symbol (OSI or ticker) and quantity columns, or underlying, expiry, strike, type and quantity;
-          broker exports are read by their column names. Shorts are negative. Files stay on this server, up to 64 KiB.
+          broker exports are read by their column names. Shorts are negative. Files stay on this server, up to 4 MiB.
         </p>
       </div>
     </Panel>

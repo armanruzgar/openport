@@ -16,7 +16,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <functional>
 #include <future>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -115,6 +117,26 @@ TEST(WebPolicy, HostsMustBeAddressesLocalhostOrNamesAllowedOnPurpose) {
   EXPECT_TRUE(server::host_allowed("internal:8080", {}, {"internal"}));
   EXPECT_TRUE(server::host_allowed("internal", {}, {"INTERNAL:9000"}));
   EXPECT_FALSE(server::host_allowed("terminal.example.evil", {"https://terminal.example"}, {"internal"}));
+}
+
+TEST(WebServer, TokenReloadWithoutATokenFileSaysSo) {
+  server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{200, "{}"}; });
+  web.start(1);
+  asio::io_context io;
+  tcp::socket socket(io);
+  socket.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+  http::request<http::string_body> request{http::verb::post, "/api/tokens/reload", 11};
+  request.set(http::field::host, "localhost");
+  request.set(http::field::content_type, "application/json");
+  request.body() = "{}";
+  request.prepare_payload();
+  http::write(socket, request);
+  beast::flat_buffer buffer;
+  http::response<http::string_body> response;
+  http::read(socket, buffer, response);
+  EXPECT_EQ(response.result_int(), 409U);
+  EXPECT_NE(response.body().find("TOKENS_UNCONFIGURED"), std::string::npos) << response.body();
+  web.stop();
 }
 
 TEST(WebPolicy, SessionSlotsAreBoundedAndReleasedAfterFailedOrClosedSessions) {
@@ -382,6 +404,41 @@ TEST(WebServer, ConnectionsBeyondTheCapAreClosedAtOnceAndFreedSlotsServeAgain) {
     next.connect(endpoint);
     served = get(next);
     if (!served) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  EXPECT_TRUE(served);
+  web.stop();
+}
+
+// Sessions free up as other clients leave, so an upgrade past the limit is told to
+// retry, and is served once a session has closed.
+TEST(WebServer, AWebSocketPastTheSessionLimitIsAskedToRetryUntilOneCloses) {
+  server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
+  web.set_websocket_session_limit(1);
+  web.start(1);
+  asio::io_context io;
+  const tcp::endpoint endpoint{asio::ip::make_address("127.0.0.1"), web.port()};
+  const auto upgrade = [&] {
+    websocket::stream<tcp::socket> ws(io);
+    ws.next_layer().connect(endpoint);
+    websocket::response_type response;
+    beast::error_code error;
+    ws.handshake(response, "localhost", "/ws", error);
+    if (!error) ws.close(websocket::close_code::normal, error);
+    return response;
+  };
+  websocket::stream<tcp::socket> open(io);
+  open.next_layer().connect(endpoint);
+  open.handshake("localhost", "/ws");
+  const auto refused = upgrade();
+  EXPECT_EQ(refused.result_int(), 503U);
+  EXPECT_EQ(std::string(refused[http::field::retry_after]), std::to_string(server::kWebSocketRetrySeconds));
+  EXPECT_NE(refused.body().find("WebSocket session limit reached (1 open sessions)"), std::string::npos)
+      << refused.body();
+  open.close(websocket::close_code::normal);
+  bool served = false;
+  for (int attempt = 0; attempt < 3000 && !served; ++attempt) {
+    served = upgrade().result_int() == 101U;
+    if (!served) std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   EXPECT_TRUE(served);
   web.stop();
@@ -738,6 +795,41 @@ TEST(WebServer, APortfolioImportTheServerWouldRefuseIsAnsweredBeforeItsBody) {
   web.stop();
 }
 
+// Each route's limit is named whether the body is declared or chunked. A declared
+// length past the import's 4 MiB fails while the header is read, before the route's
+// limit is chosen, and used to be answered "Body exceeds 64 KiB".
+TEST(WebServer, BodiesPastTheirRoutesLimitAreRefusedNamingIt) {
+  server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{200, "{}"}; });
+  web.start(1);
+  asio::io_context io;
+  const tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), web.port());
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  // Sends a header, and the first chunk's size for a chunked body, and nothing more:
+  // each is refused before any body arrives.
+  const auto refusal = [&](const std::string& target, const std::string& framing) {
+    tcp::socket socket(io);
+    socket.connect(endpoint);
+    beast::error_code error;
+    asio::write(socket,
+                asio::buffer("POST " + target + " HTTP/1.1\r\nHost: " + host +
+                             "\r\nContent-Type: application/json\r\n" + framing),
+                error);
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    if (!error) http::read(socket, buffer, response, error);
+    EXPECT_FALSE(error) << target << ": " << error.message();
+    EXPECT_EQ(response.result_int(), 400U) << target;
+    return response.body();
+  };
+  const std::string declared = "Content-Length: 5242880\r\n\r\n";
+  const std::string chunked = "Transfer-Encoding: chunked\r\n\r\n";
+  EXPECT_NE(refusal("/api/analysis/portfolios", declared).find("Body exceeds 4 MiB"), std::string::npos);
+  EXPECT_NE(refusal("/api/analysis/portfolios", chunked + "400001\r\n").find("Body exceeds 4 MiB"), std::string::npos);
+  EXPECT_NE(refusal("/api/orders", declared).find("Body exceeds 64 KiB"), std::string::npos);
+  EXPECT_NE(refusal("/api/orders", chunked + "10001\r\n").find("Body exceeds 64 KiB"), std::string::npos);
+  web.stop();
+}
+
 // A long read learns that nobody will take its response: the client hung up, or
 // the server is stopping. Answering it still lets the connection carry on.
 TEST(WebServer, AwaitedRequestsAreCancelledWhenTheClientLeavesOrTheServerStops) {
@@ -970,6 +1062,9 @@ TEST_F(StaticFiles, TokenReloadRouteChecksAdminAndRevokesExistingWebSockets) {
   };
   EXPECT_EQ(call(http::verb::post, "/api/tokens/reload", "reader-secret").result_int(), 403U);
   EXPECT_EQ(call(http::verb::post, "/api/tokens/reload", "owner-secret", R"({"bad":1})").result_int(), 400U);
+  const auto queried = call(http::verb::post, "/api/tokens/reload?x=1", "owner-secret");
+  EXPECT_EQ(queried.result_int(), 400U);
+  EXPECT_NE(queried.body().find("Unknown query parameter"), std::string::npos) << queried.body();
   const auto good = call(http::verb::post, "/api/tokens/reload", "owner-secret");
   EXPECT_EQ(good.result_int(), 200U);
   EXPECT_EQ(nlohmann::json::parse(good.body())["names"], (nlohmann::json{"owner", "reader"}));
@@ -1314,6 +1409,71 @@ TEST(WebServer, EventChannelIsVersionedFilteredAndDoesNotCoalesce) {
   invalid.handshake(upgrade, "localhost", "/ws/events?version=2", error);
   EXPECT_TRUE(error);
   EXPECT_EQ(upgrade.result(), http::status::bad_request);
+  web.stop();
+}
+
+// Ticks may coalesce, but losing a fill silently is not acceptable: an event stream
+// whose client is 256 events behind is closed instead.
+TEST(WebServer, AnEventStreamThatFallsTooFarBehindIsClosed) {
+  server::Notifications::Options options;
+  options.worker = false;
+  auto events = std::make_shared<server::Notifications>(server::NotificationConfig{}, nullptr, options);
+  // The server's only I/O thread is held in an API handler while the events are
+  // published, so none is written and the queue fills, whatever the timing.
+  std::promise<void> entered;
+  std::promise<void> release;
+  auto handling = entered.get_future();
+  const auto released = release.get_future().share();
+  server::WebServer web("127.0.0.1", 0, {}, [&entered, released](const server::ApiRequest&) {
+    entered.set_value();
+    released.wait();
+    return server::ApiResponse{200, "{}"};
+  });
+  web.set_event_stream(events);
+  web.start(1);
+  asio::io_context io;
+  const tcp::endpoint endpoint{asio::ip::make_address("127.0.0.1"), web.port()};
+  websocket::stream<tcp::socket> ws(io);
+  ws.next_layer().connect(endpoint);
+  ws.handshake("localhost", "/ws/events?version=1&account=practice");
+  beast::flat_buffer buffer;
+  ws.read(buffer);  // the hello: the stream is subscribed
+  buffer.consume(buffer.size());
+  auto held = std::async(std::launch::async, [endpoint] {
+    asio::io_context client;
+    tcp::socket socket(client);
+    socket.connect(endpoint);
+    http::request<http::empty_body> request{http::verb::get, "/api/status", 11};
+    request.set(http::field::host, "localhost");
+    beast::error_code ec;
+    http::write(socket, request, ec);
+    beast::flat_buffer answer;
+    http::response<http::string_body> response;
+    if (!ec) http::read(socket, answer, response, ec);
+    return response.result_int();
+  });
+  EXPECT_EQ(handling.wait_for(std::chrono::minutes(5)), std::future_status::ready);
+  for (int i = 0; i < 300; ++i) events->publish({"fill", "demo/practice", 0, "Synthetic", {{"id", i}}});
+  release.set_value();
+  EXPECT_EQ(held.get(), 200U);
+  // Reads until the server ends the stream, for at most a minute: never all 300.
+  std::size_t received = 0;
+  bool ended = false;
+  std::function<void()> next = [&] {
+    ws.async_read(buffer, [&](beast::error_code ec, std::size_t) {
+      if (ec) {
+        ended = true;
+        return;
+      }
+      ++received;
+      buffer.consume(buffer.size());
+      next();
+    });
+  };
+  next();
+  io.run_for(std::chrono::minutes(1));
+  EXPECT_TRUE(ended);
+  EXPECT_LT(received, 300u);
   web.stop();
 }
 
