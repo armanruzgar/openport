@@ -515,6 +515,55 @@ TEST_F(Sandboxes, ShareTradesAndPreviewsShareOrderRateButShareClosesDoNot) {
     EXPECT_EQ(refused->retry_after, 10);
   }
 }
+TEST_F(Sandboxes, ExitsHaveABudgetOfTheirOwnSoRefusedOnesCannotGrowTheJournal) {
+  limits.orders = 2;
+  limits.exits = 3;
+  configure();
+  const auto own = create();
+  const auto journal = files.directory / "sandboxes" / id(own) / (id(own) + ".jsonl");
+  const auto records = [&] { return trading::FileJournal::read(journal.string()).records.size(); };
+  const auto before = records();
+  // Each names nothing the account has, so the engine refuses it and journals that.
+  struct NoOp { std::string method, path, body; };
+  const std::vector<NoOp> no_ops{{"DELETE", "/api/orders/999", ""}, {"DELETE", "/api/alerts/999", ""},
+                                 {"POST", "/api/orders/cancel", R"({"orders":["999"]})"}};
+  int refused = 0, limited = 0;
+  for (int round = 0; round < 4; ++round) {
+    for (const auto& [method, path, body] : no_ops) {
+      const auto response = send(request(method, path, token(own), body));
+      if (response.status == 429) {
+        ++limited;
+        EXPECT_EQ(json::parse(response.body)["error"]["code"], "SANDBOX_ORDER_RATE");
+      } else {
+        ++refused;
+        EXPECT_EQ(response.status, 404) << path << response.body;
+      }
+    }
+  }
+  EXPECT_EQ(refused, 3);
+  EXPECT_EQ(limited, 9);
+  EXPECT_LE(records() - before, 3U);
+  now += 10s;
+  // Every exit shares that budget, whoever sends it to the sandbox; the main account has none.
+  for (const auto& [method, path] : std::vector<std::pair<std::string, std::string>>{
+           {"DELETE", "/api/orders/1"}, {"POST", "/api/orders/cancel"}, {"DELETE", "/api/stocks/orders/1"},
+           {"POST", "/api/positions/close"}, {"POST", "/api/positions/close/preview"}, {"POST", "/api/stocks/close"},
+           {"POST", "/api/positions/exercise"}, {"POST", "/api/positions/abandon"},
+           {"POST", "/api/positions/instruction"}, {"DELETE", "/api/alerts/1"}}) {
+    const auto rejected = server::check_api_write(request(method, path, token(own)), policy);
+    ASSERT_TRUE(rejected) << path;
+    EXPECT_EQ(rejected->status, 429) << path;
+    EXPECT_EQ(rejected->retry_after, 50) << path;
+  }
+  const auto admin_refused = server::check_api_write(request("DELETE", "/api/orders/1?account=" + id(own), "operator"), policy);
+  ASSERT_TRUE(admin_refused);
+  EXPECT_EQ(admin_refused->status, 429);
+  EXPECT_FALSE(server::check_api_write(request("DELETE", "/api/orders/1", "operator"), policy));
+  // Spent exits leave the order budget alone, as spent orders leave exits alone.
+  EXPECT_FALSE(server::check_api_write(request("POST", "/api/orders/preview", token(own)), policy));
+  now = server::Sandboxes::Clock::time_point{} + limits.order_window;
+  EXPECT_FALSE(server::check_api_write(request("DELETE", "/api/orders/1", token(own)), policy));
+}
 TEST_F(Sandboxes, HttpRateLimitsEmitRetryAfterButCapacityDoesNot) {
   namespace asio = boost::asio;
   namespace beast = boost::beast;

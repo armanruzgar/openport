@@ -466,13 +466,18 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool counted_stock_trade = request.method == "POST" &&
       (path == "/stocks/trade" || path == "/stocks/trade/preview" || path == "/stocks/orders" || path == "/stocks/orders/preview");
   // Journaled writes that reduce no risk share the order budget, so a visitor cannot
-  // grow a journal or fill the shared inbox with notes, alerts or grouping. Closing,
-  // exercise and cancelling stay unlimited.
+  // grow a journal or fill the shared inbox with notes, alerts or grouping.
   const bool counted_annotation = request.method != "DELETE" &&
       (path == "/alerts" || path.starts_with("/alerts/") || path == "/trades/group" || path == "/trades/ungroup" ||
        ((path.starts_with("/trades/") || path.starts_with("/days/")) && path.ends_with("/note")));
   if (sandbox_account && (counted_order || counted_stock_trade || counted_annotation)) {
     if (auto rejected = policy.sandboxes->check_order(account)) return rejected;
+  } else if (sandbox_account && trade) {
+    // Cancels, closes, exercise and the other exits get a budget of their own, so a
+    // spent order budget never traps a visitor in a position. They need one: the
+    // engine journals an exit it refuses (an unknown order or contract) like any
+    // other command, so unlimited no-op exits would grow a journal without end.
+    if (auto rejected = policy.sandboxes->check_exit(account)) return rejected;
   }
   if (request.method == "DELETE") {
     if (!request.body.empty()) return api_error(400, "INVALID_REQUEST", "DELETE must have no body");

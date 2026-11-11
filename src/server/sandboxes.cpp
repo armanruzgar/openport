@@ -37,7 +37,7 @@ void prune(std::deque<Sandboxes::Clock::time_point>& times, Sandboxes::Clock::ti
 
 Sandboxes::Sandboxes(Options options) : options_(std::move(options)) {
   if (!options_.capacity || options_.idle.count() <= 0 || !options_.per_client || !options_.global ||
-      !options_.orders || options_.creation_window.count() <= 0 || options_.order_window.count() <= 0)
+      !options_.orders || !options_.exits || options_.creation_window.count() <= 0 || options_.order_window.count() <= 0)
     throw std::invalid_argument("Invalid sandbox limits");
 }
 
@@ -68,7 +68,7 @@ void Sandboxes::create(const ApiRequest& request, MetricsSource& source, ApiComp
     } else {
       do { id = "sbox-" + random_hex(); } while (entries_.contains(id));
       secret = "sandbox_" + random_hex();
-      entries_.emplace(id, Entry{digest(secret), now, false, {}});
+      entries_.emplace(id, Entry{digest(secret), now, false, {}, {}});
       creations_.push_back(now);
       clients_[request.client_ip].push_back(now);
     }
@@ -126,14 +126,22 @@ bool Sandboxes::contains(const std::string& account) {
   return entries_.contains(account);
 }
 std::optional<ApiResponse> Sandboxes::check_order(const std::string& account) {
+  return charge(account, false);
+}
+std::optional<ApiResponse> Sandboxes::check_exit(const std::string& account) {
+  return charge(account, true);
+}
+std::optional<ApiResponse> Sandboxes::charge(const std::string& account, bool exit_budget) {
   const std::lock_guard lock(mutex_);
   const auto found = entries_.find(account);
-  auto rejected = api_error(429, "SANDBOX_ORDER_RATE", "Too many sandbox order requests. Try again later.");
+  auto rejected = api_error(429, "SANDBOX_ORDER_RATE", exit_budget
+      ? "Too many sandbox cancel, close and exercise requests. Try again later."
+      : "Too many sandbox order requests. Try again later.");
   if (found == entries_.end() || !found->second.ready) return rejected;
-  auto& times = found->second.orders;
+  auto& times = exit_budget ? found->second.exits : found->second.orders;
   const auto now = options_.clock();
   prune(times, now - options_.order_window);
-  if (times.size() >= options_.orders) {
+  if (times.size() >= (exit_budget ? options_.exits : options_.orders)) {
     rejected.retry_after = retry_seconds(times.front() + options_.order_window - now);
     return rejected;
   }

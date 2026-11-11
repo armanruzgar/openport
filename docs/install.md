@@ -212,5 +212,6 @@ public names. Trust that header only behind a proxy that overwrites it and preve
 direct access to the backend. By default, the server uses the connection address
 and ignores forwarding headers. Creation allows 3 accounts per client and 30 total
 per hour, with at most 100 at once in this example; each sandbox allows 60 order
-requests per minute. Full capacity or rate limits return HTTP 429. The normal
+requests and 60 cancels, closes or other exits per minute. Full capacity or rate
+limits return HTTP 429. The normal
 low-disk journal refusal applies. [Runtime details](runtime.md#public-sandboxes).

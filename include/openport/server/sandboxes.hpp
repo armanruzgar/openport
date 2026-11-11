@@ -25,6 +25,8 @@ class Sandboxes {
     std::chrono::seconds creation_window{60 * 60};
     std::size_t orders = 60;
     std::chrono::seconds order_window{60};
+    /// Cancels, closes, exercise and the other exits, per order_window.
+    std::size_t exits = 60;
     std::function<Clock::time_point()> clock = Clock::now;
   };
   explicit Sandboxes(Options options);
@@ -36,6 +38,11 @@ class Sandboxes {
   [[nodiscard]] bool contains(const std::string& account);
   /// Counts an order request or returns its rate-limit response.
   [[nodiscard]] std::optional<ApiResponse> check_order(const std::string& account);
+  /// Counts a cancel, close, exercise or other exit, or returns its rate-limit
+  /// response. Exits have a budget of their own, so a spent order budget never traps
+  /// a visitor in a position; the engine journals an exit it refuses (an unknown
+  /// order, say) like any other command, so they cannot go unlimited either.
+  [[nodiscard]] std::optional<ApiResponse> check_exit(const std::string& account);
   /// Expired tokens stop working immediately; capacity returns after file removal.
   [[nodiscard]] std::vector<std::string> expired();
   void removed(const std::string& account);
@@ -47,7 +54,9 @@ class Sandboxes {
     Clock::time_point used;
     bool ready = false;
     std::deque<Clock::time_point> orders;
+    std::deque<Clock::time_point> exits = {};
   };
+  [[nodiscard]] std::optional<ApiResponse> charge(const std::string& account, bool exit_budget);
   Options options_;
   std::mutex mutex_;
   std::map<std::string, Entry> entries_;

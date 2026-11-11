@@ -201,6 +201,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   exactly its width named one contract in two legs, which the server refused with a
   generic message. The Roll dialog now says that a new strike is one the strategy
   already holds before anything is sent.
+- **Sandbox exits have a budget.** A visitor's cancels, closes, exercises and
+  abandonments were exempt from the sandbox's 60-requests-a-minute limit, but the
+  engine journals one it refuses as it does any command. Cancelling an order that
+  does not exist, over and over, grew the sandbox's journal without end, about 450
+  bytes a request, on a volume every account shares. Exits now have a budget of
+  their own, 60 per rolling minute, so a visitor who has spent the order budget can
+  still close out; past it they get 429 `SANDBOX_ORDER_RATE` with `Retry-After`.
 
 ## 0.5.1 (2026-10-28)
 

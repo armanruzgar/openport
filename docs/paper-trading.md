@@ -4943,7 +4943,9 @@ Creation returns 429 `SANDBOX_CAPACITY` when all account slots are occupied,
 `SANDBOX_GLOBAL_RATE` after 30 globally. Order submissions, previews, what-if
 requests, modifications, share trades and their previews share 60 requests per
 account per rolling minute; excess requests return 429 `SANDBOX_ORDER_RATE`.
-Cancels, flatten and share closes remain available at the order cap. Rate-limit
+Cancels, flatten, share closes, exercise, abandonment, exercise instructions and
+alert deletions share a second budget of 60 per rolling minute, so they remain
+available at the order cap; past it they get the same 429. Rate-limit
 responses carry `Retry-After` seconds until the oldest counted request leaves
 that bucket's window, rounded up to at least 1.
 `SANDBOX_CAPACITY` omits the header because the next free time is unknown.
