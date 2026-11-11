@@ -3,9 +3,10 @@
  * Record the real terminal against an isolated, offline simulator.
  * Prerequisites (do not install or replace web/node_modules):
  *   (cd web && npm run build)
- *   /Users/armanruzgar/dev/openport-work/wtbuild.sh 8
- *   PLAYWRIGHT_DIR=/Users/armanruzgar/dev/neofund/node_modules/playwright \
+ *   cmake --build build --target openportd      # build/apps/openportd, a Release build
+ *   PLAYWRIGHT_DIR=/path/to/node_modules/playwright \
  *     node tools/record_site_demo.mjs
+ * PLAYWRIGHT_DIR is an installed playwright package outside this repository.
  * Chromium must already be installed (PLAYWRIGHT_BROWSERS_PATH is respected).
  * Optional: FFMPEG=/opt/homebrew/bin/ffmpeg, FRAMES_DIR=/absolute/review/path.
  * Default frames: ../frames relative to this worktree. Port 9870 must be free.

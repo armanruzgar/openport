@@ -64,3 +64,15 @@ def test_each_linux_release_image_is_smoke_tested_before_anything_is_attached():
     assert linux.index("Smoke test the image on this architecture") < linux.index("gh release upload")
     assert "if: always()" not in smoke
 
+
+def test_release_script_attaches_only_its_own_archive_with_the_commit_revision():
+    script = (ROOT / "tools/release.sh").read_text()
+    # The workflow rebuilds and replaces the Linux archives, so a draft that carried
+    # this script's copy would list a checksum for a file no longer on the release.
+    assert 'package "$linux" "$dist/stage/prefix-linux" "$dist/linux"' in script
+    assert '(cd "$dist" && sha *.tar.gz > SHA256SUMS)' in script
+    assert '"$dist"/*.tar.gz "$dist/SHA256SUMS"' not in script
+    assert 'gh release upload "v$version" --clobber "${assets[@]}"' in script
+    # The image has no .git: it embeds the revision only if it is given one.
+    assert 'docker build --build-arg OPENPORT_BUILD_REVISION="$revision"' in script
+    assert '-DCMAKE_CXX_FLAGS="-ffile-prefix-map=$root=."' in script

@@ -6,13 +6,16 @@
 # Checks and builds the web terminal and the engine, runs every test, then writes
 # to dist/:
 #   openport-VERSION-OS-ARCH.tar.gz   this machine's build: bin/, share/openport/web, docs
-#   openport-VERSION-linux-ARCH.tar.gz  the Linux build from the Docker image
 #   SHA256SUMS, RELEASE_NOTES.md
+#   linux/openport-VERSION-linux-ARCH.tar.gz  the Linux build from the Docker image, to
+#                                     try locally; never attached
 # and tags the Docker image openport:VERSION after a smoke test. VERSION comes from
 # CMakeLists.txt. Nothing leaves the machine unless --publish is given: then it creates
 # a draft GitHub release for vVERSION at this commit with gh, or refreshes the draft's
 # files, notes and commit when one exists. GitHub creates the tag when you publish the
-# draft, so a draft can wait for more commits without tagging the wrong one.
+# draft, so a draft can wait for more commits without tagging the wrong one. Publishing
+# it starts the release workflow, which builds both Linux archives and their packages
+# and adds them to SHA256SUMS; this script's own Linux archive would only be replaced.
 # After publishing the final archives and SHA256SUMS, run tools/update_formula.sh VERSION
 # and commit Formula/openport.rb to the default branch to update the Homebrew tap.
 # The macOS archive runs on OPENPORT_MACOS_FLOOR (CMakeLists.txt) and later, so this
@@ -82,8 +85,11 @@ say "Engine ($os/$arch)"
 build="$root/build-release"
 # macOS has no OpenSSL or zstd of its own: its archive links them statically.
 static="$([ "$os" = darwin ] && echo ON || echo OFF)"
+# Source paths are compiled in relative to the checkout (./src/...), so the archive
+# names no directory of this machine's and builds the same wherever it is checked out.
 configure() {
   cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DOPENPORT_BUILD_BENCHMARKS=OFF \
+    -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$root=." \
     -DOPENPORT_STATIC_DEPS="$static" -DOPENPORT_BUILD_TESTS="$([ "$tests" = 1 ] && echo ON || echo OFF)" "$@" >/dev/null
 }
 cached() { sed -n "s/^$1:[A-Z]*=//p" "$build/CMakeCache.txt"; }
@@ -107,15 +113,15 @@ cmake --build "$build" --parallel
 
 # One archive: the binaries, the web terminal beside them, the documentation, and the
 # licences of the third-party code they contain.
-package() {  # package NAME SOURCE-PREFIX
-  local name="$1" prefix="$2" stage="$dist/stage/$1"
-  mkdir -p "$stage"
+package() {  # package NAME SOURCE-PREFIX [DIRECTORY]; DIRECTORY defaults to dist
+  local name="$1" prefix="$2" out="${3:-$dist}" stage="$dist/stage/$1"
+  mkdir -p "$stage" "$out"
   cp -R "$prefix/." "$stage/"
   mkdir -p "$stage/docs"
   cp README.md LICENSE THIRD_PARTY_NOTICES.txt "$stage/"
   cp docs/*.md "$stage/docs/"
-  tar -C "$dist/stage" -czf "$dist/$name.tar.gz" "$name"
-  echo "wrote dist/$name.tar.gz"
+  tar -C "$dist/stage" -czf "$out/$name.tar.gz" "$name"
+  echo "wrote ${out#"$root"/}/$name.tar.gz"
 }
 native="openport-$version-$os-$arch"
 cmake --install "$build" --component openport --prefix "$dist/stage/prefix-native" >/dev/null
@@ -141,7 +147,10 @@ fi
 
 if [ "$docker" = 1 ]; then
   say "Docker image"
-  docker build -t "openport:$version" .
+  # The revision the native build embeds (cmake/BuildInfo.cmake): the image has no .git.
+  revision="$(git rev-parse --short=12 HEAD)"
+  git diff --quiet HEAD || revision="$revision-dirty"
+  docker build --build-arg OPENPORT_BUILD_REVISION="$revision" -t "openport:$version" .
   name="openport-release-smoke-$$"
   docker run -d --rm --name "$name" -p 127.0.0.1::8080 "openport:$version" >/dev/null
   trap 'docker stop "$name" >/dev/null 2>&1 || true' EXIT
@@ -155,6 +164,9 @@ if [ "$docker" = 1 ]; then
   trap - EXIT
   echo "openport:$version answers /api/status, serves the terminal and fills an order"
 
+  # For trying here only. The release workflow builds the Linux archives on each
+  # architecture when the release is published, and attaching this one too would only
+  # leave SHA256SUMS naming a file that one replaces.
   say "Linux build from the image"
   image_arch="$(docker image inspect --format '{{.Architecture}}' "openport:$version")"
   linux="openport-$version-linux-$image_arch"
@@ -164,15 +176,23 @@ if [ "$docker" = 1 ]; then
   docker cp "$container:/usr/local/bin/openport-probe" "$dist/stage/prefix-linux/bin/"
   docker cp "$container:/usr/share/openport/web" "$dist/stage/prefix-linux/share/openport/"
   docker rm "$container" >/dev/null
-  package "$linux" "$dist/stage/prefix-linux"
+  package "$linux" "$dist/stage/prefix-linux" "$dist/linux"
 fi
 
 rm -rf "$dist/stage"
-if ! compgen -G "$dist/*.tar.gz" >/dev/null; then
-  echo "release: no archive was built; run with Docker for the Linux one" >&2
-  exit 1
+# What a draft gets: this machine's archive and its checksum. The release workflow
+# builds the rest when the release is published and rewrites SHA256SUMS over them all.
+assets=()
+for archive in "$dist"/*.tar.gz; do
+  [ -f "$archive" ] && assets+=("$archive")
+done
+if [ "${#assets[@]}" -gt 0 ]; then
+  (cd "$dist" && sha *.tar.gz > SHA256SUMS)
+  assets+=("$dist/SHA256SUMS")
+else
+  echo "release: this machine built no archive to attach; the release workflow builds them all" \
+    "when the release is published" >&2
 fi
-(cd "$dist" && sha *.tar.gz > SHA256SUMS)
 
 # Release tags only: the Python client's python-v* tags share the history.
 previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true)"
@@ -188,7 +208,7 @@ previous="$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || true
   echo "- Linux archives (amd64 and arm64): need OpenSSL 3, zlib and zstd (\`apt install libssl3t64 zlib1g libzstd1\` on Ubuntu 24.04). Unpack one and run \`bin/openportd\`."
   echo "- macOS archive (Apple silicon, macOS ${macos_floor%.0} or later): needs nothing installed. Unpack it with \`tar -xzf\` and run \`bin/openportd\`. Unpacked in Finder, macOS may refuse to run it as from an unidentified developer; \`xattr -dr com.apple.quarantine\` on the folder allows it."
   echo
-  echo "Then open http://127.0.0.1:8080. \`openportd --help\` lists every option. \`SHA256SUMS\` covers every archive."
+  echo "Then open http://127.0.0.1:8080. \`openportd --help\` lists every option. \`SHA256SUMS\` covers every archive and package."
   echo
   if [ -n "$previous" ]; then
     echo "## Changes since $previous"
@@ -206,12 +226,12 @@ ls -l "$dist"
 if [ "$publish" = 1 ]; then
   head="$(git rev-parse HEAD)"
   if [ "$(gh release view "v$version" --json isDraft --jq .isDraft 2>/dev/null || true)" = true ]; then
-    gh release upload "v$version" --clobber "$dist"/*.tar.gz "$dist/SHA256SUMS"
+    [ "${#assets[@]}" -eq 0 ] || gh release upload "v$version" --clobber "${assets[@]}"
     gh release edit "v$version" --target "$head" --title "openport $version" --notes-file "$dist/RELEASE_NOTES.md"
     echo "Refreshed the draft release for v$version at $commit; publish it on GitHub when it looks right."
   else
     gh release create "v$version" --draft --target "$head" --title "openport $version" --notes-file "$dist/RELEASE_NOTES.md" \
-      "$dist"/*.tar.gz "$dist/SHA256SUMS"
+      ${assets[@]+"${assets[@]}"}
     echo "Created a draft release for v$version at $commit; publish it on GitHub when it looks right."
   fi
 else

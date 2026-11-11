@@ -158,11 +158,15 @@ applies to the RPM too; do not advertise older enterprise distro compatibility.
 On a matching Linux machine, `python3 tools/package_test.py PACKAGE_DIRECTORY
 --arch amd64` (or `arm64`) checks locally built packages without installing them.
 `tools/release.sh` builds a release on your own machine: it checks and tests the web
-terminal and the engine, packages this machine's build and a Linux build from the Docker
-image with checksums and release notes into `dist/`, and smoke-tests the image. Nothing
-is published unless you pass `--publish`, which creates a draft GitHub release for the
-version in `CMakeLists.txt` at the current commit, or refreshes its files when the draft
-exists; GitHub tags the commit when you publish the draft.
+terminal and the engine, packages this machine's build with checksums and release notes
+into `dist/`, smoke-tests the Docker image (built with this commit's revision) and puts a
+Linux build from it in `dist/linux/` to try locally. Nothing is published unless you pass
+`--publish`, which creates a draft GitHub release for the version in `CMakeLists.txt` at
+the current commit with this machine's archive, or refreshes its files when the draft
+exists; GitHub tags the commit when you publish the draft. The Linux archives come only
+from the release workflow, so `SHA256SUMS` never names a file it replaced. Release builds
+compile source paths relative to the checkout, so the binaries name no directory of the
+machine that built them.
 
 After publishing the release and its `SHA256SUMS`, update the Homebrew formula:
 

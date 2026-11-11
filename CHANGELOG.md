@@ -965,6 +965,17 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   binary. Each architecture's image now goes through CI's Docker smoke test (status,
   the path check, a paper fill and the API contract) on its own runner first, and
   nothing built from it is attached if that fails.
+- **A release's `SHA256SUMS` no longer names an archive the workflow replaced.**
+  `tools/release.sh --publish` attached its own Linux archive and a `SHA256SUMS`
+  covering it; publishing the draft rebuilt that archive under the same name, with
+  different bytes, so for the tens of minutes until the workflow rewrote the sums (or
+  for good, had it failed) the release listed a wrong checksum. The script now
+  attaches only this machine's archive and keeps its Linux build in `dist/linux/` to
+  try locally. Its Docker image, and that Linux build, also reported build revision
+  `unknown`; they now carry the commit's, as the native build does. Release builds
+  compile source paths relative to the checkout, so the binaries no longer name the
+  build machine's directories, and `tools/record_site_demo.mjs` no longer names them
+  in its instructions either.
 
 ## 0.5.1 (2026-10-28)
 

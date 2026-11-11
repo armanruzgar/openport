@@ -136,7 +136,9 @@ jobs:
         if: steps.attached.outputs.build == 'true'
         run: |
           test "$(uname -m)" = arm64
+          # Source paths compile in relative to the checkout, as tools/release.sh builds them.
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DOPENPORT_BUILD_TESTS=OFF \
+            -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$GITHUB_WORKSPACE=." \
             -DOPENPORT_BUILD_BENCHMARKS=OFF -DOPENPORT_STATIC_DEPS=ON -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
           cmake --build build --target openportd openport-probe
           cmake --install build --component openport --prefix "$RUNNER_TEMP/prefix"
