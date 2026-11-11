@@ -1397,6 +1397,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   playbook at once, though archiving cannot be undone: its ID cannot be used again,
   and every live account running it switches to Off, which ends its forward tests.
   It now asks for confirmation and says so, as enabling Auto does.
+- **The API contract test checks every documented read.** `tools/contract_test.py`
+  skipped a route whose ID it could not fill, so on a server without playbooks, as in
+  CI, the playbook, signal-secret and replay playbook reads went unchecked. A missing
+  ID now checks their documented answers, and a route the test cannot fill fails it.
 
 ## 0.5.1 (2026-10-28)
 

@@ -3,8 +3,10 @@
 """Validate openportd's HTTP contract; writes use a disposable simulated replay.
 
 Requires jsonschema and pyyaml. Refuses to replace an active replay. Every API GET
-is visited (including mirrors and archived routes); static files/WS are transports,
-not JSON API calls. First mismatch reports method, path and JSON field.
+is visited (including mirrors and archived routes); where the server has nothing to
+read under an ID, a missing one checks the documented error, and a route whose path
+parameters the test cannot fill fails the run. Static files/WS are transports, not
+JSON API calls. First mismatch reports method, path and JSON field.
 """
 from __future__ import annotations
 
@@ -141,11 +143,12 @@ class Contract:
         expiry = summary.get("expiries", [{}])[0].get("id") if summary.get("expiries") else None
         accounts = self.call("GET", prefix + "/accounts", success=True)["accounts"]
         playbooks = self.call("GET", prefix + "/playbooks", success=True)["definitions"]
-        playbook = next(iter(playbooks), None)
         packs = self.call("GET", "/api/replay/packs", success=True)["packs"] if prefix == "/api/replay" else []
-        pack = packs[0]["scenario"]["id"] if packs else None
         portfolios = self.call("GET", "/api/analysis/portfolios", success=True)["portfolios"] if prefix == "/api" else []
-        # Without an imported portfolio, a missing one exercises the documented error.
+        # Without a saved playbook, scenario pack or imported portfolio, a missing one
+        # exercises the documented error. Playbook IDs take at most 15 characters.
+        playbook = next(iter(playbooks), "contract-none")
+        pack = packs[0]["scenario"]["id"] if packs else "contract-missing"
         portfolio = portfolios[0]["id"] if portfolios else "contract-missing"
         for template, raw in self.spec["paths"].items():
             if not template.startswith("/api/") or "get" not in self.resolve(raw):
@@ -157,16 +160,15 @@ class Contract:
             if run_id is not None and not template.startswith("/api/replay/history/{run_id}/"):
                 continue
             path = template.replace("{symbol}", quote(symbol, safe="")).replace("{run_id}", quote(run_id or "", safe=""))
-            if playbook is not None:
-                path = path.replace("/playbooks/{id}", "/playbooks/" + quote(playbook, safe=""))
-            if pack is not None:
-                path = path.replace("/packs/{id}", "/packs/" + quote(pack, safe=""))
+            path = path.replace("/playbooks/{id}", "/playbooks/" + quote(playbook, safe=""))
+            path = path.replace("/packs/{id}", "/packs/" + quote(pack, safe=""))
             if path in {"/api/backtests/{id}", "/api/backtests/sweeps/{id}"}:
                 path = path.replace("{id}", "000000")  # A missing saved run exercises the documented error.
             path = path.replace("/orders/{id}", "/orders/1")
             path = path.replace("/analysis/portfolios/{id}", "/analysis/portfolios/" + quote(portfolio, safe=""))
             if "{" in path:
-                continue
+                # Skipping it would leave a documented GET unchecked without a word.
+                raise ContractMismatch(f"GET {template}: the contract test has no value for its path parameters; add one to get_family")
             item = self.resolve(raw)
             names = {self.resolve(p)["name"] for p in item.get("parameters", [])}
             choices = accounts if "account" in names else [None]
