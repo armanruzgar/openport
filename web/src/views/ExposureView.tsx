@@ -9,6 +9,7 @@ import { CoverageBadge, Empty, Panel, Segmented, Stat } from "../components/ui"
 import { oiCoverage } from "../lib/coverage"
 import { expiryLabel, fixed, isNum, money, price } from "../lib/format"
 import { matchingPayload } from "../lib/payload"
+import { errorText } from "../lib/errors"
 
 type Metric = "gex" | "vex" | "dex" | "cex" | "vomex"
 const metrics: { value: Metric; label: string; name: string; unit: string }[] = [
@@ -82,7 +83,7 @@ export function ExposureView({ symbol }: { symbol: string }) {
         ]} onChange={setSlice} />
         <Segmented label="Metric" value={metric} options={metrics} onChange={setMetric} />
       </div>
-      {exposure.isError ? <Empty>{String(exposure.error)}</Empty> : !modeMatches ? <Empty>This server did not return the selected exposure convention and slice.</Empty>
+      {exposure.isError ? <Empty>{errorText(exposure.error)}</Empty> : !modeMatches ? <Empty>This server did not return the selected exposure convention and slice.</Empty>
         : !data || !summary ? <Empty>Loading exposure…</Empty> : <>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
           {metrics.map((entry) => <Stat key={entry.value} label={`Net ${entry.label}`} value={money(summary[entry.value])}

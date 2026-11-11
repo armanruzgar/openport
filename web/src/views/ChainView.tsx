@@ -12,6 +12,7 @@ import { CoverageBadge, Empty, Panel, Segmented, Stat } from "../components/ui"
 import { expiryCoverage } from "../lib/coverage"
 import { count, days, fixed, isNum, money, pct, price, vol } from "../lib/format"
 import { matchingPayload } from "../lib/payload"
+import { marketDataError } from "../lib/errors"
 import { americanApproximation, rateSourceHint } from "../lib/model"
 import { OrderTicket, type TicketSelection } from "../components/OrderTicket"
 import { PriceChart } from "../components/PriceChart"
@@ -146,7 +147,9 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
       price: isNum(clickedPrice) ? String(clickedPrice) : "", spot: source.spot })
 
   }
-  if (summary.isError) return <Empty>{String(summary.error)}</Empty>
+  const underlying = live.underlyings.find((u) => u.symbol === symbol)
+  const feed = live.status?.feed.state
+  if (summary.isError) return <Empty>{marketDataError(summary.error, symbol, underlying, feed)}</Empty>
   if (!summaryData) return <Empty>Loading {symbol}…</Empty>
 
   const e = data?.expiry
@@ -215,7 +218,7 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
             selected={highlighted} held={held} used={used}
             onQuote={live.trading ? (quote, row, optionType, cell) => chooseQuote(data, quote, row, optionType, cell) : undefined} />
         ) : (
-          <Empty>{chain.isError ? String(chain.error) : "Loading chain…"}</Empty>
+          <Empty>{chain.isError ? marketDataError(chain.error, symbol, underlying, feed) : "Loading chain…"}</Empty>
         )}
         {prefs.stacked && expiries.filter((expiry) => expiry.id !== selected).map((expiry) => {
           const source = chains.get(expiry.id)

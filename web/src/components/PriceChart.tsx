@@ -13,6 +13,7 @@ import type { Expiry } from "../api/types"
 import { bandColor, CandleChart, levelColors } from "../charts/CandleChart"
 import { describeAlert, useAlertSettings } from "../lib/alerts"
 import { candleIntervals, candleLimit, chartLevels, expectedMove, intervalNames, loadChartPrefs, saveChartPrefs, type ChartLevel, type ChartPrefs } from "../lib/candles"
+import { errorText } from "../lib/errors"
 import { expiryLabel, isNum, price } from "../lib/format"
 import { useMediaQuery } from "../lib/media"
 import { AlertsDialog } from "./Alerts"
@@ -138,7 +139,7 @@ export function PriceChart({ symbol, spot, expiry }: { symbol: string; spot: num
               studies={studies} drawings={drawings} onDrawPoint={drawMode ? draw : undefined} height={height} formatPrice={priceText} label={`${symbol} ${name}`} />
           ) : (
             <div className="flex items-center justify-center px-4 text-center text-sm text-muted" style={{ height }}>
-              {candles.isError ? String(candles.error)
+              {candles.isError ? errorText(candles.error)
                 : candles.isPending ? "Loading bars…"
                 : "No bars yet. They build from the feed's prices as it updates, and Cboe's history fills in when it arrives."}
             </div>

@@ -3,6 +3,7 @@ import { useState } from "react"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
 import type { EarningsMove } from "../api/types"
+import { errorText } from "../lib/errors"
 import { fixed, pct } from "../lib/format"
 import { useWriteToken } from "../lib/write-token"
 import { Badge, Empty, Panel } from "./ui"
@@ -52,7 +53,7 @@ export function EarningsPanel({ symbol }: { symbol: string }) {
     <Panel title="Earnings: implied vs realized" className="xl:col-span-2"
       actions={<button type="button" className="text-xs text-muted underline decoration-dotted hover:text-foreground" onClick={() => setOpen(!open)}>
         {open ? "Close import" : "Import past events"}</button>}>
-      {history.isError ? <Empty>{String(history.error)}</Empty> : !data ? <Empty>Loading earnings history…</Empty> : <>
+      {history.isError ? <Empty>{errorText(history.error)}</Empty> : !data ? <Empty>Loading earnings history…</Empty> : <>
         {summary && summary.events > 0 && <p className="mb-2 text-xs">
           The straddle priced more than the realized move in <span className="font-medium tabular">{summary.over} of {summary.events}</span> events
           ({pct(summary.over_rate, 0)}); average implied {pct(summary.mean_implied, 1)} against realized {pct(summary.mean_realized, 1)}.

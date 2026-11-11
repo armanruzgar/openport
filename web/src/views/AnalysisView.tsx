@@ -7,6 +7,7 @@ import { LineChart, type Series } from "../charts/LineChart"
 import { ScenarioGrid } from "../components/ScenarioGrid"
 import { StressResultPanel } from "../components/StressPanel"
 import { Badge, Empty, PageHeader, Panel, Segmented, Stat } from "../components/ui"
+import { errorText } from "../lib/errors"
 import { count, fixed, money, price } from "../lib/format"
 import { useWriteToken } from "../lib/write-token"
 
@@ -121,7 +122,7 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
   const grid = useQuery({ queryKey: ["analysis-grid", id], queryFn: ({ signal }) => api.analysisGrid(id, signal), enabled: data != null, refetchInterval: 15_000 })
   const stress = useQuery({ queryKey: ["analysis-stress", id], queryFn: ({ signal }) => api.analysisStress(id, signal), enabled: data != null, refetchInterval: 60_000 })
   const tail = useQuery({ queryKey: ["analysis-var", id], queryFn: ({ signal }) => api.analysisVar(id, signal), enabled: data != null, refetchInterval: 60_000 })
-  if (detail.isError) return <Empty>{String(detail.error)}</Empty>
+  if (detail.isError) return <Empty>{errorText(detail.error)}</Empty>
   if (!data) return <Empty>Loading the portfolio…</Empty>
   return (
     <div className="flex flex-col gap-3">
@@ -169,7 +170,7 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
         <Panel title="Risk profile" actions={held.length > 1 && <Segmented label="Move" value={underlying ?? "benchmark"}
           options={[{ value: "benchmark", label: "SPY-weighted" }, ...held.map((s) => ({ value: s, label: s }))]}
           onChange={(v) => setUnderlying(v === "benchmark" ? null : v)} />}>
-          {profile.isError ? <Empty>{String(profile.error)}</Empty> : !profile.data ? <Empty>Loading…</Empty> : (
+          {profile.isError ? <Empty>{errorText(profile.error)}</Empty> : !profile.data ? <Empty>Loading…</Empty> : (
             <>
               <LineChart series={profileSeries(profile.data)} height={260} formatX={(x) => `${x > 0 ? "+" : ""}${fixed(x, 0)}%`} formatY={(y) => money(y)}
                 xLabel={`${profile.data.reference} move`} marginLeft={64} />
@@ -180,7 +181,7 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
           )}
         </Panel>
         <Panel title="Scenario grid">
-          {grid.isError ? <Empty>{String(grid.error)}</Empty> : !grid.data ? <Empty>Loading…</Empty> : <>
+          {grid.isError ? <Empty>{errorText(grid.error)}</Empty> : !grid.data ? <Empty>Loading…</Empty> : <>
             {grid.data.unpriced.length > 0 && <p className="mb-2 text-xs text-warn">Leaves out {grid.data.unpriced.join(", ")}: no valuation from this feed.</p>}
             <ScenarioGrid scenarios={{ ...grid.data, complete: grid.data.pnl.every((row) => row.every((v) => v != null)) }} />
           </>}
@@ -188,7 +189,7 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
         </Panel>
       </div>
       <Panel title="Stress tests and value at risk">
-        {stress.isError || tail.isError ? <Empty>{String(stress.error ?? tail.error)}</Empty> : !stress.data || !tail.data ? <Empty>Loading…</Empty> : <>
+        {stress.isError || tail.isError ? <Empty>{errorText(stress.error ?? tail.error)}</Empty> : !stress.data || !tail.data ? <Empty>Loading…</Empty> : <>
           {!stress.data.complete && <p className="mb-2 text-xs text-warn">Leaves out {stress.data.unpriced.join(", ")}: no valuation from this feed.</p>}
           <StressResultPanel account={false} data={{ stress: stress.data.stress, sticky_strike: tail.data.sticky_strike, atm_vol_change: tail.data.atm_vol_change }} />
           <p className="mt-1 text-[11px] text-muted">{stress.data.model} {tail.data.model}</p>
@@ -212,7 +213,7 @@ export function AnalysisView() {
       <div className="grid gap-3 xl:grid-cols-[18rem_1fr]">
         <div className="flex flex-col gap-3">
           <Panel title="Portfolios">
-            {list.isError ? <Empty>{String(list.error)}</Empty> : portfolios.length ? (
+            {list.isError ? <Empty>{errorText(list.error)}</Empty> : portfolios.length ? (
               <ul className="space-y-1 text-sm">{portfolios.map((p) => (
                 <li key={p.id}><button type="button" aria-current={p.id === current ? "true" : undefined} onClick={() => setSelected(p.id)}
                   className={`w-full rounded-md px-2 py-1 text-left ${p.id === current ? "bg-raised" : "hover:bg-raised/60"}`}>

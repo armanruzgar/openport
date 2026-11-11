@@ -4,6 +4,7 @@ import { api } from "../api/client"
 import { useLive } from "../api/live"
 import type { VolatilityScanner, VolatilityScannerRow } from "../api/types"
 import { Empty, Panel } from "../components/ui"
+import { errorText } from "../lib/errors"
 import { metricMark, volPoints as vp } from "../lib/volatility"
 
 type Sort = "symbol" | "iv30" | "iv_rank" | "iv_percentile" | "vrp" | "rr25" | "rr25_rank" | "term_ratio" | "today_percent" | "today_points"
@@ -46,5 +47,5 @@ export function VolatilityScannerTable({ data, onSymbol }: { data: VolatilitySca
 export function VolatilityScannerView({ onSymbol }: { onSymbol: (symbol: string) => void }) {
   const live = useLive()
   const query = useQuery({ queryKey: ["volatility-scanner", live.source], queryFn: ({ signal }) => api.volatilityScanner(signal), refetchInterval: 60_000 })
-  return query.data ? <VolatilityScannerTable data={query.data} onSymbol={onSymbol} /> : <Empty>{query.isError ? String(query.error) : "Loading volatility scanner…"}</Empty>
+  return query.data ? <VolatilityScannerTable data={query.data} onSymbol={onSymbol} /> : <Empty>{query.isError ? errorText(query.error) : "Loading volatility scanner…"}</Empty>
 }

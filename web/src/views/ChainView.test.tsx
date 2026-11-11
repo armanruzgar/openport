@@ -3,7 +3,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act } from "react"
 import { createRoot } from "react-dom/client"
 import { expect, it, vi } from "vitest"
+import { api, ApiError } from "../api/client"
 import { liveState, useLive } from "../api/live"
+import { waitForRender } from "../test/render"
 import { account, chain, portfolio, quote, selection, status, summary } from "../test/trading-fixtures"
 import { ChainView } from "./ChainView"
 
@@ -190,5 +192,26 @@ it("keeps quoting a ticket and strategy legs from the whole chain once the strik
   } finally {
     await act(async () => root.unmount())
     client.clear(); vi.unstubAllGlobals()
+  }
+})
+
+it("waits for the feed's first snapshot instead of showing the summary's 404", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  const connecting = { ...status, feed: { ...status.feed, state: "connecting" as const }, underlyings: status.underlyings.map((u) => ({ ...u, as_of: null })) }
+  vi.mocked(useLive).mockReturnValue(liveState(connecting, null, "open"))
+  const summaryRequest = vi.spyOn(api, "summary").mockRejectedValue(new ApiError(404, "no data for SPX yet", "NOT_FOUND"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+  const host = document.createElement("div")
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ChainView symbol="SPX" expiry={null} onExpiry={() => {}} /></QueryClientProvider>))
+    await waitForRender(() => expect(host.textContent).toContain("Waiting for the first SPX snapshot… (feed: connecting)"))
+    expect(host.textContent).not.toContain("ApiError")
+    expect(summaryRequest).toHaveBeenCalled()
+  } finally {
+    await act(async () => root.unmount())
+    client.clear()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   }
 })

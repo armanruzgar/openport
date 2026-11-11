@@ -14,6 +14,7 @@ import { Empty, Panel, Segmented } from "../components/ui"
 import { days, expiryLabel, fixed, isNum, pct, price, vol } from "../lib/format"
 import { comparisonLabels, comparisonSeries, smileSeries, type SmileMode } from "../lib/svi"
 import { matchingPayload } from "../lib/payload"
+import { errorText, marketDataError } from "../lib/errors"
 
 // Natural tenors, placed on the square-root time axis.
 const tenorTicks = [7, 30, 91, 182, 365, 730, 1826].map(Math.sqrt)
@@ -84,11 +85,11 @@ export function SmileView({ symbol }: { symbol: string }) {
     ? isNum(spot) ? [{ x: spot, label: `spot ${price(spot)}`, color: "var(--warn)" }] : []
     : [{ x: 0, label: "forward", color: "var(--warn)" }]
 
-  if (surface.isError) return <Empty>{String(surface.error)}</Empty>
+  if (surface.isError) return <Empty>{marketDataError(surface.error, symbol, live.underlyings.find((u) => u.symbol === symbol), live.status?.feed.state)}</Empty>
   return (
     <div className="grid gap-3 xl:grid-cols-[2fr_1fr]">
-      {volatilityData ? <VolatilitySummary data={volatilityData} /> : <div className="text-xs text-muted xl:col-span-2">{volatility.isError ? `Volatility metrics unavailable: ${String(volatility.error)}` : "Loading volatility metrics…"}</div>}
-      {volatilityData && <VolatilityHistory data={volatilityData} history={matchingPayload(history.data, symbol)} error={history.isError ? String(history.error) : undefined} />}
+      {volatilityData ? <VolatilitySummary data={volatilityData} /> : <div className="text-xs text-muted xl:col-span-2">{volatility.isError ? `Volatility metrics unavailable: ${errorText(volatility.error)}` : "Loading volatility metrics…"}</div>}
+      {volatilityData && <VolatilityHistory data={volatilityData} history={matchingPayload(history.data, symbol)} error={history.isError ? errorText(history.error) : undefined} />}
       <Panel
         title="Volatility smile"
         actions={
@@ -187,7 +188,7 @@ export function SmileView({ symbol }: { symbol: string }) {
         <LineChart series={comparisons} height={280} formatX={x => fixed(x, axis === "strike" ? 0 : 3)} formatY={y => vol(y, 1)} xLabel={axis === "strike" ? "strike" : "log-moneyness"} />
         <div className="mt-2 space-y-1 text-[11px] text-muted">
           <p>Current sample: {surfaceData?.as_of ?? "unavailable"}</p>
-          {surfaceHistory.isError ? <p>{String(surfaceHistory.error)}</p> : !comparisonData ? <p>Loading surface history…</p> : !comparisonData.enabled ? <p>Surface collection is disabled for this source.</p> : comparisonData.comparisons.map(c => <p key={c.label}>{comparisonLabels[c.label]} · {c.date}: {c.snapshot ? `sample ${c.snapshot.as_of}${c.snapshot.expiries.some(e => e.id === selectedComparison?.id && e.svi) ? "" : " · no fit for this expiry"}` : "no close snapshot"}</p>)}
+          {surfaceHistory.isError ? <p>{errorText(surfaceHistory.error)}</p> : !comparisonData ? <p>Loading surface history…</p> : !comparisonData.enabled ? <p>Surface collection is disabled for this source.</p> : comparisonData.comparisons.map(c => <p key={c.label}>{comparisonLabels[c.label]} · {c.date}: {c.snapshot ? `sample ${c.snapshot.as_of}${c.snapshot.expiries.some(e => e.id === selectedComparison?.id && e.svi) ? "" : " · no fit for this expiry"}` : "no close snapshot"}</p>)}
           <p>Derived SVI curves at each sample's own tenor and forward, clipped to its calibration range. Close samples come from the final five session minutes; timestamps show actual observations. Comparisons do not hold time to expiry constant. Flagged fits remain diagnostic.</p>
         </div>
       </Panel>

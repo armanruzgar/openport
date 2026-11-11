@@ -15,6 +15,7 @@ import { addAnalyzeCandidate, candidateLegs, daysUntil, entryCost, maxAnalyzeCan
 import { defaultExpiry } from "../lib/expiry"
 import { expiryLabel, fixed, money, price } from "../lib/format"
 import { matchingPayload } from "../lib/payload"
+import { marketDataError } from "../lib/errors"
 import { parseNumbers } from "../lib/probability"
 import { MAX_LEGS, MAX_RATIO, strategyLabel, type StrategyLeg } from "../lib/strategy"
 
@@ -257,7 +258,7 @@ export function AnalyzeView({ symbol }: { symbol: string }) {
   })()
 
   if (!live.trading) return <Empty>Analyze draws strategies through the paper account's risk profile; paper trading is unavailable on this server.</Empty>
-  if (summary.isError) return <Empty>{String(summary.error)}</Empty>
+  if (summary.isError) return <Empty>{marketDataError(summary.error, symbol, live.underlyings.find((u) => u.symbol === symbol), live.status?.feed.state)}</Empty>
   if (!data) return <Empty>Loading {symbol}…</Empty>
   const errors = profiles.map((p) => p.error).filter(Boolean)
   return <div className="flex flex-col gap-3">

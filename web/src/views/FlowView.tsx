@@ -8,6 +8,7 @@ import { Badge, Empty, Panel, Segmented, Stat } from "../components/ui"
 import { clock, count, expiryLabel, fixed, money, price } from "../lib/format"
 import { emptyTapeText, flowTags, sideText, strikeBars } from "../lib/flow"
 import { matchingPayload } from "../lib/payload"
+import { errorText } from "../lib/errors"
 
 type Only = "all" | NonNullable<FlowQuery["only"]>
 type Kind = "both" | "call" | "put"
@@ -39,7 +40,7 @@ export function FlowView({ symbol }: { symbol: string }) {
     refetchInterval: 5_000,
   })
   const data = matchingPayload(flow.data, symbol)
-  if (flow.isError) return <Empty>{String(flow.error)}</Empty>
+  if (flow.isError) return <Empty>{errorText(flow.error)}</Empty>
   if (!data) return <Empty>Loading the tape…</Empty>
   if (data.source === "none") {
     return <Panel title="Time and sales">

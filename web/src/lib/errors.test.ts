@@ -1,0 +1,22 @@
+import { describe, expect, it } from "vitest"
+import { ApiError } from "../api/client"
+import { errorText, marketDataError } from "./errors"
+
+describe("error text", () => {
+  it("shows a failure's message without its class name", () => {
+    const error = new ApiError(404, "no data for SPX yet", "NOT_FOUND")
+    expect(String(error)).toBe("ApiError: no data for SPX yet")
+    expect(errorText(error)).toBe("no data for SPX yet")
+    expect(errorText(new TypeError("Failed to fetch"))).toBe("Failed to fetch")
+    expect(errorText("plain")).toBe("plain")
+    expect(errorText(undefined)).toBe("Request failed. Please retry.")
+  })
+  it("waits for an underlying's first snapshot instead of reporting its 404", () => {
+    const missing = new ApiError(404, "no data for SPX yet", "NOT_FOUND")
+    expect(marketDataError(missing, "SPX", { as_of: null }, "connecting")).toBe("Waiting for the first SPX snapshot… (feed: connecting)")
+    expect(marketDataError(missing, "SPX", undefined)).toBe("Waiting for the first SPX snapshot…")
+    // Once it has a snapshot, a 404 is a failure like any other, and so is another error before it.
+    expect(marketDataError(missing, "SPX", { as_of: "2026-11-06T14:31:30Z" }, "live")).toBe("no data for SPX yet")
+    expect(marketDataError(new ApiError(500, "boom"), "SPX", { as_of: null }, "connecting")).toBe("boom")
+  })
+})

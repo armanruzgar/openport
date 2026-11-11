@@ -3,6 +3,7 @@ import { useState } from "react"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
 import type { Probability } from "../api/types"
+import { errorText } from "../lib/errors"
 import { fixed } from "../lib/format"
 import { parseNumbers } from "../lib/probability"
 import { matchingPayload } from "../lib/payload"
@@ -64,7 +65,7 @@ export function ProbabilityPanel({ symbol }: { symbol: string }) {
     <label className="text-xs text-muted">Prices <input aria-label="Prices to reach" className={`trade-input w-40 ${prices ? "" : "border-danger"}`}
       placeholder="e.g. 5900, 6100" value={pricesText} onChange={(e) => setPricesText(e.target.value)} /></label>
   </>}>
-    {odds.error ? <p className="text-sm text-warn">{String(odds.error)}</p>
+    {odds.error ? <p className="text-sm text-warn">{errorText(odds.error)}</p>
       : odds.data ? <ProbabilityTable data={odds.data} /> : <p className="text-sm text-muted">{valid ? "Loading…" : "Enter up to 8 horizons (0–366 days) and up to 20 prices."}</p>}
   </Panel>
 }

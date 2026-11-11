@@ -1161,6 +1161,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `encode`, so every API answer reached a phone or a remote browser uncompressed (an
   SPX chain, about 85 KB, is about 15 KB gzipped), on every refresh. It now has
   `encode zstd gzip`, as the demo deployment's Caddyfile does.
+- **The Trade page waits for the feed's first snapshot.** For about half a minute after
+  `openportd` starts (or across a restart), an underlying's summary answers 404 until
+  its first snapshot, and the chain showed "ApiError: no data for SPX yet". It now
+  says it is waiting for the first snapshot and gives the feed's state; and the
+  terminal's other panels show an error's message without the "ApiError:" prefix.
 
 ## 0.5.1 (2026-10-28)
 
