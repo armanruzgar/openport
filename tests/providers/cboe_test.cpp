@@ -534,6 +534,69 @@ TEST(Cboe, ReadingThePageDoesNotExtendItsHold) {
   EXPECT_TRUE(retried);
 }
 
+TEST(Cboe, AFailedQuotePageNeitherEndsTheHoldNorBringsBackTheStaleFile) {
+  md::Timestamp now = utc("2026-09-24 15:04:13");
+  providers::CboeDelayedProvider::Options options;
+  options.clock = [&] { return now; };
+  providers::CboeDelayedProvider provider(options);
+  const std::string file = restamped(kChain, "2026-09-23 03:54:59");  // stopped the night before
+  int page_status = 200;
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) {
+    if (url.find("cdn-api.cboe.com") != std::string_view::npos) return net::HttpResponse{200, file};
+    return net::HttpResponse{page_status, page_status == 200 ? page(restamped(kChain, "15:03:40")) : "<html>busy</html>"};
+  };
+  const md::Subscription subscription{{"SPX"}, 0, 0.0};
+  Collector sink;
+  const auto fetched = [&] {
+    std::vector<std::string> sources;
+    for (const auto& url : http.urls) sources.push_back(url.find("cdn-api.cboe.com") != std::string::npos ? "file" : "page");
+    http.urls.clear();
+    return sources;
+  };
+  const auto step = [&](md::Timestamp seconds) {
+    now += seconds * md::kNanosPerSecond;
+    sink.events.clear();
+    provider.poll_once(http, "SPX", subscription, sink);
+    const auto statuses = sink.all<md::ProviderStatus>();
+    return statuses.empty() ? md::ProviderStatus{} : statuses.back();
+  };
+  // The file stopped the night before, so the page is read and held to.
+  EXPECT_NE(step(0).message.find("(page)"), std::string::npos);
+  EXPECT_EQ(fetched(), (std::vector<std::string>{"file", "page"}));
+  // During the hold one page fails: its own status is reported, nothing is published
+  // and the hold goes on, with the page tried again once it is due.
+  page_status = 503;
+  auto status = step(90);
+  EXPECT_EQ(fetched(), (std::vector<std::string>{"page"}));
+  EXPECT_EQ(status.state, md::FeedState::Error);
+  EXPECT_EQ(status.message, "cboe SPX: quote page HTTP 503");
+  EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
+  page_status = 200;
+  status = step(15);  // the page is not due yet, and the failure stands until it is
+  EXPECT_TRUE(fetched().empty());
+  EXPECT_EQ(status.message, "cboe SPX: quote page HTTP 503");
+  EXPECT_NE(step(30).message.find("(page)"), std::string::npos);
+  EXPECT_EQ(fetched(), (std::vector<std::string>{"page"}));
+  ASSERT_EQ(sink.all<md::SnapshotComplete>().size(), 1u);
+  EXPECT_GT(sink.all<md::SnapshotComplete>()[0].ts, utc("2026-09-24 14:00:00"));
+  // After the hold the stale file is read first; with the page failing it is still
+  // never published over the fresher chain the page gave.
+  page_status = 503;
+  status = step(240);
+  EXPECT_EQ(fetched(), (std::vector<std::string>{"file", "page"}));
+  EXPECT_EQ(status.state, md::FeedState::Error);
+  EXPECT_EQ(status.message, "cboe SPX: quote page HTTP 503; the CDN file is older than the chain already published");
+  EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
+  status = step(15);
+  EXPECT_EQ(fetched(), (std::vector<std::string>{"file"}));  // the page is not due yet
+  EXPECT_EQ(status.message, "cboe SPX: quote page HTTP 503; the CDN file is older than the chain already published");
+  EXPECT_TRUE(sink.all<md::OptionQuote>().empty());
+  page_status = 200;
+  EXPECT_NE(step(30).message.find("(page)"), std::string::npos);
+  EXPECT_EQ(fetched(), (std::vector<std::string>{"file", "page"}));
+}
+
 TEST(CboeCharts, UrlsFollowTheChainConvention) {
   EXPECT_EQ(providers::cboe_chart_url("SPX", providers::CboeChart::Intraday),
             "https://cdn-api.cboe.com/api/global/delayed_quotes/charts/intraday/_SPX.json");

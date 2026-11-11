@@ -429,6 +429,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   **disconnected**, the age counts on the wall clock, a banner says when the
   connection dropped, tickets refuse to send while the server cannot be reached, and
   a request that got no answer says the server could not be reached.
+- **Cboe when a quote page fails.** While the CDN file was stale and the adapter read
+  Cboe's quote page instead, one failed page read (a 503, a 429, a page without the
+  chain) reported `cboe SPX: HTTP 0` and then published the stale file, hours old, for
+  five minutes, taking quotes and spot back to the file's time. A failed page now
+  reports its own status and is read again 45 seconds later, the hold on the page goes
+  on, and a chain older than the one already published is never published.
 
 ## 0.5.1 (2026-10-28)
 

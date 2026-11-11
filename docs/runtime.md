@@ -1486,8 +1486,12 @@ and keeps whichever is fresher. The page is about 1.5 times the file's size and
 Cboe refreshes it about once a minute, so the adapter fetches it no more often
 than every 45 seconds, holds to it for five minutes, then tries the file again;
 a page no fresher than the file (overnight, when neither moves) is left alone for
-five minutes. The status message names the source, `(file)` or `(page)`. The page
-stamps only a UTC time of day, dated by the clock. Because pages can trail the
+five minutes. A page that fails (an HTTP error, or no chain in it) is reported with
+its own status, such as `quote page HTTP 503`, until a page is read again 45 seconds
+later; it neither ends a hold nor stops the page being tried. A chain older than the
+one already published, such as the stale file after the page, is never published:
+until a fresher one comes the status is `error`. The status message names the source,
+`(file)` or `(page)`. The page stamps only a UTC time of day, dated by the clock. Because pages can trail the
 stated delay by a minute or two, the paper feed check lets a delayed feed fall up
 to three minutes behind its delay (or `max_quote_age`, if larger) before calling
 it stalled.

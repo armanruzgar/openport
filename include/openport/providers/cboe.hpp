@@ -188,6 +188,10 @@ class CboeDelayedProvider final : public PollingProvider {
   std::map<std::string, md::Timestamp> page_until_;
   std::map<std::string, md::Timestamp> skip_page_until_;
   std::map<std::string, md::Timestamp> page_fetched_;
+  /// Per underlying, the time of the last chain published; an older one never follows.
+  std::map<std::string, md::Timestamp> published_;
+  /// Per underlying, why the last quote page read gave no chain; empty once one does.
+  std::map<std::string, std::string> page_error_;
   /// The last official close published per underlying, by date.
   std::map<std::string, std::pair<md::Date, double>> closes_;
 };

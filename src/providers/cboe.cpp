@@ -586,11 +586,13 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
   // 2026-09-23, when it stopped updating), Cboe's own quote page embeds the same
   // chain, fresher; read that for a while, then try the file again.
   const auto now = options_.clock();
-  const auto stale = std::chrono::duration_cast<std::chrono::nanoseconds>(options_.stale_after).count();
+  const auto nanos = [](auto span) { return std::chrono::duration_cast<std::chrono::nanoseconds>(span).count(); };
   net::HttpResponse response;
   CboeChain chain;
   bool have = false;
   std::string source = "file";
+  std::string failed;  // why there is no fresh chain, for the error or the summary
+  const auto add = [&failed](const std::string& reason) { failed += (failed.empty() ? "" : "; ") + reason; };
   double parse_ms = 0;
   const auto parse = [&](std::string_view json) {
     const auto started = std::chrono::steady_clock::now();
@@ -598,24 +600,33 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
     parse_ms += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     return parsed;
   };
+  auto& page_error = page_error_[underlying];
   const bool holding = page_until_[underlying] > now;
-  bool read_page = holding;
-  if (read_page && now - page_fetched_[underlying] < std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_interval).count())
+  if (holding && now - page_fetched_[underlying] < nanos(options_.page_interval)) {
+    // A page that failed stays the news until one is read again.
+    if (!page_error.empty()) throw std::runtime_error(page_error);
     return "cboe " + underlying + " (page): waiting for Cboe's next page, about once a minute";
-  if (!read_page) {
+  }
+  bool read_page = holding;
+  if (!holding) {
     response = http.get(cboe_chain_url(underlying), {}, options_.timeout, cancellation());
     if (response.status == 200) {
       chain = parse(response.body);
       have = true;
+    } else {
+      add("HTTP " + std::to_string(response.status));
     }
-    read_page = (!have || chain.as_of == 0 || now - chain.as_of > stale) && skip_page_until_[underlying] <= now;
+    const bool behind = !have || chain.as_of == 0 || now - chain.as_of > nanos(options_.stale_after);
+    read_page = behind && skip_page_until_[underlying] <= now;
+    if (behind && !read_page && !page_error.empty()) add(page_error);
   }
   if (read_page) {
     check_cancelled();
-    auto page = http.get(cboe_page_url(underlying), {}, options_.timeout, cancellation());
     page_fetched_[underlying] = now;
+    auto page = http.get(cboe_page_url(underlying), {}, options_.timeout, cancellation());
     const auto embedded = page.status == 200 ? cboe_page_chain(page.body) : std::nullopt;
     if (embedded) {
+      page_error.clear();
       auto from_page = parse(*embedded);
       if (!have || from_page.as_of > chain.as_of) {
         chain = std::move(from_page);
@@ -624,25 +635,38 @@ std::string CboeDelayedProvider::poll(net::HttpClient& http, const std::string& 
         source = "page";
         // The hold starts when the page beats the file, and is not extended by
         // reading the page during it: the file is tried again when it ends.
-        if (!holding) page_until_[underlying] = now + std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_hold).count();
+        if (!holding) page_until_[underlying] = now + nanos(options_.page_hold);
+      } else {
+        // A page no fresher than the file (both idle overnight, say) is left alone for a while.
+        page_until_.erase(underlying);
+        skip_page_until_[underlying] = now + nanos(options_.page_hold);
       }
-    }
-    // A page no fresher than the file (both idle overnight, say) is left alone for a while.
-    if (source != "page") {
-      page_until_.erase(underlying);
-      skip_page_until_[underlying] = now + std::chrono::duration_cast<std::chrono::nanoseconds>(options_.page_hold).count();
+    } else {
+      // A page that failed says nothing about the file: a hold goes on, and the page
+      // is tried again once Cboe may have another.
+      page_error = page.status == 200 ? std::string("quote page without a chain")
+                                      : "quote page HTTP " + std::to_string(page.status);
+      add(page_error);
+      if (!holding) skip_page_until_[underlying] = now + nanos(options_.page_interval);
     }
   }
-  if (!have) throw std::runtime_error("HTTP " + std::to_string(response.status));
+  // Never step back to an older chain, such as the stale file after the page: the
+  // book would take its quotes and spot as current.
+  if (have && chain.as_of < published_[underlying]) {
+    have = false;
+    add(std::string(source == "page" ? "the quote page" : "the CDN file") + " is older than the chain already published");
+  }
+  if (!have) throw std::runtime_error(failed);
   check_cancelled();
   publish_chain(chain, subscription, sink);
+  published_[underlying] = chain.as_of;
 
   char summary[208];
   std::snprintf(summary, sizeof summary, "cboe %s (%s): %zu options, %.2f MB in %.0f ms, parsed in %.1f ms",
                 underlying.c_str(), source.c_str(), chain.options.size(),
                 static_cast<double>(response.wire_bytes) / 1e6,
                 static_cast<double>(response.elapsed.count()) / 1e3, parse_ms);
-  return summary;
+  return failed.empty() ? std::string(summary) : std::string(summary) + "; " + failed;
 }
 
 void CboeDelayedProvider::publish_chain(const CboeChain& chain,
