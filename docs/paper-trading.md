@@ -2598,7 +2598,10 @@ flatten (including limit flatten), daily-loss exits, expiry cutoff, liquidation,
 exercise, assignment and settlement remain executable. Minimum hold applies in
 evaluation, verification and funded phases.
 An already-reached trigger or marketable OCO leg must satisfy minimum hold;
-attaching a condition or sibling does not exempt an immediate close.
+attaching a condition or sibling does not exempt an immediate close. Any other
+conditional close, such as a take-profit or time trigger, is accepted and checked
+when it triggers: while the position is still too young it is cancelled with
+`RISK_CHANGED` (`MIN_HOLD` in its message).
 
 While a bracket stop protects an open position, required-stop and trade-risk rules
 also refuse moving its trigger farther away (`STOP_REQUIRED`): lower for an

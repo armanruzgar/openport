@@ -2454,13 +2454,22 @@ bool reached(const State& s, const Order& o);
 bool marketable(const Order& o, const QuoteObservation& q);
 Decision min_hold_check(const State& s, const Order& o, Stage stage) {
   if (s.config.rules.min_hold_seconds == 0 || o.system || kept_within(o) || o.request.exits_only) return {};
-  if (!s.evaluation.revised_rules && (o.request.trigger || o.oco != 0 || !o.request.oco.empty())) return {};
-  if (s.evaluation.revised_rules && o.request.trigger) {
-    Order protective = o;
-    protective.triggered_at = std::max<Timestamp>(1, s.time);
-    if (closing_stop(s, protective) && (stage != Stage::Accept || !reached(s, o))) return {};
-  }
-  if (s.evaluation.revised_rules && (o.oco != 0 || !o.request.oco.empty()) && !o.request.trigger) {
+  const bool paired = o.oco != 0 || !o.request.oco.empty();
+  if (!s.evaluation.revised_rules) {
+    if (o.request.trigger || paired) return {};
+  } else if (const auto symbols = order_symbols(o.request); std::any_of(symbols.begin(), symbols.end(),
+                 [&](const std::string& symbol) { return !s.contracts.contains(symbol); })) {
+    return {};  // Refused below as an unregistered contract: it holds nothing to close.
+  } else if (o.request.trigger) {
+    // A condition not yet met is checked when it triggers. There a protective stop
+    // closes as any stop does, and any other triggered close is a user reduction.
+    if (stage == Stage::Accept && !reached(s, o)) return {};
+    Order triggered = o;
+    triggered.triggered_at = std::max<Timestamp>(1, s.time);
+    if (stage != Stage::Accept && closing_stop(s, triggered)) return {};
+  } else if (paired) {
+    // A resting OCO leg closes like a bracket exit; one marketable when accepted is
+    // an immediate close like any other.
     if (stage != Stage::Accept) return {};
     if (o.request.type == OrderType::Limit && o.request.limit_price) {
       if (multi_leg(o.request)) {

@@ -265,6 +265,39 @@ TEST(TradeRules, MinimumHoldRejectsReachedTriggersAndMarketableOcoLegs) {
   EXPECT_TRUE(s.snapshot()->positions.empty());
 }
 
+TEST(TradeRules, MinimumHoldChecksAnUnreachedConditionalCloseWhenItTriggers) {
+  ScriptedMarket f;
+  AccountRules rules; rules.min_hold_seconds = 3600;
+  TradingSession s(config(rules), f.time); f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("open", 2), f.time).decision.ok());
+  // An unregistered contract is refused as such, whatever its condition would read.
+  auto unknown = f.market("unknown", 1, Side::Sell);
+  unknown.symbol = "SPXW261022C05100000";
+  unknown.trigger = Trigger{TriggerSource::Study, TriggerDirection::AtOrAbove, m("1"), {}, "iv30"};
+  EXPECT_EQ(s.submit(unknown, f.time).decision.code, Reason::UNKNOWN_CONTRACT);
+  // Take-profit conditions not yet met are accepted and checked when they trigger.
+  auto early = f.market("early-target", 1, Side::Sell);
+  early.trigger = Trigger{TriggerSource::Option, TriggerDirection::AtOrAbove, m("5")};
+  const auto first = s.submit(early, f.time);
+  ASSERT_TRUE(first.decision.ok()) << first.decision.message;
+  auto late = f.market("late-target", 1, Side::Sell);
+  late.trigger = Trigger{TriggerSource::Option, TriggerDirection::AtOrAbove, m("6")};
+  const auto second = s.submit(late, f.time);
+  ASSERT_TRUE(second.decision.ok()) << second.decision.message;
+  // Triggered while the position is still too young: cancelled, the position kept.
+  f.next(); f.seed(s, "5.00", "5.20");
+  const auto refused = s.snapshot()->recent_orders.at(static_cast<std::size_t>(*first.order_id - 1));
+  EXPECT_EQ(refused.status, OrderStatus::Cancelled);
+  EXPECT_EQ(refused.reason.code, Reason::RISK_CHANGED);
+  EXPECT_NE(refused.reason.message.find("MIN_HOLD"), std::string::npos) << refused.reason.message;
+  EXPECT_EQ(s.snapshot()->positions.front().position.quantity, 2);
+  // Triggered after the hold: it closes as ordered.
+  f.time += 3600 * md::kNanosPerSecond; ++f.observation;
+  f.seed(s, "6.00", "6.20");
+  EXPECT_EQ(s.snapshot()->recent_orders.at(static_cast<std::size_t>(*second.order_id - 1)).status, OrderStatus::Filled);
+  EXPECT_EQ(s.snapshot()->positions.front().position.quantity, 1);
+}
+
 TEST(TradeRules, ARequiredStopCanTightenButCannotMoveAwayFromItsPosition) {
   for (const bool require_stop : {false, true}) {
     ScriptedMarket f;

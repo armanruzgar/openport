@@ -136,8 +136,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
 - **Trade protection rules.** Already-reached triggers and marketable OCO legs no
-  longer bypass minimum hold. Under required-stop or trade-risk rules, an open
-  position's bracket stop can tighten but cannot be moved farther away.
+  longer bypass minimum hold, and a take-profit or time trigger is held to it when it
+  triggers; protective stops still close a young position. Under required-stop or
+  trade-risk rules, an open position's bracket stop can tighten but cannot be moved
+  farther away.
 - **Open-loss caps.** Percentage drawdown room uses the day's opening floor, so
   intraday gains cannot shrink it to zero and immediately flatten new entries.
   A flatten stays pending through partial fills and price recovery until flat,
