@@ -4,7 +4,7 @@ import { announceDestination, subscribeDestinationNotices, captureDestination, d
 import { DestinationConfirmation } from "./action-client"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { api } from "./client"
+import { api, ApiError } from "./client"
 import { connectLive, type Connection } from "./connection"
 import { activeAccount, MAIN_ACCOUNT, useActiveAccount } from "../lib/active-account"
 import { isSandboxToken, useWriteToken, writeToken } from "../lib/write-token"
@@ -38,6 +38,11 @@ interface Live {
   connection: Connection
   /** Null while connected; prices, positions and orders on screen stop updating while set. */
   offline: Offline | null
+  /**
+   * Set when openportd refuses this terminal for want of its token (--require-token):
+   * none is saved, or the saved one was refused. Nothing loads until it changes.
+   */
+  access: "token-required" | "token-refused" | null
   market: Status["market"]
   circuitBreaker: Status["circuit_breaker"]
   underlyings: (UnderlyingSnapshot & Partial<Pick<UnderlyingStatus, "expiries" | "options">>)[]
@@ -50,7 +55,8 @@ const LiveContext = createContext<Live | null>(null)
 export function liveState(status: Status | undefined, tick: Tick | null, connection: Connection, accountScope = 0,
   account = MAIN_ACCOUNT, switchAccount: (id: string, reason: DestinationChangeReason) => void = () => {},
   source: DataSource = "live", replay: ReplayState | null = null, switchSource: (source: DataSource, reason: DestinationChangeReason) => void = () => {},
-  stopReplay: (stop: () => Promise<unknown>) => Promise<void> = async (stop) => { await stop() }, offline: Offline | null = null): Live {
+  stopReplay: (stop: () => Promise<unknown>) => Promise<void> = async (stop) => { await stop() }, offline: Offline | null = null,
+  access: Live["access"] = null): Live {
   const connectedTick = connection === "open" ? tick : null
   const accounts = connectedTick?.accounts ?? status?.accounts ?? []
   const main = connectedTick?.trading === undefined ? status?.trading : connectedTick.trading
@@ -74,6 +80,7 @@ export function liveState(status: Status | undefined, tick: Tick | null, connect
     tick: connectedTick,
     connection,
     offline: connection === "open" ? null : offline,
+    access,
     market: connectedTick?.market === undefined ? status?.market : connectedTick.market,
     circuitBreaker: connectedTick?.circuit_breaker === undefined ? status?.circuit_breaker : connectedTick.circuit_breaker,
     underlyings: connectedTick
@@ -109,8 +116,19 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [accountScope, setAccountScope] = useState(0)
   const account = useActiveAccount()
   const source = useDataSource()
+  const status = useQuery({
+    queryKey: ["status", source, sandbox || (token ? "authenticated" : "public")],
+    queryFn: ({ signal }) => api.status(signal),
+    // Refused for want of the token, polling would only be refused again: a new token asks anew.
+    refetchInterval: (query) => tokenRefused(query.state.error) ? false : connection === "open" ? 10_000 : 2_000,
+  })
+  const refused = tokenRefused(status.error)
+  const access: Live["access"] = refused ? token ? "token-refused" : "token-required" : null
 
   useEffect(() => {
+    // The socket is refused too until the token changes; this runs again when it does.
+    // Nothing on screen is live meanwhile, so the last tick is dropped with the socket.
+    if (refused) { setTick(null); setReplayTick(null); setConnection("closed"); return }
     const scheme = window.location.protocol === "https:" ? "wss" : "ws"
     setTick(null)
     setReplayTick(null)
@@ -120,7 +138,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       if (next) { replaySeen.current = Date.now(); setReconnecting(false); rememberReplay(next.replay?.id) }
       setReplayTick(next)
     })
-  }, [queryClient, token])
+  }, [queryClient, token, refused])
 
   useEffect(() => subscribeDestinationNotices(setNotice), [])
 
@@ -128,11 +146,6 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
   const history = useQuery({ enabled: !isSandboxToken(token), queryKey: ["replay-listing"], queryFn: ({ signal }) => api.replay(signal), refetchInterval: 10_000 })
   const archived = source.startsWith("history:") ? history.data?.history?.find((run) => run.id === source.slice(8)) : undefined
-  const status = useQuery({
-    queryKey: ["status", source, sandbox || (token ? "authenticated" : "public")],
-    queryFn: ({ signal }) => api.status(signal),
-    refetchInterval: connection === "open" ? 10_000 : 2_000,
-  })
 
   // REST answering while the socket is down still takes orders; a status poll failing
   // since the socket went down means the server cannot be reached at all.
@@ -248,11 +261,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [])
   const value = useMemo<Live>(
     () => liveState(status.data, source === "replay" ? replayTick : source === "live" ? tick : null, connection, accountScope,
-      source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource, stopReplay, offline),
-    [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived, stopReplay, offline],
+      source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource, stopReplay, offline, access),
+    [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived, stopReplay, offline, access],
   )
   return <LiveContext value={value}>
-    {value.offline && <ConnectionLost offline={value.offline} />}
+    {access ? <TokenRefused access={access} /> : value.offline && <ConnectionLost offline={value.offline} />}
     {reconnecting && source === "replay" && <div role="status" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">Reconnecting to the replay…</div>}
     {notice && <div role="alert" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">
       {notice}
@@ -261,6 +274,19 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     </div>}
     {children}<DestinationConfirmation />
   </LiveContext>
+}
+
+/** openportd refused the request for want of its token (--require-token), not because it is down. */
+function tokenRefused(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.code === "WRITE_TOKEN_REQUIRED")
+}
+/** Says, above every page, that the server is up but answers only with its token. */
+function TokenRefused({ access }: { access: NonNullable<Live["access"]> }) {
+  return <div role="alert" className="border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs">
+    {access === "token-refused"
+      ? "openportd refused the saved token, so nothing here loads or updates. Enter the token it was started with."
+      : "openportd answers only with its token, and this browser has none saved. Enter the token it was started with."}
+  </div>
 }
 
 const lostClock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })

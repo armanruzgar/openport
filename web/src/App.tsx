@@ -98,7 +98,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey)
   }, [navigate, queryClient, route.expiry, view, symbol, pages, live])
 
-  const waiting = live.status?.feed.message || "Connecting to openportd…"
+  // A server that requires a token refuses everything without it: say so, not that it is still connecting.
+  const waiting = live.access === "token-refused" ? "openportd refused the saved token. Enter the token it was started with."
+    : live.access === "token-required" ? "openportd answers only with its token. Enter the token it was started with."
+    : live.status?.feed.message || "Connecting to openportd…"
   const content = view === "chart" && symbol ? <ChartView symbol={symbol} expiry={route.expiry} />
     : view === "dashboard" ? <DashboardView />
     : view === "brief" ? <BriefView symbol={symbol} />
@@ -115,7 +118,7 @@ export function App() {
     : !symbol ? (
       <Empty>
         <div className="text-center">
-          <div>Waiting for the first snapshot…</div>
+          <div>{live.access ? "This server needs its write token" : "Waiting for the first snapshot…"}</div>
           {!live.status && <div className="mt-3"><WriteAccess /></div>}
           <div className="mt-1 text-xs text-faint">{waiting}</div>
         </div>

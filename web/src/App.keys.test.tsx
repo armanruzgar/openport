@@ -36,6 +36,23 @@ it("steps expiries from the one the chain shows, while a new version's summary l
   } finally { await act(async () => root.unmount()); client.clear() }
 })
 
+it("says a refused token is why nothing loads, not that it is still connecting", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value() { this.open = true } })
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value() { this.open = false } })
+  vi.mocked(useLive).mockReturnValue(liveState(undefined, null, "closed", 0, "main", () => {}, "live", null, () => {}, undefined, null, "token-refused"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const host = document.createElement("div"), root = createRoot(host)
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><App /></QueryClientProvider>))
+    expect(host.textContent).toContain("This server needs its write token")
+    expect(host.textContent).toContain("openportd refused the saved token. Enter the token it was started with.")
+    expect(host.textContent).not.toContain("Connecting to openportd")
+    expect([...host.querySelectorAll("button")].some((button) => button.textContent === "Enter write token")).toBe(true)
+  } finally { await act(async () => root.unmount()); client.clear() }
+})
+
 it("switches pages with a digit while a clicked button keeps focus, and leaves it the arrows", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))

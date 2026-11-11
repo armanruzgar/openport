@@ -10,7 +10,7 @@ import { AccountSwitcher } from "../components/AccountSwitcher"
 import { ReplayView } from "../views/ReplayView"
 import { ReplayBanner } from "../components/ReplayBanner"
 import type { ReactNode } from "react"
-import { api } from "./client"
+import { api, ApiError } from "./client"
 import { connectLive, type Connection } from "./connection"
 import { dataSource } from "../lib/data-source"
 import { activeAccount } from "../lib/active-account"
@@ -205,6 +205,28 @@ it("says above every page when openportd drops the socket or cannot be reached, 
   vi.mocked(api.status).mockResolvedValue(status)
   await act(async () => onConnection("open"))
   expect(host.textContent).not.toContain("connection to openportd")
+})
+it("says when openportd refuses the token, and stops asking until the token changes", async () => {
+  dataSource.set("live")
+  function Access() { return <output>{useLive().access ?? "none"}</output> }
+  vi.mocked(api.status).mockRejectedValue(new ApiError(403, "A valid bearer token is required", "WRITE_TOKEN_REQUIRED"))
+  await render(<Access />); await advance(1)
+  expect(host.querySelector("output")!.textContent).toBe("token-required")
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("answers only with its token")
+  expect(host.textContent).not.toContain("connection to openportd")
+  // Neither the status poll nor the socket tries again while nothing has changed.
+  const polls = vi.mocked(api.status).mock.calls.length, sockets = vi.mocked(connectLive).mock.calls.length
+  await advance(30_000)
+  expect(vi.mocked(api.status).mock.calls.length).toBe(polls)
+  expect(vi.mocked(connectLive).mock.calls.length).toBe(sockets)
+  await act(async () => { writeToken.set("wrong") }); await advance(1)
+  expect(host.querySelector("output")!.textContent).toBe("token-refused")
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("refused the saved token")
+  vi.mocked(api.status).mockResolvedValue(status)
+  await act(async () => { writeToken.set("right") }); await advance(1)
+  expect(host.querySelector("output")!.textContent).toBe("none")
+  expect(vi.mocked(connectLive).mock.calls.length).toBeGreaterThan(sockets)
+  expect(host.querySelector('[role="alert"]')).toBeNull()
 })
 it("announces the two-minute unreachable fallback", async () => {
   vi.mocked(api.replay).mockRejectedValue(new Error("Offline"))

@@ -1290,6 +1290,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   to disk after every record it wrote, one full drive flush per transaction (minutes
   for tens of thousands of records), though it is read back and must recover the same
   account before it replaces the journal. It is now synced once, when whole.
+- **A server that requires a token says so.** With `--require-token`, a terminal with
+  no token, or the wrong one, sat on "Waiting for the first snapshot… Connecting to
+  openportd…" and polled and reconnected every few seconds, so a refused token looked
+  like a server that was down. The terminal now says that openportd answers only with
+  its token, or that it refused the saved one, and asks again only once the token
+  changes.
 
 ## 0.5.1 (2026-10-28)
 
