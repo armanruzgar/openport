@@ -183,7 +183,12 @@ std::filesystem::path import_day(const ImportDay& request, HistorySource& source
         if (event_time(event) < window.begin || event_time(event) >= window.end) continue;
         if (const auto* quote = std::get_if<md::OptionQuote>(&event); quote && request.subscription.strike_window > 0) {
           latest[quote->id] = *quote;
-          selection_changed = true;
+          // Rebuilding every parity pair on every quote is quadratic when each tick
+          // quote is its own group (Massive). Once its underlying has a center, a quote
+          // waits for the once-a-second refresh below.
+          const auto found = pending.contracts.find(quote->id);
+          const auto center = found == pending.contracts.end() ? centers.end() : centers.find(found->second.underlying);
+          if (center == centers.end() || center->second <= 0) selection_changed = true;
         }
         if (const auto* spot = std::get_if<md::UnderlyingQuote>(&event)) {
           spots[spot->symbol] = *spot;

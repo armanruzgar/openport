@@ -403,6 +403,52 @@ TEST(HistoryImport, StrikeSelectionCannotSeeLaterPricesInTheSameDownloadWindow) 
   EXPECT_EQ(quotes.back().id, definitions[1].id);
 }
 
+// Tick quotes, each on its own clock, and no underlying price, as Massive sends them:
+// the strike window's center comes from put-call parity alone.
+class ParityHistory final : public providers::HistorySource {
+ public:
+  void prepare(const providers::ImportDay& input, providers::HistoryWindow, md::EventSink& sink) override {
+    first = md::new_york_to_utc(input.date, 9, 30) + md::kNanosPerSecond / 1000;
+    sink.publish(md::ContractDefinition{0, *md::parse_osi("SPY260923C00500000")});
+    sink.publish(md::ContractDefinition{1, *md::parse_osi("SPY260923P00500000")});
+    sink.publish(md::ContractDefinition{2, *md::parse_osi("SPY260923C00560000")});
+  }
+  void read(providers::HistoryWindow window, md::EventSink& sink) override {
+    if (first < window.begin || first >= window.end) return;
+    const auto quote = [&](md::Timestamp after, md::InstrumentId id, double mid) {
+      sink.publish(md::OptionQuote{id, first + after, mid - 0.1, mid + 0.1, 10, 10});
+    };
+    quote(0, 0, 5);      // a call alone gives no forward yet
+    quote(1'000, 1, 5);  // with its put, parity says 500
+    // A jump this large within a second is artificial; it shows when the center moves.
+    quote(2'000, 0, 65);  // parity now says 560, ...
+    quote(3'000, 1, 5);
+    quote(4'000, 2, 5);  // ... but the center stays 500 until the next second
+    quote(md::kNanosPerSecond + 5'000, 2, 5);
+  }
+  md::Timestamp first = 0;
+};
+
+TEST(HistoryImport, ParityCentersRefreshOncePerMarketSecondOnceKnown) {
+  test::RecordingFile file;
+  ParityHistory source;
+  const auto records = read(providers::import_day(request(file.directory), source, kToday));
+  const auto definitions = events_of<md::ContractDefinition>(records);
+  ASSERT_EQ(definitions.size(), 3U);
+  // Admitted on the quote that first gave its underlying a center, not a second later.
+  EXPECT_EQ(definitions[0].contract.type, pricing::OptionType::Put);
+  EXPECT_EQ(definitions[1].contract.strike, 500);
+  EXPECT_EQ(definitions[2].contract.strike, 560);
+  const auto quotes = events_of<md::OptionQuote>(records);
+  ASSERT_EQ(quotes.size(), 4U);
+  EXPECT_EQ(quotes.front().ts, source.first + 1'000);
+  EXPECT_EQ(quotes[1].id, definitions[1].id);
+  EXPECT_DOUBLE_EQ(quotes[1].bid, 64.9);
+  // Quotes alone refresh a known center once per market second.
+  EXPECT_EQ(quotes.back().id, definitions[2].id);
+  EXPECT_EQ(quotes.back().ts, source.first + md::kNanosPerSecond + 5'000);
+}
+
 TEST(HistoryImport, AFailureAfterTheFirstWindowRemovesThePartialRecording) {
   test::RecordingFile file;
   test::HttpStub http;

@@ -569,7 +569,9 @@ not claim that tick history was a complete live polling snapshot.
 Zero expiry and window limits mean unrestricted, as for live feeds. Nearest expiry
 dates are selected across all roots, keeping AM and PM contracts distinct. The
 shared chain filter uses the reported underlying price at each market timestamp, or an inferred
-near-expiry parity forward when the provider supplies no underlying. A previously
+near-expiry parity forward when the provider supplies no underlying. Once an
+underlying has a parity forward, option quotes refresh it once per market second
+rather than on every tick; until it has one, each quote can establish it. A previously
 admitted contract continues receiving updates when prices move outside the window.
 A nonzero window with neither a price nor a parity estimate admits no new contracts.
 Selection never uses a later price from the same download window.

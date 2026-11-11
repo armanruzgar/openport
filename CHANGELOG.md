@@ -142,6 +142,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   one-minute idle timer, so stopping the feed or `openportd` took a minute (as long as
   systemd's stop timeout), and every hourly chain refresh, quote-token refresh and
   reconnect after an error went a minute without data. It now closes at once.
+- **Massive imports with a strike window.** With `--window` above 0, every Massive
+  quote rebuilt the put-call parity estimate behind the window from every quoted
+  contract, so an import ran about 70 times slower than with `--window 0`. Once an
+  underlying has an estimate, quotes now refresh it once per market second.
 
 ## 0.5.1 (2026-10-28)
 
