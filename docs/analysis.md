@@ -16,8 +16,11 @@ sides close against each other, as an average-cost ledger reduces a position, so
 holding's cost is the quantity-weighted cost of the lots on the side it nets to (the
 long lots of a net long), when each of them has one. Holdings that net to zero, cash,
 totals and unsupported instruments (futures and options on them, bonds, funds) are
-left out and listed as skipped; a symbol starting with `/` is a future. A file that
-cannot be read is refused with the line and the reason.
+left out and listed as skipped; a symbol starting with `/` is a future. Fractional
+shares (dividend reinvestment, fractional trading) keep their whole shares, toward
+zero, and the fraction is listed as skipped; an option quantity must be a whole
+number of contracts. A file that cannot be read is refused with the line and the
+reason.
 
 Layouts are read by their column names, case and punctuation ignored. The broker
 layouts use those exports' usual column names and are tested against hand-written

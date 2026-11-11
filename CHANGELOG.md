@@ -1364,6 +1364,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   status 2; it now goes to stdout with status 0, a missing provider or symbol is
   named, and `--certify` ends by printing the outcome and the report directory's full
   path.
+- **A fractional share no longer refuses a whole broker export.** One row such as
+  `SPY,10.532` made a portfolio import fail with `quantity must be a whole number`,
+  losing every other holding, though dividend reinvestment and fractional trading put
+  such rows in most exports. The whole shares are now imported and the fraction is
+  listed as skipped; an option quantity must still be whole.
 
 ## 0.5.1 (2026-10-28)
 

@@ -249,9 +249,20 @@ struct Sink {
   }
   void add(const std::string& symbol, std::optional<md::OptionContract> contract, double quantity,
            std::optional<double> cost, const std::string& source) {
-    if (!std::isfinite(quantity) || std::abs(quantity - std::round(quantity)) > 1e-9 || std::abs(quantity) > 1e9)
+    if (!std::isfinite(quantity) || std::abs(quantity) > 1e9)
       throw std::invalid_argument(source + ": quantity must be a whole number");
-    const auto whole = static_cast<trading::Quantity>(std::llround(quantity));
+    auto whole = static_cast<trading::Quantity>(std::llround(quantity));
+    if (std::abs(quantity - std::round(quantity)) > 1e-9) {
+      // Options trade in whole contracts: a fraction there is a misread file.
+      if (contract) throw std::invalid_argument(source + ": an option quantity must be a whole number of contracts");
+      // A broker's fractional shares (dividend reinvestment, fractional trading): the
+      // whole shares are analysed, and the fraction is listed rather than the file refused.
+      whole = static_cast<trading::Quantity>(std::trunc(quantity));
+      char text[128];
+      std::snprintf(text, sizeof text, ": %.10g of %.10g shares left out; holdings are whole shares",
+                    quantity - static_cast<double>(whole), quantity);
+      out.skipped.push_back(source + text);
+    }
     if (cost && (!std::isfinite(*cost) || *cost < 0)) cost.reset();
     const auto [it, inserted] = index.emplace(symbol, out.holdings.size());
     if (inserted) {

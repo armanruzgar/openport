@@ -43,7 +43,21 @@ TEST(AnalysisImport, GenericReadsOsiTickersAndSplitColumnsAndNetsLots) {
   ASSERT_EQ(p.holdings.size(), 1u);
   EXPECT_EQ(p.holdings[0].symbol, "SPY   261218P00600000");
 
-  EXPECT_THROW((void)server::parse_analysis_csv("symbol,quantity\nSPY,1.5\n", "generic"), std::invalid_argument);
+  // G-18: fractional shares keep their whole shares and list the fraction; a fraction
+  // of a contract is still a misread file.
+  p = server::parse_analysis_csv("symbol,quantity\nSPY,10.532\nAAPL,5\n", "generic");
+  ASSERT_EQ(p.holdings.size(), 2u);
+  EXPECT_EQ(p.holdings[0].quantity, 10);
+  EXPECT_EQ(p.holdings[1].quantity, 5);
+  ASSERT_EQ(p.skipped.size(), 1u);
+  EXPECT_EQ(p.skipped[0], "line 2 SPY: 0.532 of 10.532 shares left out; holdings are whole shares");
+  p = server::parse_analysis_csv("Symbol,Qty (Quantity),Cost Basis\nSPY,-2.5,\nAAPL,5,900\n", "schwab");
+  ASSERT_EQ(p.holdings.size(), 2u);
+  EXPECT_EQ(p.holdings[0].quantity, -2);
+  EXPECT_EQ(p.skipped.size(), 1u);
+  EXPECT_THROW((void)server::parse_analysis_csv("symbol,quantity\nSPY,0.5\n", "generic"), std::invalid_argument);  // nothing whole
+  EXPECT_THROW((void)server::parse_analysis_csv("underlying,expiry,strike,type,quantity\nSPY,2026-12-18,600,put,-1.5\n", "generic"),
+               std::invalid_argument);
   EXPECT_THROW((void)server::parse_analysis_csv("symbol,quantity\n???,1\n", "generic"), std::invalid_argument);
   EXPECT_THROW((void)server::parse_analysis_csv("ticker,shares\nSPY,1\n", "generic"), std::invalid_argument);
   EXPECT_THROW((void)server::parse_analysis_csv("symbol,quantity\nSPY,1\nSPY,-1\n", "generic"), std::invalid_argument);  // nets to nothing
