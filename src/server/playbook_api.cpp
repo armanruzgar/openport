@@ -26,6 +26,19 @@ json query(const ApiRequest& request) {
   for (const auto& [key, value] : *parameters) result[key] = value;
   return result;
 }
+/// The staged order and action of POST /api/playbooks/staged/{stage}/send or
+/// /dismiss. A playbook may itself be named "staged", so every other path under
+/// /api/playbooks/staged/ (its evaluate and mode routes) is that playbook's.
+std::optional<std::pair<std::string, std::string>> staged_action(std::string_view path) {
+  constexpr std::string_view prefix = "/api/playbooks/staged/";
+  if (!path.starts_with(prefix)) return std::nullopt;
+  const auto rest = path.substr(prefix.size());
+  const auto slash = rest.find('/');
+  if (slash == std::string_view::npos) return std::nullopt;
+  const auto action = rest.substr(slash + 1);
+  if (action != "send" && action != "dismiss") return std::nullopt;
+  return std::pair{std::string(rest.substr(0, slash)), std::string(action)};
+}
 std::uint64_t uint_parameter(const json& parameters, const char* key, std::uint64_t fallback) {
   if (!parameters.contains(key)) return fallback;
   const auto text = parameters.at(key).get<std::string>();
@@ -308,12 +321,9 @@ bool playbook_write(const ApiRequest& request, MetricsSource& source, ApiComplet
       if (request.method != "POST" || body.at("action") != "evaluate") throw std::invalid_argument("Signal action must be evaluate");
       command = {{"action", "signal"}, {"id", path.substr(13)}};
     } else if (request.method == "POST" && path == "/api/playbooks") command = {{"action", "create"}, {"definition", body}};
-    else if (path.starts_with("/api/playbooks/staged/") && request.method == "POST") {
-      const auto rest = path.substr(std::string("/api/playbooks/staged/").size());
-      const auto slash = rest.find('/');
-      if (slash == std::string::npos || (rest.substr(slash + 1) != "send" && rest.substr(slash + 1) != "dismiss")) throw std::invalid_argument("Unknown staged-order action");
+    else if (const auto staged = staged_action(path); staged && request.method == "POST") {
       strict_keys(body, {});
-      command = {{"action", rest.substr(slash + 1)}, {"staged", rest.substr(0, slash)}};
+      command = {{"action", staged->second}, {"staged", staged->first}};
     } else {
       const auto rest = path.substr(std::min(path.size(), std::string("/api/playbooks/").size()));
       if (request.method == "POST" && rest.ends_with("/evaluate")) {

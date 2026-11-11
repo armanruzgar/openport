@@ -1793,3 +1793,28 @@ TEST(PlaybookApi, SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode) {
   server::handle_api_async(evaluate_request, source, [&](server::ApiResponse reply) { response = std::move(reply); });
   EXPECT_EQ(response.status, 400);
 }
+
+// A playbook may be named "staged": its evaluate route is its own, not a staged
+// order's action, while a staged order's send and dismiss keep their routes.
+TEST(PlaybookApi, APlaybookNamedStagedIsEvaluatedByItsOwnRoute) {
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  server::Desk::Options options;
+  options.paper.limits.aggregate = {1e9, 1e9}; options.paper.limits.per_underlying = {1e9, 1e9};
+  server::Desk desk("test", {}, {{"SPX"}}, options);
+  desk.start_trading(); desk.replay_batch(breadth_batch(time, 10), time, time);
+  DeskSource source(desk);
+  auto setup = breadth_setup();
+  setup["id"] = "staged";
+  ASSERT_EQ(api(source, "POST", "/api/playbooks", setup).status, 200);
+  ASSERT_EQ(api(source, "PUT", "/api/playbooks/staged/mode", {{"mode", "stage"}}).status, 200);
+  const auto evaluated = api(source, "POST", "/api/playbooks/staged/evaluate", json::object());
+  ASSERT_EQ(evaluated.status, 200) << evaluated.body;
+  const auto publication = json::parse(evaluated.body);
+  EXPECT_EQ(publication.at("modes").at("staged"), "stage");
+  ASSERT_EQ(publication.at("staged").size(), 1U) << evaluated.body;
+  const auto stage = publication.at("staged")[0].at("id").get<std::string>();
+  const auto dismissed = api(source, "POST", "/api/playbooks/staged/" + stage + "/dismiss", json::object());
+  ASSERT_EQ(dismissed.status, 200) << dismissed.body;
+  EXPECT_TRUE(json::parse(dismissed.body).at("staged").empty());
+  EXPECT_TRUE(desk.trading_view()->snapshot->recent_orders.empty());
+}

@@ -332,7 +332,7 @@ modes need the `admin` scope; sending and dismissing a stage need the account's
 | `DELETE /api/playbooks/{id}?version=N` | Archive after a version check; keep historical versions |
 | `PUT /api/playbooks/{id}/mode` | `{"mode":"off"}`, `stage` or `auto` (live paper and replay; live requires market time) |
 | `POST /api/playbooks/staged/{stage}/send` | Empty object; recheck and submit the stage's latest order |
-| `POST /api/playbooks/staged/{stage}/dismiss` | Empty object; dismiss for this day |
+| `POST /api/playbooks/staged/{stage}/dismiss` | Empty object; dismiss for this day. Only these two paths are a stage's: a playbook may be named `staged`, and `/api/playbooks/staged/evaluate` and `/mode` are that playbook's |
 | `GET /api/account/pass-odds` | Seeded, labelled estimate as above; 422 `PASS_ODDS_UNAVAILABLE` for insufficient history, incomplete marks or no evaluation rule, 400 `INVALID_REQUEST` for invalid inputs, 404 `UNKNOWN_ACCOUNT` for an unknown account |
 | `GET /api/strategy-template?symbol=SPX&expiry=ID&template=JSON` | URL-encoded template JSON; return legs, tag and actual widths. Optional paired `min_strike`/`max_strike` preserve a terminal's loaded strike window |
 

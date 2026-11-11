@@ -447,7 +447,10 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       path.starts_with("/orders/") || path == "/positions/close" || path == "/positions/close/preview" || path == "/positions/exercise" || path == "/stocks/close" || path == "/stocks/trade" || path == "/stocks/trade/preview" ||
       path == "/stocks/orders" || path.starts_with("/stocks/orders/") ||
       path == "/positions/abandon" || path == "/positions/instruction" ||
-      path.starts_with("/playbooks/staged/") || (path.starts_with("/playbooks/") && path.ends_with("/evaluate")) || path == "/alerts" || path.starts_with("/alerts/") ||
+      // A staged order's send and dismiss; any other path under /playbooks/staged/
+      // belongs to a playbook named "staged", as the routes read it.
+      (path.starts_with("/playbooks/staged/") && (path.ends_with("/send") || path.ends_with("/dismiss"))) ||
+      (path.starts_with("/playbooks/") && path.ends_with("/evaluate")) || path == "/alerts" || path.starts_with("/alerts/") ||
       path == "/trades/group" || path == "/trades/ungroup" ||
       ((path.starts_with("/trades/") || path.starts_with("/days/")) && path.ends_with("/note"));
   const bool history_control = replay && path.starts_with("/history/") &&

@@ -1064,6 +1064,11 @@ TEST(WebPolicy, NamedTokensEnforceEveryRouteFamilyAndAccount) {
     EXPECT_FALSE(check("POST", path, "owner-secret")) << path;
     EXPECT_FALSE(check("POST", path, "legacy-secret")) << path;
   }
+  // A playbook named "staged" is configured like any other; only a staged order's
+  // send and dismiss are trades.
+  EXPECT_TRUE(check("PUT", "/api/playbooks/staged/mode", "all-secret"));
+  EXPECT_FALSE(check("POST", "/api/playbooks/staged/evaluate", "all-secret"));
+  EXPECT_FALSE(check("POST", "/api/playbooks/staged/12/send", "all-secret"));
 }
 
 TEST(WebPolicy, AnalysisPortfoliosRequireAdminEvenToRead) {

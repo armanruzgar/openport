@@ -32,6 +32,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **A playbook named `staged`.** Every POST under `/api/playbooks/staged/` was read
+  as a staged order's action, so `POST /api/playbooks/staged/evaluate` failed for a
+  playbook of that name with "Unknown staged-order action", and a trade-scoped token
+  could change its mode. Only `/api/playbooks/staged/{stage}/send` and `/dismiss` are
+  a stage's routes now; the rest are that playbook's, with its scopes.
 - **CSV exports of small and large negative numbers.** JSON prints a double below
   1e-4 or from 1e15 with an exponent, and the formula guard of `/api/fills.csv` and
   `/api/trades.csv` took `-5e-05` for text, so a far out-of-the-money put's delta, or
