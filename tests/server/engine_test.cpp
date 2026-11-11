@@ -3,10 +3,17 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
+#include <future>
+#include <memory>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
 
 #include "openport/server/api.hpp"
+#include "openport/server/sandboxes.hpp"
 #include "support/recording.hpp"
 
 namespace {
@@ -269,8 +276,11 @@ TEST(Engine, ACleanShutdownSendsNoFeedStalledNotifications) {
       if (!sink) return;
       sink->publish(md::ProviderStatus{1, md::FeedState::Stopped, "SPY: stopped", "SPY"});
       ASSERT_TRUE(eventually([&] { return engine->status().underlyings.at("SPY").state == md::FeedState::Stopped; }));
-      // Let the engine finish the pass that saw it before stop() goes on.
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      // Engine::stop() sets stopping_ only after this returns, so until then nothing but
+      // shutting_down_ keeps the pass that saw Stopped from notifying. A synchronization
+      // asked for now resolves at the end of a later pass, after its notification block:
+      // return only then, however the engine thread is scheduled.
+      ASSERT_EQ(engine->synchronize().wait_for(std::chrono::minutes(5)), std::future_status::ready);
       sink = nullptr;
     }
     md::EventSink* sink = nullptr;
@@ -297,6 +307,34 @@ TEST(Engine, RejectsEverySecondStartIncludingAfterStop) {
   EXPECT_THROW(engine.start(), std::logic_error);
   engine.stop();
   EXPECT_THROW(engine.start(), std::logic_error);
+}
+
+// Visitor sandboxes trade the demo market in journals beside the main one. openportd
+// refuses other setups first; a caller embedding the engine meets its own guard.
+TEST(Engine, SandboxesRequireTheDemoMarketAndAPaperJournal) {
+  class NamedProvider final : public md::Provider {
+   public:
+    std::string_view name() const noexcept override { return label; }
+    md::Capabilities capabilities() const noexcept override { return {}; }
+    void start(const md::Subscription&, md::EventSink&) override {}
+    void stop() override {}
+    std::string label = "demo";
+  } provider;
+  test::RecordingFile file;
+  server::Sandboxes::Options limits;
+  limits.capacity = 1;
+  server::Engine::Options options;
+  options.paper_journal = file.directory / "paper.jsonl";
+  options.sandboxes = std::make_shared<server::Sandboxes>(limits);
+  EXPECT_NO_THROW(server::Engine(provider, {{"SPY"}}, options));
+  auto without_journal = options;
+  without_journal.paper_journal.clear();
+  EXPECT_THROW(server::Engine(provider, {{"SPY"}}, without_journal), std::invalid_argument);
+  auto without_paper = options;
+  without_paper.paper_enabled = false;
+  EXPECT_THROW(server::Engine(provider, {{"SPY"}}, without_paper), std::invalid_argument);
+  provider.label = "manual";
+  EXPECT_THROW(server::Engine(provider, {{"SPY"}}, options), std::invalid_argument);
 }
 
 TEST(Engine, StopsProviderWhenConsumerThreadLaunchThrows) {
