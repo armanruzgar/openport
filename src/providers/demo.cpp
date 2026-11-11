@@ -426,8 +426,13 @@ std::vector<md::OptionContract> scenario_chain(const Scenario& script, md::Date 
   return out;
 }
 
-void write_scenario_recording(const std::filesystem::path& path, const Scenario& script, md::Date date, std::uint64_t seed,
-                              int revision) {
+namespace {
+/// Plays `script` on `date`: into a recording at `path`, or, without one, its prices
+/// alone into `prices`. Every random draw is the underlying path's (the chains use
+/// stateless hashed draws), so a prices-only run prints the same prices and closes
+/// without pricing a single option.
+void play_scenario(const std::filesystem::path* path, md::EventSink* prices, const Scenario& script, md::Date date,
+                   std::uint64_t seed, int revision) {
   if (script.generator != 1) throw std::invalid_argument("scenario.generator: only version 1 is supported");
   if (!md::valid_date(date) || !business_day(date)) throw std::invalid_argument("The demo day must be a trading day");
   if (revision < 1 || revision > kScenarioRevision) throw std::invalid_argument("Unsupported scenario revision");
@@ -491,7 +496,10 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
   sink_options.clock = [&now] { return now; };
   sink_options.fixed_frames = revision >= 5;
   Discard discard;
-  md::RecordingSink sink(path, header, discard, sink_options);
+  std::optional<md::RecordingSink> recording;
+  if (path) recording.emplace(*path, header, discard, sink_options);
+  md::EventSink& sink = recording ? static_cast<md::EventSink&>(*recording) : *prices;
+  const bool prices_only = !recording;
 
   SnapshotPublisher publisher;
   std::map<std::string, std::vector<Listed>> chains;
@@ -731,6 +739,7 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
           closed = w.date;
         }
       }
+      if (prices_only) continue;
       for (auto& [underlying, chain] : chains) {
         if (frozen(underlying)) {
           sink.publish(md::ProviderStatus{now, md::FeedState::Stale,
@@ -853,8 +862,19 @@ void write_scenario_recording(const std::filesystem::path& path, const Scenario&
     base = log_level;
     base_level = std::exp(log_level);
   }
-  sink.close();
-  if (const auto error = sink.error(); !error.empty()) throw std::runtime_error("Demo recording failed: " + error);
+  if (!recording) return;
+  recording->close();
+  if (const auto error = recording->error(); !error.empty()) throw std::runtime_error("Demo recording failed: " + error);
+}
+}  // namespace
+
+void write_scenario_recording(const std::filesystem::path& path, const Scenario& script, md::Date date, std::uint64_t seed,
+                              int revision) {
+  play_scenario(&path, nullptr, script, date, seed, revision);
+}
+
+void play_scenario_prices(const Scenario& script, md::Date date, std::uint64_t seed, md::EventSink& sink, int revision) {
+  play_scenario(nullptr, &sink, script, date, seed, revision);
 }
 
 }  // namespace openport::providers

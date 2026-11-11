@@ -34,8 +34,10 @@ class DayStatus final : public md::EventSink {
 };
 
 /// What the batches a restart's accounts already saw left in the book: every
-/// definition, and each contract's and underlying's latest values. The first batch
-/// after them carries these, so the book is whole again from it on.
+/// definition, the official closes the day opened with, and each contract's and
+/// underlying's latest values. The first batch after them carries these, so the book
+/// is whole again from it on. Halts are not repeated: the desk keeps them across a
+/// restart (market-halts.json), and a second copy would list one twice.
 class CatchUp {
  public:
   void absorb(std::vector<md::Event>& events) {
@@ -47,12 +49,17 @@ class CatchUp {
         else if constexpr (std::is_same_v<T, md::OptionQuote>) quotes_[value.id] = value;
         else if constexpr (std::is_same_v<T, md::OptionVolume>) volumes_[value.id] = value;
         else if constexpr (std::is_same_v<T, md::UnderlyingQuote>) spots_[value.symbol] = std::move(value);
+        else if constexpr (std::is_same_v<T, md::UnderlyingClose>) {
+          // A day that authors its previous close opens with it; nothing else sends it.
+          const auto key = std::pair{value.symbol, value.date};
+          closes_[key] = std::move(value);
+        }
       }, event);
     }
   }
-  /// Leads `events` with what they do not themselves bring up to date.
-  void lead(std::vector<md::Event>& events) {
-    if (definitions_.empty()) return;
+  /// Leads `events`, a batch at `time`, with what they do not themselves bring up to date.
+  void lead(std::vector<md::Event>& events, md::Timestamp time) {
+    if (definitions_.empty() && closes_.empty()) return;
     for (const auto& event : events) {
       std::visit([&](const auto& value) {
         using T = std::decay_t<decltype(value)>;
@@ -60,9 +67,15 @@ class CatchUp {
         else if constexpr (std::is_same_v<T, md::OptionQuote>) quotes_.erase(value.id);
         else if constexpr (std::is_same_v<T, md::OptionVolume>) volumes_.erase(value.id);
         else if constexpr (std::is_same_v<T, md::UnderlyingQuote>) spots_.erase(value.symbol);
+        else if constexpr (std::is_same_v<T, md::UnderlyingClose>) closes_.erase(std::pair{value.symbol, value.date});
       }, event);
     }
     std::vector<md::Event> lead(std::make_move_iterator(definitions_.begin()), std::make_move_iterator(definitions_.end()));
+    // Stamped with the batch, as a fresh start's first day gets its previous closes.
+    for (auto& [key, value] : closes_) {
+      value.ts = time;
+      lead.emplace_back(std::move(value));
+    }
     for (auto& [id, value] : interest_) lead.emplace_back(std::move(value));
     for (auto& [symbol, value] : spots_) lead.emplace_back(std::move(value));
     for (auto& [id, value] : quotes_) lead.emplace_back(std::move(value));
@@ -77,19 +90,32 @@ class CatchUp {
   std::map<md::InstrumentId, md::OptionQuote> quotes_;
   std::map<md::InstrumentId, md::OptionVolume> volumes_;
   std::map<std::string, md::UnderlyingQuote> spots_;
+  std::map<std::pair<std::string, md::Date>, md::UnderlyingClose> closes_;
 };
 
-/// The closes a generated day printed at its regular close, as that date's official ones.
-std::vector<md::Event> closes_of(const std::filesystem::path& file, md::Date date, const std::vector<std::string>& symbols) {
-  const auto close = md::new_york_to_utc(date, md::regular_close_hour(date), 0);
-  std::vector<md::Event> closes;
-  md::RecordingReader reader(file);
-  while (const auto record = reader.next()) {
-    const auto* spot = std::get_if<md::UnderlyingQuote>(&record->event);
-    if (spot && spot->ts == close && std::find(symbols.begin(), symbols.end(), spot->symbol) != symbols.end())
-      closes.emplace_back(md::UnderlyingClose{spot->symbol, close, date, spot->last});
-  }
-  return closes;
+/// The closes a generated day prints at its regular close, as that date's official ones.
+/// Its prices alone print them: no option is priced, and nothing is recorded.
+std::vector<md::Event> closes_of(const Scenario& day, md::Date date, std::uint64_t day_seed, int revision,
+                                 const std::vector<std::string>& symbols) {
+  class Closes final : public md::EventSink {
+   public:
+    Closes(md::Date on, const std::vector<std::string>& wanted)
+        : on_(on), at_(md::new_york_to_utc(on, md::regular_close_hour(on), 0)), wanted_(wanted) {}
+    void publish(md::Event event) override {
+      const auto* spot = std::get_if<md::UnderlyingQuote>(&event);
+      if (spot && spot->ts == at_ && std::find(wanted_.begin(), wanted_.end(), spot->symbol) != wanted_.end())
+        closes.emplace_back(md::UnderlyingClose{spot->symbol, at_, on_, spot->last});
+    }
+    std::vector<md::Event> closes;
+
+   private:
+    md::Date on_;
+    md::Timestamp at_;
+    const std::vector<std::string>& wanted_;
+  };
+  Closes sink(date, symbols);
+  play_scenario_prices(day, date, day_seed, sink, revision);
+  return std::move(sink.closes);
 }
 }
 
@@ -234,20 +260,21 @@ void DemoProvider::run(md::Subscription subscription, md::EventSink& sink) {
       });
     };
     auto date = first_date_;
+    auto pending = prepare(date);
     // The trading date before the first one, as the feed would have played it: its
     // closes are the first day's previous closes, which circuit breakers measure from.
-    const auto before = md::previous_business_day(date);
-    auto previous = prepare(before);
-    auto pending = prepare(date);
+    // Its prices alone give them, without a whole day generated and recorded beside
+    // the first; a first day that authors its previous close brings its own.
     std::vector<md::Event> closes;
-    try {
-      const auto path = previous.get();
-      closes = closes_of(path, before, subscription.underlyings);
-      std::filesystem::remove(path);
-      std::filesystem::remove(path.string() + ".end");
-    } catch (const std::exception&) {
-      // Without them the first day has no breaker reference, as before a close is seen.
-      closes.clear();
+    if (!days_[day_on(date)].previous_close) {
+      try {
+        const auto before = md::previous_business_day(date);
+        const auto previous = on_date(days_[day_on(before)], before);
+        closes = closes_of(previous, before, seed(previous.id, before), options_.revision, subscription.underlyings);
+      } catch (const std::exception&) {
+        // Without them the first day has no breaker reference, as before a close is seen.
+        closes.clear();
+      }
     }
     bool resuming = resume_after_ > 0;
     while (!stopping_.load()) {
@@ -311,7 +338,7 @@ void DemoProvider::run(md::Subscription subscription, md::EventSink& sink) {
             caught.absorb(batch.events);
             return done.get_future();
           }
-          caught.lead(batch.events);
+          caught.lead(batch.events, batch.time);
           resuming = false;
         }
         if (!closes.empty()) {

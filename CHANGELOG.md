@@ -719,6 +719,18 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `REPLAY_FAILED` once per name in a shared, sticky `/tmp`, or had openportd reuse a
   directory it did not make. The directory is now made by `mkdtemp`, with a random
   name, exclusively and owner-only, as the demo feed's already was.
+- **The demo restarted mid-day keeps a day's authored previous close.** A day that
+  authors its previous close (`stress-rehearsal`) sends it with its first batch. After
+  a restart part way through the date, the batches before the saved time are replayed
+  unsent to rebuild the book, and that close was dropped with them, so a playbook
+  measuring from the prior close or a gap found none. It now goes out with the first
+  batch after the restart.
+- **The demo starts without generating a second day.** To find the first day's
+  previous closes, `openportd --provider demo` generated, compressed and read back the
+  whole day before it (about 95 MB) beside the first one, roughly doubling startup
+  work, and threw it away. Those closes now come from that day's prices alone, with no
+  option priced and nothing written, and a first day that authors its previous close
+  needs none.
 - **One visitor can no longer hold every sandbox.** The per-client limit counted
   creations in the last hour, and using a sandbox keeps it alive, so one address that
   created 3 an hour and used each within the idle period held all 20 slots of the

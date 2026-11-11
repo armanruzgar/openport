@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "openport/md/contract.hpp"
+#include "openport/md/provider.hpp"
 #include "openport/md/time.hpp"
 #include "openport/trading/dividends.hpp"
 
@@ -139,5 +140,12 @@ inline constexpr int kScenarioRevision = 9;
                                                              int revision = kScenarioRevision);
 void write_scenario_recording(const std::filesystem::path& path, const Scenario& scenario,
                               md::Date date, std::uint64_t seed, int revision = kScenarioRevision);
+/// What write_scenario_recording records for `date`, but the option chains: their
+/// definitions and open interest, the underlying prices and closes, and the halts go
+/// to `sink`, and no option is priced and no file written. The underlying path takes
+/// every random draw, so its prices are the recording's exactly, at a small part of
+/// the cost.
+void play_scenario_prices(const Scenario& scenario, md::Date date, std::uint64_t seed, md::EventSink& sink,
+                          int revision = kScenarioRevision);
 
 }  // namespace openport::providers

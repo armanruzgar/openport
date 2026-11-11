@@ -267,6 +267,49 @@ TEST(Scenarios, NewIndicesCarryClosesAndContractsAcrossSessionsWithEtfDividends)
   }
 }
 
+TEST(Scenarios, APricesOnlyPlayPrintsTheRecordingsUnderlyingPricesAndNoOptions) {
+  // The demo feed took the day before its first one's previous closes from a whole day
+  // generated, compressed and read back. Every random draw is the underlying path's,
+  // so a play without the chains prints the same prices and closes.
+  const auto scenario = providers::parse_scenario(several().dump(), "prices.json");
+  test::RecordingFile file;
+  providers::write_scenario_recording(file.path, scenario, scenario.date, scenario.seed);
+  std::vector<md::UnderlyingQuote> recorded;
+  std::vector<md::UnderlyingClose> recorded_closes;
+  md::RecordingReader reader(file.path);
+  while (const auto record = reader.next()) {
+    if (const auto* spot = std::get_if<md::UnderlyingQuote>(&record->event)) recorded.push_back(*spot);
+    if (const auto* close = std::get_if<md::UnderlyingClose>(&record->event)) recorded_closes.push_back(*close);
+  }
+  test::EventCollector sink;
+  providers::play_scenario_prices(scenario, scenario.date, scenario.seed, sink);
+  std::vector<md::UnderlyingQuote> played;
+  std::vector<md::UnderlyingClose> played_closes;
+  std::size_t options = 0;
+  for (const auto& event : sink.snapshot()) {
+    if (const auto* spot = std::get_if<md::UnderlyingQuote>(&event)) played.push_back(*spot);
+    if (const auto* close = std::get_if<md::UnderlyingClose>(&event)) played_closes.push_back(*close);
+    if (std::holds_alternative<md::OptionQuote>(event) || std::holds_alternative<md::OptionVolume>(event)) ++options;
+  }
+  EXPECT_EQ(options, 0u);
+  ASSERT_FALSE(recorded.empty());
+  ASSERT_EQ(played.size(), recorded.size());
+  for (std::size_t i = 0; i < played.size(); ++i) {
+    EXPECT_EQ(played[i].symbol, recorded[i].symbol) << i;
+    EXPECT_EQ(played[i].ts, recorded[i].ts) << i;
+    EXPECT_EQ(played[i].bid, recorded[i].bid) << i;
+    EXPECT_EQ(played[i].ask, recorded[i].ask) << i;
+    EXPECT_EQ(played[i].last, recorded[i].last) << i;
+  }
+  ASSERT_FALSE(recorded_closes.empty());
+  ASSERT_EQ(played_closes.size(), recorded_closes.size());
+  for (std::size_t i = 0; i < played_closes.size(); ++i) {
+    EXPECT_EQ(played_closes[i].symbol, recorded_closes[i].symbol) << i;
+    EXPECT_EQ(played_closes[i].date, recorded_closes[i].date) << i;
+    EXPECT_EQ(played_closes[i].price, recorded_closes[i].price) << i;
+  }
+}
+
 TEST(Scenarios, SeveralSessionsPlayAsOneRecordingThatCarriesTheMarket) {
   auto data = several();
   data["volatility"] = 0;

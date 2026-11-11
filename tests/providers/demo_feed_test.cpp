@@ -1,6 +1,7 @@
 #include "support/sanitizer.hpp"
 #include "support/recording.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <condition_variable>
 #include <csignal>
@@ -570,6 +571,44 @@ TEST(DemoFeed, RestartPartWayThroughADateResumesItAfterTheSavedTime) {
   EXPECT_EQ(breaker.previous_close->date, (md::Date{2026, 9, 17}));
   EXPECT_GT(breaker.previous_close->price, 0);
   engine.stop();
+}
+
+TEST(DemoFeed, ARestartAfterTheOpenStillSendsADaysAuthoredPreviousClose) {
+  // stress-rehearsal authors its previous close and plays it in its first batch. A
+  // restart after the open absorbed that batch unsent and dropped the close, so
+  // playbooks measuring from the prior close found none.
+  const test::SanitizerScenarioScale scale;
+  auto clock = std::make_shared<DemoClock>();
+  auto options = settings(clock);
+  options.days = {"stress-rehearsal"};
+  providers::DemoProvider provider(options);
+  const auto resumed = md::new_york_to_utc({2026, 9, 18}, 10, 20);
+  provider.start_after(resumed);
+  std::mutex mutex;
+  md::Timestamp first = 0;
+  std::vector<md::UnderlyingClose> closes;
+  provider.set_driver([&](providers::ReplayBatch batch) {
+    const std::lock_guard lock(mutex);
+    if (first == 0) first = batch.time;
+    for (const auto& event : batch.events)
+      if (const auto* close = std::get_if<md::UnderlyingClose>(&event)) closes.push_back(*close);
+    std::promise<void> done; done.set_value(); return done.get_future();
+  });
+  test::EventCollector sink;
+  provider.start({{"SPX"}}, sink);
+  clock->through(60s);
+  ASSERT_TRUE(eventually([&] { const std::lock_guard lock(mutex); return first > 0; }));
+  provider.stop();
+  const std::lock_guard lock(mutex);
+  EXPECT_GT(first, resumed);
+  const auto spx = std::find_if(closes.begin(), closes.end(), [](const auto& close) { return close.symbol == "SPX"; });
+  ASSERT_NE(spx, closes.end());
+  EXPECT_EQ(spx->date, (md::Date{2026, 9, 17}));
+  EXPECT_GT(spx->price, 0);
+  for (const auto& close : closes) {
+    EXPECT_EQ(close.date, (md::Date{2026, 9, 17})) << close.symbol;
+    EXPECT_EQ(close.ts, first) << close.symbol;  // with the first batch the accounts see
+  }
 }
 
 TEST(DemoFeed, GeneratedDividendsReachLiveSharesAndWarningsUnlessASourceIsExplicit) {
