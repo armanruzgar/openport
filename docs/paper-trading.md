@@ -4831,6 +4831,13 @@ other body gets 400 `INVALID_REQUEST` before a route reads it, on every route. A
 or an exact `--allowed-origin`; invalid or ambiguous security headers fail closed
 with 403 `ORIGIN_REJECTED`. Non-browser clients may omit Origin.
 
+No other site may frame the terminal: a framed copy's requests carry the server's
+own Origin, so on a loopback bind with open writes a page laid over it could turn
+a visitor's clicks into orders, resets or a tripped kill switch. Every response,
+the terminal's files and the API's alike, carries `X-Frame-Options: DENY` and
+`Content-Security-Policy: frame-ancestors 'none'`, and `X-Content-Type-Options:
+nosniff` so a browser never guesses a type other than the one sent.
+
 `--write-token TOKEN` overrides `OPENPORT_WRITE_TOKEN`. When configured, all writes
 require `Authorization: Bearer TOKEN`, checked with a constant-time digest comparison;
 missing/incorrect credentials return 403 `WRITE_TOKEN_REQUIRED`. Without either,

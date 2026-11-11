@@ -79,6 +79,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   server has closed is now replaced before a request goes out, a POST reuses one only
   within a second of the last request, and a GET that fails on a reused connection is
   sent once more on a new one.
+- **No other site can frame the terminal.** Any web page could load the terminal in
+  an invisible frame and lay its own buttons over it. On the default loopback bind,
+  where writes need no token, the framed copy's requests carry the server's own
+  Origin, so the visitor's clicks could place orders, reset the account or trip the
+  kill switch. Every response now carries `X-Frame-Options: DENY` and
+  `Content-Security-Policy: frame-ancestors 'none'`, plus
+  `X-Content-Type-Options: nosniff`.
 
 ## 0.5.1 (2026-10-28)
 

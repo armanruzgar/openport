@@ -281,6 +281,69 @@ TEST_F(StaticFiles, MissingWebRootExplainsHowToBuildOrSelectTheTerminal) {
             "web terminal not built: run `npm run build` in web/, or pass --web-root");
 }
 
+// A page that frames the terminal could lay its own controls over it, and on an open
+// loopback server the framed copy's writes carry the server's own Origin.
+TEST_F(StaticFiles, EveryResponseForbidsFramingAndContentSniffing) {
+  server::WebServer web("127.0.0.1", 0, root,
+                        [](const auto&) { return server::ApiResponse{200, "{}"}; }, {}, "secret");
+  web.start();
+  asio::io_context io;
+  const tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), web.port());
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  const auto fetch = [&](http::verb verb, const std::string& path, const std::string& name) {
+    tcp::socket socket(io);
+    socket.connect(endpoint);
+    http::request<http::string_body> request{verb, path, 11};
+    request.set(http::field::host, name);
+    if (verb == http::verb::post) {
+      request.set(http::field::content_type, "application/json");
+      request.body() = "{}";
+    }
+    request.prepare_payload();
+    http::write(socket, request);
+    beast::flat_buffer buffer;
+    http::response_parser<http::string_body> parser;
+    parser.skip(verb == http::verb::head);
+    http::read(socket, buffer, parser);
+    return parser.release();
+  };
+  const auto expect_protected = [](const auto& response, const std::string& label) {
+    EXPECT_EQ(std::string(response["X-Frame-Options"]), "DENY") << label;
+    EXPECT_EQ(std::string(response["Content-Security-Policy"]), "frame-ancestors 'none'") << label;
+    EXPECT_EQ(std::string(response["X-Content-Type-Options"]), "nosniff") << label;
+  };
+  struct Case {
+    http::verb verb;
+    std::string path, name;
+    unsigned status;
+  };
+  // The shell, its client-side routes and assets, file errors, API answers and
+  // refusals, and requests refused for their Host.
+  for (const auto& [verb, path, name, status] : std::vector<Case>{
+           {http::verb::get, "/", host, 200}, {http::verb::head, "/", host, 200},
+           {http::verb::get, "/chain/SPX", host, 200}, {http::verb::get, "/assets/app.js", host, 200},
+           {http::verb::get, "/assets/missing.js", host, 404}, {http::verb::post, "/", host, 405},
+           {http::verb::get, "/api/status", host, 200}, {http::verb::post, "/api/orders", host, 403},
+           {http::verb::get, "/", "evil.test", 403}, {http::verb::get, "/api/status", "evil.test", 403}}) {
+    const auto label = std::string(http::to_string(verb)) + " " + path + " at " + name;
+    const auto response = fetch(verb, path, name);
+    EXPECT_EQ(response.result_int(), status) << label;
+    expect_protected(response, label);
+  }
+  // A refused WebSocket upgrade is answered over HTTP too.
+  websocket::stream<tcp::socket> ws(io);
+  ws.next_layer().connect(endpoint);
+  ws.set_option(websocket::stream_base::decorator(
+      [](websocket::request_type& req) { req.set(http::field::origin, "https://evil.test"); }));
+  beast::error_code ec;
+  websocket::response_type upgrade;
+  ws.handshake(upgrade, host, "/ws", ec);
+  EXPECT_TRUE(ec);
+  EXPECT_EQ(upgrade.result(), http::status::forbidden);
+  expect_protected(upgrade, "refused upgrade");
+  web.stop();
+}
+
 TEST(WebServer, ConnectionsBeyondTheCapAreClosedAtOnceAndFreedSlotsServeAgain) {
   server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
   web.set_http_session_limit(2);

@@ -522,6 +522,16 @@ std::string_view mime_type(std::string_view path) {
   return "application/octet-stream";
 }
 
+/// No other page may frame the terminal. A framed copy's requests carry this server's
+/// own Origin, so on a loopback bind with open writes a page laid over it could turn a
+/// visitor's clicks into orders, resets or a tripped kill switch. Every response says
+/// so, and that its Content-Type is not to be guessed from its bytes.
+void forbid_framing(http::fields& response) {
+  response.set("X-Frame-Options", "DENY");
+  response.set("Content-Security-Policy", "frame-ancestors 'none'");
+  response.set("X-Content-Type-Options", "nosniff");
+}
+
 class Session {
  public:
   virtual ~Session() = default;
@@ -908,6 +918,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
                       std::string reason, int retry_after = 0) {
     http::response<http::string_body> response{status, request.version()};
     response.set(http::field::content_type, "text/plain; charset=utf-8");
+    forbid_framing(response);
     if (retry_after > 0) response.set(http::field::retry_after, std::to_string(retry_after));
     response.keep_alive(false);
     response.body() = std::move(reason);
@@ -921,6 +932,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     response.set(http::field::content_type, api.content_type);
     if (!api.download.empty()) response.set(http::field::content_disposition, "attachment; filename=\"" + api.download + "\"");
     response.set(http::field::cache_control, "no-store");
+    forbid_framing(response);
     if (api.retry_after > 0) response.set(http::field::retry_after, std::to_string(api.retry_after));
     response.keep_alive(keep_alive);
     response.body() = std::move(api.body);
@@ -1045,6 +1057,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     auto text = [&](http::status status, std::string_view body) {
       http::response<http::string_body> response{status, request.version()};
       response.set(http::field::content_type, "text/plain; charset=utf-8");
+      forbid_framing(response);
       response.keep_alive(request.keep_alive());
       response.body() = std::string(body);
       response.prepare_payload();
@@ -1068,6 +1081,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (request.method() == http::verb::head) {
       http::response<http::empty_body> response{http::status::ok, request.version()};
       response.set(http::field::content_type, mime_type(file.string()));
+      forbid_framing(response);
       response.content_length(size);
       response.keep_alive(request.keep_alive());
       return response;
@@ -1076,6 +1090,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
                                              std::make_tuple(std::move(body)),
                                              std::make_tuple(http::status::ok, request.version())};
     response.set(http::field::content_type, mime_type(file.string()));
+    forbid_framing(response);
     // Built assets carry a content hash in their name and never change; the shell must.
     response.set(http::field::cache_control,
                  fingerprinted ? "public, max-age=31536000, immutable" : "no-cache");
