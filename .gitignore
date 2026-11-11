@@ -4,13 +4,12 @@
 compile_commands.json
 .cache/
 
-# Python
+# Python (*.egg-info is setuptools' editable-install metadata, never tracked)
 /.venv/
 /.venv-py/
 *.egg-info/
 __pycache__/
 *.pyc
-*.egg-info/
 /python/build/
 .pytest_cache/
 
@@ -31,6 +30,3 @@ __pycache__/
 
 # Release builds (tools/release.sh)
 /dist/
-
-# Python editable-install metadata
-*.egg-info/

@@ -20,6 +20,21 @@ def test_readme_installs_the_current_version_from_its_tag():
     assert "pip install openport-client" not in readme, "The client is not on PyPI"
 
 
+def test_no_install_metadata_is_tracked():
+    # An editable install writes *.egg-info beside the sources. A tracked copy goes stale
+    # and shows a phantom distribution to anything that puts src on sys.path, as pytest does.
+    import subprocess
+    import pytest
+    if not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    tracked = subprocess.run(["git", "ls-files", "--", "*.egg-info/*"], cwd=ROOT,
+                             capture_output=True, text=True, check=True).stdout
+    assert tracked == ""
+    ignored = subprocess.run(["git", "check-ignore", "--no-index", "-q", "python/src/openport_client.egg-info/PKG-INFO"],
+                             cwd=ROOT)
+    assert ignored.returncode == 0
+
+
 def test_no_workflow_publishes_to_pypi():
     for workflow in (ROOT / ".github/workflows").glob("*.yml"):
         assert "pypa/gh-action-pypi-publish" not in workflow.read_text(), workflow.name

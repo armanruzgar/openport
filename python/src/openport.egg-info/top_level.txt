@@ -1,2 +1,0 @@
-openport
-openport_mcp

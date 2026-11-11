@@ -891,6 +891,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `account` or `replay` it ignored, nor labels that calendar with a running replay's
   feed and time. `candles`, `surface` and `strategy_template` drop an `account` they
   never sent.
+- **No stale install metadata in the repository.** `python/src/openport.egg-info`, an
+  old editable install's metadata for a distribution named `openport` 0.1.0, was
+  tracked though ignored, so anything that put `python/src` on `sys.path`, as the
+  Python tests do, saw a phantom `openport` 0.1.0 beside `openport-client`. It is no
+  longer tracked, and a test keeps such metadata out.
 
 ## 0.5.1 (2026-10-28)
 
