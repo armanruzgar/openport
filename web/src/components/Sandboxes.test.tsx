@@ -199,7 +199,8 @@ it("restores the sandbox account after a reload even when another tab last selec
     return <output>{live.account} {live.trading?.enabled ? "ticket available" : "waiting"}</output>
   }
   await render(<actual.LiveProvider><Probe /></actual.LiveProvider>)
-  await waitForRender(() => expect(host.textContent).toBe(`${sandboxId} ticket available`))
+  // The socket never opens here, so the page also says the connection dropped.
+  await waitForRender(() => expect(host.querySelector("output")?.textContent).toBe(`${sandboxId} ticket available`))
   expect(dataSource.get()).toBe("live")
   expect(api.replay).not.toHaveBeenCalled()
 }, renderTimeout)
