@@ -532,6 +532,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   to for good, as "below the minimum". Rules set from now on take fees of at most
   $1,000,000 each and caps of at least the minimum (`INVALID_RULES`); journals and
   recorded runs from before keep theirs.
+- **Event calendars on busy accounts.** With holding restrictions and a large event
+  calendar (up to its 256 events), each market batch, opening-order check and flat-time
+  pass worked out every event's window, entering the plan's holiday calendar and
+  clearing the thread's business-day cache each time: about 1 ms a check at 256
+  events. Only events whose window can fall in the time asked about are now worked
+  out, and the calendar is entered only for them; the windows are the same.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

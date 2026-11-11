@@ -353,6 +353,40 @@ TEST(EventRules, AnEarlyCloseMovesTheHoldCutoffAsMuchEarlier) {
   EXPECT_EQ(windows.front().start, md::new_york_to_utc({2026, 11, 27}, 12, 45));
   EXPECT_EQ(event_entry_check(r, "SPX", friday).code, Reason::HOLD_RESTRICTED);
 }
+TEST(EventRules, AFullCalendarGivesTheWindowsOfTheDaysAskedAboutAcrossAHoliday) {
+  AccountRules r; r.hold_restrictions = {"earnings", "ex_dividend"};
+  // Most of the 256-event limit falls in 2027, far from the days asked about first.
+  for (int i = 0; i < 250; ++i)
+    r.events.push_back({"earnings", md::format_date(md::date_from_days(md::days_since_epoch({2027, 1, 4}) + i)), "QQQ", "", "Later"});
+  // Thanksgiving, Thursday 2026-11-26, is closed: an ex-date on Friday holds from
+  // Wednesday's cutoff, and one on Monday from Friday's, which the early close moves.
+  r.events.push_back({"ex_dividend", "2026-11-27", "SPY", "", "Friday"});
+  r.events.push_back({"ex_dividend", "2026-11-30", "IWM", "", "Monday"});
+  r.events.push_back({"earnings", "2026-11-25", "DIA", "after_close", "Tonight"});
+  normalize_event_rules(r, true);
+  const auto wednesday = md::new_york_to_utc({2026, 11, 25}, 15, 50);
+  const auto at_wednesday = event_windows(r, wednesday, wednesday);
+  ASSERT_EQ(at_wednesday.size(), 2U);
+  EXPECT_EQ(at_wednesday[0].key, "earnings:2026-11-25:DIA");
+  EXPECT_EQ(at_wednesday[1].key, "ex_dividend:2026-11-25:SPY");
+  EXPECT_EQ(at_wednesday[1].start, md::new_york_to_utc({2026, 11, 25}, 15, 45));
+  EXPECT_EQ(event_entry_check(r, "SPY", wednesday).scope, "ex_dividend:SPY");
+  EXPECT_TRUE(event_entry_check(r, "QQQ", wednesday).ok());
+  const auto friday = md::new_york_to_utc({2026, 11, 27}, 12, 50);
+  EXPECT_EQ(event_entry_check(r, "IWM", friday).code, Reason::HOLD_RESTRICTED);
+  EXPECT_TRUE(event_entry_check(r, "IWM", friday - 10 * md::kNanosPerMinute).ok());
+  // A range takes every window from its first day to its last.
+  const auto days = event_windows(r, md::new_york_to_utc({2026, 11, 25}, 0, 0), md::new_york_to_utc({2026, 11, 27}, 23, 0));
+  ASSERT_EQ(days.size(), 3U);
+  EXPECT_EQ(days[2].key, "ex_dividend:2026-11-27:IWM");
+  EXPECT_EQ(days[2].start, md::new_york_to_utc({2026, 11, 27}, 12, 45));
+  // And the far events still hold their own days: Thursday 2027-01-07's earnings from Wednesday.
+  const auto later = md::new_york_to_utc({2027, 1, 6}, 15, 50);
+  const auto in_2027 = event_windows(r, later, later);
+  ASSERT_EQ(in_2027.size(), 1U);
+  EXPECT_EQ(in_2027[0].key, "earnings:2027-01-06:QQQ");
+  EXPECT_EQ(event_entry_check(r, "QQQ", later).code, Reason::HOLD_RESTRICTED);
+}
 TEST(EventRules, CombinedRolloverPrecedenceAndRecoveryBeforeLateCloses) {
   for (const bool overnight : {false, true}) {
     for (const bool explicit_roll : {false, true}) {

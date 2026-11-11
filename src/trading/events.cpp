@@ -5,6 +5,7 @@
 #include <array>
 #include <cctype>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <tuple>
 
@@ -113,8 +114,11 @@ std::vector<PlanEvent> parse_event_calendar(std::istream& input) {
 std::vector<EventWindow> event_windows(const AccountRules& r, Timestamp from, Timestamp to) {
   std::vector<EventWindow> out;
   if (to <= 0 || from > to) return out;
-  // A frozen empty calendar is distinct from the ambient live schedule.
-  md::ScheduledDaysScope calendar(r.hold_calendar.value_or(md::scheduled_days()));
+  // A frozen empty calendar is distinct from the ambient live schedule. It is put in
+  // force only for a window that needs business days: entering and leaving it clears
+  // the thread's business-day memo.
+  std::optional<md::ScheduledDaysScope> calendar;
+  const auto business_days = [&] { if (!calendar) calendar.emplace(r.hold_calendar.value_or(md::scheduled_days())); };
   const auto append = [&](EventWindow w) { if (w.start <= to && w.end > from) out.push_back(std::move(w)); };
   const auto holding = [&](const std::string& kind, const std::string& symbol,
                            const std::string& label, md::Date day) {
@@ -124,23 +128,34 @@ std::vector<EventWindow> event_windows(const AccountRules& r, Timestamp from, Ti
     const auto cutoff = close < 16 * 60 ? std::max<std::int64_t>(0, r.hold_cutoff - (16 * 60 - close)) : r.hold_cutoff;
     append({kind + ":" + md::format_date(day) + ":" + symbol, kind, symbol, label, at(day, cutoff), at(day, r.day_end_minutes)});
   };
+  // A holding window runs from its day's cutoff to its day's end, on the New York date
+  // it is on: its event's date, or the business day before, at most 14 days earlier
+  // (previous_business_day). Only events that can put one between from's date and
+  // to's are worked out; the rest could not be appended.
+  const auto first_day = md::days_since_epoch(md::new_york_time(from).date);
+  const auto last_day = md::days_since_epoch(md::new_york_time(to).date);
   for (std::size_t i = 0; i < r.events.size(); ++i) {
     const auto& e = r.events[i];
-    const auto key = e.kind + ":" + std::to_string(i);
     if (e.kind == "news") {
-      if (r.news_before_minutes || r.news_after_minutes)
-        append({key, e.kind, e.symbol, e.label, event_time(e) - r.news_before_minutes * md::kNanosPerMinute,
-                event_time(e) + r.news_after_minutes * md::kNanosPerMinute});
+      if (!r.news_before_minutes && !r.news_after_minutes) continue;
+      const auto time = event_time(e);
+      const auto start = time - r.news_before_minutes * md::kNanosPerMinute;
+      const auto end = time + r.news_after_minutes * md::kNanosPerMinute;
+      if (start <= to && end > from) out.push_back({e.kind + ":" + std::to_string(i), e.kind, e.symbol, e.label, start, end});
     } else if (has(r, e.kind)) {
       const auto date = event_date(e);
+      const auto days = md::days_since_epoch(date);
+      if (days < first_day || days - 14 > last_day) continue;
+      business_days();
       const auto day = e.kind == "earnings" && e.session == "after_close"
           ? date : md::previous_business_day(date);
       holding(e.kind, e.symbol, e.label, day);
     }
   }
   if (has(r, "weekend")) {
-    const auto first = md::days_since_epoch(md::new_york_time(from).date) - 7;
-    const auto last = md::days_since_epoch(md::new_york_time(to).date) + 7;
+    business_days();
+    const auto first = first_day - 7;
+    const auto last = last_day + 7;
     // Each Saturday names the last business date before it, including Friday holidays.
     for (auto d = first; d <= last; ++d) {
       if ((d + 4) % 7 != 6) continue;
