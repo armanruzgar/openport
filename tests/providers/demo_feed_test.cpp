@@ -596,11 +596,15 @@ TEST(DemoFeed, ARestartAfterTheOpenStillSendsADaysAuthoredPreviousClose) {
   });
   test::EventCollector sink;
   provider.start({{"SPX"}}, sink);
-  clock->through(60s);
+  // The first batch after 10:20 is 10:20:15, but a sanitizer build samples generated
+  // snapshots (the first ten minutes, every fifth minute, event edges), and its next
+  // one is 10:25. Ten minutes of the paced replay reach either, and stay in the day.
+  clock->through(600s);
   ASSERT_TRUE(eventually([&] { const std::lock_guard lock(mutex); return first > 0; }));
   provider.stop();
   const std::lock_guard lock(mutex);
   EXPECT_GT(first, resumed);
+  EXPECT_LE(first, resumed + 10 * md::kNanosPerMinute);
   const auto spx = std::find_if(closes.begin(), closes.end(), [](const auto& close) { return close.symbol == "SPX"; });
   ASSERT_NE(spx, closes.end());
   EXPECT_EQ(spx->date, (md::Date{2026, 9, 17}));
