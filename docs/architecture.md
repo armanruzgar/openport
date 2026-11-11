@@ -169,10 +169,13 @@ Driver 5 adds AM settlement on the expiry date’s first underlying print at or 
 09:30 ET, with its provenance. Drivers 1–4 keep manual AM settlement during
 verification. Driver 6 also labels automatic playbook time-stop cancellations
 `PLAYBOOK_TIME_STOP`. Driver 7 fixes evaluation and payout rules, including requiring
-a flat account for equity targets under trade consistency or microscalping, and
+a flat account for equity targets under trade consistency or microscalping,
 driver 8 fills and order mechanics: queue fills, stop stress, underlying trails, a
-walking order's `then` and limit flatten. Older drivers retain their original reducer
-behavior. The start input records `"driver": 8`: batches of whole market instants, with each
+walking order's `then` and limit flatten, and driver 9 corporate actions and
+financing: prices from before a split's ex-date, option triggers on a split stock,
+dividends on adjusted series and across catch-up rollovers, financing from an
+account's first trading date and portfolio margin on adjusted series. Older drivers
+retain their original reducer behavior. The start input records `"driver": 9`: batches of whole market instants, with each
 underlying's quotes offered at the market time its own snapshot arrived; a new
 trading date's first batch rolling each account over on the finished day's closing
 marks before that batch's quotes; and each command's input recorded before the

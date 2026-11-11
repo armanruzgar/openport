@@ -285,5 +285,58 @@ TEST(CorporateActions, WorkingShareOrdersOnTheStockAreCancelled) {
   EXPECT_EQ(s.snapshot()->stock_orders[0].reason.code, Reason::CORPORATE_ACTION);
   EXPECT_THROW(s.roll_day(at({2026, 9, 24}, 9), {}, {{"SPY", {2026, 9, 24}, 2, 2}}), TradingError);
 }
+
+TEST(CorporateActions, PricesFromBeforeTheExDateDoNotRevalueTheSplitShares) {
+  // A live feed rolls the day over at 17:00 ET the evening before the ex-date and goes on
+  // giving the shares' pre-split prices, and the series' pre-split quotes, until it opens.
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    AccountRules rules;
+    rules.plan = "test";
+    rules.profit_target = m("3000");
+    rules.max_drawdown = m("3000");
+    Spy f;
+    TradingSession s(roomy(rules), f.time);
+    s.set_revised_corporate_actions(revised);
+    ASSERT_TRUE(s.define(call, f.time).decision.ok());
+    f.quote(s, call, "14.00", "14.20");
+    ASSERT_TRUE(s.trade_stock("SPY", 100, f.time).decision.ok());
+    ASSERT_TRUE(s.submit(f.market("long", call, 1, Side::Buy), f.time).decision.ok());
+    f.time = at(kToday, 16) + 14 * md::kNanosPerMinute + 30 * md::kNanosPerSecond;
+    f.quote(s, call, "14.00", "14.20");
+    const auto equity = s.snapshot()->equity;
+    ASSERT_TRUE(s.roll_day(at(kToday, 17) + md::kNanosPerMinute, {}, {{"SPY", kExDate, 2, 1}}).decision.ok());
+    ASSERT_EQ(stock(s)->mark, m("255"));
+    // An after-hours print at $510, and the 250 call's last quote of the day, which the
+    // desk now prices the adjusted 500 call from (twice a deep call's 260.10).
+    const auto evening = at(kToday, 17) + 30 * md::kNanosPerMinute;
+    const auto last = at(kToday, 16) + 15 * md::kNanosPerMinute;
+    s.on_quotes({{call.osi_symbol(), ++f.observation, evening, m("520.00"), m("520.40"), 10, 10, last}}, {}, evening,
+                {{"SPY", evening, m("510")}});
+    if (!revised) {
+      // The split shares were valued at the price of the shares before it.
+      EXPECT_EQ(stock(s)->mark, m("510"));
+      EXPECT_GT(s.snapshot()->equity, equity + m("3000"));
+      continue;
+    }
+    EXPECT_EQ(stock(s)->mark, m("255"));
+    ASSERT_EQ(s.snapshot()->positions.size(), 1u);
+    EXPECT_EQ(s.snapshot()->positions[0].mark, m("14.10"));
+    EXPECT_TRUE(s.snapshot()->valuation_complete);
+    EXPECT_EQ(s.snapshot()->equity, equity);
+    EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Active);
+    // A later pre-split print moves the mark on the split shares' scale.
+    s.on_quotes({}, {}, evening + md::kNanosPerMinute, {{"SPY", evening + md::kNanosPerMinute, m("512")}});
+    EXPECT_EQ(stock(s)->mark, m("256"));
+    // From the ex-date the feed's prices and quotes are the split ones.
+    f.time = at(kExDate, 9) + 31 * md::kNanosPerMinute;
+    f.spot = 257;
+    f.quote(s, call, "14.40", "14.60");
+    EXPECT_EQ(stock(s)->mark, m("257"));
+    EXPECT_EQ(s.snapshot()->positions[0].mark, m("14.50"));
+  }
+}
+
 }  // namespace
 }  // namespace openport::trading

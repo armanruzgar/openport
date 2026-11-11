@@ -3787,6 +3787,7 @@ TEST(Desk, EveryReplayDriverRoundTripsThroughItsOptions) {
     EXPECT_EQ(options.instant_batches, driver >= 2) << driver;
     EXPECT_EQ(options.inputs_first, driver >= 4) << driver;
     EXPECT_EQ(options.opening_settlement, driver >= 5) << driver;
+    EXPECT_EQ(options.revised_corporate_actions, driver >= 9) << driver;
   }
   server::Desk::Options current;
   EXPECT_EQ(server::replay_driver(current), server::kReplayDriver);

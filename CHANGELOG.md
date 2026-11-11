@@ -26,6 +26,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   underlying, a walking order's `then` and limit flatten. Runs recorded with drivers
   1–7 still pass `--verify-run` with their original fills; like driver 7's, they can
   no longer be resumed or restarted.
+- **Replay driver 9.** New reproducible runs record driver 9, which also applies the
+  split, dividend, financing and margin fixes below. Runs recorded with drivers 1–8
+  still pass `--verify-run` with their original rollovers and margin; like driver 8's,
+  they can no longer be resumed or restarted.
 
 ### Providers
 
@@ -404,6 +408,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **Limit flatten of a long nobody bids for.** A limit flatten left a single long whose
   quote showed only an ask working at 0.00 for a bid, while a market flatten and a
   spread's close give such a long away at 0.00. A limit flatten now gives it away too.
+- **A split on a live feed.** A split applies at the rollover into its ex-date, 17:00 ET
+  the evening before, but the feed goes on giving the old shares' prices until the
+  ex-date: the next batch's pre-split close marked the split shares, doubling a 2:1
+  holding's value (or cutting a 1:10 one by 90%) all night, and plan rules passed or
+  failed the account on it. An adjusted series was marked the same way from its
+  standard equivalent's pre-split quote. A price printed before the ex-date now marks
+  the shares divided by the split's ratio, and a quote given before the ex-date's
+  open does not mark or fill the split stock's series.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

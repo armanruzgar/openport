@@ -216,7 +216,16 @@ assignments and before the day's dividends:
   average cost without a mark), with the basis it carried released as realised P&L, as a
   broker's cash in lieu is. The stock fill records the split (`source: "split"`, no price)
   and the round trip continues.
-- The mark splits with the shares, so equity does not move.
+- The mark splits with the shares, so equity does not move. On a live feed the split
+  applies at the rollover into the ex-date, 17:00 ET the evening before, while the
+  feed still gives the shares' pre-split prices and the series' pre-split quotes
+  until the ex-date opens. A share price printed before the ex-date (New York
+  midnight) is on the shares before the split, so it is divided by the split's ratio
+  before it marks the shares, and an option quote on the underlying's series first
+  given before the ex-date's 09:30 open neither marks nor fills them (the desk prices
+  an adjusted series from a standard series that, before the ex-date, was another
+  contract). Runs recorded with replay driver 8 or earlier took both as they came,
+  valuing the split shares at the old price until the ex-date's first print.
 - Every share-settled series on the underlying that has not expired keeps its symbol,
   strike, contract count and 100 premium multiplier, as OCC adjusts a series, and takes
   the split deliverable: 100 shares a contract become 200 for 2:1, 150 for 3:2 and 10 for

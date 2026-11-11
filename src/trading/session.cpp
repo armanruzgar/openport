@@ -415,6 +415,36 @@ Quantity shares_held(const State& s, const std::string& symbol) {
   const auto it = s.ledger.stocks().find(symbol);
   return it == s.ledger.stocks().end() ? 0 : it->second.shares;
 }
+/// A payment in whole cents, as brokers pay one: nearest cent, ties away from zero.
+Money nearest_cent(Money amount) {
+  constexpr std::int64_t cent = 10'000;
+  const auto micros = amount.micros();
+  const auto rest = micros % cent;
+  auto rounded = micros - rest;
+  if (2 * (rest < 0 ? -rest : rest) >= cent) rounded += micros < 0 ? -cent : cent;
+  return Money::from_micros(rounded);
+}
+/// A share price printed before a split of its stock went ex prices the shares before
+/// it: on the split shares it is that price over each such split's ratio. A split goes
+/// ex at its date's New York midnight. Replay drivers 1-8 took such a price as it came,
+/// so the pre-split close a feed still gave after the rollover into the ex-date valued
+/// the split shares at it.
+Money split_basis(const State& s, const std::string& symbol, Timestamp time, Money price) {
+  if (!s.revised_corporate_actions) return price;
+  for (const auto& r : s.corporate_actions)
+    if (r.symbol == symbol && time < md::new_york_to_utc(r.ex_date, 0, 0)) price = price.prorate(r.denominator, r.numerator);
+  return price;
+}
+/// Whether an option quote first given at `time` on a series of `underlying` predates a
+/// split of it the account has applied: given before the ex-date's regular open, when
+/// the series first trade split, it prices them as they were, and an adjusted series'
+/// standard equivalent was another series then (driver 9).
+bool before_split(const State& s, const std::string& underlying, Timestamp time) {
+  return s.revised_corporate_actions &&
+      std::any_of(s.corporate_actions.begin(), s.corporate_actions.end(), [&](const CorporateActionRecord& r) {
+        return r.symbol == underlying && time < md::new_york_to_utc(r.ex_date, 9, 30);
+      });
+}
 /// The underlying's price if fresh at `at`: within max_quote_age of it while the
 /// stock market is open, or of its last close while it is not (the 16:00 close
 /// stays current while the options trade on to 16:15, and overnight). `extended`
@@ -4760,6 +4790,8 @@ State prepared(const State& state, Timestamp time, const PreviewMarket& market) 
   }
   for (const auto& quote : market.quotes) {
     if (!before.contracts.contains(quote.symbol) || quote.time > time || quote.time < 0) continue;
+    // As on_quotes: a quote from before a split's ex-date prices the series as they were.
+    if (before_split(before, before.contracts.at(quote.symbol).underlying, quote.first_time())) continue;
     const auto prior = before.books.find(quote.symbol);
     const bool keep_mark = prior != before.books.end() && keeps_mark(before, prior->second.quote, quote, quote.time);
     if (prior != before.books.end() && prior->second.quote.observation == quote.observation) {
@@ -6007,6 +6039,10 @@ void TradingSession::set_revised_fills(bool revised) {
   impl_->state.revised_fills = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
+void TradingSession::set_revised_corporate_actions(bool revised) {
+  impl_->state.revised_corporate_actions = revised;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {
   impl_->opening_rule_inputs = std::move(inputs);
   impl_->compact_opening_rule_inputs = compact;
@@ -6686,6 +6722,9 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (quote.quoted == quote.time) quote.quoted = 0;
       if (!seen.insert(quote.symbol).second) throw TradingError(Reason::INVALID_QUOTE, "One observation per contract per batch is required");
       if (retired_observation(s.contracts.at(quote.symbol), quote.time)) continue;
+      // From a split's rollover to its ex-date's open, a feed still quotes the series as
+      // they were: such a quote neither marks nor fills an adjusted series (driver 9).
+      if (before_split(s, s.contracts.at(quote.symbol).underlying, quote.first_time())) continue;
       auto& book = s.books[quote.symbol];
       if (quote.observation == book.quote.observation && quote.time >= book.quote.time) {
         // The same quote, confirmed current at a later time: it and its mark stay
@@ -6732,7 +6771,8 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (prior != s.stock_marks.end() && price.time < prior->second.time) continue;
       // A simulated halt prints nothing: the mark stays the last pre-halt print.
       if (price.time < halt_end(s, price.symbol)) continue;
-      s.stock_marks[price.symbol] = {price.price, price.time};
+      // A price printed before a split went ex is on the shares before it (driver 9).
+      s.stock_marks[price.symbol] = {split_basis(s, price.symbol, price.time, price.price), price.time};
     }
     seen.clear();
     for (const auto& indicator : indicators) {
@@ -7013,15 +7053,6 @@ void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp cl
                                      {"intrinsic", intrinsic}, {"mark", mark->second.price},
                                      {"underlying", contract.underlying}, {"shares", shares}, {"price", *price}});
   }
-}
-/// A payment in whole cents, as brokers pay one: nearest cent, ties away from zero.
-Money nearest_cent(Money amount) {
-  constexpr std::int64_t cent = 10'000;
-  const auto micros = amount.micros();
-  const auto rest = micros % cent;
-  auto rounded = micros - rest;
-  if (2 * (rest < 0 ? -rest : rest) >= cent) rounded += micros < 0 ? -cent : cent;
-  return Money::from_micros(rounded);
 }
 /// Actual/365 simple accrual on the last closing balance and marks, including
 /// skipped calendar days. Each posting rounds once to cents; no fabricated prices.
@@ -7778,7 +7809,7 @@ CommandResult TradingSession::trade_stock(const std::string& symbol, Quantity si
     if (feed_price) {
       const auto prior = s.stock_marks.find(symbol);
       if (prior == s.stock_marks.end() || prior->second.time <= feed_price->time)
-        s.stock_marks[symbol] = {feed_price->price, feed_price->time};
+        s.stock_marks[symbol] = {split_basis(s, symbol, feed_price->time, feed_price->price), feed_price->time};
     }
     if (const auto d = share_close_check(s, symbol); !d.ok()) return CommandResult{d, {}, 0};
     const auto d = trade_shares_checked(s, symbol, signed_shares, *stock_price(s, symbol), terms, events);
@@ -7810,7 +7841,7 @@ CommandResult TradingSession::submit_stock_order(StockOrderRequest request, Time
     if (feed_price) {
       const auto prior = s.stock_marks.find(request.symbol);
       if (prior == s.stock_marks.end() || prior->second.time <= feed_price->time)
-        s.stock_marks[request.symbol] = {feed_price->price, feed_price->time};
+        s.stock_marks[request.symbol] = {split_basis(s, request.symbol, feed_price->time, feed_price->price), feed_price->time};
     }
     auto [d, id] = accept_stock_order(s, std::move(request), OrderRole::Normal, 0, events);
     if (!d.ok()) return CommandResult{d, id ? std::optional<OrderId>(id) : std::nullopt, 0};

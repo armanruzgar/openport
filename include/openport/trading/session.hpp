@@ -452,6 +452,14 @@ class TradingSession {
   /// stop, an underlying trail moving a stop-limit's limit, a walk's `then` and
   /// a limit flatten's long nobody bids for.
   void set_revised_fills(bool revised);
+  /// Preserve corporate-action, financing and margin behavior when verifying replay
+  /// drivers 1–8: share prices and option quotes from before a split went ex taken
+  /// as they came, option orders' triggers on the stock left at pre-split levels,
+  /// early assignment weighing a share's dividend against a unit, a dividend that
+  /// rounds to nothing refused, a catch-up rollover paying dividends after all its
+  /// splits, financing from a placeholder date, and portfolio margin crediting the
+  /// value of adjusted series it does not scan.
+  void set_revised_corporate_actions(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

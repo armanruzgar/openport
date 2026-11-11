@@ -992,6 +992,10 @@ struct State {
   /// Transient compatibility: false for replay drivers 1–7, which keep their
   /// original fills, stops, walks and flatten closes (see set_revised_fills).
   bool revised_fills = true;
+  /// Transient compatibility: false for replay drivers 1–8, which keep their original
+  /// splits, dividends, financing and adjusted-series margin (see
+  /// set_revised_corporate_actions).
+  bool revised_corporate_actions = true;
   std::set<std::string> walked; ///< Transient symbols to match after this transaction's market is in place.
   SessionConfig config;
   Timestamp time = 0;

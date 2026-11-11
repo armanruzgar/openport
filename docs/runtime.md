@@ -1091,7 +1091,7 @@ be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
 their existing journal bytes; restart creates a byte-identical prefix on the current
-driver (8).
+driver (9).
 
 ### Verifying a run
 
@@ -1210,6 +1210,16 @@ walking order filled ahead of another command places its `then` order, and a lim
 flatten gives a single long nobody bids for away
 ([paper trading](paper-trading.md)). Runs recorded with drivers 1–7 verify with
 their original fills; they can no longer be resumed or restarted.
+
+Driver 9 applies this build's corporate-action and financing fixes: a split's
+shares and series are not revalued at prices the feed gave before the ex-date,
+option orders' levels on the stock's price take the split, early assignment weighs
+a dividend on what an adjusted unit delivers, a dividend that rounds to nothing is
+not paid, a rollover across several ex-dates takes them in date order, an account
+made before the first market data accrues no financing for the years before it, and
+portfolio margin takes only what it scans out of equity
+([paper trading](paper-trading.md)). Runs recorded with drivers 1–8 verify with
+their original rollovers and margin; they can no longer be resumed or restarted.
 
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).
