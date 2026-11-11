@@ -20,7 +20,7 @@ CALLS = [
     ("signal_secret", "{id}"), ("revoke_signal_secret", "{id}"),
     ("start_sweep", "test", "practice", {}), ("list_sweeps",),
     ("get_sweep", "{id}"), ("cancel_sweep", "{id}"), ("purge_sweep", "{id}"),
-    ("status",), ("summary", "{symbol}"), ("chain", "{symbol}"), ("exposure", "{symbol}"),
+    ("status",), ("underlyings",), ("subscribe", "NVDA"), ("unsubscribe", "{symbol}"), ("summary", "{symbol}"), ("chain", "{symbol}"), ("exposure", "{symbol}"),
     ("surface", "{symbol}"), ("volatility", "{symbol}"), ("candles", "{symbol}"), ("probability", "{symbol}"),
     ("account",), ("portfolio",), ("orders",), ("get_order", "{id}"), ("fills",), ("trades",), ("risk",),
     ("fill_quality",), ("calibrate_fills", "time,symbol,side,quantity,price\n"),
@@ -87,7 +87,7 @@ def test_every_openapi_operation_has_an_exercised_client_method(monkeypatch):
     documented = {(m, p) for m, p, _ in operations()}
     assert set(EXCLUSIONS) <= documented, "Remove stale exclusions"
     missing = [(m, p, op) for m, p, op in operations()
-               if (m, p) not in EXCLUSIONS and (m, ALIASES.get(p, p)) not in covered
+               if (m, p) not in EXCLUSIONS and (m, p) not in covered and (m, ALIASES.get(p, p)) not in covered
                and (m, re.sub(r"/underlyings/\{symbol\}$", "/underlyings/{symbol}/summary", p)) not in covered]
     assert not missing, f"Add client methods and CALLS (or an explicit exclusion): {missing}"
 

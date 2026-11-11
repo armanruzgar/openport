@@ -123,10 +123,15 @@ class CboeChartHistory {
   /// The latest failure of each chart that is failing, one per line; empty when none is.
   [[nodiscard]] std::string error() const;
 
+  /// Fetches `underlying`'s charts too from now on, beginning with the next round (within
+  /// a minute). Thread-safe; an underlying already fetched is not added twice.
+  void add(std::string underlying);
+
  private:
   void run();
 
-  std::vector<std::string> underlyings_;
+  std::mutex underlyings_mutex_;
+  std::vector<std::string> underlyings_;  // underlyings_mutex_
   Sink sink_;
   Options options_;
   std::map<std::pair<std::string, CboeChart>, md::Timestamp> due_;

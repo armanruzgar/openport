@@ -6,7 +6,7 @@ import { Dialog } from "./Dialog"
 export function HotkeyHelp({ onClose }: { onClose: () => void }) {
   return <Dialog title="Keyboard shortcuts" onClose={onClose}>
     <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 text-sm">
-      {[["?", "Show this help"], ["Ctrl / ⌘ K", "Search subscribed symbols"], ["1–9", "Switch sidebar page"],
+      {[["?", "Show this help"], ["Ctrl / ⌘ K", "Search symbols, or subscribe to a new one"], ["1–9", "Switch sidebar page"],
         ["← / →", "Previous / next expiry outside the chain"], ["↑ / ↓", "Move through strikes in the focused chain"],
         ["← / → in chain", "Select calls / puts"], ["B / S", "Buy / sell focused contract; prefill the ticket"],
         ["Enter on a quote", "Open the ticket for that bid or ask"], ["Enter in a ticket", "From a non-editable control, focus the order review; in a field, submit"], ["Esc", "Cancel the ticket or close a dialog"],

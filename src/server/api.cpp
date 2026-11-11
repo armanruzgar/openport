@@ -3,6 +3,7 @@
 #include "openport/server/strategy_search.hpp"
 #include "metric_cache.hpp"
 #include "series_api.hpp"
+#include "underlyings_api.hpp"
 #include "flow_api.hpp"
 #include "openport/trading/events.hpp"
 
@@ -1057,6 +1058,10 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
     return volatility_scanner_response(source);
   }
 
+  if (path == "/api/underlyings") {
+    if (!query.empty()) return error(400, "underlyings takes no query parameters");
+    return underlyings_response(source);
+  }
   constexpr std::string_view prefix = "/api/underlyings/";
   // A write route asked with GET is 405 with its methods; an unknown path is 404.
   if (!path.starts_with(prefix)) return method_not_allowed(path, request.method);

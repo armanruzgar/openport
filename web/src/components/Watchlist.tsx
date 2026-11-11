@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { api } from "../api/client"
 import { marketTime, useLive } from "../api/live"
-import type { UnderlyingSnapshot } from "../api/types"
+import type { UnderlyingSnapshot, UnderlyingSubscription } from "../api/types"
+import { errorText } from "../lib/errors"
 import { barDay, expectedMove } from "../lib/candles"
 import { defaultExpiry } from "../lib/expiry"
 import { fixed, isNum, pct, price, vol } from "../lib/format"
@@ -13,6 +14,11 @@ import { Dialog } from "./Dialog"
 export function searchSymbols(symbols: readonly string[], query: string) {
   const needle = query.trim().toUpperCase()
   return symbols.filter((symbol) => symbol.toUpperCase().includes(needle))
+}
+/** A symbol the server takes for a runtime subscription, in capitals; null for anything else. */
+export function subscribableSymbol(text: string): string | null {
+  const symbol = text.trim().toUpperCase()
+  return /^[A-Z0-9][A-Z0-9.]{0,15}$/.test(symbol) ? symbol : null
 }
 function WatchSymbol({ underlying, onSelect }: { underlying: UnderlyingSnapshot; onSelect: (symbol: string) => void }) {
   const live = useLive()
@@ -53,13 +59,13 @@ export function Watchlist({ onSymbol }: { onSymbol: (symbol: string) => void }) 
   return <section className="mb-3 min-w-0 rounded-lg border border-border bg-panel p-3">
     <button className="text-sm" aria-expanded={open} onClick={() => setOpen(!open)}>Watchlist {open ? "▾" : "▸"} <span className="text-xs text-muted">{underlyings.length} subscribed symbols</span></button>
     {open && <>
-      <p className="my-2 text-xs text-muted">{status?.provider.simulated || (source === "replay" && replay?.demo) ? "Simulated data · " : ""}Feed prices; missing metrics stay blank. Expected move uses the nearest active expiry. Runtime subscriptions are configured on the server.</p>
+      <p className="my-2 text-xs text-muted">{status?.provider.simulated || (source === "replay" && replay?.demo) ? "Simulated data · " : ""}Feed prices; missing metrics stay blank. Expected move uses the nearest active expiry. Subscribe to another underlying from symbol search (Ctrl/⌘ K).</p>
       <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{underlyings.map((u) => <WatchSymbol key={u.symbol} underlying={u} onSelect={onSymbol} />)}</ul>
     </>}
   </section>
 }
 export function SymbolSearch({ onSymbol, onClose }: { onSymbol: (symbol: string) => void; onClose: () => void }) {
-  const { underlyings } = useLive()
+  const { underlyings, source, trading } = useLive()
   const [query, setQuery] = useState("")
   const [index, setIndex] = useState(0)
   const matches = searchSymbols(underlyings.map((u) => u.symbol), query)
@@ -69,7 +75,32 @@ export function SymbolSearch({ onSymbol, onClose }: { onSymbol: (symbol: string)
   useEffect(() => {
     if (active >= 0) document.getElementById(`symbol-result-${active}`)?.scrollIntoView?.({ block: "nearest" })
   }, [active])
+  // Whether the live server can add underlyings while it runs; a replay plays its own.
+  const [subscription, setSubscription] = useState<UnderlyingSubscription | null>(null)
+  const [change, setChange] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null })
+  useEffect(() => {
+    if (source !== "live") return
+    const request = new AbortController()
+    api.underlyingSubscription(request.signal).then(setSubscription, () => {})
+    return () => request.abort()
+  }, [source])
+  const mode = source === "live" ? trading?.write ?? "disabled" : "disabled"
+  const typed = subscribableSymbol(query)
+  const offer = typed && subscription?.live && !subscription.underlyings.includes(typed) &&
+    !underlyings.some((u) => u.symbol === typed) ? typed : null
   const choose = (symbol: string) => { onSymbol(symbol); onClose() }
+  async function update(run: () => Promise<UnderlyingSubscription>, done?: () => void) {
+    setChange({ pending: true, error: null })
+    try {
+      setSubscription(await run())
+      setChange({ pending: false, error: null })
+      done?.()
+    } catch (error) {
+      setChange({ pending: false, error: errorText(error) })
+    }
+  }
+  // Its views wait for the first snapshot, which arrives with the feed's next poll.
+  const subscribe = (symbol: string) => update(() => api.subscribeUnderlying(symbol, mode), () => choose(symbol))
   return <Dialog title="Jump to symbol" onClose={onClose}>
     <input autoFocus className="trade-input" role="combobox" aria-label="Search subscribed symbols" aria-controls="symbol-results" aria-expanded="true"
       aria-activedescendant={active >= 0 ? `symbol-result-${active}` : undefined} value={query}
@@ -77,11 +108,26 @@ export function SymbolSearch({ onSymbol, onClose }: { onSymbol: (symbol: string)
         if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setIndex(Math.max(0, Math.min(matches.length - 1, active + (event.key === "ArrowDown" ? 1 : -1)))) }
         const chosen = matches[active]
         if (event.key === "Enter" && chosen) { event.preventDefault(); choose(chosen) }
+        else if (event.key === "Enter" && offer && !change.pending && mode !== "disabled") { event.preventDefault(); void subscribe(offer) }
       }} />
     <ul id="symbol-results" role="listbox" aria-label="Subscribed symbols" className="max-h-80 overflow-auto">{matches.map((symbol, i) =>
       <li id={`symbol-result-${i}`} role="option" aria-selected={i === active} key={symbol} className={i === active ? "bg-raised" : ""}>
         <button className="w-full p-3 text-left" onClick={() => choose(symbol)}>{symbol} <span className="float-right tabular">{price(underlyings.find((u) => u.symbol === symbol)?.spot)}</span></button>
       </li>)}</ul>
     {!matches.length && <p className="text-sm text-muted">No subscribed symbol matches.</p>}
+    {offer && <div className="space-y-1">
+      <button type="button" className="trade-button" disabled={change.pending || mode === "disabled"} onClick={() => void subscribe(offer)}>Subscribe to {offer}</button>
+      <p className="text-xs text-muted">The server polls it from the feed's next cycle until openportd restarts; recordings keep their own symbols.</p>
+    </div>}
+    {!offer && typed && !matches.length && subscription && !subscription.live && subscription.reason &&
+      <p className="text-xs text-muted">{subscription.reason}.</p>}
+    {subscription && subscription.added.length > 0 && <section className="space-y-1" aria-label="Added while running">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-muted">Added while running</h3>
+      <ul className="flex flex-wrap gap-2">{subscription.added.map((symbol) => <li key={symbol}>
+        <button type="button" className="trade-button" aria-label={`Unsubscribe from ${symbol}`} disabled={change.pending || mode === "disabled"}
+          onClick={() => void update(() => api.unsubscribeUnderlying(symbol, mode))}>{symbol} ×</button>
+      </li>)}</ul>
+    </section>}
+    {change.error && <p role="alert" className="text-xs text-danger">{change.error}</p>}
   </Dialog>
 }

@@ -87,6 +87,11 @@ flowchart LR
 - **Commands** from the terminal (orders, cancels, resets) are queued and applied on
   the engine thread, between market batches, so each account sees one ordered stream
   of market data and commands.
+- **Runtime subscriptions** (`POST /api/underlyings`) are queued the same way. The
+  engine thread checks them against its accounts and hands a polled provider its new
+  list, which the provider's thread reads at its next cycle. The engine's ingress keeps
+  an added underlying's events out of a recording, whose header names the underlyings
+  it started with, so a replay still plays a fixed set.
 - **Each account's reducer** turns (state, input) into (state, events) with no clock of
   its own; the journal it appends to is passed in. Market time comes from the data, so
   a replay runs on its day's clock. A transaction works on a copy of the account and

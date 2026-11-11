@@ -4,6 +4,9 @@
 #include "openport/providers/demo_feed.hpp"
 #include "openport/providers/demo.hpp"
 #include "openport/providers/failover.hpp"
+#include "openport/providers/factory.hpp"
+#include "openport/md/contract.hpp"
+#include "openport/trading/types.hpp"
 
 #include <algorithm>
 #include <iterator>
@@ -87,7 +90,12 @@ bool overdue(std::string_view symbol, md::Timestamp since, md::Timestamp now, md
 void Engine::Ingress::publish(md::Event event) {
   const auto stamped = stamped_at(event);
   if (stamped <= md::now() + kMaxEventLead) {
-    next->publish(std::move(event));
+    // A recording keeps the underlyings its header names, those the engine started with,
+    // so a replay of it plays a fixed set: one added while running goes past the recorder.
+    if (extended_.load(std::memory_order_acquire) && next != &owner_.queue_ && !recorded(event))
+      owner_.queue_.publish(std::move(event));
+    else
+      next->publish(std::move(event));
     return;
   }
   const auto [kind, underlying] = described(event);
@@ -100,6 +108,33 @@ void Engine::Ingress::publish(md::Event event) {
                     std::to_string(refusal.count) + (refusal.count == 1 ? " event" : " events") + " refused so far";
   refusal.underlying = underlying;
   refusal.time = at;
+}
+
+bool Engine::Ingress::recorded(const md::Event& event) {
+  const auto& started = owner_.subscription_.underlyings;
+  const auto carried = [&](const std::string& symbol) {
+    return std::find(started.begin(), started.end(), symbol) != started.end();
+  };
+  // As ReplayBatches admits events: definitions by their contract's underlying, the
+  // other option events by the contract a definition named.
+  return std::visit([&](const auto& value) -> bool {
+    using T = std::decay_t<decltype(value)>;
+    if constexpr (std::is_same_v<T, md::ContractDefinition>) {
+      if (carried(value.contract.underlying)) return true;
+      const std::lock_guard lock(ids_mutex_);
+      unrecorded_.insert(value.id);
+      return false;
+    } else if constexpr (std::is_same_v<T, md::UnderlyingQuote> || std::is_same_v<T, md::UnderlyingClose>) {
+      return carried(value.symbol);
+    } else if constexpr (std::is_same_v<T, md::ProviderStatus> || std::is_same_v<T, md::TradingHalt>) {
+      return value.underlying.empty() || carried(value.underlying);
+    } else if constexpr (std::is_same_v<T, md::SnapshotComplete> || std::is_same_v<T, md::SnapshotHeartbeat>) {
+      return carried(value.underlying);
+    } else {
+      const std::lock_guard lock(ids_mutex_);
+      return !unrecorded_.contains(value.id);
+    }
+  }, event);
 }
 
 Engine::Engine(md::Provider& provider, md::Subscription subscription, Options options)
@@ -205,7 +240,11 @@ void Engine::start() {
     // even if constructing or binding its web server subsequently fails.
     if (!demo_) desk_.start_trading();
     publish_desk();
-    { const std::lock_guard lock(command_mutex_); accepting_commands_ = options_.paper_enabled; }
+    {
+      const std::lock_guard lock(command_mutex_);
+      accepting_commands_ = options_.paper_enabled;
+      accepting_underlyings_ = true;
+    }
     thread_ = options_.launch([this] { run(); });
     if (options_.series) {
       series_worker_ = std::make_unique<SeriesWorker>(*this, *options_.series);
@@ -221,10 +260,14 @@ void Engine::start() {
     if (recorder_) recorder_->close();
     if (daily_recorder_) daily_recorder_->close();
     desk_.stop();
+    std::deque<PendingUnderlying> unapplied;
     {
       const std::lock_guard lock(command_mutex_);
       accepting_commands_ = false;
+      accepting_underlyings_ = false;
+      unapplied.swap(underlying_changes_);
     }
+    for (auto& pending : unapplied) apply_underlying(pending);
     throw;
   }
 }
@@ -267,6 +310,167 @@ std::string Engine::recording_warning() const {
 
 void Engine::roll_recording() {
   if (daily_recorder_) daily_recorder_->rollover();
+}
+
+bool Engine::live_subscription() const {
+  return provider_.live_subscription() && !replay_ && !demo_ && !options_.replay;
+}
+
+std::string Engine::fixed_subscription() const {
+  const std::string name(provider_.name());
+  if (demo_) return "The demo market generates its own underlyings and cannot add others";
+  if (replay_ || options_.replay || name.starts_with("replay")) return "A replay plays the underlyings its recording holds";
+  if (dynamic_cast<const providers::FailoverProvider*>(&provider_))
+    return name + " (a feed with --fallback-provider) keeps the underlyings it started with; "
+           "restart openportd with --symbols to change them";
+  return name + " subscribes to its underlyings when it connects; restart openportd with --symbols to change them";
+}
+
+UnderlyingSubscription Engine::underlying_subscription() const {
+  UnderlyingSubscription out;
+  out.live = live_subscription();
+  if (!out.live) out.reason = fixed_subscription();
+  out.configured = subscription_.underlyings;
+  const std::lock_guard lock(mutex_);
+  for (const auto& item : added_) out.added.push_back(item.symbol);
+  return out;
+}
+
+bool Engine::post_underlying(UnderlyingChange change, UnderlyingCompletion completion) {
+  {
+    const std::lock_guard lock(command_mutex_);
+    if (!accepting_underlyings_ || underlying_changes_.size() >= kUnderlyingInbox) return false;
+    underlying_changes_.push_back({std::move(change), std::move(completion)});
+  }
+  queue_.wake();
+  return true;
+}
+
+md::Timestamp Engine::watched_since(const std::string& symbol, md::Timestamp started) const {
+  for (const auto& item : added_)
+    if (item.symbol == symbol) return item.at;
+  return started;
+}
+
+std::vector<std::string> Engine::accounts_using(const std::string& symbol) const {
+  const auto option_on = [&](const std::string& osi) {
+    const auto contract = md::parse_osi(osi);
+    return contract && contract->underlying == symbol;
+  };
+  const auto chain_on = [&](const trading::OrderRequest& request) {
+    const auto names = trading::chain_symbols(request);
+    return std::any_of(names.begin(), names.end(), option_on);
+  };
+  std::vector<std::string> users;
+  for (const auto& [id, view] : desk_.views()) {
+    if (!view || !view->snapshot) continue;
+    const auto& s = *view->snapshot;
+    // As affects_trading gathers them: what it holds, works, or watches with an alert.
+    bool uses = false;
+    for (const auto& p : s.positions) uses = uses || p.position.contract.underlying == symbol;
+    for (const auto& order : s.open_orders) uses = uses || chain_on(order.request);
+    for (const auto& stock : s.stocks) uses = uses || stock.position.symbol == symbol;
+    for (const auto& order : s.stock_orders) uses = uses || (order.open() && order.request.symbol == symbol);
+    for (const auto& alert : s.alerts) {
+      if (uses || (!alert.armed && !alert.spec.repeat)) continue;
+      const auto& c = alert.spec.condition;
+      uses = (c.scope == trading::AlertScope::Underlying && c.symbol == symbol) ||
+             (c.scope == trading::AlertScope::Contract && option_on(c.symbol));
+      for (const auto& leg : c.legs) uses = uses || option_on(leg.symbol);
+    }
+    if (uses) users.push_back(id);
+  }
+  return users;
+}
+
+void Engine::apply_underlying(PendingUnderlying& pending) {
+  UnderlyingReply reply;
+  const auto& symbol = pending.change.symbol;
+  const auto& configured = subscription_.underlyings;
+  const bool started_with = std::find(configured.begin(), configured.end(), symbol) != configured.end();
+  const bool added = std::any_of(added_.begin(), added_.end(), [&](const Added& item) { return item.symbol == symbol; });
+  const auto refuse = [&](int answer, const char* reason, std::string text) {
+    reply.status = answer;
+    reply.code = reason;
+    reply.message = std::move(text);
+  };
+  // What the provider polls once the change is made: every underlying but `except`.
+  const auto polled = [&](const std::string& except) {
+    std::vector<std::string> list = configured;
+    for (const auto& item : added_)
+      if (item.symbol != except) list.push_back(item.symbol);
+    return list;
+  };
+  if (!live_subscription()) {
+    refuse(409, "SUBSCRIPTION_FIXED", fixed_subscription());
+  } else if (stopping_ || shutting_down_) {
+    refuse(503, "ENGINE_STOPPING", "The server is stopping");
+  } else if (pending.change.add) {
+    if (started_with || added) {
+      reply.message = symbol + " is already subscribed";
+    } else if (configured.size() + added_.size() >= kMaxUnderlyings) {
+      refuse(409, "UNDERLYING_LIMIT", "The server carries " + std::to_string(configured.size() + added_.size()) +
+             " underlyings, the most it adds to; remove one first");
+    } else {
+      auto list = polled(std::string());
+      list.push_back(symbol);
+      std::string unsupported;
+      try {
+        providers::validate_subscription(provider_.name(), md::Subscription{list, subscription_.max_expiries, subscription_.strike_window});
+      } catch (const std::invalid_argument& error) {
+        unsupported = error.what();
+      }
+      if (!unsupported.empty()) {
+        refuse(422, "UNDERLYING_UNSUPPORTED", unsupported);
+      } else {
+        ingress_.extend();
+        dropped_.erase(symbol);
+        UnderlyingHealth health;
+        health.message = std::string(provider_.name()) + " " + symbol + ": subscribing";
+        health_[symbol] = health;
+        health_changed_ = true;
+        health_dirty_ = true;
+        {
+          const std::lock_guard lock(mutex_);
+          added_.push_back({symbol, options_.clock()});
+          status_.underlyings[symbol] = health;
+        }
+        provider_.update_underlyings(list);
+        if (options_.added_underlying) options_.added_underlying(symbol);
+        reply.status = 201;
+        reply.message = "Subscribed to " + symbol + "; its data arrives with the feed's next poll";
+      }
+    }
+  } else if (started_with) {
+    refuse(409, "UNDERLYING_CONFIGURED", symbol + " is one of the underlyings the server started with (--symbols); "
+           "it stays until openportd restarts without it");
+  } else if (!added) {
+    refuse(404, "UNKNOWN_UNDERLYING", "The server does not carry " + symbol);
+  } else if (const auto users = accounts_using(symbol); !users.empty()) {
+    std::string names;
+    for (const auto& id : users) names += (names.empty() ? "" : ", ") + id;
+    refuse(409, "UNDERLYING_IN_USE", symbol + " has positions, working orders or alerts in " + names +
+           "; close, cancel or delete them first");
+  } else {
+    const auto list = polled(symbol);
+    // Its last poll may still report: dropped_ keeps it out of health and analytics.
+    dropped_.insert(symbol);
+    health_.erase(symbol);
+    stalled_.erase(symbol);
+    health_changed_ = true;
+    health_dirty_ = true;
+    {
+      const std::lock_guard lock(mutex_);
+      std::erase_if(added_, [&](const Added& item) { return item.symbol == symbol; });
+      status_.underlyings.erase(symbol);
+      metrics_.erase(symbol);
+    }
+    provider_.update_underlyings(list);
+    reply.message = "Unsubscribed from " + symbol;
+  }
+  reply.subscription = underlying_subscription();
+  // A disconnected client cannot take down the engine thread.
+  try { pending.completion(std::move(reply)); } catch (...) {}
 }
 
 std::vector<std::string> Engine::symbols() const {
@@ -322,7 +526,7 @@ EngineStatus Engine::status() const {
   out.feed_message.clear();
   std::vector<std::string> messages;
   for (auto& [symbol, health] : out.underlyings) {
-    const auto since = health.last_success > 0 ? health.last_success : out.started;
+    const auto since = health.last_success > 0 ? health.last_success : watched_since(symbol, out.started);
     // A feed that reports an error keeps its own cause (rejected credentials, a missing
     // entitlement), which says more than how long it has gone without an update.
     if (health.state != md::FeedState::Stopped && health.state != md::FeedState::Error &&
@@ -368,6 +572,8 @@ EngineStatus Engine::status() const {
 
 void Engine::update_health(const md::Event& event, md::Timestamp received) {
   if (const auto* feed = std::get_if<md::ProviderStatus>(&event)) {
+    // An underlying removed while running can still report from its last poll; it stays gone.
+    if (!feed->underlying.empty() && dropped_.contains(feed->underlying)) return;
     auto update = [&](UnderlyingHealth& health) {
       if (health.state != feed->state || health.message != feed->message ||
           (!feed->feed.empty() && health.feed != feed->feed)) {
@@ -468,10 +674,12 @@ void Engine::run() {
     queue_.drain(batch, std::chrono::milliseconds(synchronized.empty() ? 50 : 0));
     std::deque<PendingCommand> commands;
     std::deque<PendingReplay> replay_batches;
+    std::deque<PendingUnderlying> underlying_changes;
     {
       const std::lock_guard lock(command_mutex_);
       commands.swap(commands_);
       replay_batches.swap(replay_batches_);
+      underlying_changes.swap(underlying_changes_);
     }
     {
       const std::lock_guard lock(dividends_mutex_);
@@ -520,6 +728,7 @@ void Engine::run() {
       publish_desk();
       // The event rate falls to zero while the replay is paused or has ended.
       publish_rates(std::chrono::steady_clock::now(), false);
+      for (auto& pending : underlying_changes) apply_underlying(pending);
       for (auto& done : synchronized) done.set_value();
       continue;
     }
@@ -581,6 +790,8 @@ void Engine::run() {
       desk_.apply_command(command, desk_.market_time(), options_.clock());
     }
     publish_desk();
+    // After the pass's commands, so a removal sees the orders sent before it.
+    for (auto& pending : underlying_changes) apply_underlying(pending);
     // Outbound channels and the local event stream both hear of a stall: the stream keeps
     // it in its history, so a terminal opened later can still see it happened.
     if ((options_.notifications || options_.event_stream) && !stopping_ && !shutting_down_) {
@@ -588,7 +799,7 @@ void Engine::run() {
       const auto stale_after = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::max(3 * capabilities.poll_interval, std::chrono::seconds(60))).count();
       for (const auto& [symbol, health] : health_) {
-        const auto since = health.last_success > 0 ? health.last_success : status_.started;
+        const auto since = health.last_success > 0 ? health.last_success : watched_since(symbol, status_.started);
         // A Stale label is not a stall: a feed that says it while its updates arrive is
         // healthy, and one that stops updating is caught by the timeout like any other.
         // A stream's market closing is not a stall either (see overdue).
@@ -606,13 +817,17 @@ void Engine::run() {
     for (auto& done : synchronized) done.set_value();
   }
   std::deque<PendingCommand> remaining;
+  std::deque<PendingUnderlying> unapplied;
   {
     const std::lock_guard lock(command_mutex_);
     accepting_commands_ = false;
+    accepting_underlyings_ = false;
     remaining.swap(commands_);
+    unapplied.swap(underlying_changes_);
   }
   desk_.halt();
   for (auto& command : remaining) desk_.apply_command(command, desk_.market_time(), options_.clock());
+  for (auto& pending : unapplied) apply_underlying(pending);
   refresh_analytics();
   // Release the exclusive journal writers on their owner thread. Published values
   // remain readable, and a replacement Engine can recover as soon as stop returns.
@@ -631,6 +846,7 @@ void Engine::publish_desk() {
     status_.feed_updated = feed_updated_;
   }
   metrics_ = desk_.publications();
+  for (const auto& symbol : dropped_) metrics_.erase(symbol);
   trading_views_ = desk_.views();
   status_.trading = desk_.trading_status();
   status_.accounts = desk_.accounts();

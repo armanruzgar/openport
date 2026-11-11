@@ -67,6 +67,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/notifications_test.cpp
     server/notification_delivery_test.cpp
     server/notification_history_test.cpp
+    server/subscription_test.cpp
     server/playbooks_test.cpp
     server/desk_test.cpp
     server/multiday_test.cpp

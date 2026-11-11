@@ -6,7 +6,7 @@
     "license": {
       "name": "MIT"
     },
-    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. symbols() is status.underlyings and has no separate route; series() and volatility_history() read metric history from /api/underlyings/{symbol}/series; an underlying's expiries are in summary.expiries. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
+    "description": "The terminal HTTP contract. All trades are simulated. Generated scenario/demo prices are identified by provider.simulated; recordings retain their provider and delay. Missing analytics are null. Money is exact decimal text. Unknown response fields may be added. symbols() is status.underlyings; GET /api/underlyings also says which can change while the server runs; series() and volatility_history() read metric history from /api/underlyings/{symbol}/series; an underlying's expiries are in summary.expiries. JSON syntax is used here (a YAML 1.2 subset), so the web contract test needs no YAML dependency. Account routes default to main, except issued sandbox tokens default to their own sandbox. Explicit account query parameters are always scope checked; named trade:ACCOUNT tokens do not change the default."
   },
   "servers": [
     {
@@ -42,6 +42,68 @@
         }
       }
     },
+    "/api/underlyings": {
+      "get": {
+        "summary": "List the subscribed underlyings",
+        "description": "The underlyings the server carries: those it started with (--symbols), fixed until a restart, then those added while it runs, oldest first. live says whether POST /api/underlyings and DELETE /api/underlyings/{symbol} can change them now, and reason why not: a replay and the demo market play fixed underlyings, and Databento, tastytrade and a feed with --fallback-provider subscribe when they connect. Each underlying's feed health and price are in GET /api/status.",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderlyingSubscription"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Subscribe to an underlying while the server runs",
+        "description": "Requires admin. Adds one underlying, polled from the feed's next cycle: until its first snapshot its routes answer 503 NOT_READY. 201 added; 200 already subscribed. Not kept across a restart: give it to --symbols to keep it. A recording (--record, --record-dir) keeps the underlyings it started with, so one added later is not recorded and a replay of the day plays the recording's own. 400 INVALID_REQUEST for a symbol that is not 1 to 16 letters, digits and dots (lowercase is taken as capitals); 409 SUBSCRIPTION_FIXED, with the reason, where the underlyings cannot change; 409 UNDERLYING_LIMIT past limit underlyings in all; 422 UNDERLYING_UNSUPPORTED when the provider refuses it (Alpaca has no index options); 503 ENGINE_BUSY with Retry-After while the engine's inbox is full. A symbol the provider does not list is subscribed and its status shows the provider's error; remove it.",
+        "x-scope": "admin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnderlyingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderlyingSubscription"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already subscribed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderlyingSubscription"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/api/underlyings/{symbol}": {
       "parameters": [
         {
@@ -64,6 +126,26 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Summary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Unsubscribe from an underlying added while running",
+        "description": "Requires admin. Removes an underlying added with POST /api/underlyings: it is no longer polled and its analytics are no longer published. 409 UNDERLYING_CONFIGURED for one the server started with (--symbols); 409 UNDERLYING_IN_USE, naming the accounts, while an account holds a position or shares in it, works an order on it or has an armed or repeating alert on it; 404 UNKNOWN_UNDERLYING for one it does not carry; 409 SUBSCRIPTION_FIXED where the underlyings cannot change; 503 ENGINE_BUSY with Retry-After while the engine's inbox is full.",
+        "x-scope": "admin",
+        "responses": {
+          "200": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnderlyingSubscription"
                 }
               }
             }
@@ -8645,6 +8727,79 @@
           "expiries",
           "options"
         ]
+      },
+      "UnderlyingSubscription": {
+        "type": "object",
+        "properties": {
+          "underlyings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every underlying carried: configured, then added."
+          },
+          "configured": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Those the server started with (--symbols); fixed until a restart."
+          },
+          "added": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Those added while running, oldest first; gone after a restart."
+          },
+          "live": {
+            "type": "boolean",
+            "description": "Underlyings can be added and removed now."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why they cannot, when live is false; null otherwise."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The most underlyings the server carries once it adds any, those it started with included."
+          },
+          "message": {
+            "type": "string",
+            "description": "What a POST or DELETE did; absent on GET."
+          }
+        },
+        "required": [
+          "underlyings",
+          "configured",
+          "added",
+          "live",
+          "reason",
+          "limit"
+        ],
+        "additionalProperties": false
+      },
+      "UnderlyingRequest": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9.]{0,15}$",
+            "description": "The underlying, such as NVDA or BRK.B."
+          }
+        },
+        "required": [
+          "symbol"
+        ],
+        "additionalProperties": false
       },
       "TradingSession": {
         "type": "object",

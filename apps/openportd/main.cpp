@@ -930,9 +930,14 @@ int run(int argc, char** argv) {
   engine_options.events = settings.events;
   engine_options.event_calendar = settings.event_calendar;
   engine_options.write_mode = server::write_mode({settings.address, settings.write_token, settings.allowed_origins, settings.tokens, settings.require_token, engine_options.sandboxes, settings.client_ip_header});
+  // An underlying added while running (POST /api/underlyings) gets its chart history too.
+  // The web server starts after `history` is set, so no addition can come before it.
+  std::unique_ptr<providers::CboeChartHistory> history;
+  engine_options.added_underlying = [&history](const std::string& symbol) {
+    if (history) history->add(symbol);
+  };
   server::Engine engine(*provider, settings.subscription, engine_options);
   engine.start();
-  std::unique_ptr<providers::CboeChartHistory> history;
   if (settings.history && !offline) {
     history = std::make_unique<providers::CboeChartHistory>(
         settings.subscription.underlyings,

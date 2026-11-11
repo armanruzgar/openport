@@ -41,6 +41,20 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Features
 
+- **Subscribe to an underlying while openportd runs.** The underlyings were fixed at
+  startup: to look at or trade NVDA you restarted openportd with a new `--symbols`,
+  which interrupted the feed, the working orders and any recording, and a Homebrew
+  service could not do it at all. On a polled feed (Cboe, Tradier, Massive, ThetaData,
+  Schwab, Alpaca, Interactive Brokers) `POST /api/underlyings` now adds one, polled from
+  the feed's next cycle, and `DELETE /api/underlyings/{symbol}` removes one added that
+  way once no account holds, works or watches anything on it; both need admin access,
+  and `GET /api/underlyings` lists what the server carries. The terminal's symbol
+  search (Ctrl/Cmd+K) offers to subscribe to a symbol it does not find and lists the
+  additions with a remove button; Python has `Client.subscribe()`, `unsubscribe()` and
+  `underlyings()`. Additions last until openportd restarts and are not recorded: a
+  recording keeps the underlyings its header names. Databento, tastytrade, a feed with
+  a fallback, the demo market and replays keep a fixed set and say so (409
+  `SUBSCRIPTION_FIXED`).
 - **Notification history.** openportd kept no record of the notifications it
   published: a floor warning, a feed stall, a staged playbook order or an earlier
   firing of a repeating alert reached only a terminal open at the time, or an

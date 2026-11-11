@@ -443,7 +443,7 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
       return api_error(403, "SCOPE_REQUIRED", "Event volatility may read only this sandbox's plan calendar");
     const bool market_read = read && (path == "/ws" || path == "/api/status" || path == "/api/accounts" ||
         path == "/api/plans" || path == "/api/calendar/events" || path == "/api/strategy-template" || path == "/api/volatility/scanner" ||
-        path == "/api/rule-packs/validate" || path.starts_with("/api/underlyings/"));
+        path == "/api/rule-packs/validate" || path == "/api/underlyings" || path.starts_with("/api/underlyings/"));
     const bool account_read = read && (path == "/ws/events" || path == "/api/notifications/history" || path == "/api/account" || path == "/api/account/equity" ||
         path == "/api/account/pass-odds" || path == "/api/account/rules-compare" || path == "/api/portfolio" || path == "/api/orders" || path.starts_with("/api/orders/") ||
         path == "/api/fills" || path == "/api/fills/quality" || path == "/api/settlements" || path == "/api/risk" || path == "/api/risk/profile" || path == "/api/risk/scenarios" || path == "/api/risk/history" || path == "/api/risk/hedges" || path == "/api/trades" ||

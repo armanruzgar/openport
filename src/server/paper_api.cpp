@@ -8,6 +8,7 @@
 #include "paper_csv.hpp"
 #include "metric_cache.hpp"
 #include "fill_calibration.hpp"
+#include "underlyings_api.hpp"
 
 #include <algorithm>
 #include <array>
@@ -3115,7 +3116,8 @@ namespace {
 /// routes are their live routes' (/api/replay/orders is /api/orders).
 constexpr std::pair<std::string_view, std::string_view> kRouteMethods[] = {
     {"/api/status", "GET, HEAD"}, {"/api/volatility/scanner", "GET, HEAD"}, {"/api/calendar/events", "GET, HEAD"},
-    {"/api/strategy-template", "GET, HEAD"}, {"/api/underlyings/{}", "GET, HEAD"}, {"/api/underlyings/{}/{}", "GET, HEAD"},
+    {"/api/strategy-template", "GET, HEAD"}, {"/api/underlyings", "GET, HEAD, POST"},
+    {"/api/underlyings/{}", "GET, HEAD, DELETE"}, {"/api/underlyings/{}/{}", "GET, HEAD"},
     {"/api/account", "GET, HEAD"}, {"/api/account/equity", "GET, HEAD"}, {"/api/account/pass-odds", "GET, HEAD"},
     {"/api/account/reset", "POST"}, {"/api/account/payout", "POST"}, {"/api/account/cash-flows", "POST"},
     {"/api/account/rules-compare", "POST"}, {"/api/portfolio", "GET, HEAD"}, {"/api/plans", "GET, HEAD"},
@@ -4626,6 +4628,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
   }
   if (auto rejection = sandbox_visibility(request, source)) { complete(std::move(*rejection)); return; }
   if (account_group_api(request, source, complete)) return;
+  if (underlying_write(request, source, complete)) return;
   if (request.method == "GET" && strategy_search(request, source, complete)) return;
   if (request.method == "GET") {
     // A Heston or SABR fit takes up to seconds: it runs on the fit worker, never here.

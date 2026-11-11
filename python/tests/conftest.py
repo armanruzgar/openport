@@ -120,6 +120,8 @@ class Stub:
             return 200, {"names": ["operator"], "count": 1, "loaded_at": TIME}
         if path == "/api/notifications/history":
             return 200, shaped("NotificationHistory", sequence="1", events=[])
+        if path == "/api/underlyings":
+            return 200, shaped("UnderlyingSubscription", underlyings=["SPX"], configured=["SPX"], live=True, reason=None)
         if path == "/api/status":
             return 200, self.status
         if path == "/api/volatility/scanner":

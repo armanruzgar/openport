@@ -236,8 +236,12 @@ Client parity includes `get_order`, `playbooks`, `get_playbook(id, version)`,
 `create_playbook`, `version_playbook` (pass the current version), `archive_playbook`,
 `playbook_mode`, `send_staged_order`, `dismiss_staged_order`, `notifications`,
 `test_notification`, `configure_notification`, `notification_history`,
-`create_sandbox`, `calendar_events`, `pass_odds`, `strategy_template`,
-`replay_history` and `get_replay`. Notification status comes from `status`;
+`underlyings`, `subscribe`, `unsubscribe`, `create_sandbox`, `calendar_events`,
+`pass_odds`, `strategy_template`, `replay_history` and `get_replay`.
+`subscribe("NVDA")` adds an underlying while openportd runs, on a polled feed and
+with admin access, until openportd restarts; `unsubscribe` removes one added that
+way once no account uses it; `underlyings()` lists both kinds and says whether they
+can change. Notification status comes from `status`;
 configuration/test require admin. `notification_history(since=None, limit=None)`
 returns the account's recent events as the event stream sent them, each with the
 server's `received` time, oldest first; pass the answer's `sequence` as `since` to

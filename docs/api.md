@@ -31,6 +31,9 @@ halt reaches the regular close. See [stress scenarios](scenarios.md#events).
 | `GET /api/status` | Running `version`, provider, market and per-underlying sessions, feed health (including the demo day title), engine counters, notification delivery status (no secrets), and optional sandbox availability |
 | `POST /api/notifications/test` | Queue a test for `{ "channel": "ID" }`; requires admin |
 | `PUT /api/notifications/channels/ID` | Change a channel's enabled state, event filters and floor distance for this process; requires admin |
+| `GET /api/notifications/history?account=main` | The account's recent notifications, kept in memory ([notification history](#notification-history)) |
+| `GET /api/underlyings` | The underlyings the server carries, those it started with and those added since, and whether they can change while it runs ([runtime subscriptions](#subscribing-while-running)) |
+| `POST /api/underlyings`, `DELETE /api/underlyings/{symbol}` | Subscribe to `{ "symbol": "NVDA" }` while the server runs, or remove one added that way; require admin |
 | `GET /api/underlyings/{symbol}/summary` | Spot and its source, expiries with forward, rate and its source, ATM IV, GEX/VEX/DEX/CEX/VOMEX, coverage and `last_trade` / `auto_close` UTC ISO times |
 | `GET /api/underlyings/{symbol}/chain?expiry={id}` | Every strike with both sides' quotes, IV, Greeks, early-exercise premium, `volume` (session contracts or null) and whether paper orders can fill on each quote (`executable`, `quote_issue`); coverage includes `volume` |
 | `GET /api/underlyings/{symbol}/exposure?expiries=8&convention=long_calls_short_puts&slice=all` | GEX, VEX, DEX, CEX and VOMEX by strike and expiry, totals, flips and signed walls |
@@ -72,6 +75,48 @@ which the Python client waits out and retries; `GET /api/status` shows each
 underlying's `state`, `live` once its data flows, which is the check to wait on. An
 underlying the server does not carry (a typo, `spx` for `SPX`, or one never
 subscribed) is 404 `UNKNOWN_UNDERLYING`, which no wait changes.
+
+### Subscribing while running
+
+openportd starts with the underlyings `--symbols` names. On a polled feed (Cboe,
+Tradier, Massive, ThetaData, Schwab, Alpaca and Interactive Brokers) an admin can add
+one while it runs, without a restart that would interrupt the feed, the working
+orders and any recording:
+
+```bash
+curl -X POST -H 'Content-Type: application/json' -d '{"symbol":"NVDA"}' http://127.0.0.1:8080/api/underlyings
+# 201 {"underlyings":["SPX","SPY","QQQ","IWM","DIA","NVDA"],"configured":[...],"added":["NVDA"],"live":true,"reason":null,"limit":32,"message":"Subscribed to NVDA; ..."}
+```
+
+The feed polls it from its next cycle, with the expiry and strike filters openportd
+started with; until its first snapshot its views answer 503 `NOT_READY` and its
+status says `connecting`. A symbol takes 1 to 16 letters, digits and dots (`BRK.B`),
+and lowercase is read as capitals. Adding one already carried answers 200. The server
+carries at most 32 underlyings, those it started with included (409
+`UNDERLYING_LIMIT` past that), and the provider's own rules apply (422
+`UNDERLYING_UNSUPPORTED`: Alpaca has no index options). A symbol the provider does
+not list is still subscribed, and its status shows the provider's error; remove it.
+On a sandbox server, a demo market, a replay, Databento, tastytrade or a feed with
+`--fallback-provider`, the underlyings are fixed: the answer is 409
+`SUBSCRIPTION_FIXED` with the reason, which `GET /api/underlyings` also gives (`live`
+false).
+
+`DELETE /api/underlyings/NVDA` removes an underlying added this way: it is no longer
+polled and its views answer 404 `UNKNOWN_UNDERLYING`. One the server started with
+answers 409 `UNDERLYING_CONFIGURED`, and one an account holds a position or shares
+in, works an order on, or watches with an armed or repeating alert answers 409
+`UNDERLYING_IN_USE` naming the accounts: close, cancel or delete those first, since a
+position whose quotes stopped could no longer be marked or closed.
+
+Added underlyings are not saved: after a restart openportd carries what `--symbols`
+names, so list one there to keep it. A recording (`--record`, `--record-dir`) keeps the
+underlyings it started with, as its header names them: an added one's events reach the
+engine but not the file, so every replay of a recorded day plays a fixed set. Its
+minute and daily chart history is fetched from Cboe as for the others, but dividend
+imports (`--dividends massive`) and published settlement values (`--cboe-soq`) cover
+only those openportd started with. `Client.underlyings()`, `subscribe(symbol)` and
+`unsubscribe(symbol)` call these routes, and the terminal's symbol search (Ctrl/Cmd+K)
+offers to subscribe to a symbol it does not find.
 
 ## Paper trading
 

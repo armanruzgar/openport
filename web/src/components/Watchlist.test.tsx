@@ -3,11 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { api } from "../api/client"
+import { api, ApiError } from "../api/client"
 import { liveState, useLive } from "../api/live"
+import type { UnderlyingSubscription } from "../api/types"
 import { barDay } from "../lib/candles"
 import { status, summary } from "../test/trading-fixtures"
-import { SymbolSearch, Watchlist } from "./Watchlist"
+import { subscribableSymbol, SymbolSearch, Watchlist } from "./Watchlist"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 let host: HTMLDivElement, root: Root, client: QueryClient
@@ -69,4 +70,48 @@ it("scrolls the highlighted symbol into view and keeps the highlight on a row wh
   expect(host.querySelector('[aria-selected="true"]')?.id).toBe("symbol-result-4")
   await press("Enter")
   expect(chosen).toHaveBeenCalledWith("S04")
+})
+
+// G-11: a symbol the server does not carry can be subscribed while it runs.
+it("subscribes to a new symbol from search and explains a refused removal or a fixed source", async () => {
+  expect(subscribableSymbol(" nvda ")).toBe("NVDA")
+  expect(subscribableSymbol("BRK.B")).toBe("BRK.B")
+  for (const bad of ["", ".X", "NV DA", "SPX$", "A".repeat(17)]) expect(subscribableSymbol(bad)).toBeNull()
+  const carried: UnderlyingSubscription = { underlyings: ["SPX", "AAPL"], configured: ["SPX"], added: ["AAPL"], live: true, reason: null, limit: 32 }
+  vi.spyOn(api, "underlyingSubscription").mockResolvedValue(carried)
+  const subscribe = vi.spyOn(api, "subscribeUnderlying").mockResolvedValue({ ...carried, underlyings: ["SPX", "AAPL", "NVDA"], added: ["AAPL", "NVDA"] })
+  const unsubscribe = vi.spyOn(api, "unsubscribeUnderlying").mockRejectedValue(
+    new ApiError(409, "AAPL has positions, working orders or alerts in main; close, cancel or delete them first", "UNDERLYING_IN_USE"))
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
+  const chosen = vi.fn(), closed = vi.fn()
+  await act(async () => root.render(<SymbolSearch onSymbol={chosen} onClose={closed} />))
+  const input = host.querySelector("input")!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "nvda")
+    input.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  expect(host.textContent).toContain("No subscribed symbol matches.")
+  expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Subscribe to NVDA")).toBe(true)
+  await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })) })
+  expect(subscribe).toHaveBeenCalledWith("NVDA", "open")
+  expect(chosen).toHaveBeenCalledWith("NVDA")
+  expect(closed).toHaveBeenCalledOnce()
+
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Unsubscribe from AAPL"]')!.click())
+  expect(unsubscribe).toHaveBeenCalledWith("AAPL", "open")
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("AAPL has positions")
+
+  // A replay or the demo market plays fixed underlyings: no offer, and the reason.
+  await act(async () => root.unmount())
+  root = createRoot(host)
+  vi.mocked(api.underlyingSubscription).mockResolvedValue({ ...carried, added: [], live: false,
+    reason: "The demo market generates its own underlyings and cannot add others" })
+  await act(async () => root.render(<SymbolSearch onSymbol={chosen} onClose={closed} />))
+  const fixed = host.querySelector("input")!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(fixed, "NVDA")
+    fixed.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  expect([...host.querySelectorAll("button")].some((b) => b.textContent?.startsWith("Subscribe"))).toBe(false)
+  expect(host.textContent).toContain("The demo market generates its own underlyings and cannot add others.")
 })

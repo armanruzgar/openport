@@ -151,9 +151,20 @@ void CboeChartHistory::run() {
   }
 }
 
+void CboeChartHistory::add(std::string underlying) {
+  const std::lock_guard lock(underlyings_mutex_);
+  if (std::find(underlyings_.begin(), underlyings_.end(), underlying) == underlyings_.end())
+    underlyings_.push_back(std::move(underlying));
+}
+
 md::Timestamp CboeChartHistory::poll_once(net::HttpClient& http) {
   md::Timestamp next = std::numeric_limits<md::Timestamp>::max();
-  for (const auto& underlying : underlyings_) {
+  std::vector<std::string> underlyings;
+  {
+    const std::lock_guard lock(underlyings_mutex_);
+    underlyings = underlyings_;
+  }
+  for (const auto& underlying : underlyings) {
     for (const auto chart : {CboeChart::Intraday, CboeChart::Daily}) {
       if (options_.daily_only && chart == CboeChart::Intraday) continue;
       const auto key = std::pair{underlying, chart};

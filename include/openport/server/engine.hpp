@@ -13,6 +13,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -75,6 +76,35 @@ struct EngineStatus {
   std::map<std::string, UnderlyingHealth> underlyings;
 };
 
+/// The most underlyings a running server carries once it adds some at runtime, those it
+/// started with included: an addition past it is refused.
+inline constexpr std::size_t kMaxUnderlyings = 32;
+/// Underlying changes waiting for the engine thread; more are refused until it takes them.
+inline constexpr std::size_t kUnderlyingInbox = 16;
+
+/// The underlyings a source carries and whether they can change while it runs.
+struct UnderlyingSubscription {
+  bool live = false;  ///< Underlyings can be added and removed now.
+  std::string reason;  ///< Why not, when they cannot.
+  std::vector<std::string> configured;  ///< Those it started with (--symbols): fixed until a restart.
+  std::vector<std::string> added;  ///< Those added since, oldest first. Not kept across a restart.
+  std::size_t limit = kMaxUnderlyings;
+};
+/// One underlying to add to or remove from a running engine's subscription.
+struct UnderlyingChange {
+  std::string symbol;
+  bool add = true;
+};
+/// What a change did: 201 added, 200 removed or already as asked, otherwise an error
+/// status and code. The subscription is as it stands after the change.
+struct UnderlyingReply {
+  int status = 200;
+  std::string code;
+  std::string message;
+  UnderlyingSubscription subscription;
+};
+using UnderlyingCompletion = std::function<void(UnderlyingReply)>;
+
 /// Read-only view of the engine's results. The HTTP API depends only on this, so it
 /// can be tested without a provider or a thread.
 class MetricsSource {
@@ -112,6 +142,16 @@ class MetricsSource {
   /// False means unavailable or full. Completion runs on the engine thread;
   /// network callers must dispatch it onto their own executor.
   virtual bool post_trading(TradingCommand, TradingCompletion) { return false; }
+  /// The underlyings this source carries and whether they can change while it runs.
+  [[nodiscard]] virtual UnderlyingSubscription underlying_subscription() const {
+    UnderlyingSubscription fixed;
+    fixed.reason = "This source's underlyings are fixed";
+    fixed.configured = symbols();
+    return fixed;
+  }
+  /// Queues adding or removing one underlying. False when this source takes no changes
+  /// or its inbox is full; completion runs on the engine thread, as post_trading's.
+  virtual bool post_underlying(UnderlyingChange, UnderlyingCompletion) { return false; }
   /// Where recorded trading days are kept, which fill calibration reads; empty for none.
   [[nodiscard]] virtual std::filesystem::path recordings_directory() const { return {}; }
 };
@@ -133,6 +173,9 @@ class Engine final : public MetricsSource {
     bool demo_dividends = true;
     /// Groups of accounts copied orders fan out to; absent offers none.
     std::shared_ptr<AccountGroups> account_groups;
+    /// Called on the engine thread once an underlying is added while running; openportd
+    /// fetches its chart history. It must return at once.
+    std::function<void(const std::string&)> added_underlying;
     std::filesystem::path record_file;
     md::RecordingSink::Options recording;
     std::filesystem::path record_dir;
@@ -193,6 +236,13 @@ class Engine final : public MetricsSource {
   [[nodiscard]] const FlowTape* flow() const override { return options_.flow.get(); }
   [[nodiscard]] AccountGroups* account_groups() const override { return options_.account_groups.get(); }
   bool post_trading(TradingCommand command, TradingCompletion completion) override;
+  /// Live when the provider takes a new list while running (the polled feeds) and this is
+  /// neither a replay nor the demo market. A recording keeps the underlyings it started
+  /// with: one added later is not recorded, so every replay plays a fixed set.
+  [[nodiscard]] UnderlyingSubscription underlying_subscription() const override;
+  /// Adds an underlying, or removes one added earlier that no account holds, works or
+  /// watches, on the engine thread. The underlyings the engine started with stay.
+  bool post_underlying(UnderlyingChange change, UnderlyingCompletion completion) override;
   [[nodiscard]] std::filesystem::path recordings_directory() const override { return options_.recordings; }
   [[nodiscard]] md::RecordingStats recording_stats() const;
   [[nodiscard]] std::string recording_error() const;
@@ -206,6 +256,24 @@ class Engine final : public MetricsSource {
     providers::ReplayBatch batch;
     std::promise<void> done;
   };
+  struct PendingUnderlying {
+    UnderlyingChange change;
+    UnderlyingCompletion completion;
+  };
+  /// An underlying added while running, and when: its feed is overdue only from then.
+  struct Added {
+    std::string symbol;
+    md::Timestamp at = 0;
+  };
+  [[nodiscard]] bool live_subscription() const;
+  [[nodiscard]] std::string fixed_subscription() const;
+  /// Engine thread: applies one change and completes it.
+  void apply_underlying(PendingUnderlying& pending);
+  /// Engine thread: the accounts holding, working or watching anything on `symbol`.
+  [[nodiscard]] std::vector<std::string> accounts_using(const std::string& symbol) const;
+  /// When `symbol`'s feed was first owed an update: the engine's start, or its addition.
+  /// mutex_ held, or on the engine thread, which alone writes added_.
+  [[nodiscard]] md::Timestamp watched_since(const std::string& symbol, md::Timestamp started) const;
   std::future<void> consume_replay(providers::ReplayBatch batch);
   void run();
   void publish_desk();
@@ -232,9 +300,17 @@ class Engine final : public MetricsSource {
    public:
     explicit Ingress(Engine& owner) : owner_(owner) {}
     void publish(md::Event event) override;
+    /// From now on the events of an underlying added while running bypass the recorder.
+    void extend() { extended_.store(true, std::memory_order_release); }
     md::EventSink* next = nullptr;  ///< set before the provider starts
    private:
+    /// Whether a recording keeps `event`: one of the underlyings the engine started
+    /// with, or of none (a feed-wide status or halt), as a replay of it would read it.
+    bool recorded(const md::Event& event);
     Engine& owner_;
+    std::atomic<bool> extended_{false};
+    std::mutex ids_mutex_;
+    std::unordered_set<md::InstrumentId> unrecorded_;  // ids_mutex_: contracts of later underlyings
   };
   struct Refusal {
     std::uint64_t count = 0;
@@ -265,10 +341,14 @@ class Engine final : public MetricsSource {
   std::mutex command_mutex_;
   std::deque<PendingCommand> commands_;
   std::deque<PendingReplay> replay_batches_;
+  std::deque<PendingUnderlying> underlying_changes_;  // command_mutex_
   providers::ReplayProvider* replay_ = nullptr;
   bool demo_ = false;
   std::uint64_t next_command_ = 1;
   bool accepting_commands_ = false;
+  bool accepting_underlyings_ = false;  // command_mutex_
+  std::vector<Added> added_;  // mutex_; only the engine thread writes it
+  std::set<std::string> dropped_;  // engine thread: removed while running, not added since
 
   std::mutex dividends_mutex_;
   std::optional<std::vector<trading::Dividend>> pending_dividends_;

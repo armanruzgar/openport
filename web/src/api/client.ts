@@ -5,7 +5,7 @@ import type { Playbook, PlaybooksResponse, PassOdds } from "./playbook-types"
 import type { StrategyTemplate, TemplateResult } from "../lib/strategy"
 import type { Volatility, VolatilitySeries } from "./types"
 import type { AnalysisFormat, AnalysisGrid, AnalysisPortfolio, AnalysisPortfolios, AnalysisProfile, AnalysisStress, AnalysisVar, EarningsHistory, EarningsImport, Flow, FlowQuery } from "./types"
-import type { NotificationChannel, NotificationHistory, NotificationStatus, TokenReloadResponse } from "./types"
+import type { NotificationChannel, NotificationHistory, NotificationStatus, TokenReloadResponse, UnderlyingSubscription } from "./types"
 import type { CandleInterval, Candles, Chain, ExposureConvention, ExposureSlice, ExposureMatrix, Probability, ReplayListing, ReplayState, Status, StrategySearch, StrategySearchQuery, Summary, Surface, RunVerification } from "./types"
 import type { RulePack, RulePackValidation, RulesCompareRequest, RulesCompareResponse, Account, AccountsResponse, UpdateAccountRequest, UpdateAccountResponse, DeleteAccountResponse, AlertDeleted, AlertRequest, AlertResponse, AlertsResponse, CancelAllResponse, CancelRequest, ClosePositionsResponse, CreateAccountRequest, CreateAccountResponse, DayNote, EquityHistory, FillsResponse, FlattenPreview, FlattenPricing, GroupResponse, Guardrails, HedgeSuggestions, HedgeTarget, KillResponse, Limits, Money, NewOrder, OrderChange, OrderPreview, OrderResponse, OrdersResponse, PlansResponse, Portfolio, ResetRequest, Risk, RiskProfile, RiskProfileQuery, SettlementsResponse, SettlementResponse, Side, StockPreview, SubmitOrderResponse, TradeNote, TradeNoteResponse, TradesResponse, WhatIfResponse, WriteMode, StockOrderRequest, StockOrderResponse, StockOrdersResponse, AccountGroupDeleted, AccountGroupInput, AccountGroup, AccountGroupsResponse, CopyOrderResponse } from "./trading-types"
 import { activeAccount, MAIN_ACCOUNT } from "../lib/active-account"
@@ -198,6 +198,13 @@ export const api = {
   testNotification: (channel: string, mode: WriteMode) => write<{ queued: boolean }>("/api/notifications/test", "POST", mode, { channel }),
   configureNotification: (channel: string, settings: Pick<NotificationChannel, "enabled" | "events" | "floor_distance">, mode: WriteMode) =>
     write<NotificationStatus>(`/api/notifications/channels/${encodeURIComponent(channel)}`, "PUT", mode, settings),
+  /** The live server's underlyings and whether they can change while it runs; never a replay's. */
+  underlyingSubscription: (signal?: AbortSignal) => request<UnderlyingSubscription>("/api/underlyings", { signal, headers: readHeaders() }),
+  /** Admin: subscribe to an underlying while the server runs (a polled feed); not kept across a restart. */
+  subscribeUnderlying: (symbol: string, mode: WriteMode) => write<UnderlyingSubscription>("/api/underlyings", "POST", mode, { symbol }),
+  /** Admin: remove an underlying added while running, once no account holds, works or watches it. */
+  unsubscribeUnderlying: (symbol: string, mode: WriteMode) =>
+    write<UnderlyingSubscription>(`/api/underlyings/${encodeURIComponent(symbol)}`, "DELETE", mode),
   /** The server's kept notifications of one account; the source is a parameter, so the path is never a replay's. */
   notificationHistory: (account: string, source: "live" | "replay", signal?: AbortSignal) =>
     request<NotificationHistory>(`/api/notifications/history?${new URLSearchParams({ account, source })}`, { signal, headers: readHeaders() }),

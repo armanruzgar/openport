@@ -102,7 +102,16 @@ bool ChainFilter::admits(const md::OptionContract& contract) const {
 void PollingProvider::start(const md::Subscription& subscription, md::EventSink& sink) {
   stop();
   stopping_ = false;
+  {
+    const std::lock_guard lock(underlyings_mutex_);
+    underlyings_ = subscription.underlyings;
+  }
   thread_ = std::thread(&PollingProvider::run, this, subscription, &sink);
+}
+
+void PollingProvider::update_underlyings(const std::vector<std::string>& underlyings) {
+  const std::lock_guard lock(underlyings_mutex_);
+  underlyings_ = underlyings;
 }
 
 void PollingProvider::check_cancelled() const {
@@ -125,12 +134,23 @@ bool PollingProvider::sleep(std::chrono::milliseconds duration) {
 
 void PollingProvider::run(md::Subscription subscription, md::EventSink* sink) {
   const std::string label(name());
-  for (const auto& underlying : subscription.underlyings) {
-    sink->publish(md::ProviderStatus{md::now(), md::FeedState::Connecting, label + " " + underlying,
-                                     underlying});
-  }
+  // Each underlying says it is connecting before its first poll, one added later too.
+  std::set<std::string> announced;
+  const auto announce = [&] {
+    for (const auto& underlying : subscription.underlyings)
+      if (announced.insert(underlying).second)
+        sink->publish(md::ProviderStatus{md::now(), md::FeedState::Connecting, label + " " + underlying,
+                                         underlying});
+  };
+  announce();
   net::HttpClient http;
   while (!stopping_) {
+    // The list can change between cycles (update_underlyings); the filters cannot.
+    {
+      const std::lock_guard lock(underlyings_mutex_);
+      subscription.underlyings = underlyings_;
+    }
+    announce();
     for (const std::string& underlying : subscription.underlyings) {
       if (stopping_) break;
       poll_once(http, underlying, subscription, *sink);

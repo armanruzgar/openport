@@ -8,7 +8,14 @@ A chart overlay or expected move is a derived estimate, not an executable quote.
 
 Press **?** or the **?** button for the shortcut dialog. **Ctrl/Cmd+K** opens
 symbol search over the server's subscribed underlyings. Arrow through the search
-results and press Enter to jump. The terminal does not add runtime subscriptions.
+results and press Enter to jump. A symbol the server does not carry can be added
+there: type it and press Enter, or **Subscribe to NVDA**, and the terminal opens it,
+waiting for its first snapshot (the feed polls it from its next cycle). The search
+also lists those added while the server runs, each with a button that removes it once
+no account holds, works or watches anything on it. Additions last until openportd
+restarts; to keep one, add it to `--symbols`. A server whose underlyings are fixed
+(the demo market, a replay, Databento, tastytrade or a feed with a fallback) says so
+instead, and adding needs the server's write access ([runtime subscriptions](api.md#subscribing-while-running)).
 Number keys select the sidebar pages in their displayed order; left/right outside
 the chain retain the existing previous/next-expiry behavior.
 

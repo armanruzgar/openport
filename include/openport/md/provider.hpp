@@ -62,6 +62,15 @@ class Provider {
 
   /// Stops delivery and joins the adapter's threads. Safe to call more than once.
   virtual void stop() = 0;
+
+  /// Whether update_underlyings() takes effect while the provider runs. One that cannot
+  /// (a recording, the demo market, a stream that subscribes upstream when it connects)
+  /// keeps the default, and openportd refuses runtime changes, saying why.
+  [[nodiscard]] virtual bool live_subscription() const noexcept { return false; }
+  /// Delivers these underlyings from now on, with the filters start() was given: an added
+  /// one from the provider's next cycle, and a removed one no longer. Thread-safe; returns
+  /// at once. Called only after start(), and only when live_subscription() is true.
+  virtual void update_underlyings(const std::vector<std::string>& /*underlyings*/) {}
 };
 
 /// Settings for one provider: an API key plus provider-specific options.

@@ -164,7 +164,16 @@ supported and cause no release request.
 
 `openportd` defaults to Cboe delayed data for SPX, SPY, QQQ, IWM and DIA, as does
 the Docker image. `--symbols` replaces that subscription. At revision 3 and later,
-the demo feed uses SPX, SPY, QQQ, XSP, NDX, RUT and VIX.
+the demo feed uses SPX, SPY, QQQ, XSP, NDX, RUT and VIX. On a polled feed (Cboe,
+Tradier, Massive, ThetaData, Schwab, Alpaca, Interactive Brokers) an admin can add an
+underlying while openportd runs, and remove one added that way
+([`POST /api/underlyings`](api.md#subscribing-while-running), or the terminal's symbol
+search): the next poll cycle takes the new list, up to 32 underlyings in all. An
+addition lasts until openportd restarts, so a Homebrew service or Docker container
+keeps only what its `--symbols` names. Databento and tastytrade subscribe upstream
+when they connect, and a feed with `--fallback-provider` keeps both feeds' lists in
+step, so their underlyings change only with a restart; the demo feed and replays
+play fixed sets.
 
 Ports must be integers from 1 through 65,535. Poll intervals and probe timeout
 seconds must be positive integers. Expiry counts must be nonnegative integers;
@@ -716,6 +725,11 @@ only when it changes. These go to the file only, never to live delivery again.
 Names include the provider, trading date, start nanoseconds and a unique suffix, so
 restarting within a date creates another file without overwriting the earlier one.
 A backward wall-clock adjustment does not reopen an earlier date.
+
+A recording holds the underlyings openportd started with, which its header names. One
+added while running ([runtime subscriptions](api.md#subscribing-while-running)) reaches
+the engine but not the recording, so each replay of a day plays the fixed set its
+header lists, and a run recorded from it verifies against the same events.
 
 Directory recordings stay in private `.record-*` staging directories until clean
 close, then publish atomically. The Replay page sees them after rollover or shutdown.

@@ -141,6 +141,21 @@ class Client:
     def symbols(self) -> list[str]:
         return [item["symbol"] for item in self.status()["underlyings"]]
 
+    def underlyings(self) -> JSON:
+        """The underlyings the server carries: those it started with (configured) and those
+        added while it runs (added), and whether they can change now (live) or why not (reason)."""
+        return self._request("GET", "/underlyings", control=True)
+
+    def subscribe(self, symbol: str) -> JSON:
+        """Admin: add an underlying while the server runs, on a polled feed. It is polled from the
+        feed's next cycle, is not recorded, and is gone after a restart unless --symbols names it."""
+        return self._request("POST", "/underlyings", {"symbol": symbol}, control=True, retry=False)
+
+    def unsubscribe(self, symbol: str) -> JSON:
+        """Admin: remove an underlying added while running, once no account holds, works or
+        watches anything on it."""
+        return self._request("DELETE", "/underlyings/" + quote(symbol, safe=""), control=True, retry=False)
+
     def _market(self, symbol: str, view: str, **params):
         return self._request("GET", "/underlyings/" + quote(symbol, safe="") + "/" + view, params=params)
 

@@ -170,6 +170,20 @@ export interface NotificationStatus {
   /** Public channel settings and shared counters, independent of this source's forwarding availability. */
   channels: NotificationChannel[]
 }
+/** GET /api/underlyings: what the live server carries and whether that can change while it runs. */
+export interface UnderlyingSubscription {
+  underlyings: string[]
+  /** Those it started with (--symbols): fixed until a restart. */
+  configured: string[]
+  /** Those added while it runs, oldest first; gone after a restart. */
+  added: string[]
+  live: boolean
+  /** Why the underlyings cannot change, when live is false. */
+  reason: string | null
+  limit: number
+  /** What a subscribe or unsubscribe did. */
+  message?: string
+}
 /** An event the server kept: the event stream's message plus when the server published it. */
 export interface NotificationHistoryEvent {
   type: "event"

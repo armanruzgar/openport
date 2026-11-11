@@ -89,6 +89,10 @@ class PollingProvider : public md::Provider {
   /// Interrupts requests and joins promptly, except while system DNS is blocked
   /// in getaddrinfo (see HttpClient::get).
   void stop() final;
+  /// Each cycle polls the underlyings one after another, so the list can change between
+  /// cycles: the next cycle polls the new list, after a Connecting status for an addition.
+  [[nodiscard]] bool live_subscription() const noexcept final { return true; }
+  void update_underlyings(const std::vector<std::string>& underlyings) final;
 
   /// Runs one poll and reports its underlying's outcome. Call without the background
   /// loop running; an injectable HTTP client also permits deterministic replay.
@@ -121,6 +125,8 @@ class PollingProvider : public md::Provider {
   std::atomic<bool> stopping_{false};
   std::mutex wake_mutex_;
   std::condition_variable wake_;
+  std::mutex underlyings_mutex_;
+  std::vector<std::string> underlyings_;  // underlyings_mutex_: what the next cycle polls
 };
 
 }  // namespace openport::providers

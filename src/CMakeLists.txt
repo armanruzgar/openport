@@ -192,6 +192,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/fill_calibration.cpp
     server/plans.cpp
     server/api.cpp
+    server/underlyings_api.cpp
     server/replay_host.cpp
     server/practice.cpp
     server/sandboxes.cpp
