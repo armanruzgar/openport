@@ -321,7 +321,9 @@ TEST(StrategySearch, NetworkRequestsCompleteFromThePool) {
   EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/QQQ/optimizer?target=1&budget=1"}, source).status, 404);
 }
 
-// A request whose client has gone stops at the first check, answering what it valued.
+// A request whose client has gone stops at the first check. A client that closed only
+// its sending side still reads the answer, which says the search was cancelled rather
+// than that nothing fit the budget (B-124).
 TEST(StrategySearch, ACancelledRequestStopsItsSearch) {
   SearchSource source;
   server::ApiRequest request{"GET", "/api/underlyings/SPX/optimizer?target=5050&budget=2000"};
@@ -331,11 +333,10 @@ TEST(StrategySearch, ACancelledRequestStopsItsSearch) {
   auto future = promise.get_future();
   ASSERT_EQ(future.wait_for(std::chrono::minutes(2)), std::future_status::ready);
   const auto response = future.get();
-  ASSERT_EQ(response.status, 200) << response.body;
-  const auto body = json::parse(response.body);
-  EXPECT_TRUE(body["truncated"]);
-  EXPECT_EQ(body["evaluated"], 0);
-  EXPECT_GT(body["considered"].get<int>(), 0);
-  EXPECT_EQ(json::parse(server::handle_api(request, source).body)["evaluated"], 0);
+  EXPECT_EQ(response.status, 503) << response.body;
+  EXPECT_EQ(json::parse(response.body)["error"]["code"], "REQUEST_CANCELLED");
+  const auto direct = server::handle_api(request, source);
+  EXPECT_EQ(direct.status, 503) << direct.body;
+  EXPECT_EQ(json::parse(direct.body)["error"]["code"], "REQUEST_CANCELLED");
 }
 }  // namespace

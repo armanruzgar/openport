@@ -4209,6 +4209,10 @@ bool strategy_search(const ApiRequest& request, const MetricsSource& source, Api
     try { response.body = search_strategies(*metrics, search, cancelled).dump(); }
     catch (const std::invalid_argument& failure) { response = api_error(400, "INVALID_REQUEST", failure.what()); }
     catch (const std::exception&) { response = api_error(500, "INTERNAL_ERROR", "Strategy search failed"); }
+    // A client that closed the connection, even only its sending side, stopped the
+    // search: say so, rather than answer as if the market had no candidates.
+    if (cancel && cancel->load() && response.status == 200)
+      response = api_error(503, "REQUEST_CANCELLED", "The search stopped when the client closed the connection; keep it open, sending side included, until the answer arrives");
     complete(std::move(response));
   }, [complete] { complete(api_error(503, "ENGINE_STOPPING", "Strategy searches are stopping")); });
   if (!queued) {

@@ -1009,7 +1009,13 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
   if (view == "optimizer") {
     // The network path runs this on the search pool (see handle_api_async).
     const auto cancelled = [cancel = request.cancelled] { return cancel && cancel->load(); };
-    try { return ok(search_strategies(*metrics, parse_strategy_search(query), cancelled)); }
+    try {
+      auto found = ok(search_strategies(*metrics, parse_strategy_search(query), cancelled));
+      // As on the network path: a search its client stopped is not an empty market.
+      if (cancelled())
+        return api_error(503, "REQUEST_CANCELLED", "The search stopped when the client closed the connection; keep it open, sending side included, until the answer arrives");
+      return found;
+    }
     catch (const std::invalid_argument& failure) { return error(400, failure.what()); }
   }
   if (view == "volatility") {

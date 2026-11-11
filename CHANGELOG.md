@@ -1069,6 +1069,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   that figure is now the "account file". The welcome dialog and the alerts dialog
   wrote the name as "openport"; they say "OpenPort" like the rest of the terminal. The
   Dashboard no longer reads "Practice · Practice" for the built-in Practice plan.
+- **A strategy search its client cancelled says so.** A client that closes the
+  connection cancels its optimizer search, and one that closes only its sending side
+  after the request (`shutdown(SHUT_WR)`, `nc -N`, some proxies) cannot be told from
+  one that has gone. Such a client still read the answer: 200 with `evaluated` 0, an
+  empty candidate list and `truncated` true, as if nothing fit the budget. A search its
+  client cancelled now answers 503 `REQUEST_CANCELLED`.
 
 ## 0.5.1 (2026-10-28)
 
