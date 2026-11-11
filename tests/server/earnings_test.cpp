@@ -4,7 +4,9 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
+#include <vector>
 
 #include "support/synthetic_chain.hpp"
 
@@ -140,6 +142,59 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
 }  // namespace
 
 namespace {
+// One row this build could not read (a hand edit, another version's file) stopped the
+// load: the rows after it were dropped, the next save rewrote the file without them,
+// and the load error stayed after the rewrite succeeded.
+TEST(Earnings, AnUnreadableRowCostsOnlyItselfAndTheFileIsKeptBeforeItIsRewritten) {
+  const auto directory = std::filesystem::temp_directory_path() / ("openport-earnings-rows-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(directory);
+  std::filesystem::create_directories(directory);
+  const auto file = directory / "earnings.json";
+  const auto row = [](const char* symbol) {
+    return json{{"symbol", symbol}, {"date", "2026-07-30"}, {"session", "after_close"}, {"source", "imported"}};
+  };
+  auto unreadable = row("MSFT");
+  unreadable["before"] = "2026-1-28";
+  {
+    std::ofstream out(file);
+    out << json{{"version", 1}, {"moves", json::array({row("AAPL"), unreadable, row("NVDA"), row("TSLA")})}}.dump();
+  }
+  {
+    server::EarningsStore store(file);
+    EXPECT_EQ(store.moves().size(), 3u);
+    EXPECT_NE(store.error().find("skipped 1 unreadable move (invalid before)"), std::string::npos) << store.error();
+    EXPECT_EQ(store.import_csv("symbol,date,session,implied_move,realized_move\nAMZN,2026-07-30,after_close,4,1\n").added, 1u);
+    EXPECT_NE(store.error().find("kept as it was in earnings.json.unread-"), std::string::npos) << store.error();
+  }
+  std::vector<std::filesystem::path> kept;
+  for (const auto& entry : std::filesystem::directory_iterator(directory))
+    if (entry.path().filename().string().starts_with("earnings.json.unread-")) kept.push_back(entry.path());
+  ASSERT_EQ(kept.size(), 1u);
+  std::ifstream copy(kept[0]);
+  EXPECT_EQ(json::parse(copy)["moves"].size(), 4u);  // MSFT's row is still there
+  {
+    server::EarningsStore reopened(file);
+    EXPECT_EQ(reopened.moves().size(), 4u);
+    EXPECT_TRUE(reopened.error().empty()) << reopened.error();
+  }
+  // A file that is not JSON at all is kept the same way, and a later save clears the error.
+  { std::ofstream out(file); out << "{\"version\": 1, \"moves\": [{\"symbol\""; }
+  {
+    server::EarningsStore store(file);
+    EXPECT_TRUE(store.moves().empty());
+    EXPECT_FALSE(store.error().empty());
+    EXPECT_EQ(store.import_csv("symbol,date,session,implied_move,realized_move\nAMZN,2026-07-30,after_close,4,1\n").added, 1u);
+  }
+  std::size_t copies = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(directory))
+    if (entry.path().filename().string().starts_with("earnings.json.unread-")) ++copies;
+  EXPECT_EQ(copies, 2u);
+  server::EarningsStore reopened(file);
+  EXPECT_EQ(reopened.moves().size(), 1u);
+  EXPECT_TRUE(reopened.error().empty()) << reopened.error();
+  std::filesystem::remove_all(directory);
+}
+
 TEST(Earnings, ALongLabelIsCutOnACharacterBoundaryAndOnlyUtf8IsImported) {
   const auto file = std::filesystem::temp_directory_path() / ("openport-earnings-labels-" + std::to_string(::getpid()) + ".json");
   std::filesystem::remove(file);

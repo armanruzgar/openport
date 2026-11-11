@@ -86,6 +86,10 @@ class EarningsStore {
   mutable std::mutex mutex_;
   std::map<std::tuple<std::string, md::Date>, EarningsMove> moves_;
   std::string error_;
+  /// The file held moves this build could not read (or was not JSON): the first save
+  /// keeps it as it was, beside it, before rewriting it without them.
+  bool unread_ = false;
+  std::string kept_;  ///< says where, for as long as the process runs
 };
 
 /// Routes:

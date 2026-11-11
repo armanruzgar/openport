@@ -166,11 +166,25 @@ EarningsStore::EarningsStore(std::filesystem::path file) : file_(std::move(file)
     md::restrict_file(file_);
     std::ifstream in(file_);
     const auto data = json::parse(in);
+    // Recorded implied moves are observations of past markets: one row this build
+    // cannot read (a hand edit, another version's file) costs only that row.
+    std::size_t skipped = 0;
+    std::string first;
     for (const auto& item : data.at("moves")) {
-      auto move = move_from(item);
-      moves_[{move.symbol, move.date}] = std::move(move);
+      try {
+        auto move = move_from(item);
+        moves_[{move.symbol, move.date}] = std::move(move);
+      } catch (const std::exception& e) {
+        if (skipped++ == 0) first = e.what();
+      }
+    }
+    if (skipped) {
+      unread_ = true;
+      error_ = file_.string() + ": skipped " + std::to_string(skipped) + " unreadable move" + (skipped == 1 ? "" : "s") +
+               " (" + first + ")";
     }
   } catch (const std::exception& e) {
+    unread_ = true;
     error_ = file_.string() + ": " + e.what();
   }
 }
@@ -178,10 +192,28 @@ EarningsStore::EarningsStore(std::filesystem::path file) : file_(std::move(file)
 void EarningsStore::save() {
   if (file_.empty()) return;
   try {
+    if (unread_ && std::filesystem::exists(file_)) {
+      // What could not be read is never rewritten away: the file as it was goes beside it.
+      const auto stamp = md::format_timestamp(md::now()).substr(0, 19);
+      std::string suffix = ".unread-";
+      for (const char c : stamp) if (c != '-' && c != ':') suffix += c;
+      suffix += 'Z';
+      auto aside = file_;
+      aside += suffix;
+      for (int n = 2; std::filesystem::exists(aside); ++n) {
+        aside = file_;
+        aside += suffix + "-" + std::to_string(n);
+      }
+      std::filesystem::copy_file(file_, aside);
+      kept_ = "earnings: " + file_.filename().string() + " held moves this version could not read; it is kept as it was in " +
+              aside.filename().string();
+    }
+    unread_ = false;
     json moves = json::array();
     for (const auto& [key, move] : moves_) moves.push_back(move_json(move));
     if (file_.has_parent_path()) md::create_private_directories(file_.parent_path());
     md::write_file_atomic(file_, json{{"version", 1}, {"moves", moves}}.dump(1) + '\n');
+    error_ = kept_;
   } catch (const std::exception& e) {
     error_ = "earnings: " + std::string(e.what());
   }

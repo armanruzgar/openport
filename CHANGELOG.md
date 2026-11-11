@@ -549,6 +549,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   directories openportd creates 0700. Imported portfolios, `playbooks.json`,
   `earnings.json` and equity histories an earlier version left readable are tightened
   when they are next opened.
+- **One unreadable earnings row no longer costs the rest.** `earnings.json` was read in
+  one pass that stopped at the first row this build could not read (a date such as
+  `2026-1-28` from a hand edit, or another version's file): the rows after it were
+  dropped, and the next capture, settlement or import rewrote the file without them,
+  though a recorded implied move cannot be measured again. The load error also stayed
+  in `/api/earnings` after the rewrite succeeded. Each row is now read on its own and
+  only unreadable ones are skipped. Before its first rewrite, a file that was not read
+  in full is kept as it was beside it, as `earnings.json.unread-TIME`, and the error
+  then names that copy; a successful save otherwise clears the error.
 
 ## 0.5.1 (2026-10-28)
 
