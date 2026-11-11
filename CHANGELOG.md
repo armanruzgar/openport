@@ -669,6 +669,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   made offline, rate-limited by GitHub or answered with something unreadable hid the
   "is available" notice for another day. The known release now stays until a check
   names the latest one.
+- **A new attempt takes the chosen plan's margin.** In **Start a new attempt**, margin
+  settings edited under one plan stayed when another plan, Custom or a different
+  **Start from** was chosen, and went out as explicit overrides: a cash plan chosen
+  after editing house margin started as a margin account. The dialog now starts margin
+  again from each plan chosen, as **New account** already did.
 
 ## 0.5.1 (2026-10-28)
 

@@ -154,6 +154,24 @@ it("starts margin again from each plan chosen for a new account", async () => {
   expect(api.createAccount).toHaveBeenCalledWith({ name: "Account 1", plan: "cash" }, "open")
 })
 
+it("starts margin again from each plan chosen for a new attempt", async () => {
+  const practice = plans.find((entry) => entry.id === "practice")!
+  const cash = { ...practice, id: "cash", name: "Cash", rules: { ...practice.rules, plan: "Cash", plan_id: "cash", account_type: "cash" as const, house_margin_percent: 0 } }
+  client.setQueryData(["plans"], { plans: [{ ...practice, rules: { ...practice.rules, house_margin_percent: 25 } }, cash] })
+  await act(async () => root.render(<QueryClientProvider client={client}>
+    <ResetDialog trading={{ ...status.trading!, write: "open" }} attempt={2} initial="practice" onClose={() => {}} />
+  </QueryClientProvider>))
+  const house = host.querySelector<HTMLInputElement>('input[type="number"][max="400"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(house, "30")
+    house.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  await act(async () => (host.querySelector('input[value="cash"]') as HTMLInputElement).click())
+  expect(host.querySelector<HTMLSelectElement>('option[value="ira"]')!.closest("select")!.value).toBe("cash")
+  await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  expect(api.resetAccount).toHaveBeenCalledWith({ plan: "cash", reason: "Start Cash" }, "open")
+})
+
 it("inherits a plan's margin settings until the trader changes them", async () => {
   const plan = { ...plans.find((entry) => entry.id === "practice")!, rules: {
     ...plans.find((entry) => entry.id === "practice")!.rules, margin: "portfolio" as const, house_margin_percent: 30, pm_vol_shock: 5,

@@ -95,8 +95,14 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
   const floorWarning = compareMoney(softFloor, "0") === 1 && balance != null &&
     (compareMoney(balance, softFloor) === -1 || compareMoney(balance, softFloor) === 0)
   const planDefaults = planMargin(custom && !("error" in custom) ? custom.rules : selected?.rules)
+  // Margin settings start again from each plan chosen, as for a new account, so one
+  // plan's edited margin never goes out as another plan's explicit overrides.
+  function choose(id: string) {
+    setChoice(id)
+    setMargin(undefined)
+  }
   function chooseCustom() {
-    setChoice(CUSTOM)
+    choose(CUSTOM)
     if (form || !base) return
     const start = bases.find((p) => p.id === choice) ?? base
     setBaseId(start.id)
@@ -107,6 +113,7 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
     if (!plan) return
     setBaseId(id)
     setForm(formFor(plan))
+    setMargin(undefined)
   }
   function formFor(plan: Plan): PlanForm {
     const form = planForm(plan)
@@ -162,7 +169,7 @@ export function ResetDialog({ trading, attempt, initial, onClose }: { trading: T
                   choice === plan.id && !locked ? "border-accent bg-accent/5" : "border-border hover:border-muted"}`}>
                   <div className="flex items-start gap-2">
                     <input type="radio" name="plan" value={plan.id} checked={choice === plan.id && !locked} disabled={locked != null}
-                      onChange={() => setChoice(plan.id)} className="mt-1 accent-[var(--accent)]" />
+                      onChange={() => choose(plan.id)} className="mt-1 accent-[var(--accent)]" />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
                         {plan.name}
