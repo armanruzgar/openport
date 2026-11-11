@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useId, useState } from "react"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
 import { sameAccountPlaceholder } from "../api/trading"
@@ -79,11 +79,15 @@ export function RiskProfilePanel({ underlyings }: { underlyings: string[] }) {
   const [termScaled, setTermScaled] = useState(false)
   const [range, setRange] = useState(10)
   const [betaText, setBetaText] = useState("")
+  // The overrides in use: the last text that parsed. Text that does not parse is not sent
+  // (nor silently replaced by no overrides): the profile keeps these and the field says why.
+  const [appliedBetas, setAppliedBetas] = useState<Record<string, number>>({})
   const [dynamics, setDynamics] = useState<SmileDynamics>("sticky_strike")
   const betas = parseBetas(betaText)
+  const betaHint = useId()
   const underlying = underlyings.includes(scope) ? scope : ""
   const query: RiskProfileQuery = {
-    ...(underlying ? { underlying } : { benchmark, betas: betas ?? {} }),
+    ...(underlying ? { underlying } : { benchmark, betas: appliedBetas }),
     ...(termScaled ? { term_scaled: true } : {}),
     days: dateChoices.map((c) => c.value).filter((v) => dates.includes(v)), iv, range,
     ...(dynamics === "sticky_strike" ? {} : { dynamics }),
@@ -123,8 +127,10 @@ export function RiskProfilePanel({ underlyings }: { underlyings: string[] }) {
       <DynamicsSelect value={dynamics} onChange={setDynamics} />
       {!underlying && <label className="flex flex-col gap-1 text-muted">Betas (optional)
         <input aria-label="Beta overrides" className={`trade-input w-40 ${betas ? "" : "border-danger"}`} placeholder="QQQ:1.2, IWM:1.1" value={betaText}
-          onChange={(e) => setBetaText(e.target.value)} /></label>}
+          aria-invalid={betas == null} aria-describedby={betas == null ? betaHint : undefined}
+          onChange={(e) => { setBetaText(e.target.value); const parsed = parseBetas(e.target.value); if (parsed) setAppliedBetas(parsed) }} /></label>}
     </div>
+    {!underlying && betas == null && <p id={betaHint} className="text-xs text-warn">Use SYMBOL:BETA pairs separated by commas, with betas from -10 to 10. The profile keeps the last overrides that did.</p>}
     <TradingError error={profile.error} />
     {profile.data ? <ProfileResult profile={profile.data} /> : !profile.error && <p className="text-sm text-muted">Loading profile…</p>}
   </div>

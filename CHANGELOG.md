@@ -1057,6 +1057,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   to 29 seconds before their last trade read "Positions are held into expiry", the
   plan table and the reset dialog said "0 min before", and 90 seconds read "2 minutes".
   Cutoffs are now stated to the second ("20 seconds", "1 min 30 s").
+- **Beta overrides that do not parse are no longer dropped silently.** In the
+  Positions risk profile, beta-override text that did not parse (or a beta beyond
+  ±10) was sent as no overrides at all, so the beta-weighted profile on screen
+  ignored the text still in the field, marked only by a red border. Such text is now
+  not sent: the profile keeps the last overrides that parsed, and the field says
+  what it takes, as the scenario explorer does.
 
 ## 0.5.1 (2026-10-28)
 
