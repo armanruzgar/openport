@@ -47,6 +47,15 @@ it("schedules spaced fresh practice by recent weakness and real completion days"
   expect(practiceStreak(history, "2026-10-22")).toBe(0)
   expect(practiceQueue(demos, [run("weak", "2026-10-21", 20)], "2026-10-21").some(q => q.scenario === "weak")).toBe(false)
 })
+it("skips a completion whose time does not parse instead of failing the Replay page", () => {
+  const demos = [{ id: "a", title: "A", objectives: [{ id: "loss", type: "max_loss", limit: 500 }] } as ReplayDemo]
+  const garbage = { ...run("a", "2026-10-20", 95), completed_at: "garbage" }
+  expect(practiceStreak([garbage], "2026-10-21")).toBe(0)
+  expect(practiceQueue(demos, [garbage], "2026-10-21", () => "7")).toMatchObject([{ scenario: "a", score: null, interval: 1 }])
+  // A readable completion still counts, whichever order the rows come in.
+  expect(practiceQueue(demos, [garbage, run("a", "2026-10-20", 95)], "2026-10-21", () => "7")).toEqual([])
+  expect(practiceQueue(demos, [run("a", "2026-10-20", 95), garbage], "2026-10-21", () => "7")).toEqual([])
+})
 it("puts authored events on both second and millisecond chart axes without fabricating prices", () => {
   const events = [{ type: "halt", time: "2026-09-22T14:45:00Z", end: "2026-09-22T14:50:00Z", symbols: ["SPX"] }]
   const from = Date.parse(trade.opened), to = Date.parse(trade.closed)

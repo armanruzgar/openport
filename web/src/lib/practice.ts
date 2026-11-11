@@ -31,12 +31,17 @@ export function practiceStreak(history: ReplayHistory[], today: string) {
 export function practiceQueue(demos: ReplayDemo[], history: ReplayHistory[], today: string, seed = freshPracticeSeed, edges: readonly Bucket[] = []) {
   return demos.flatMap(demo => {
     if (!demo.id || !demo.objectives?.length) return []
-    const prior = history.filter(r => r.scenario === demo.id && r.drill?.complete_run && r.drill.score != null && r.completed_at)
-      .sort((a, b) => b.completed_at!.localeCompare(a.completed_at!))[0]
+    // Sidecars are editable: a completion time that does not parse counts as no completion, as in practiceDays.
+    const completions = history.flatMap(r => {
+      const day = r.scenario === demo.id && r.drill?.complete_run && r.drill.score != null && r.completed_at ? newYorkDate(r.completed_at) : null
+      return day ? [{ run: r, day: day.date, time: Date.parse(r.completed_at!) }] : []
+    })
+    const latest = completions.sort((a, b) => b.time - a.time)[0]
+    const prior = latest?.run
     const score = prior?.drill?.score ?? null
     const weak = edges.filter(b => b.trades >= 3 && b.expectancy != null && b.expectancy < 0 && demo.symbols?.includes(b.label)).map(b => b.label)
     const interval = weak.length || score == null || score < 60 ? 1 : score < 80 ? 3 : 7
-    const elapsed = prior ? dayNumber(today) - dayNumber(newYorkDate(prior.completed_at!)!.date) : Infinity
+    const elapsed = latest ? dayNumber(today) - dayNumber(latest.day) : Infinity
     if (elapsed < interval) return []
     let nextSeed = seed()
     // A deterministic test generator may repeat; the neighbour is still a new seed.

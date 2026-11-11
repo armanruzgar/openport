@@ -619,6 +619,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   only the other providers were on its list and a failover's `primary+backup` name
   matched none. Every provider openportd can run is named now, and a failover reports
   both of its providers.
+- **A finished run with an unreadable completion time no longer breaks the Replay
+  page.** Today's practice took a drill's last completion without checking that its
+  `completed_at` parsed, so one edited or damaged replay sidecar made the page fail to
+  render. Such a completion is skipped, as the practice streak already did.
 
 ## 0.5.1 (2026-10-28)
 
