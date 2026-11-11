@@ -27,7 +27,7 @@ body:
     id: provider
     attributes:
       label: Market data
-      options: [Cboe (default), Databento, Massive, ThetaData, Tradier, tastytrade, Replay or demo market]
+      options: [Cboe (default), Databento, Massive, ThetaData, Tradier, tastytrade, Charles Schwab, Alpaca, Interactive Brokers, Replay or demo market, Other]
     validations:
       required: true
   - type: textarea

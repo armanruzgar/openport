@@ -13,7 +13,7 @@ body:
     id: provider
     attributes:
       label: Provider
-      options: [Cboe, Databento, Massive, ThetaData, Tradier, tastytrade, Demo, Replay]
+      options: [Cboe, Databento, Massive, ThetaData, Tradier, tastytrade, Charles Schwab, Alpaca, Interactive Brokers, Demo, Replay, Other]
     validations:
       required: true
   - type: input
