@@ -106,9 +106,11 @@ reported as level 0 and shown with their resume time in the terminal.
 
 ## Homebrew and Docker Compose
 
-`Formula/openport.rb` installs the self-contained Apple Silicon release archive,
-including `bin/`, `share/openport/web` and documentation. It needs no source build.
-Use Docker on Intel Macs and Linux. [Installation](install.md) has the commands, and
+On Apple Silicon (macOS 15 or later), `Formula/openport.rb` installs the
+self-contained release archive, including `bin/`, `share/openport/web` and
+documentation, with no source build. On Intel Macs it builds the release tag from
+source with Homebrew's CMake, Node and Boost, which takes longer. Use Docker on
+Linux. [Installation](install.md) has the commands, and
 [CONTRIBUTING](../CONTRIBUTING.md#releasing) the release step that fills in the
 formula's checksum.
 
@@ -195,7 +197,7 @@ Supported `openportd --option KEY=VALUE` keys:
 | Interactive Brokers | `base_url` (default `https://localhost:5000/v1/api`, loopback only), `max_lines=2..10000` (default 100), `requests_per_second=1..10` (default 5), `poll_seconds` (default 5) |
 | Databento | `quotes=cbbo-1s` or `quotes=cmbp-1`, `trades=on` or `trades=off` |
 | Replay | `file=PATH` (required), `speed=1`, `10`, `60` or `max`, `loop=on` or `off` |
-| Demo | `days=ID,ID,...`, `speed=1`, `2`, `5`, `10`, `30`, `60`, `120` or `300` (default 1), `revision=1..8` (default 8) |
+| Demo | `days=ID,ID,...`, `speed=1`, `2`, `5`, `10`, `30`, `60`, `120` or `300` (default 1), `revision=1..9` (default 9) |
 
 Databento parent subscriptions stream the entire option chain upstream. Both
 CLIs reject nonzero `--expiries` or `--window` with that provider; those filters
@@ -800,11 +802,15 @@ without a v5 header stops recording with a visible error. Readers accept version
 1–5; older builds refuse v5 at the header instead of failing mid-file, and a
 trailing venue in an earlier version is rejected as an extra field.
 
-Readers accept versions 1–4 as before; older builds refuse v4. Version 4 retains the v3 header
+Builds before v4 refuse v4. Version 4 retains the v3 header
 and adds tag 10 (`SnapshotHeartbeat`: underlying string, timestamp i64), and tag 11
-(`TradingHalt`: start and exclusive end i64 timestamps). A heartbeat is a batch
-boundary advancing market time without confirming quotes. Halt intervals are
-market-wide. Ordinary generated scenarios still write version 2; imports use v3. Version 3 appends one `u8` boolean, `imported`,
+(`TradingHalt`: start and exclusive end i64 timestamps, then an optional underlying
+string). A heartbeat is a batch boundary advancing market time without confirming
+quotes. A halt without an underlying is market-wide; one with an underlying halts
+only that symbol, as a scenario's [single-name halt](scenarios.md#events) records.
+Readers refuse a halt whose start is not positive, whose end is not after its start,
+that lasts more than a day, or whose underlying is longer than 12 characters or holds
+anything but `A`–`Z`, `0`–`9` and `.`. Ordinary generated scenarios still write version 2; imports use v3. Version 3 appends one `u8` boolean, `imported`,
 to the header. Older headers default it to false. Event tags are unchanged. Version 2
 adds tag 9 for option volume. The header and tags 0–8 are unchanged, so v1 files
 play as before, with volume unknown.
@@ -849,7 +855,7 @@ prices/sizes/Greeks are binary64, and strings use the encoding above.
 | 8 | Snapshot complete | underlying; ts |
 | 9 | Option volume (v2 and later) | id, ts, cumulative contracts |
 | 10 | Snapshot heartbeat (v4) | underlying; ts; batch boundary without quote confirmation |
-| 11 | Trading halt (v4) | ts; end (exclusive); both `i64` nanosecond timestamps |
+| 11 | Trading halt (v4) | ts; end (exclusive); both `i64` nanosecond timestamps; then an optional underlying string for a single-name halt, absent for a market-wide one |
 
 A zero record length is the clean-end marker, written only after all publishers
 stop and all accepted events drain. It must finish the final frame; bytes after
@@ -1137,7 +1143,7 @@ Replay driver 5 adds AM opening-print settlement. Verification
 of drivers 1–4 keeps their manual AM behavior and original journal bytes. Driver 5
 changes the start input for every new run and adds settlement transactions when an
 AM position is held into an expiry opening print. Resuming requires the current driver (6, below);
-older runs remain readable and verifiable. The scenario generator revision is 8; older recorded revisions regenerate as before.
+older runs remain readable and verifiable. The scenario generator revision is 9 (see the demo market below); older recorded revisions regenerate as before.
 A stopped run verifies through its recorded prefix; it need not have reached EOF.
 So does a run a crash cut off, whichever record its journal ends at: each input and
 each transaction is its own append, and new runs record a command's input before the
@@ -1381,7 +1387,10 @@ at the global limit. A creation that makes no sandbox (a full command inbox, whi
 answers 503 with `Retry-After: 1`, or a journal that cannot be written) counts toward
 neither creation limit.
 Each account permits 60 order requests per rolling minute, including previews,
-what-if requests, modifications, share trades and their previews; excess requests
+what-if requests, modifications, share trades and working share orders with their
+previews, and the journaled writes that reduce no risk: creating or changing alerts,
+trade and day notes, and grouping or ungrouping trades. They are counted before the
+body is checked, and excess requests
 return HTTP 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and its preview, share closes,
 exercise, abandonment, exercise instructions and alert deletions have a second
 budget of 60 per rolling minute, so they remain available at the order cap; past it
