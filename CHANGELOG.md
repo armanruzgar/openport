@@ -20,6 +20,25 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Analysis imports with lots on opposite sides.** A symbol's long and short lots were
+  netted at their signed average cost, which could be negative: long 2 at $1 and short
+  1 at $3 read as long 1 at −$1. The ledger refuses a negative cost, so the import
+  answered 500 yet kept the portfolio, and every later read of it and all four risk
+  views answered 500 too. Lots on opposite sides now close against each other, as an
+  average-cost ledger reduces a position: the holding keeps the cost of the lots on the
+  side it nets to. A portfolio stored with a negative cost reads again, without that
+  cost in its book, and an import that cannot be valued is no longer kept.
+- **SPX, NDX and RUT weeklies in analysis imports.** A file that names an option by its
+  underlying, expiry, strike and right (the generic split columns, and tastytrade's and
+  IBKR's columns) built every SPX option on the morning-settled SPX root, so a weekly or
+  daily was a contract no chain lists: `not_in_chain`, unpriced and left out of every
+  risk view. Off the monthly expiry they now take SPXW, NDXP or RUTW; a root written in
+  the underlying column is still kept.
+- **Futures options in analysis imports.** tastytrade's `Future Option` rows and IBKR's
+  `Futures Options` and `Options On Futures` rows were read as equity options on the
+  futures root (/ES became an ES option with a multiplier of 100), or refused the whole
+  file when the option could not be read. They are now skipped and listed, as futures
+  were, and so is a symbol starting with `/` in every layout.
 - **MCP tools say what failed.** A timeout, a dropped connection or an `openportd`
   that is down, and arguments the client refuses before sending (`version_playbook`
   with a definition missing its `id`), reached the agent from every tool but

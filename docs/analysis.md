@@ -11,10 +11,13 @@ The Analysis page, or `POST /api/analysis/portfolios` with
 `{ "name", "csv", "format" }`, imports a CSV of up to 4 MiB (this route's request
 limit; every other route keeps 64 KiB, and a request without admin access is refused
 before its body is read) and 2,000 holdings. `format` is `auto` (detected from the columns), `generic`,
-`tastytrade`, `schwab` or `ibkr`. Lots of one symbol are summed, with their
-quantity-weighted cost when every lot has one; holdings that net to zero, cash,
-totals and unsupported instruments (futures, bonds, funds) are left out and listed
-as skipped. A file that cannot be read is refused with the line and the reason.
+`tastytrade`, `schwab` or `ibkr`. Lots of one symbol are summed. Lots on opposite
+sides close against each other, as an average-cost ledger reduces a position, so the
+holding's cost is the quantity-weighted cost of the lots on the side it nets to (the
+long lots of a net long), when each of them has one. Holdings that net to zero, cash,
+totals and unsupported instruments (futures and options on them, bonds, funds) are
+left out and listed as skipped; a symbol starting with `/` is a future. A file that
+cannot be read is refused with the line and the reason.
 
 Layouts are read by their column names, case and punctuation ignored. The broker
 layouts use those exports' usual column names and are tested against hand-written
@@ -31,13 +34,22 @@ imported holdings against your statement.
 Short positions are negative quantities. Costs are per share, or per option share
 (the option price, not times 100).
 
+Where a file names an option by its underlying, expiry, strike and right (the generic
+split columns, and tastytrade's and IBKR's columns when the symbol is not OSI), SPX,
+NDX and RUT take their morning-settled root on the monthly expiry (the third Friday,
+or the business day before when the exchange is closed) and SPXW, NDXP or RUTW on
+every other date. Write the root in place of the underlying (`SPXW` for a third-Friday
+SPXW) to choose it yourself.
+
 ## Valuation and risk views
 
 Holdings are valued from the engine's current analytics exactly as paper positions
 are: options at their chain mid and smile IV, shares at the underlying's spot. A
 holding whose underlying is not subscribed, or whose contract is not in the chain,
-expired or has no usable quote, is listed as unpriced and left out of the views,
-which then report `complete: false`.
+expired, has no usable quote or has terms no paper position may hold (an adjusted
+series), is listed as unpriced and left out of the views, which then report
+`complete: false`. A cost the book cannot hold (a negative one, stored by an earlier
+version from lots on opposite sides) is left out of the book; the views do not use it.
 
 `GET /api/analysis/portfolios/{id}` returns each holding's mark, value, cost,
 unrealized P&L and share-equivalent delta, gamma, vega and theta, with dollar Greeks

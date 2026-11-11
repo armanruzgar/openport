@@ -51,9 +51,12 @@ inline constexpr std::size_t kAnalysisMaxPortfolios = 32;
 [[nodiscard]] std::vector<std::vector<std::string>> csv_rows(std::string_view text);
 
 /// Parses a positions file. Throws std::invalid_argument naming the line and the
-/// problem, or the columns a layout is missing. Holdings of one symbol are summed;
-/// ones that net to zero are dropped. Option symbols are read as OSI (padded or
-/// compact), Schwab's "SPY 12/18/2026 600.00 C" and IBKR's "SPY 18DEC26 600 C".
+/// problem, or the columns a layout is missing. Holdings of one symbol are summed,
+/// at the quantity-weighted cost of the lots on the side they net to; ones that net
+/// to zero are dropped. Option symbols are read as OSI (padded or compact), Schwab's
+/// "SPY 12/18/2026 600.00 C" and IBKR's "SPY 18DEC26 600 C"; columns that name only
+/// the underlying take SPXW, NDXP or RUTW off the monthly expiry. Futures and
+/// options on them are skipped.
 [[nodiscard]] AnalysisPortfolio parse_analysis_csv(std::string_view text, std::string_view format);
 
 /// Imported portfolios, one JSON file each in `directory` (memory only when empty).

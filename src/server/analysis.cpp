@@ -89,8 +89,15 @@ std::optional<double> amount(std::string_view raw) {
   return negative ? -value : value;
 }
 
+/// A root as files write it: "$SPX" and ".SPX" name SPX. A leading slash is kept, so
+/// a futures root (/ES) never reads as an equity option's.
+std::string bare_root(std::string root) {
+  while (!root.empty() && (root.front() == '$' || root.front() == '.')) root.erase(root.begin());
+  return root;
+}
+
 std::optional<md::OptionContract> option_of(std::string root, md::Date expiry, double strike, char right) {
-  while (!root.empty() && (root.front() == '$' || root.front() == '.' || root.front() == '/')) root.erase(root.begin());
+  root = bare_root(std::move(root));
   if (root.empty() || root.size() > 6 || !(strike > 0) || strike >= 100000 || (right != 'C' && right != 'P')) return std::nullopt;
   const auto milli = static_cast<long long>(std::llround(strike * 1000));
   if (std::abs(static_cast<double>(milli) - strike * 1000) > 1e-6) return std::nullopt;
@@ -101,9 +108,36 @@ std::optional<md::OptionContract> option_of(std::string root, md::Date expiry, d
   return contract;
 }
 
+/// The option a file names by its underlying, expiry, strike and right. An index whose
+/// monthly settles in the morning and whose other expiries settle on the close (SPX
+/// and SPXW, NDX and NDXP, RUT and RUTW) lists the morning root on the monthly expiry,
+/// the third Friday or the business day before when the exchange is closed, and the
+/// closing root on every other date. A root written in place of the underlying is kept.
+std::optional<md::OptionContract> listed_option(const std::string& underlying, md::Date expiry, double strike, char right) {
+  auto root = bare_root(underlying);
+  const auto roots = md::option_roots(root);
+  const auto closing = std::find_if(roots.begin(), roots.end(), [](const std::string& candidate) {
+    return md::conventions_for_root(candidate).settlement == md::Settlement::PM;
+  });
+  if (closing != roots.end() && md::conventions_for_root(root).settlement == md::Settlement::AM) {
+    auto day = md::days_since_epoch({expiry.year, expiry.month, 15});
+    while (md::weekday(md::date_from_days(day)) != 5) ++day;
+    auto monthly = md::date_from_days(day);
+    if (!md::market_session(md::new_york_to_utc(monthly, 9, 30)).open) monthly = md::previous_business_day(monthly);
+    if (expiry != monthly) root = *closing;
+  }
+  return option_of(root, expiry, strike, right);
+}
+
 char right_of(std::string_view text) {
   const auto t = upper(trim(text));
   return t == "C" || t == "CALL" ? 'C' : t == "P" || t == "PUT" ? 'P' : '\0';
+}
+
+/// Futures and options on futures are left out: a type or asset class that names
+/// futures, or a symbol that starts with a slash (/ESZ6, tastytrade's ./ESZ6 EW3X6 261120P5800).
+bool futures(std::string_view type, std::string_view symbol) {
+  return type.find("future") != std::string_view::npos || symbol.starts_with('/') || symbol.starts_with("./");
 }
 
 std::optional<md::Date> date_parts(std::string_view raw);
@@ -188,9 +222,24 @@ const std::initializer_list<std::string_view> kSymbol{"symbol"};
 const std::initializer_list<std::string_view> kQuantity{"quantity", "qtyquantity", "qty", "position"};
 const std::initializer_list<std::string_view> kCost{"cost", "costprice", "averageprice", "avgprice", "averageopenprice", "tradeprice", "costbasisprice", "price"};
 
+/// One side of a holding's lots: their quantity and quantity-weighted cost, unknown
+/// once a lot of that side has none.
+struct Lots {
+  trading::Quantity quantity = 0;
+  std::optional<double> cost;
+  void add(trading::Quantity lot, std::optional<double> price) {
+    if (quantity == 0) cost = price;
+    else if (cost && price)
+      cost = (*cost * static_cast<double>(quantity) + *price * static_cast<double>(lot)) / static_cast<double>(quantity + lot);
+    else cost.reset();
+    quantity += lot;
+  }
+};
+
 struct Sink {
   AnalysisPortfolio& out;
   std::map<std::string, std::size_t> index;
+  std::vector<std::pair<Lots, Lots>> lots;  ///< by holding: its long lots, then its short ones
   void option(const md::OptionContract& contract, double quantity, std::optional<double> cost, const std::string& source) {
     add(contract.osi_symbol(), contract, quantity, cost, source);
   }
@@ -206,16 +255,18 @@ struct Sink {
     const auto [it, inserted] = index.emplace(symbol, out.holdings.size());
     if (inserted) {
       if (out.holdings.size() == kAnalysisMaxHoldings) throw std::invalid_argument("more than 2000 holdings");
-      out.holdings.push_back({symbol, std::move(contract), whole, cost, source});
-      return;
+      out.holdings.push_back({symbol, std::move(contract), 0, std::nullopt, source});
+      lots.emplace_back();
     }
     auto& held = out.holdings[it->second];
-    // Several lots of one symbol: their quantity-weighted cost, when every lot has one.
-    if (held.cost && cost && held.quantity + whole != 0)
-      held.cost = (*held.cost * static_cast<double>(held.quantity) + *cost * static_cast<double>(whole)) /
-                  static_cast<double>(held.quantity + whole);
-    else held.cost.reset();
+    auto& [longs, shorts] = lots[it->second];
+    (whole < 0 ? shorts : longs).add(whole, cost);
     held.quantity += whole;
+    // Lots of opposite sides close against each other, as an average-cost ledger
+    // reduces a position: what remains has its own side's cost, never their mix.
+    held.cost.reset();
+    if (held.quantity > 0) held.cost = longs.cost;
+    else if (held.quantity < 0) held.cost = shorts.cost;
   }
 };
 
@@ -236,16 +287,22 @@ void parse_generic(const std::vector<Row>& rows, Sink& sink) {
     if (!quantity) throw std::invalid_argument(where + ": quantity is not a number");
     const auto cost = amount(cell(row, table->column(kCost)));
     if (split) {
+      const auto underlying = upper(cell(row, table->column({"underlying"})));
+      if (futures({}, underlying)) {
+        sink.out.skipped.push_back(where + " " + underlying + ": futures are not supported");
+        continue;
+      }
       const auto expiry = date_of(cell(row, table->column({"expiry", "expiration"})));
       const auto strike = amount(cell(row, table->column({"strike"})));
-      const auto contract = expiry && strike ? option_of(upper(cell(row, table->column({"underlying"}))), *expiry, *strike,
+      const auto contract = expiry && strike ? listed_option(underlying, *expiry, *strike,
           right_of(cell(row, table->column({"type", "right", "callput"})))) : std::nullopt;
       if (!contract) throw std::invalid_argument(where + ": not a listed option (underlying, YYYY-MM-DD expiry, strike, call or put)");
       sink.option(*contract, *quantity, cost, where);
       continue;
     }
     const auto symbol = cell(row, table->column(kSymbol));
-    if (const auto contract = option_symbol(symbol)) sink.option(*contract, *quantity, cost, where + " " + symbol);
+    if (futures({}, symbol)) sink.out.skipped.push_back(where + " " + symbol + ": futures are not supported");
+    else if (const auto contract = option_symbol(symbol)) sink.option(*contract, *quantity, cost, where + " " + symbol);
     else if (ticker(upper(symbol))) sink.shares(upper(symbol), *quantity, cost, where + " " + symbol);
     else throw std::invalid_argument(where + ": " + symbol + " is neither an OSI option symbol nor a ticker");
   }
@@ -260,6 +317,11 @@ void parse_tastytrade(const std::vector<Row>& rows, Sink& sink) {
     if (symbol.empty()) continue;
     const auto where = "line " + std::to_string(r + 1) + " " + symbol;
     const auto type = key(cell(row, table->column({"type", "instrumenttype"})));
+    const auto underlying = upper(cell(row, table->column({"underlyingsymbol", "underlying"})));
+    if (futures(type, symbol) || futures({}, underlying)) {
+      sink.out.skipped.push_back(where + ": futures are not supported");
+      continue;
+    }
     auto quantity = amount(cell(row, table->column(kQuantity)));
     if (!quantity) throw std::invalid_argument(where + ": quantity is not a number");
     // Some exports give an unsigned quantity and the side apart.
@@ -272,8 +334,7 @@ void parse_tastytrade(const std::vector<Row>& rows, Sink& sink) {
         const auto expiry = date_of(cell(row, table->column({"expdate", "expirationdate", "expiration"})));
         const auto strike = amount(cell(row, table->column({"strikeprice", "strike"})));
         if (expiry && strike)
-          contract = option_of(upper(cell(row, table->column({"underlyingsymbol", "underlying"}))), *expiry, *strike,
-                               right_of(cell(row, table->column({"callput", "putcall"}))));
+          contract = listed_option(underlying, *expiry, *strike, right_of(cell(row, table->column({"callput", "putcall"}))));
       }
       if (!contract) throw std::invalid_argument(where + ": cannot read the option");
       sink.option(*contract, *quantity, cost, where);
@@ -295,6 +356,10 @@ void parse_schwab(const std::vector<Row>& rows, Sink& sink) {
     const auto type = key(cell(row, table->column({"securitytype", "assettype"})));
     const auto quantity = amount(cell(row, table->column({"qtyquantity", "quantity", "qty"})));
     if (symbol.empty()) continue;
+    if (futures(type, symbol)) {
+      sink.out.skipped.push_back(where + ": futures are not supported");
+      continue;
+    }
     if (!quantity) {
       sink.out.skipped.push_back(where + ": no quantity (cash or a total)");
       continue;
@@ -342,6 +407,11 @@ void parse_ibkr(const std::vector<Row>& rows, Sink& sink) {
     if (symbol.empty()) continue;
     const auto where = "line " + std::to_string(r + 1) + " " + symbol;
     const auto asset = key(cell(row, table->column({"assetclass", "assetcategory"})));
+    // Futures Options and Options On Futures name an option too, but are not equity options.
+    if (futures(asset, symbol)) {
+      sink.out.skipped.push_back(where + ": " + cell(row, table->column({"assetclass", "assetcategory"})) + " is not supported");
+      continue;
+    }
     const auto quantity = amount(cell(row, table->column(kQuantity)));
     if (!quantity) {
       sink.out.skipped.push_back(where + ": no quantity (a total)");
@@ -354,8 +424,8 @@ void parse_ibkr(const std::vector<Row>& rows, Sink& sink) {
         const auto expiry = date_of(cell(row, table->column({"expiry", "expiration"})));
         const auto strike = amount(cell(row, table->column({"strike"})));
         if (expiry && strike)
-          contract = option_of(upper(cell(row, table->column({"underlyingsymbol"}))), *expiry, *strike,
-                               right_of(cell(row, table->column({"putcall", "right"}))));
+          contract = listed_option(upper(cell(row, table->column({"underlyingsymbol"}))), *expiry, *strike,
+                                   right_of(cell(row, table->column({"putcall", "right"}))));
       }
       if (!contract) throw std::invalid_argument(where + ": cannot read the option");
       // IBKR's cost price is per contract share, as the other layouts' are.
@@ -392,7 +462,7 @@ AnalysisPortfolio parse_analysis_csv(std::string_view text, std::string_view for
   if (rows.empty()) throw std::invalid_argument("the file is empty");
   AnalysisPortfolio out;
   out.format = format == "auto" || format.empty() ? detect(rows) : std::string(format);
-  Sink sink{out, {}};
+  Sink sink{out, {}, {}};
   if (out.format == "generic") parse_generic(rows, sink);
   else if (out.format == "tastytrade") parse_tastytrade(rows, sink);
   else if (out.format == "schwab") parse_schwab(rows, sink);

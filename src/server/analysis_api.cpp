@@ -62,6 +62,18 @@ std::set<std::string> held_underlyings(const AnalysisBook& book) {
   return held;
 }
 
+/// A holding's signed cost as the ledger keeps it, or none: a portfolio an earlier
+/// version stored can hold a negative cost, which no position has, and a cost times
+/// the quantity can pass Money's range. The views value the book now, not its cost.
+Money basis_of(const AnalysisHolding& h, double multiplier) {
+  if (!h.cost || !(*h.cost >= 0)) return {};
+  try {
+    return Money::from_double(*h.cost * static_cast<double>(h.quantity) * multiplier);
+  } catch (const trading::TradingError&) {
+    return {};
+  }
+}
+
 json base(const AnalysisBook& book) {
   return {{"portfolio", book.portfolio->id}, {"name", book.portfolio->name}, {"analysis_only", true},
           {"read_only", true}, {"note", kNote},
@@ -335,11 +347,11 @@ AnalysisBook analysis_book(const AnalysisPortfolio& portfolio, const MetricsSour
   for (const auto& h : portfolio.holdings) {
     const auto m = analytics_of(h.contract ? h.contract->underlying : h.symbol);
     if (h.contract) {
-      trading::Position position{*h.contract, h.quantity, {}, {}, {}};
-      if (h.cost) position.basis = Money::from_double(*h.cost * static_cast<double>(h.quantity) * h.contract->multiplier);
+      const trading::Position position{*h.contract, h.quantity, basis_of(h, h.contract->multiplier), {}, {}};
       const auto valuation = contract_valuation(h.symbol, *h.contract, m);
-      // A holding without a valuation stays out of the views, which name it as unpriced.
-      if (!valuation.valid) {
+      // A holding without a valuation, or with terms no paper position may hold, stays
+      // out of the views, which name it as unpriced.
+      if (!valuation.valid || !trading::eligible(*h.contract).ok()) {
         book.unpriced.push_back(h.symbol);
         continue;
       }
@@ -347,8 +359,7 @@ AnalysisBook analysis_book(const AnalysisPortfolio& portfolio, const MetricsSour
       book.contracts.emplace(h.symbol, *h.contract);
       book.valuations.emplace(h.symbol, valuation);
     } else {
-      trading::StockPosition stock{h.symbol, h.quantity, {}, {}, {}};
-      if (h.cost) stock.basis = Money::from_double(*h.cost * static_cast<double>(h.quantity));
+      const trading::StockPosition stock{h.symbol, h.quantity, basis_of(h, 1), {}, {}};
       if (m && m->spot > 0 && std::isfinite(m->spot)) {
         book.stock_prices[h.symbol] = m->spot;
         stocks.emplace(h.symbol, stock);
@@ -391,8 +402,13 @@ std::optional<ApiResponse> analysis_request(const ApiRequest& request, AnalysisP
         if (key != "name" && key != "csv" && key != "format") return api_error(400, "INVALID_REQUEST", "Unknown field " + key);
       auto parsed = parse_analysis_csv(body.at("csv").get<std::string>(), body.value("format", "auto"));
       const auto stored = portfolios.add(std::move(parsed), body.at("name").get<std::string>(), source.wall_time());
-      const auto book = analysis_book(stored, source);
-      return ApiResponse{201, detail_json(stored, book).dump()};
+      // A portfolio its own import cannot value is not left behind to fail every read.
+      try {
+        return ApiResponse{201, detail_json(stored, analysis_book(stored, source)).dump()};
+      } catch (...) {
+        portfolios.remove(stored.id);
+        throw;
+      }
     } catch (const json::exception&) {
       return api_error(400, "INVALID_REQUEST", "The body must be JSON");
     } catch (const std::invalid_argument& error) {

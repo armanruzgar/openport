@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <filesystem>
+#include <fstream>
 #include <nlohmann/json.hpp>
 
 #include "openport/analytics/chain_analytics.hpp"
@@ -129,6 +130,110 @@ TEST(AnalysisImport, TastytradeSchwabAndIbkrLayouts) {
   ASSERT_EQ(p.holdings.size(), 2u);
   EXPECT_EQ(p.holdings[0].quantity, 3);
   EXPECT_EQ(p.holdings[1].quantity, -100);
+}
+
+// Lots of opposite sides close against each other, as an average-cost ledger reduces a
+// position, so what remains keeps its own side's cost. Their signed mix could be
+// negative, which no position has, and a portfolio stored with it failed every read.
+TEST(AnalysisImport, OppositeLotsKeepTheCostOfTheSideThatRemains) {
+  const auto holding = [](const std::string& lots) {
+    const auto p = server::parse_analysis_csv("symbol,quantity,cost\n" + lots, "generic");
+    EXPECT_EQ(p.holdings.size(), 1u) << lots;
+    return p.holdings.at(0);
+  };
+  auto h = holding("SPY,2,1\nSPY,-1,3\n");  // was (2 - 3) / 1 = -1
+  EXPECT_EQ(h.quantity, 1);
+  EXPECT_EQ(h.cost, 1.0);
+  h = holding("SPY,-1,3\nSPY,2,1\n");
+  EXPECT_EQ(h.quantity, 1);
+  EXPECT_EQ(h.cost, 1.0);
+  h = holding("SPY,-2,3\nSPY,1,1\n");  // a net short keeps the short lots' cost
+  EXPECT_EQ(h.quantity, -1);
+  EXPECT_EQ(h.cost, 3.0);
+  h = holding("SPY,1,1\nSPY,-3,2\n");  // through zero: the side it ends on
+  EXPECT_EQ(h.quantity, -2);
+  EXPECT_EQ(h.cost, 2.0);
+  h = holding("SPY,2,1\nSPY,-1,5\nSPY,2,3\n");  // the long lots average 2, whatever comes between
+  EXPECT_EQ(h.quantity, 3);
+  EXPECT_EQ(h.cost, 2.0);
+  h = holding("SPY,2,1\nSPY,-1,\n");  // the closing side needs no cost
+  EXPECT_EQ(h.cost, 1.0);
+  h = holding("SPY,2,\nSPY,1,3\nSPY,-1,3\n");  // a remaining lot without one leaves none
+  EXPECT_FALSE(h.cost);
+  h = holding("SPXW261022C05000000,2,1\nSPXW261022C05000000,-1,3\n");
+  EXPECT_EQ(h.quantity, 1);
+  EXPECT_EQ(h.cost, 1.0);
+}
+
+// A file that names only the underlying gets the root that lists the expiry: SPX, NDX
+// and RUT settle their monthlies in the morning and every other expiry on the close.
+TEST(AnalysisImport, SplitColumnsTakeTheClosingRootOffTheMonthlyExpiry) {
+  const auto symbol = [](const std::string& row) {
+    const auto p = server::parse_analysis_csv("underlying,expiry,strike,type,quantity\n" + row + ",1\n", "generic");
+    return p.holdings.at(0).symbol;
+  };
+  EXPECT_EQ(symbol("SPX,2026-11-09,6000,put"), "SPXW  261109P06000000");
+  EXPECT_EQ(symbol("$SPX,2026-11-10,6000,call"), "SPXW  261110C06000000");
+  EXPECT_EQ(symbol("SPX,2026-11-20,6000,put"), "SPX   261120P06000000");  // the third Friday
+  EXPECT_EQ(symbol("SPXW,2026-11-20,6000,put"), "SPXW  261120P06000000");  // a root written out is kept
+  EXPECT_EQ(symbol("NDX,2026-11-13,20000,call"), "NDXP  261113C20000000");
+  EXPECT_EQ(symbol("RUT,2026-12-31,2500,call"), "RUTW  261231C02500000");
+  EXPECT_EQ(symbol("RUT,2026-12-18,2500,call"), "RUT   261218C02500000");
+  // Good Friday 2030 is the third Friday of April: the monthly expires the day before.
+  EXPECT_EQ(symbol("SPX,2030-04-18,6000,put"), "SPX   300418P06000000");
+  // VIX weeklies settle in the morning too, and other underlyings have one root.
+  EXPECT_EQ(symbol("VIX,2026-11-25,20,call"), "VIX   261125C00020000");
+  EXPECT_EQ(symbol("SPY,2026-11-09,600,put"), "SPY   261109P00600000");
+  // tastytrade's and IBKR's columns name the underlying too.
+  auto p = server::parse_analysis_csv(
+      "Symbol,Type,Quantity,Exp Date,Strike Price,Call/Put,Underlying Symbol\n"
+      "SPXW 6000P,Equity Option,1,11/09/2026,6000,PUT,SPX\n",
+      "tastytrade");
+  EXPECT_EQ(p.holdings.at(0).symbol, "SPXW  261109P06000000");
+  p = server::parse_analysis_csv(
+      "AssetClass,Symbol,UnderlyingSymbol,Expiry,Strike,Put/Call,Quantity\n"
+      "OPT,SPXW 6000P,SPX,20261109,6000,P,1\n",
+      "ibkr");
+  EXPECT_EQ(p.holdings.at(0).symbol, "SPXW  261109P06000000");
+}
+
+// Futures and options on them are left out and listed, as the docs say, rather than
+// read as equity options on the futures root or refusing the whole file.
+TEST(AnalysisImport, FuturesAndFuturesOptionsAreSkipped) {
+  auto p = server::parse_analysis_csv(
+      "Symbol,Type,Quantity,Exp Date,Strike Price,Call/Put,Underlying Symbol\n"
+      "./ESZ6 EW3X6 261120P5800,Future Option,1,11/20/2026,5800,PUT,/ES\n"
+      "./ESZ6 EW3X6 261120C6000,Future Option,-1,,,,/ES\n"
+      "SPY,Equity,10,,,,SPY\n",
+      "tastytrade");
+  ASSERT_EQ(p.holdings.size(), 1u);
+  EXPECT_EQ(p.holdings[0].symbol, "SPY");
+  EXPECT_EQ(p.skipped.size(), 2u);
+
+  p = server::parse_analysis_csv(
+      "Open Positions,Header,DataDiscriminator,Asset Category,Currency,Symbol,Quantity,Mult,Cost Price,Close Price\n"
+      "Open Positions,Data,Summary,Stocks,USD,SPY,100,1,500,510\n"
+      "Open Positions,Data,Summary,Futures Options,USD,ESZ6 P5800,1,50,20,25\n"
+      "Open Positions,Data,Summary,Options On Futures,USD,ES 20NOV26 5800 P,1,50,20,25\n",
+      "auto");
+  EXPECT_EQ(p.format, "ibkr");
+  ASSERT_EQ(p.holdings.size(), 1u);
+  EXPECT_EQ(p.holdings[0].symbol, "SPY");
+  ASSERT_EQ(p.skipped.size(), 2u);
+  EXPECT_NE(p.skipped[1].find("Options On Futures is not supported"), std::string::npos) << p.skipped[1];
+
+  p = server::parse_analysis_csv("symbol,quantity\n/ESZ6,1\n./ESZ6 EW3X6 261120P5800,1\nSPY,1\n", "generic");
+  ASSERT_EQ(p.holdings.size(), 1u);
+  EXPECT_EQ(p.skipped.size(), 2u);
+  p = server::parse_analysis_csv("underlying,expiry,strike,type,quantity\n/ES,2026-11-20,5800,put,1\nSPY,2026-12-18,600,put,1\n",
+                                 "generic");
+  ASSERT_EQ(p.holdings.size(), 1u);
+  EXPECT_EQ(p.holdings[0].symbol, "SPY   261218P00600000");
+  EXPECT_EQ(p.skipped.size(), 1u);
+  p = server::parse_analysis_csv("\"Symbol\",\"Qty (Quantity)\",\"Security Type\"\n\"/ESZ26\",\"1\",\"\"\n\"MSFT\",\"10\",\"Equity\"\n",
+                                 "schwab");
+  ASSERT_EQ(p.holdings.size(), 1u);
+  EXPECT_EQ(p.skipped.size(), 1u);
 }
 
 class AnalysisSource final : public server::MetricsSource {
@@ -295,6 +400,55 @@ TEST(AnalysisApi, StressTestsAndValueAtRiskRunOnTheValuedHoldings) {
   EXPECT_FALSE(body["stress"][0]["complete"]);
   EXPECT_EQ(source.orders, 0);
   std::filesystem::remove_all(directory);
+}
+
+// Opposite lots used to average to a negative cost: the import answered 500 yet stored
+// the portfolio, and every read of it answered 500 after. A file an earlier version
+// stored that way reads again, its negative costs left out of the book.
+TEST(AnalysisApi, OppositeLotsImportAndAStoredNegativeCostStillReads) {
+  const auto directory = std::filesystem::temp_directory_path() / ("openport-analysis-lots-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(directory);
+  AnalysisSource source;
+  {
+    server::AnalysisPortfolios store(directory);
+    const auto response = call(store, source, "POST", "/api/analysis/portfolios",
+        json{{"name", "Lots"}, {"csv", "symbol,quantity,cost\nSPXW261022C05000000,2,1\nSPXW261022C05000000,-1,3\n"}}.dump());
+    ASSERT_EQ(response.status, 201) << response.body;
+    const auto body = json::parse(response.body);
+    EXPECT_EQ(body["holdings"][0]["quantity"], 1);
+    EXPECT_EQ(body["holdings"][0]["cost"], 1);
+    EXPECT_EQ(body["holdings"][0]["status"], "priced");
+    EXPECT_EQ(call(store, source, "GET", "/api/analysis/portfolios/lots/risk/grid").status, 200);
+  }
+  {
+    std::ofstream file(directory / "old.json");
+    file << json{{"id", "old"}, {"name", "Old"}, {"format", "generic"}, {"imported", 0}, {"analysis_only", true},
+                 {"holdings", {{{"symbol", "SPXW  261022C05000000"}, {"quantity", 1}, {"cost", -1}, {"source", "line 2"}},
+                               {{"symbol", "SPX"}, {"quantity", 1}, {"cost", -1}, {"source", "line 4"}}}},
+                 {"skipped", json::array()}}.dump();
+  }
+  server::AnalysisPortfolios reopened(directory);
+  EXPECT_TRUE(reopened.error().empty()) << reopened.error();
+  ASSERT_EQ(reopened.list().size(), 2u);
+  const auto response = call(reopened, source, "GET", "/api/analysis/portfolios/old");
+  ASSERT_EQ(response.status, 200) << response.body;
+  EXPECT_TRUE(json::parse(response.body)["unpriced"].empty()) << response.body;
+  for (const auto* view : {"profile?underlying=SPX", "grid", "stress", "var"})
+    EXPECT_EQ(call(reopened, source, "GET", std::string("/api/analysis/portfolios/old/risk/") + view).status, 200) << view;
+  std::filesystem::remove_all(directory);
+}
+
+// The split-column layout names SPX; the chain lists that expiry under SPXW.
+TEST(AnalysisApi, SplitColumnWeekliesFindTheirChain) {
+  AnalysisSource source;
+  server::AnalysisPortfolios store;
+  const auto response = call(store, source, "POST", "/api/analysis/portfolios",
+      json{{"name", "Weekly"}, {"csv", "underlying,expiry,strike,type,quantity\nSPX,2026-10-22,5000,call,1\n"}}.dump());
+  ASSERT_EQ(response.status, 201) << response.body;
+  const auto body = json::parse(response.body);
+  EXPECT_EQ(body["holdings"][0]["symbol"], "SPXW  261022C05000000");
+  EXPECT_EQ(body["holdings"][0]["status"], "priced");
+  EXPECT_TRUE(body["unpriced"].empty());
 }
 
 }  // namespace
