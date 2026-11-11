@@ -11,7 +11,7 @@ import { evaluationBadge } from "../components/Sidebar"
 import { TradingError } from "../components/TradingControls"
 import { Empty, PageHeader, Panel } from "../components/ui"
 import { lockReason, offeredPlans, payoutCap, payoutRuleFacts } from "../lib/payouts"
-import { sizeScalingFact, scalingFact, clockText, dailyLossBasisText, dailyLossFact, dayEnd, floorMoves, objectiveFacts, timeRuleEntries } from "../lib/plan-rules"
+import { sizeScalingFact, scalingFact, clockText, cutoffText, dailyLossBasisText, dailyLossFact, dayEnd, floorMoves, objectiveFacts, timeRuleEntries } from "../lib/plan-rules"
 import { compareMoney, ruleMoney, formatMoney, subtractMoney } from "../lib/trading"
 import { openLossFact, reviewFacts } from "../lib/prop-rules"
 import { ChallengeEconomicsPanel, RulePacksPanel, RulesComparePanel } from "../components/PropRulesPanels"
@@ -27,7 +27,6 @@ function Rule({ title, children }: { title: string; children: ReactNode }) {
 export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
   const r = account.rules
   const e = account.evaluation
-  const minutes = Math.round(r.expiry_cutoff_seconds / 60)
   const p = r.payouts
   const funded = r.phase === "funded"
   const balance = r.profit_basis === "balance"
@@ -149,8 +148,8 @@ export function ruleText(account: Account, fee?: string, dailyLoss?: string) {
         A short straddle or strangle holds its greater side plus the other side's buy-back value.</>}
       {r.house_margin_percent ? <> House margin adds {r.house_margin_percent}% {r.margin === "portfolio" ? "to each underlying's scan" : "to each naked requirement and short sale's margin"}.</> : null}
       {" "}Orders that free buying power still have to satisfy the account’s strategy and account-type rules. The Positions page shows what holds the requirement.</> },
-    { title: "Expiring positions", body: minutes > 0
-      ? `From ${minutes} minutes before a contract's last trade, working orders on it are cancelled, the position is closed at the bid or ask with the account's slippage, and only closing orders are accepted. Expiring index options such as SPXW and XSP last trade at 4:00 pm ET, SPY, QQQ, IWM, DIA and other ETF options at 4:15 pm, and AM-settled series at the regular close the day before.`
+    { title: "Expiring positions", body: r.expiry_cutoff_seconds > 0
+      ? `From ${cutoffText(r.expiry_cutoff_seconds)} before a contract's last trade, working orders on it are cancelled, the position is closed at the bid or ask with the account's slippage, and only closing orders are accepted. Expiring index options such as SPXW and XSP last trade at 4:00 pm ET, SPY, QQQ, IWM, DIA and other ETF options at 4:15 pm, and AM-settled series at the regular close the day before.`
       : "Positions are held into expiry. Expiring index options trade until 4:00 pm ET and settle in cash; SPY, QQQ, IWM, DIA and other ETF options trade until 4:15 pm and deliver shares when a cent or more in the money at the 4:00 pm close." },
     { title: "Trading hours", body: `Every product trades in its regular session. SPX, XSP, VIX and RUT options also trade overnight, 8:15 pm to 9:25 am ET, and in the 4:15 to 5:00 pm curb session. Those sessions take limit orders only, with a condition or bracket only on a GTC limit; a day order lasts until its session ends, and stops, triggered orders, GTC limits and the account's own closing orders wait for the regular session. A trading day ends at ${end === "17:00" ? "5:00 pm" : clockText(end)} ET, so ${end === "17:00" ? "an overnight trade counts toward the next day" : "a trade after that counts toward the next trading day"}. A delayed or stalled feed refuses new orders rather than filling on stale quotes.` },
     { title: "Fills", body: <>{r.slippage_ticks
@@ -220,7 +219,7 @@ function Rules({ trading }: { trading: TradingStatus }) {
             ["Strategies", (p) => p.rules.buy_only ? "Buy only" : p.rules.defined_risk ? "Defined risk" : "Any"],
             ["Margin", (p) => p.rules.margin === "portfolio" ? "Portfolio" : "Strategy"],
             ["Slippage", (p) => `${p.rules.slippage_ticks ?? 0} ticks`],
-            ["Expiry auto-close", (p) => p.rules.expiry_cutoff_seconds ? `${Math.round(p.rules.expiry_cutoff_seconds / 60)} min before` : "—"],
+            ["Expiry auto-close", (p) => p.rules.expiry_cutoff_seconds > 0 ? `${cutoffText(p.rules.expiry_cutoff_seconds, true)} before` : "—"],
           ]} lock={(p) => lockReason(p, plans.data.plans, data)} enabled={trading.enabled} onStart={setStart} />
         </Panel>
         {offeredPlans(plans.data.plans, data).some((p) => p.rules.phase === "funded") && <Panel title="Funded accounts">

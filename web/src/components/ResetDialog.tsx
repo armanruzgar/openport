@@ -9,7 +9,7 @@ import { lockReason, offeredPlans, payoutRuleFacts } from "../lib/payouts"
 import { resetQuote } from "../lib/program-costs"
 import { propRuleFacts } from "../lib/prop-rules"
 import { isPackPlan, packPlans, useRulePacks } from "../lib/rule-packs"
-import { phaseFact, sizeScalingFact, scalingFact, dailyLossFact, dayEndFact, drawdownFact, objectiveFacts, targetFact, timeRuleFacts, tradeRuleFacts } from "../lib/plan-rules"
+import { cutoffText, phaseFact, sizeScalingFact, scalingFact, dailyLossFact, dayEndFact, drawdownFact, objectiveFacts, targetFact, timeRuleFacts, tradeRuleFacts } from "../lib/plan-rules"
 import { compareMoney, ruleMoney, formatMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
@@ -47,7 +47,7 @@ export function planFacts(plan: Pick<Plan, "initial_cash" | "rules">): string[] 
     ...(r.queue_fills ? ["Resting limits wait in a simulated queue"] : []),
     ...(r.stop_stress_ticks ? [`Stops slip ${r.stop_stress_ticks} extra ${r.stop_stress_ticks === 1 ? "tick" : "ticks"} in fast markets`] : []),
     ...(r.impact_ticks ? [`${r.impact_ticks} extra ${r.impact_ticks === 1 ? "tick" : "ticks"} per displayed-size block`] : []),
-    ...(r.expiry_cutoff_seconds > 0 ? [`Auto-close ${Math.round(r.expiry_cutoff_seconds / 60)} min before expiry`] : []),
+    ...(r.expiry_cutoff_seconds > 0 ? [`Auto-close ${cutoffText(r.expiry_cutoff_seconds, true)} before expiry`] : []),
     ...(dayEnd ? [dayEnd] : []),
     ...(p ? [`Payout every ${p.qualifying_days} days of ${ruleMoney(p.qualifying_profit)}+ net profit`,
       `Up to ${p.withdrawal_percent}% of profit per payout, ${p.split_percent}% to you`, ...payoutRuleFacts(p, plan.initial_cash)] : []),

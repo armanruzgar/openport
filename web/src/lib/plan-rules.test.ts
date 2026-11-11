@@ -2,11 +2,16 @@ import { describe, expect, it } from "vitest"
 import type { AccountRules } from "../api/trading-types"
 import { customPlan, planForm } from "../components/PlanEditor"
 import { account, fundedAccount } from "../test/trading-fixtures"
-import { phaseFact, clockText, dailyLossFact, dayEndFact, decisionLabel, drawdownFact, floorMoves, objectiveFacts, objectiveValue, targetFact, planEntryNotice, timeRuleFacts, timeRuleNotices } from "./plan-rules"
+import { phaseFact, clockText, cutoffText, dailyLossFact, dayEndFact, decisionLabel, drawdownFact, floorMoves, objectiveFacts, objectiveValue, targetFact, planEntryNotice, timeRuleFacts, timeRuleNotices } from "./plan-rules"
 
 const rules: AccountRules = { ...account.rules, buy_only: false }
 
 describe("plan rule texts", () => {
+  it("states an auto-close cutoff to the second", () => {
+    expect([20, 30, 60, 90, 300, 3600, 3725].map((s) => cutoffText(s))).toEqual(["20 seconds", "30 seconds", "1 minute", "1 minute 30 seconds",
+      "5 minutes", "1 hour", "1 hour 2 minutes 5 seconds"])
+    expect([20, 90, 300].map((s) => cutoffText(s, true))).toEqual(["20 s", "1 min 30 s", "5 min"])
+  })
   it("labels practice using the server's evaluation conditions and preserves program steps", () => {
     const practice: AccountRules = { ...rules, plan_id: "practice", plan: "Practice",
       profit_target: null, max_drawdown: null, daily_loss_limit: null,

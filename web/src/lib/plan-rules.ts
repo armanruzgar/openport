@@ -22,6 +22,18 @@ export function clockText(clock: string): string {
 /** When the plan's trading day ends, New York time; servers before plan days end it at 17:00. */
 export function dayEnd(rules: Pick<AccountRules, "day_end">): string { return rules.day_end ?? "17:00" }
 
+/**
+ * How long before a contract's last trade the account auto-closes it, to the second: a
+ * cutoff of 1-29 s still closes (it is not "0 minutes"), and 90 s is not "2 minutes".
+ * "5 minutes", "1 minute 30 seconds", "20 seconds"; `short`: "5 min", "1 min 30 s", "20 s".
+ */
+export function cutoffText(seconds: number, short = false): string {
+  const total = Math.max(0, Math.round(seconds))
+  const parts: [number, string, string][] = [[Math.floor(total / 3600), "hour", "h"], [Math.floor(total % 3600 / 60), "minute", "min"], [total % 60, "second", "s"]]
+  const text = parts.filter(([n]) => n > 0).map(([n, unit, abbreviation]) => short ? `${n} ${abbreviation}` : `${n} ${unit}${n === 1 ? "" : "s"}`)
+  return text.join(" ") || (short ? "0 s" : "0 seconds")
+}
+
 export const dailyLossBasisText: Record<DailyLossBasis, string> = {
   equity: "the day's opening equity",
   balance: "the day's opening balance",

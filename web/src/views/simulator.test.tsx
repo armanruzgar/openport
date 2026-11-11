@@ -215,6 +215,15 @@ describe("simulator pages", () => {
     expect(texts["Strategies"]).toContain("Buy-only")
     expect(texts["Expiring positions"]).toContain("last trade, working orders on it are cancelled")
     expect(texts["Expiring positions"]).toContain("4:15 pm")
+    expect(texts["Expiring positions"]).toContain("From 5 minutes before a contract")
+    // A cutoff under half a minute still closes: it is not "held into expiry".
+    for (const [seconds, words, short] of [[20, "From 20 seconds before", "Auto-close 20 s before expiry"], [90, "From 1 minute 30 seconds before", "Auto-close 1 min 30 s before expiry"]] as const) {
+      const quick = { ...account, rules: { ...account.rules, expiry_cutoff_seconds: seconds } }
+      const expiring = renderToStaticMarkup(<>{ruleText(quick, "0.65", "5000.00").find((rule) => rule.title === "Expiring positions")!.body}</>)
+      expect(expiring).toContain(words)
+      expect(expiring).not.toContain("held into expiry")
+      expect(planFacts({ initial_cash: "100000.00", rules: quick.rules })).toContain(short)
+    }
     expect(texts["Daily loss limit"]).toContain("$5,000.00")
     expect(texts["Exercise and assignment"]).toContain("can be assigned overnight, in part and at random")
     const defined = Object.fromEntries(ruleText({ ...account, rules: { ...account.rules, buy_only: false, defined_risk: true } }, "0.65", "5000.00")

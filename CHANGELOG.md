@@ -1052,6 +1052,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the equity chart flashed "Loading equity history…" and lost its day choice, and the
   explorer's grid also vanished at each keystroke. They now keep the last result on
   screen while the next one loads, and say when they are loading for the first time.
+- **An expiry auto-close under half a minute is described as one.** The Rules page
+  rounded the cutoff to whole minutes, so an account that closes expiring positions 1
+  to 29 seconds before their last trade read "Positions are held into expiry", the
+  plan table and the reset dialog said "0 min before", and 90 seconds read "2 minutes".
+  Cutoffs are now stated to the second ("20 seconds", "1 min 30 s").
 
 ## 0.5.1 (2026-10-28)
 
