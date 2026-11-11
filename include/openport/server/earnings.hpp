@@ -35,8 +35,8 @@ struct EarningsMove {
   double straddle = analytics::kNaN;
   double spot = analytics::kNaN;
   std::optional<double> realized;  ///< signed fraction, -0.031 for a 3.1% fall
-  md::Date before;                 ///< date of the close before the event
-  md::Date after;                  ///< date of the reaction session's close
+  std::optional<md::Date> before;  ///< date of the close before the event; unknown when imported
+  std::optional<md::Date> after;   ///< date of the reaction session's close; unknown when imported
   double close_before = analytics::kNaN;
   double close_after = analytics::kNaN;
   /// Whether the straddle priced more movement than came: "over", "under", or

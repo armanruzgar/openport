@@ -65,7 +65,7 @@ std::optional<double> percent(std::string_view raw) {
 
 json move_json(const EarningsMove& m) {
   const auto finite = [](double v) { return std::isfinite(v) ? json(v) : json(nullptr); };
-  const auto date = [](md::Date d) { return d.year ? json(md::format_date(d)) : json(nullptr); };
+  const auto date = [](const std::optional<md::Date>& d) { return d ? json(md::format_date(*d)) : json(nullptr); };
   return {{"symbol", m.symbol}, {"date", md::format_date(m.date)}, {"session", m.session},
           {"label", m.label.empty() ? json(nullptr) : json(m.label)}, {"source", m.source},
           {"implied", m.implied ? json(*m.implied) : json(nullptr)},
@@ -79,10 +79,12 @@ json move_json(const EarningsMove& m) {
 
 EarningsMove move_from(const json& j) {
   const auto number = [&](const char* key) { return j.contains(key) && j.at(key).is_number() ? j.at(key).get<double>() : analytics::kNaN; };
-  const auto day = [&](const char* key) -> md::Date {
-    if (!j.contains(key) || j.at(key).is_null()) return {};
+  // Unknown is null; a file an earlier version wrote holds 1970-01-01 for it.
+  const auto day = [&](const char* key) -> std::optional<md::Date> {
+    if (!j.contains(key) || j.at(key).is_null()) return std::nullopt;
     const auto date = parse_date(j.at(key).get<std::string>());
     if (!date) throw std::runtime_error(std::string("invalid ") + key);
+    if (*date == md::Date{}) return std::nullopt;
     return *date;
   };
   EarningsMove m;
@@ -230,11 +232,12 @@ void EarningsStore::settle(const CandleStore& candles, md::Timestamp now) {
   std::map<std::string, std::vector<md::Bar>> history;
   for (auto& [key, move] : moves_) {
     // A session's daily bar is built from its minutes while it trades: wait for its close.
-    if (move.source != "recorded" || move.realized || !move.implied || now < close_of(move.after) + 15 * md::kNanosPerMinute) continue;
+    if (move.source != "recorded" || move.realized || !move.implied || !move.before || !move.after ||
+        now < close_of(*move.after) + 15 * md::kNanosPerMinute) continue;
     auto found = history.find(move.symbol);
     if (found == history.end()) found = history.emplace(move.symbol, candles.daily_history(move.symbol)).first;
-    const auto before = close_on(found->second, move.before);
-    const auto after = close_on(found->second, move.after);
+    const auto before = close_on(found->second, *move.before);
+    const auto after = close_on(found->second, *move.after);
     if (!before || !after) continue;
     move.close_before = *before;
     move.close_after = *after;

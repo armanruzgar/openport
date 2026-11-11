@@ -1307,6 +1307,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   symbol out of view, and when the list shrank while open the highlight could fall
   off the end, leaving Enter doing nothing. The highlighted row is now scrolled into
   view and always stays on a listed symbol.
+- **Imported earnings moves have no session dates, not 1970-01-01.** `before` and
+  `after` in `GET /api/earnings` (and `earnings.json`) read `1970-01-01` for every
+  imported move, where the API documents null. They are now null until known, and a
+  file an earlier version wrote reads the same.
 
 ## 0.5.1 (2026-10-28)
 

@@ -130,6 +130,14 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
       json{{"csv", "symbol,date,session,implied_move,realized_move\nMSFT,2026-07-29,after_close,5,3\n"}}.dump()), store);
   ASSERT_TRUE(response);
   EXPECT_EQ(json::parse(response->body)["added"], 1);
+  // An import gives no session dates: unknown, never 1970-01-01 (B-99).
+  response = server::earnings_request(server::ApiRequest("GET", "/api/earnings?symbol=MSFT"), store);
+  ASSERT_TRUE(response);
+  body = json::parse(response->body);
+  ASSERT_EQ(body["moves"].size(), 1u);
+  EXPECT_TRUE(body["moves"][0]["before"].is_null()) << body["moves"][0];
+  EXPECT_TRUE(body["moves"][0]["after"].is_null()) << body["moves"][0];
+  EXPECT_FALSE(store.moves("MSFT")[0].before);
   EXPECT_EQ(server::earnings_request(server::ApiRequest("POST", "/api/earnings/import", "{\"csv\":\"bad\"}"), store)->status, 400);
   EXPECT_EQ(server::earnings_request(server::ApiRequest("GET", "/api/earnings?from=1"), store)->status, 400);
   response = server::earnings_request(server::ApiRequest("DELETE", "/api/earnings/imported"), store);
