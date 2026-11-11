@@ -67,7 +67,7 @@ class TlsWebSocket final : public WebSocket {
     }));
     stream_->read_message_max(16 * 1024 * 1024);
     stream_->text(true);
-    run([&](auto done) { stream_->async_handshake(target->host + ':' + target->port, target->target, done); });
+    run([&](auto done) { stream_->async_handshake(url_host(*target) + ':' + target->port, target->target, done); });
   }
 
   void send(std::string_view message) override {

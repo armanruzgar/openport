@@ -316,6 +316,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   server has closed is now replaced before a request goes out, a POST reuses one only
   within a second of the last request, and a GET that fails on a reused connection is
   sent once more on a new one.
+- **HTTP to an IPv6 address, to a non-default port and through compressing proxies.**
+  A URL with an IPv6 literal kept its brackets as the host, so `[::1]` never resolved
+  (an IBKR gateway at `https://[::1]:5000/v1/api` passed the loopback check and never
+  connected) and `http://[::1]/` split inside the address. The host is now the bare
+  address, sent back in brackets in `Host`. Ports must be 1-65535, and a URL with
+  `user:password@` is refused instead of reading `user` as the host. `Host` now carries
+  the port when it is not the scheme's default (Theta Terminal, the IBKR gateway,
+  webhooks on their own port), as RFC 9110 requires. A redirect, 204 or 304 without a
+  body that still said `Content-Encoding: gzip` failed as a corrupt gzip stream, so
+  such a redirect was never followed.
 - **No other site can frame the terminal.** Any web page could load the terminal in
   an invisible frame and lay its own buttons over it. On the default loopback bind,
   where writes need no token, the framed copy's requests carry the server's own

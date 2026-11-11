@@ -354,12 +354,13 @@ TEST(Ibkr, PacingViolationsBackOffAndNeverLeakBodies) {
 }
 
 TEST(Ibkr, OnlyALoopbackGatewayAndBoundedSettingsAreAccepted) {
-  for (const auto* url : {"https://example.com/v1/api", "http://10.0.0.2:5000/v1/api", "not a url"}) {
+  for (const auto* url : {"https://example.com/v1/api", "http://10.0.0.2:5000/v1/api", "not a url",
+                          "https://user@localhost:5000/v1/api"}) {
     auto settings = options();
     settings.base_url = url;
     EXPECT_THROW(providers::IbkrProvider{settings}, std::invalid_argument) << url;
   }
-  for (const auto* url : {"http://127.0.0.1:5000/v1/api/", "https://localhost:5000/v1/api"}) {
+  for (const auto* url : {"http://127.0.0.1:5000/v1/api/", "https://localhost:5000/v1/api", "https://[::1]:5000/v1/api"}) {
     auto settings = options();
     settings.base_url = url;
     EXPECT_NO_THROW(providers::IbkrProvider{settings}) << url;

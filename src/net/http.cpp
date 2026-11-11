@@ -10,6 +10,8 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
+#include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <limits>
 #include <stdexcept>
@@ -32,6 +34,32 @@ constexpr std::string_view kUserAgent =
 /// is written. Common keep-alive idle timeouts are five seconds or more.
 constexpr auto kPostReuseIdle = std::chrono::seconds(1);
 
+/// A URL's port: one to five digits naming 1-65535, kept without leading zeros so
+/// that one port compares equal however it was written.
+std::optional<std::string> port_of(std::string_view text) {
+  unsigned value = 0;
+  const char* end = text.data() + text.size();
+  const auto [parsed, error] = std::from_chars(text.data(), end, value);
+  if (text.empty() || text.size() > 5 || error != std::errc{} || parsed != end || value == 0 || value > 65535)
+    return std::nullopt;
+  return std::to_string(value);
+}
+
+/// A registered name or IPv4 address: printable ASCII, without what would end it or
+/// bracket an IPv6 literal.
+bool plain_host(std::string_view host) {
+  return !host.empty() && std::all_of(host.begin(), host.end(), [](unsigned char c) {
+    return c > 0x20 && c < 0x7f && c != '[' && c != ']' && c != '@' && c != '#' && c != ':';
+  });
+}
+
+/// What an IPv6 literal's brackets hold: hex digits and colons, with an IPv4 tail.
+bool ipv6_host(std::string_view host) {
+  return host.find(':') != std::string_view::npos && std::all_of(host.begin(), host.end(), [](char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || c == ':' || c == '.';
+  });
+}
+
 }  // namespace
 
 std::string_view user_agent() noexcept { return "openport/" OPENPORT_VERSION; }
@@ -40,6 +68,10 @@ std::string_view HttpResponse::header(std::string_view name) const noexcept {
   for (const auto& [key, value] : headers)
     if (beast::iequals(key, name)) return value;
   return {};
+}
+
+std::string url_host(const Url& url) {
+  return url.host.find(':') == std::string::npos ? url.host : '[' + url.host + ']';
 }
 
 std::optional<Url> parse_url(std::string_view url) {
@@ -61,15 +93,36 @@ std::optional<Url> parse_url(std::string_view url) {
     out.target = url.substr(path_start);
     if (out.target.front() == '?') out.target.insert(0, "/");
   }
-  const std::size_t colon = authority.rfind(':');
-  if (colon == std::string_view::npos) {
-    out.host = authority;
-    out.port = out.tls ? "443" : "80";
+  // "user:password@host" is no host and port, and credentials never travel in a URL here.
+  if (authority.find('@') != std::string_view::npos) return std::nullopt;
+  std::string_view host = authority;
+  std::optional<std::string_view> port;
+  if (authority.starts_with('[')) {
+    // An IPv6 literal. Resolving, SNI and the certificate check take the address
+    // without its brackets; only a port may follow them.
+    const std::size_t close = authority.find(']');
+    if (close == std::string_view::npos) return std::nullopt;
+    host = authority.substr(1, close - 1);
+    const auto rest = authority.substr(close + 1);
+    if (!rest.empty() && !rest.starts_with(':')) return std::nullopt;
+    if (!rest.empty()) port = rest.substr(1);
+    if (!ipv6_host(host)) return std::nullopt;
   } else {
-    out.host = authority.substr(0, colon);
-    out.port = authority.substr(colon + 1);
+    const std::size_t colon = authority.find(':');
+    if (colon != std::string_view::npos) {
+      host = authority.substr(0, colon);
+      port = authority.substr(colon + 1);
+    }
+    if (!plain_host(host)) return std::nullopt;
   }
-  if (out.host.empty() || out.port.empty()) return std::nullopt;
+  out.host = host;
+  if (port) {
+    auto number = port_of(*port);
+    if (!number) return std::nullopt;
+    out.port = std::move(*number);
+  } else {
+    out.port = out.tls ? "443" : "80";
+  }
   return out;
 }
 
@@ -78,7 +131,7 @@ std::optional<Url> redirect_target(const Url& from, std::string_view location) {
   if (location.starts_with("//")) {
     absolute.insert(0, from.tls ? "https:" : "http:");
   } else if (location.starts_with('/')) {
-    absolute.insert(0, (from.tls ? "https://" : "http://") + from.host + ':' + from.port);
+    absolute.insert(0, (from.tls ? "https://" : "http://") + url_host(from) + ':' + from.port);
   }
   auto target = parse_url(absolute);
   if (target && from.tls && !target->tls) return std::nullopt;
@@ -213,7 +266,9 @@ struct HttpClient::Impl {
   HttpResponse exchange(Stream& stream, const Url& url, const Headers& headers,
                         std::chrono::seconds timeout, http::verb method, std::string_view body) {
     http::request<http::string_body> req{method, url.target, 11};
-    req.set(http::field::host, url.host);
+    // The URL's authority, with its port unless that is the scheme's default (RFC 9110, 7.2).
+    const bool default_port = url.port == (url.tls ? "443" : "80");
+    req.set(http::field::host, default_port ? url_host(url) : url_host(url) + ':' + url.port);
     req.set(http::field::user_agent, kUserAgent);
     req.set(http::field::accept_encoding, "gzip");
     for (const auto& [name, value] : headers) req.set(name, value);
@@ -244,7 +299,10 @@ struct HttpClient::Impl {
     for (const auto& field : response.base())
       out.headers.emplace_back(field.name_string(), field.value());
     out.wire_bytes = response.body().size();
-    const bool gzipped = beast::iequals(response[http::field::content_encoding], "gzip");
+    // A bodiless answer (a redirect, 204, 304, an empty error page) may still name its
+    // encoding; there is nothing to inflate, and an empty stream is no gzip stream.
+    const bool gzipped =
+        !response.body().empty() && beast::iequals(response[http::field::content_encoding], "gzip");
     out.body = gzipped ? gunzip(response.body()) : std::move(response.body());
     out.elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - started);

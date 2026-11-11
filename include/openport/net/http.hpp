@@ -14,13 +14,18 @@ namespace openport::net {
 
 struct Url {
   bool tls = true;     ///< https (true) or http (false)
-  std::string host;
-  std::string port;    ///< "443" / "80" unless the URL says otherwise
+  std::string host;    ///< an IPv6 literal without its brackets, as resolving and TLS take it
+  std::string port;    ///< "443" / "80" unless the URL says otherwise; no leading zeros
   std::string target;  ///< path and query
 };
 
-/// Parses "http[s]://host[:port][/path][?query]".
+/// Parses "http[s]://host[:port][/path][?query]". The host is a name, an IPv4 address
+/// or a bracketed IPv6 literal ("[::1]"); a port is 1-65535. A URL with userinfo
+/// ("user:password@host") or any other authority is refused.
 [[nodiscard]] std::optional<Url> parse_url(std::string_view url);
+
+/// The URL's host as an authority writes it: an IPv6 literal back in its brackets.
+[[nodiscard]] std::string url_host(const Url& url);
 
 /// Resolves a redirect's Location header against the URL that sent it: an absolute
 /// http(s) URL, "//host/path" on the same scheme, or a path on the same host. Empty
@@ -44,7 +49,8 @@ struct HttpResponse {
 /// A blocking HTTP/1.1 client for http and https URLs. It keeps the connection to
 /// the last host alive between requests, asks for gzip and decompresses it,
 /// verifies TLS certificates against the system trust store, and enforces a
-/// timeout on every step. It follows up to five redirects (301, 302, 303, 307 and
+/// timeout on every step. Its Host header is the URL's host with any port that is
+/// not the scheme's default. It follows up to five redirects (301, 302, 303, 307 and
 /// 308, as GETs), never from https to http, dropping Authorization once one leaves the
 /// URL's scheme, host and port.
 ///

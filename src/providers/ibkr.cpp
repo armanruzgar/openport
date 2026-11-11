@@ -63,8 +63,7 @@ std::string strike_text(double strike) {
 
 bool loopback(const std::string& url) {
   const auto parsed = net::parse_url(url);
-  return parsed && (parsed->host == "localhost" || parsed->host == "127.0.0.1" || parsed->host == "[::1]" ||
-                    parsed->host == "::1");
+  return parsed && (parsed->host == "localhost" || parsed->host == "127.0.0.1" || parsed->host == "::1");
 }
 
 bool allowed_path(std::string_view path, bool post) {

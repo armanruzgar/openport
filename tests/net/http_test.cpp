@@ -110,6 +110,29 @@ TEST(Http, ParsesUrls) {
 
   EXPECT_FALSE(parse_url("ftp://example.com/"));
   EXPECT_FALSE(parse_url("https://"));
+
+  // An IPv6 literal's brackets are the URL's, not the address's: resolving, SNI and the
+  // certificate check take it bare. Without a port the address must not be split.
+  const auto six = parse_url("https://[::1]:5000/v1/api");
+  ASSERT_TRUE(six);
+  EXPECT_EQ(six->host, "::1");
+  EXPECT_EQ(six->port, "5000");
+  EXPECT_EQ(six->target, "/v1/api");
+  EXPECT_EQ(openport::net::url_host(*six), "[::1]");
+  const auto bare = parse_url("http://[2001:db8::7]?q=1");
+  ASSERT_TRUE(bare);
+  EXPECT_EQ(bare->host, "2001:db8::7");
+  EXPECT_EQ(bare->port, "80");
+  EXPECT_EQ(bare->target, "/?q=1");
+  EXPECT_EQ(openport::net::url_host(*local), "127.0.0.1");
+  EXPECT_EQ(parse_url("http://host:65535/")->port, "65535");
+  EXPECT_EQ(parse_url("http://host:08080/")->port, "8080");  // one port, however written
+  for (const auto* bad : {"http://user:pw@host/x", "http://user@host/", "http://host:abc/x", "http://host:0/",
+                          "http://host:65536/", "http://host:123456/", "http://host:-1/", "http://host:+80/",
+                          "http://host:/x", "http://[::1/x", "http://[::1]x/", "http://[::1]:/x", "http://[]/",
+                          "http://[host]/", "http://::1/x", "http://ho st/", "http://[::1]:80:80/"}) {
+    EXPECT_FALSE(parse_url(bad)) << bad;
+  }
 }
 
 TEST(Http, BrokerCallsCancelBeforeDnsAndExposeCaseInsensitiveHeaders) {
@@ -165,6 +188,12 @@ TEST(Http, ResolvesRedirectTargets) {
   ASSERT_TRUE(up);
   EXPECT_TRUE(up->tls);
   EXPECT_EQ(redirect_target(plain, "/new")->port, "8080");
+  // A path on an IPv6 host stays on that host.
+  const auto moved_six = redirect_target(*parse_url("http://[::1]:9833/old"), "/new?x=1");
+  ASSERT_TRUE(moved_six);
+  EXPECT_EQ(moved_six->host, "::1");
+  EXPECT_EQ(moved_six->port, "9833");
+  EXPECT_EQ(moved_six->target, "/new?x=1");
 }
 
 }  // namespace
@@ -543,6 +572,135 @@ TEST(WebServer, HttpClientSendsAPostOnANewConnectionOnceTheKeptAliveOneHasIdled)
   EXPECT_EQ(body_of([&] { return client.post(base + "/hook", "2", {}, timeout); }), "second");
   server.join();
   EXPECT_TRUE(second.load());
+}
+
+/// Reads one bodiless request's head within five seconds; empty if none arrives.
+std::string request_head(boost::asio::ip::tcp::socket& peer) {
+  peer.non_blocking(true);
+  std::string text;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (text.find("\r\n\r\n") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
+    char bytes[4096];
+    boost::system::error_code ec;
+    const auto count = peer.read_some(boost::asio::buffer(bytes), ec);
+    if (ec == boost::asio::error::would_block) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } else if (ec) {
+      return {};
+    } else {
+      text.append(bytes, count);
+    }
+  }
+  return text;
+}
+
+/// A header's value in a request head, or empty.
+std::string header_of(const std::string& head, const std::string& name) {
+  const auto at = head.find("\r\n" + name + ": ");
+  if (at == std::string::npos) return {};
+  const auto start = at + name.size() + 4;
+  return head.substr(start, head.find("\r\n", start) - start);
+}
+
+TEST(WebServer, HttpClientSendsAPortThatIsNotTheSchemesDefaultInHost) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto port = std::to_string(listener.local_endpoint().port());
+  // RFC 9110 wants host:port here: a server that routes or builds links from Host
+  // took a bare host for port 80.
+  std::string host;
+  std::thread server([&] {
+    tcp::socket peer(io);
+    if (!accept_within(listener, peer)) return;
+    host = header_of(request_head(peer), "Host");
+    boost::system::error_code ignored;
+    asio::write(peer, asio::buffer(std::string("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")),
+                ignored);
+  });
+  openport::net::HttpClient client;
+  EXPECT_EQ(body_of([&] { return client.get("http://127.0.0.1:" + port + "/a", {}, std::chrono::seconds(5)); }), "ok");
+  server.join();
+  EXPECT_EQ(host, "127.0.0.1:" + port);
+}
+
+TEST(WebServer, HttpClientReachesAnIpv6Literal) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io);
+  boost::system::error_code ec;
+  listener.open(tcp::v6(), ec);
+  if (!ec) listener.bind({asio::ip::make_address("::1"), 0}, ec);
+  if (!ec) listener.listen(asio::socket_base::max_listen_connections, ec);
+  if (ec) {
+    GTEST_SKIP() << "no IPv6 loopback here: " << ec.message();
+  }
+  const auto port = std::to_string(listener.local_endpoint().port());
+  // The bracketed host used to reach the resolver as "[::1]", which never resolves.
+  // /old moves by a path alone, which stays on the same host.
+  std::vector<std::string> hosts;
+  std::thread server([&] {
+    for (int i = 0; i < 2; ++i) {
+      tcp::socket peer(io);
+      if (!accept_within(listener, peer)) return;
+      const auto head = request_head(peer);
+      hosts.push_back(header_of(head, "Host"));
+      const std::string reply = head.starts_with("GET /old ")
+          ? "HTTP/1.1 302 Found\r\nLocation: /new\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+          : "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+      boost::system::error_code ignored;
+      asio::write(peer, asio::buffer(reply), ignored);
+    }
+  });
+  openport::net::HttpClient client;
+  EXPECT_EQ(body_of([&] { return client.get("http://[::1]:" + port + "/old", {}, std::chrono::seconds(5)); }), "ok");
+  server.join();
+  EXPECT_EQ(hosts, (std::vector<std::string>{"[::1]:" + port, "[::1]:" + port}));
+}
+
+TEST(WebServer, HttpClientTakesABodilessAnswerThatNamesGzip) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+  // Compressing proxies keep Content-Encoding on answers without a body. Inflating the
+  // empty body threw, so the redirect was never followed.
+  std::vector<std::string> paths;
+  std::thread server([&] {
+    for (int i = 0; i < 3; ++i) {
+      tcp::socket peer(io);
+      if (!accept_within(listener, peer)) return;
+      const auto head = request_head(peer);
+      if (!head.starts_with("GET ")) return;
+      const auto path = head.substr(4, head.find(' ', 4) - 4);
+      paths.push_back(path);
+      std::string reply;
+      if (path == "/a") {
+        reply = "HTTP/1.1 301 Moved Permanently\r\nLocation: /b\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n"
+                "Connection: close\r\n\r\n";
+      } else if (path == "/empty") {
+        reply = "HTTP/1.1 204 No Content\r\nContent-Encoding: gzip\r\nConnection: close\r\n\r\n";
+      } else {
+        reply = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+      }
+      boost::system::error_code ignored;
+      asio::write(peer, asio::buffer(reply), ignored);
+    }
+  });
+  openport::net::HttpClient client;
+  EXPECT_EQ(body_of([&] { return client.get(base + "/a", {}, std::chrono::seconds(5)); }), "ok");
+  try {
+    const auto empty = client.get(base + "/empty", {}, std::chrono::seconds(5));
+    EXPECT_EQ(empty.status, 204);
+    EXPECT_TRUE(empty.body.empty());
+  } catch (const std::exception& error) {
+    ADD_FAILURE() << error.what();
+  }
+  server.join();
+  EXPECT_EQ(paths, (std::vector<std::string>{"/a", "/b", "/empty"}));
 }
 
 /// A key and a self-signed certificate for 127.0.0.1, made for one test.
