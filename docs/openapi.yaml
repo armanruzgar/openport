@@ -7827,7 +7827,7 @@
     },
     "responses": {
       "Error": {
-        "description": "Failure with a stable reason code and optional evidence. 400 invalid request or INVALID_RULES; 403 authentication/scope; 404 missing resource; 409 conflict (a client ID reused with other terms, a stale limits revision LIMITS_REVISION, a server that keeps a single account ACCOUNTS_UNSUPPORTED); 422 simulator rejection (including ACCOUNT_TYPE for cash/IRA restrictions); 503 inbox full or unavailable. Orders may retry using identical client_order_id and terms. Account lifecycle: 403 ACCOUNT_PROTECTED; 404 UNKNOWN_ACCOUNT; 409 ACCOUNT_ARCHIVED, ACCOUNT_NOT_EMPTY or ACCOUNT_NAME_TAKEN (another live account has the name, ignoring case). Damaged account writes: 409 ACCOUNT_DAMAGED; stop the server and diagnose with --repair-journals --dry-run, or restore a verified backup for mid-file damage.",
+        "description": "Failure with a stable reason code and optional evidence. 400 invalid request or INVALID_RULES; 403 authentication/scope; 404 missing resource or a path no route answers; 405 METHOD_NOT_ALLOWED for a method the route does not take, with an Allow header naming those it does; 409 conflict (a client ID reused with other terms, a stale limits revision LIMITS_REVISION, a server that keeps a single account ACCOUNTS_UNSUPPORTED); 422 simulator rejection (including ACCOUNT_TYPE for cash/IRA restrictions); 503 inbox full or unavailable. Orders may retry using identical client_order_id and terms. Account lifecycle: 403 ACCOUNT_PROTECTED; 404 UNKNOWN_ACCOUNT; 409 ACCOUNT_ARCHIVED, ACCOUNT_NOT_EMPTY or ACCOUNT_NAME_TAKEN (another live account has the name, ignoring case). Damaged account writes: 409 ACCOUNT_DAMAGED; stop the server and diagnose with --repair-journals --dry-run, or restore a verified backup for mid-file damage. 500 INTERNAL_ERROR: a fault of the server, not of the request.",
         "content": {
           "application/json": {
             "schema": {
@@ -7841,6 +7841,12 @@
             "schema": {
               "type": "integer",
               "minimum": 1
+            }
+          },
+          "Allow": {
+            "description": "The methods the route takes, sent with a 405 METHOD_NOT_ALLOWED, for example GET, HEAD, POST.",
+            "schema": {
+              "type": "string"
             }
           }
         }

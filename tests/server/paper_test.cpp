@@ -2343,6 +2343,28 @@ TEST(PaperRecovery, AnUnderlyingWithoutAPriceIsNotAnalysedAndCannotDisableTradin
   std::filesystem::remove_all(path.parent_path());
 }
 
+// A known route asked with a method it does not take answers 405 with the methods it
+// does take; PUT and DELETE reach only real order IDs, not the POST routes beside them.
+TEST_F(PaperEngine, RoutesAnswerAMethodTheyDoNotTakeWith405AndAllow) {
+  seed();
+  struct Case { const char* method; const char* path; const char* allow; };
+  for (const auto& [method, path, allow] : {Case{"PUT", "/api/orders/what-if", "POST"}, Case{"PUT", "/api/orders/preview", "POST"},
+                                            Case{"DELETE", "/api/orders/cancel", "POST"}, Case{"PUT", "/api/orders/1/preview", "POST"},
+                                            Case{"PUT", "/api/account", "GET, HEAD"}, Case{"DELETE", "/api/account", "GET, HEAD"},
+                                            Case{"POST", "/api/status", "GET, HEAD"}, Case{"PATCH", "/api/risk/kill", "POST"}}) {
+    const auto response = write(*engine, method, path, json::object());
+    expect_error(response, 405, "METHOD_NOT_ALLOWED");
+    EXPECT_EQ(response.allow, allow) << method << " " << path;
+  }
+  EXPECT_TRUE(read(*engine, "/api/orders")["orders"].empty());
+  const auto cancel = server::handle_api({"GET", "/api/orders/cancel"}, *engine);
+  EXPECT_EQ(cancel.status, 405) << cancel.body;
+  EXPECT_EQ(cancel.allow, "POST");
+  // A path no route answers is still 404, and an order ID that is not one still 400.
+  expect_error(write(*engine, "PUT", "/api/nope", json::object()), 404, "NOT_FOUND");
+  expect_error(write(*engine, "PUT", "/api/orders/x", {{"quantity", 2}}), 400, "INVALID_REQUEST");
+}
+
 // A paper read names the parameter at fault and what it takes, and every route that
 // takes from and to reads a New York date or a UTC instant alike.
 TEST_F(PaperEngine, PaperReadsNameTheFaultyParameterAndShareTheirTimeBounds) {

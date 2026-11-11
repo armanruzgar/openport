@@ -958,7 +958,14 @@ namespace {
 /// The GET routes. With `deferred`, a read whose Heston or SABR fit is not cached
 /// fills it and returns nullopt; without, every read is answered here.
 std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSource& source, DeferredRead* deferred) {
-  if (request.method != "GET") return error(405, "only GET is supported");
+  if (request.method != "GET") {
+    // A write route names its own methods; any other path is read here with GET only.
+    auto refused = method_not_allowed(std::string_view(request.target).substr(0, request.target.find('?')), request.method);
+    if (refused.status == 405) return refused;
+    refused = error(405, "only GET is supported");
+    refused.allow = "GET, HEAD";
+    return refused;
+  }
   if (auto rejection = sandbox_visibility(request, source)) return *rejection;
   if (auto response = playbook_read(request, source)) return *response;
   if (auto response = paper_read(request, source)) return *response;
@@ -989,7 +996,8 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
   }
 
   constexpr std::string_view prefix = "/api/underlyings/";
-  if (!path.starts_with(prefix)) return error(404, "unknown endpoint");
+  // A write route asked with GET is 405 with its methods; an unknown path is 404.
+  if (!path.starts_with(prefix)) return method_not_allowed(path, request.method);
   std::string_view rest = path.substr(prefix.size());
   const std::size_t slash = rest.find('/');
   const std::string symbol(rest.substr(0, slash));

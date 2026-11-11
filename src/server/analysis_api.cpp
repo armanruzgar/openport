@@ -392,7 +392,7 @@ std::optional<ApiResponse> analysis_request(const ApiRequest& request, AnalysisP
       return ApiResponse{200, json{{"portfolios", list}, {"formats", std::vector<std::string>(std::begin(kAnalysisFormats), std::end(kAnalysisFormats))}, {"note", kNote},
                                    {"error", portfolios.error().empty() ? json(nullptr) : json(portfolios.error())}}.dump()};
     }
-    if (request.method != "POST") return api_error(405, "METHOD_NOT_ALLOWED", "Analysis portfolios support GET and POST");
+    if (request.method != "POST") return method_not_allowed(path, request.method);
     try {
       const auto body = json::parse(request.body);
       if (!body.is_object() || !body.contains("csv") || !body.at("csv").is_string() || !body.contains("name") ||
@@ -424,12 +424,12 @@ std::optional<ApiResponse> analysis_request(const ApiRequest& request, AnalysisP
       portfolios.remove(id);
       return ApiResponse{200, json{{"id", id}, {"deleted", true}}.dump()};
     }
-    if (request.method != "GET") return api_error(405, "METHOD_NOT_ALLOWED", "An analysis portfolio supports GET and DELETE");
+    if (request.method != "GET") return method_not_allowed(path, request.method);
     if (!query->empty()) return api_error(400, "INVALID_REQUEST", "This route takes no query parameters");
     return ApiResponse{200, detail_json(*portfolio, analysis_book(*portfolio, source)).dump()};
   }
   if (!view.starts_with("risk/")) return api_error(404, "NOT_FOUND", "Unknown analysis route");
-  if (request.method != "GET") return api_error(405, "METHOD_NOT_ALLOWED", "Risk views support GET");
+  if (request.method != "GET") return method_not_allowed(path, request.method);
   const auto& views = analysis_views();
   const auto found = views.find(view.substr(5));
   if (found == views.end()) return api_error(404, "NOT_FOUND", "No risk view " + std::string(view.substr(5)));

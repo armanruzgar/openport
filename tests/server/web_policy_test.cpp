@@ -1709,6 +1709,8 @@ TEST(WebServer, ApiHeadAnswersWithoutABodyAndOtherMethodsAreRefused) {
     const auto refused = send(method, "Bearer reader-secret");
     EXPECT_EQ(refused.result_int(), 405) << method;
     EXPECT_EQ(nlohmann::json::parse(refused.body()).at("error").at("code"), "METHOD_NOT_ALLOWED") << method;
+    // A 405 names the methods the route takes (RFC 9110).
+    EXPECT_EQ(std::string(refused[http::field::allow]), "GET, HEAD, POST") << method;
   }
   {
     const std::lock_guard lock(mutex);

@@ -48,6 +48,8 @@ struct ApiResponse {
   std::string download = {};
   /// Seconds a client should wait before retrying (Retry-After); zero sends none.
   int retry_after = 0;
+  /// The methods the route takes, sent as the Allow header (a 405 carries it); empty sends none.
+  std::string allow = {};
 };
 /// A full command inbox frees up as the engine applies commands, so its 503
 /// asks the client to retry after this many seconds.
@@ -78,6 +80,12 @@ inline constexpr int kRequestJsonDepthMax = 64;
 /// supplied default (main when empty) without one. nullopt when the query does not parse or the ID is not
 /// an account ID (lowercase letters, digits and single hyphens); refuse the request.
 [[nodiscard]] std::optional<std::string> query_account(std::string_view target, std::string_view default_account = {});
+/// The methods a known API path takes, as an Allow header lists them ("GET, HEAD,
+/// POST"), from one table of every route; empty for a path no route answers.
+[[nodiscard]] std::string allowed_methods(std::string_view path);
+/// The answer to a `method` `path` does not take: 405 METHOD_NOT_ALLOWED with Allow
+/// for a known route, otherwise (or when the route does take it, elsewhere) 404 NOT_FOUND.
+[[nodiscard]] ApiResponse method_not_allowed(std::string_view path, std::string_view method);
 /// Writes enqueue on the owner thread. Never wait for completion on an I/O thread.
 void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompletion complete);
 

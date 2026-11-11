@@ -12,6 +12,12 @@ beside cash of `"100000.00"`. Clients should parse money as exact decimals and r
 only for display (the terminal shows that buying power as `$2,033.73`). Booked values
 remain exact integer micro-dollars.
 
+Every route answers `HEAD` as it answers `GET`, without the body. A known route asked
+with a method it does not take answers 405 `METHOD_NOT_ALLOWED` with an `Allow` header
+naming the methods it does take (`PUT /api/orders/what-if` gets `Allow: POST`); a path
+no route answers is 404 `NOT_FOUND`. A fault of the server itself is 500
+`INTERNAL_ERROR`.
+
 ## Status and market data
 
 Status and WebSocket `circuit_breaker` include optional `inactive_reason`

@@ -2272,6 +2272,13 @@ bool valid_account(std::string_view id) {
   return !id.empty() && id.size() <= 40 && id.front() != '-' && id.back() != '-' && id.find("--") == std::string_view::npos &&
          std::all_of(id.begin(), id.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
 }
+/// /api/orders/{id}: one segment after /api/orders/ that is not a sibling route's name.
+bool order_id_path(std::string_view path) {
+  constexpr std::string_view prefix = "/api/orders/";
+  if (!path.starts_with(prefix)) return false;
+  const auto id = path.substr(prefix.size());
+  return !id.empty() && id.find('/') == std::string_view::npos && id != "preview" && id != "what-if" && id != "cancel" && id != "copy";
+}
 /// A display name without the spaces around it.
 std::string trimmed_name(std::string_view name) {
   const auto first = name.find_first_not_of(' ');
@@ -3095,6 +3102,86 @@ ApiResponse command_refused(const MetricsSource& source) {
   auto busy = api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable");
   busy.retry_after = kInboxRetrySeconds;
   return busy;
+}
+
+namespace {
+/// Every API route with the methods it takes, HEAD wherever GET is; "{}" matches one
+/// path segment, and the first match wins, so names come before patterns. Replay
+/// routes are their live routes' (/api/replay/orders is /api/orders).
+constexpr std::pair<std::string_view, std::string_view> kRouteMethods[] = {
+    {"/api/status", "GET, HEAD"}, {"/api/volatility/scanner", "GET, HEAD"}, {"/api/calendar/events", "GET, HEAD"},
+    {"/api/strategy-template", "GET, HEAD"}, {"/api/underlyings/{}", "GET, HEAD"}, {"/api/underlyings/{}/{}", "GET, HEAD"},
+    {"/api/account", "GET, HEAD"}, {"/api/account/equity", "GET, HEAD"}, {"/api/account/pass-odds", "GET, HEAD"},
+    {"/api/account/reset", "POST"}, {"/api/account/payout", "POST"}, {"/api/account/cash-flows", "POST"},
+    {"/api/account/rules-compare", "POST"}, {"/api/portfolio", "GET, HEAD"}, {"/api/plans", "GET, HEAD"},
+    {"/api/fills", "GET, HEAD"}, {"/api/fills.csv", "GET, HEAD"}, {"/api/fills/quality", "GET, HEAD"},
+    {"/api/fills/calibration", "POST"}, {"/api/trades", "GET, HEAD"}, {"/api/trades.csv", "GET, HEAD"},
+    {"/api/trades/group", "POST"}, {"/api/trades/ungroup", "POST"}, {"/api/trades/{}/note", "PUT"}, {"/api/days/{}/note", "PUT"},
+    {"/api/risk", "GET, HEAD"}, {"/api/risk/profile", "GET, HEAD"}, {"/api/risk/scenarios", "GET, HEAD"},
+    {"/api/risk/history", "GET, HEAD"}, {"/api/risk/hedges", "GET, HEAD"}, {"/api/risk/limits", "PUT"},
+    {"/api/risk/guardrails", "PUT"}, {"/api/risk/kill", "POST"}, {"/api/settlements", "GET, HEAD, POST"},
+    {"/api/orders", "GET, HEAD, POST"}, {"/api/orders/preview", "POST"}, {"/api/orders/what-if", "POST"},
+    {"/api/orders/cancel", "POST"}, {"/api/orders/copy", "POST"}, {"/api/orders/copy/preview", "POST"},
+    {"/api/orders/{}", "GET, HEAD, PUT, DELETE"}, {"/api/orders/{}/preview", "POST"},
+    {"/api/positions/close", "POST"}, {"/api/positions/close/preview", "POST"}, {"/api/positions/exercise", "POST"},
+    {"/api/positions/abandon", "POST"}, {"/api/positions/instruction", "POST"}, {"/api/stocks/close", "POST"},
+    {"/api/stocks/trade", "POST"}, {"/api/stocks/trade/preview", "POST"}, {"/api/stocks/orders", "GET, HEAD, POST"},
+    {"/api/stocks/orders/preview", "POST"}, {"/api/stocks/orders/{}", "DELETE"}, {"/api/market/halt", "POST"},
+    {"/api/alerts", "GET, HEAD, POST"}, {"/api/alerts/{}", "DELETE"}, {"/api/accounts", "GET, HEAD, POST"},
+    {"/api/accounts/{}", "PATCH, DELETE"}, {"/api/account-groups", "GET, HEAD"}, {"/api/account-groups/{}", "PUT, DELETE"},
+    {"/api/playbooks", "GET, HEAD, POST"}, {"/api/playbooks/staged/{}/send", "POST"},
+    {"/api/playbooks/staged/{}/dismiss", "POST"}, {"/api/playbooks/{}", "GET, HEAD, PUT, DELETE"},
+    {"/api/playbooks/{}/mode", "PUT"}, {"/api/playbooks/{}/evaluate", "POST"},
+    {"/api/playbooks/{}/signal-secret", "GET, HEAD, POST, DELETE"}, {"/api/signals/{}", "POST"},
+    {"/api/rule-packs/validate", "POST"}, {"/api/sandboxes", "POST"}, {"/api/tokens/reload", "POST"},
+    {"/api/notifications/test", "POST"}, {"/api/notifications/channels/{}", "PUT"}, {"/api/earnings", "GET, HEAD"},
+    {"/api/earnings/import", "POST"}, {"/api/earnings/imported", "DELETE"},
+    {"/api/analysis/portfolios", "GET, HEAD, POST"}, {"/api/analysis/portfolios/{}", "GET, HEAD, DELETE"},
+    {"/api/analysis/portfolios/{}/risk/{}", "GET, HEAD"}, {"/api/backtests", "GET, HEAD, POST, DELETE"},
+    {"/api/backtests/compare", "GET, HEAD"}, {"/api/backtests/sweeps", "GET, HEAD, POST"},
+    {"/api/backtests/sweeps/{}", "GET, HEAD, DELETE"}, {"/api/backtests/{}", "GET, HEAD, PUT, DELETE"},
+    {"/api/replay", "GET, HEAD, POST, PUT, DELETE"}, {"/api/replay/packs", "GET, HEAD, POST"},
+    {"/api/replay/packs/{}", "GET, HEAD"}, {"/api/replay/history", "GET, HEAD"},
+    {"/api/replay/history/{}", "GET, HEAD, DELETE"}, {"/api/replay/history/{}/verify", "GET, HEAD, POST"}};
+
+bool route_matches(std::string_view pattern, std::string_view path) {
+  for (;;) {
+    const auto wildcard = pattern.find("{}");
+    if (wildcard == std::string_view::npos) return pattern == path;
+    if (path.substr(0, wildcard) != pattern.substr(0, wildcard)) return false;
+    pattern.remove_prefix(wildcard + 2);
+    path.remove_prefix(wildcard);
+    const auto segment = std::min(path.find('/'), path.size());
+    if (segment == 0) return false;
+    path.remove_prefix(segment);
+  }
+}
+}  // namespace
+
+std::string allowed_methods(std::string_view path) {
+  std::string live;
+  if (path.starts_with("/api/replay/") && !path.starts_with("/api/replay/packs") && !path.starts_with("/api/replay/history")) {
+    live = "/api" + std::string(path.substr(std::string_view("/api/replay").size()));
+    path = live;
+  }
+  for (const auto& [pattern, methods] : kRouteMethods)
+    if (route_matches(pattern, path)) return std::string(methods);
+  return {};
+}
+
+ApiResponse method_not_allowed(std::string_view path, std::string_view method) {
+  auto allow = allowed_methods(path);
+  // A route that takes the method but was not answered here is another host's.
+  bool listed = false;
+  for (std::string_view rest = allow; !rest.empty();) {
+    const auto comma = rest.find(", ");
+    listed = listed || rest.substr(0, comma) == method;
+    rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 2);
+  }
+  if (allow.empty() || listed) return api_error(404, "NOT_FOUND", "Unknown endpoint");
+  auto refused = api_error(405, "METHOD_NOT_ALLOWED", "This route takes " + allow);
+  refused.allow = std::move(allow);
+  return refused;
 }
 
 namespace {
@@ -4046,7 +4133,8 @@ std::optional<Timestamp> query_bound(const std::string& text, bool end) {
 std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSource& source) {
   const auto question = request.target.find('?');
   const auto path = request.target.substr(0, question);
-  const bool order_detail = path.starts_with("/api/orders/") && path.find('/', 12) == std::string::npos;
+  // GET /api/orders/{id}; /api/orders/cancel and the other POST routes are not orders.
+  const bool order_detail = order_id_path(path);
   if (!order_detail && path != "/api/portfolio" && path != "/api/orders" && path != "/api/fills" && path != "/api/risk" &&
       path != "/api/trades.csv" && path != "/api/fills.csv" && path != "/api/account" && path != "/api/account/equity" &&
       path != "/api/trades" && path != "/api/settlements" && path != "/api/plans" && path != "/api/accounts" && path != "/api/risk/profile" &&
@@ -4405,7 +4493,7 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
   try {
     if (groups_path) {
       if (path == prefix) {
-        if (request.method != "GET") { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return true; }
+        if (request.method != "GET") { complete(method_not_allowed(path, request.method)); return true; }
         json list = json::array();
         for (const auto& group : groups->list()) list.push_back(account_group_json(group));
         complete({200, json{{"groups", list}}.dump()});
@@ -4427,11 +4515,11 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
         if (!request.body.empty()) throw std::invalid_argument("DELETE must have no body");
         complete(groups->remove(name) ? ApiResponse{200, json{{"deleted", name}}.dump()} : api_error(404, "UNKNOWN_GROUP", "No account group " + name));
       } else {
-        complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method"));
+        complete(method_not_allowed(path, request.method));
       }
       return true;
     }
-    if (request.method != "POST") { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return true; }
+    if (request.method != "POST") { complete(method_not_allowed(path, request.method)); return true; }
     if (request.body.size() > 64 * 1024) throw std::invalid_argument("Body exceeds 64 KiB");
     const auto body = strict_json(request.body);
     fields(body, {"group", "order"});
@@ -4552,7 +4640,7 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
       } else if (request.method == "PUT" && request.target.starts_with("/api/notifications/channels/") && request.target.find('?') == std::string::npos) {
         if (!source.notifications()->configure(request.target.substr(28), body)) complete(api_error(404, "NOT_FOUND", "Unknown notification channel"));
         else complete({200, source.notifications()->status().dump()});
-      } else complete(api_error(404, "NOT_FOUND", "Unknown notification endpoint or method"));
+      } else complete(method_not_allowed(std::string_view(request.target).substr(0, request.target.find('?')), request.method));
     } catch (...) { complete(api_error(400, "INVALID_REQUEST", "Invalid notification settings or test request")); }
     return;
   }
@@ -4620,11 +4708,12 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
       path == "/api/risk/kill" || path == "/api/settlements" ||
       path == "/api/account/reset" || path == "/api/account/payout" || path == "/api/account/cash-flows" || path == "/api/market/halt" ||
       path == "/api/trades/group" || path == "/api/trades/ungroup" || path == "/api/alerts")) ||
-      (request.method == "PUT" && (path == "/api/risk/limits" || path == "/api/risk/guardrails" || path.starts_with("/api/orders/") ||
+      (request.method == "PUT" && (path == "/api/risk/limits" || path == "/api/risk/guardrails" || order_id_path(path) ||
                                    ((path.starts_with("/api/trades/") || path.starts_with("/api/days/")) && path.ends_with("/note")))) ||
-      (request.method == "DELETE" && (path.starts_with("/api/orders/") || path.starts_with("/api/alerts/") || path.starts_with("/api/stocks/orders/"))) ||
+      (request.method == "DELETE" && (order_id_path(path) || path.starts_with("/api/alerts/") || path.starts_with("/api/stocks/orders/"))) ||
       ((request.method == "PATCH" || request.method == "DELETE") && path.starts_with("/api/accounts/"));
-  if (!route) { complete(api_error(404, "NOT_FOUND", "Unknown endpoint or method")); return; }
+  // A known route asked with a method it does not take is 405 with Allow, as on every route.
+  if (!route) { complete(method_not_allowed(path, request.method)); return; }
   std::string account = request.access.sandbox;
   if (!pairs || pairs->size() > 1 || (pairs->size() == 1 && (!pairs->contains("account") || !valid_account(pairs->at("account"))) ) ||
       (pairs->size() == 1 && (path == "/api/accounts" || path.starts_with("/api/accounts/")))) {

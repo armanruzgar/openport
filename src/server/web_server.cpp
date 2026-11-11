@@ -357,8 +357,12 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   const bool read = safe || computes;
   // No route takes another method: refuse it here, before any credential or scope
   // check could be skipped for it.
-  if (!read && request.method != "POST" && request.method != "PUT" && request.method != "PATCH" && request.method != "DELETE")
-    return api_error(405, "METHOD_NOT_ALLOWED", "Use GET, HEAD, POST, PUT, PATCH or DELETE");
+  if (!read && request.method != "POST" && request.method != "PUT" && request.method != "PATCH" && request.method != "DELETE") {
+    auto refused = api_error(405, "METHOD_NOT_ALLOWED", "Use GET, HEAD, POST, PUT, PATCH or DELETE");
+    refused.allow = allowed_methods(bare);
+    if (refused.allow.empty()) refused.allow = "GET, HEAD, POST, PUT, PATCH, DELETE";
+    return refused;
+  }
   if (request.ambiguous_headers || (!safe && !websocket_origin_allowed(
           request.origin ? std::optional<std::string_view>(*request.origin) : std::nullopt,
           request.host, policy.allowed_origins)))
@@ -1072,6 +1076,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
       response.set(http::field::cache_control, "no-store");
       forbid_framing(response);
       if (api.retry_after > 0) response.set(http::field::retry_after, std::to_string(api.retry_after));
+      if (!api.allow.empty()) response.set(http::field::allow, api.allow);
       response.keep_alive(keep_alive);
     };
     if (head) {
@@ -1100,8 +1105,11 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (api.method == "GET") return shared_.signals->describe(playbook, *account);
     if (api.method == "DELETE" && api.body.empty()) return shared_.signals->revoke(playbook, *account);
     if (api.method == "POST" && (api.body.empty() || api.body == "{}")) return shared_.signals->issue(playbook, *account);
-    return api_error(api.method == "GET" || api.method == "POST" || api.method == "DELETE" ? 400 : 405, "INVALID_REQUEST",
-        "Use POST (issue or rotate, empty body), GET or DELETE");
+    if (api.method == "GET" || api.method == "POST" || api.method == "DELETE")
+      return api_error(400, "INVALID_REQUEST", "Use POST (issue or rotate, empty body), GET or DELETE");
+    auto refused = api_error(405, "METHOD_NOT_ALLOWED", "Use POST (issue or rotate, empty body), GET or DELETE");
+    refused.allow = "GET, HEAD, POST, DELETE";
+    return refused;
   }
 
   /// Clients without Host (HTTP/1.0) are not browsers; any other Host must name this
@@ -1223,6 +1231,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     auto text = [&](http::status status, std::string_view body) {
       http::response<http::string_body> response{status, request.version()};
       response.set(http::field::content_type, "text/plain; charset=utf-8");
+      if (status == http::status::method_not_allowed) response.set(http::field::allow, "GET, HEAD");
       forbid_framing(response);
       response.keep_alive(request.keep_alive());
       response.body() = std::string(body);

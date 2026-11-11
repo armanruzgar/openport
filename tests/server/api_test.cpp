@@ -444,6 +444,18 @@ TEST(Api, ErrorsAreJson) {
   EXPECT_TRUE(get(source, "/api/nope", 404).contains("error"));
   const auto post = server::handle_api({"POST", "/api/status"}, source);
   EXPECT_EQ(post.status, 405);
+  EXPECT_EQ(post.allow, "GET, HEAD");
+  // A write route read with GET is 405 with its own methods, not an unknown endpoint.
+  const auto kill = server::handle_api({"GET", "/api/risk/kill"}, source);
+  EXPECT_EQ(kill.status, 405);
+  EXPECT_EQ(kill.allow, "POST");
+  EXPECT_EQ(server::allowed_methods("/api/orders/12"), "GET, HEAD, PUT, DELETE");
+  EXPECT_EQ(server::allowed_methods("/api/orders/what-if"), "POST");
+  EXPECT_EQ(server::allowed_methods("/api/replay/orders/12/preview"), "POST");
+  EXPECT_EQ(server::allowed_methods("/api/playbooks/staged/abc/send"), "POST");
+  EXPECT_EQ(server::allowed_methods("/api/playbooks/staged/mode"), "PUT");
+  EXPECT_EQ(server::allowed_methods("/api/orders/"), "");
+  EXPECT_EQ(server::allowed_methods("/api/nope"), "");
 }
 
 // A route may echo a query value in its JSON answer; a value that is not UTF-8 is the

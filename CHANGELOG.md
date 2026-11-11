@@ -37,6 +37,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Methods a route does not take.** A known route asked with the wrong method
+  answered 404, 400 or 405 depending on its handler, and no 405 carried the `Allow`
+  header; `PUT /api/orders/what-if` even ran the what-if, and `PUT
+  /api/orders/preview` was read as a change to order "preview". Every route now answers
+  a method it does not take with 405 `METHOD_NOT_ALLOWED` and an `Allow` header from one
+  table of routes, and `PUT`/`DELETE` reach only `/api/orders/{id}` itself.
 - **Paper read errors and time bounds.** The paper read routes (`/api/account/equity`,
   `/api/fills`, `/api/orders`, `/api/trades`, the CSV exports, fill quality, the risk
   profile and hedges) answered any unknown key or bad value with the same 400 "Unknown
