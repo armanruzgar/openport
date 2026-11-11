@@ -820,8 +820,9 @@ TEST(RecordingDirectory, RolloverRetentionRunsOffThePublishingThread) {
   EXPECT_TRUE(std::filesystem::exists(old));
   time = md::new_york_to_utc({2026, 9, 23}, 17, 0);
   recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
-  EXPECT_TRUE(test::recording_eventually([&] { return !std::filesystem::exists(old); }));
-  EXPECT_FALSE(std::filesystem::exists(old.string() + ".end"));
+  // Retention removes the recording, then its .end index: both must go.
+  const auto sidecar = old.string() + ".end";
+  EXPECT_TRUE(test::recording_eventually([&] { return !std::filesystem::exists(old) && !std::filesystem::exists(sidecar); }));
   {
     const std::lock_guard guard(lock);
     ASSERT_FALSE(removers.empty());
