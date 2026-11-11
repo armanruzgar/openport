@@ -4,7 +4,7 @@ import { useRef, useState } from "react"
 
 import { useLive } from "../api/live"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
-import type { ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, NewOrder, Order, Position, StockHolding, TradingStatus } from "../api/trading-types"
+import type { ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, NewOrder, Order, Position, StockHolding, StockOrder, TradingStatus } from "../api/trading-types"
 import { contractLabel, orderLabel, osiLabel } from "../lib/journal"
 import { closingAction, editableFields, flattenPlan, isOpen, openOrdersIn, orderChange, orderDraft, outcome, underlyingsOf } from "../lib/orders"
 import { describeTrigger } from "../lib/ticket"
@@ -314,8 +314,9 @@ export function FlattenDryRun({ preview }: { preview: { data?: FlattenPreview; e
       ...p.remaining.map((r) => `${r.quantity} ${osiLabel(r.symbol, "")}`), ...p.remaining_shares.map((r) => `${r.shares} ${r.symbol} shares`)].join(", ")}</p>}
   </section>
 }
-export function FlattenDialog({ positions, stocks = [], orders, trading, initial = null, onClose }: {
-  positions: readonly Position[]; stocks?: readonly StockHolding[]; orders: readonly Order[]; trading: TradingStatus; initial?: string | null; onClose: () => void
+export function FlattenDialog({ positions, stocks = [], stockOrders = [], orders, trading, initial = null, onClose }: {
+  positions: readonly Position[]; stocks?: readonly StockHolding[]; stockOrders?: readonly StockOrder[]; orders: readonly Order[]
+  trading: TradingStatus; initial?: string | null; onClose: () => void
 }) {
   const api = useActionApi()
   const write = useWrite(trading)
@@ -344,6 +345,10 @@ export function FlattenDialog({ positions, stocks = [], orders, trading, initial
   const cancelling = plan.cancelling.filter((o) => !refused.some((r) => r.symbol === o.underlying))
   const dryRun = useFlattenPreview(scope, trading, done == null && plan.closing.length + shares.length > 0 && !write.pending && (type === "market" || ticksValid), pricing)
   const exits = openOrdersIn(orders, scope).filter((o) => o.role != null && !refused.some((r) => r.symbol === o.underlying)).length
+  // Flatten leaves working share orders (bracket exits end with their shares): a sell
+  // of shares it closes would then open a short sale and reserve buying power.
+  const shareOrders = stockOrders.filter((o) => o.role === "entry" && (scope == null || o.symbol === scope))
+  const shortSales = shareOrders.filter((o) => o.side === "sell" && shares.some((s) => s.symbol === o.symbol && s.shares > 0))
   return (
     <Dialog title={scope ? `Flatten ${scope}` : "Close all positions"} onClose={onClose}>
       {done ? (
@@ -390,6 +395,9 @@ export function FlattenDialog({ positions, stocks = [], orders, trading, initial
           </p>
           {refused.map(({ symbol, notice }) => <p key={symbol} role="status" className="text-sm text-warn">
             {notice}. Its positions and orders stay as they are.</p>)}
+          {shareOrders.length > 0 && <p role="status" className={`text-xs ${shortSales.length ? "text-warn" : "text-muted"}`}>
+            {shareOrders.length === 1 ? "1 working share order stays" : `${shareOrders.length} working share orders stay`}: closing positions does not cancel share orders.
+            {shortSales.length > 0 && ` Once the shares are sold, ${shortSales.map((o) => `the sell of ${o.shares} ${o.symbol}`).join(" and ")} would open a short sale and reserve buying power; cancel it under Positions → Shares.`}</p>}
           {waiting > 0 && <p className="text-xs text-muted">{waiting === 1 ? "1 expired position waits" : `${waiting} expired positions wait`} for settlement.</p>}
           {plan.held.length > 0 && <p className="text-xs text-muted">{plan.held.map((p) => `${p.quantity} ${contractLabel(p)}`).join(", ")} {plan.held.length === 1
             ? "stays until the expired short it covers settles" : "stay until the expired shorts they cover settle"}.</p>}

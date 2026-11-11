@@ -509,6 +509,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   client ID, which the server refused with `DUPLICATE_CLIENT_ID` until the dialog was
   closed. Changed terms now go out under a new ID; the same terms keep it, so a retry
   is still answered once.
+- **Working share orders outside the Trade shares dialog.** They were listed only
+  there: after Close all sold the shares, a sell order left working opened a short
+  sale and reserved buying power with nothing on Positions or Orders to show it. They
+  are now listed, with Cancel, under Positions → Shares and on the Orders page, Close
+  all names the ones it leaves and the short sales they would open, and the reserved
+  buying power says it is held by working orders.
 - **Share stops and after-hours prints.** A regular-hours share stop was reached by an
   after-hours or premarket print, and then sold at the next open at whatever price it
   printed. A stop is now reached only by a print from the regular session, its close

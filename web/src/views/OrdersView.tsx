@@ -1,11 +1,12 @@
 import { FeeAmount } from "../components/FeeAmount"
 import { useMemo, useState } from "react"
 import { useLive } from "../api/live"
-import { useAllOrders, useFills } from "../api/trading"
+import { useAllOrders, useFills, usePortfolio } from "../api/trading"
 import type { Fill, Order, TradingStatus } from "../api/trading-types"
 import { FillBook } from "../components/FillBook"
 import { CancelAllDialog, CancelOrderDialog, EditOrderDialog } from "../components/OrderActions"
 import { OrderDetailDialog } from "../components/OrderDetail"
+import { WorkingShareOrders } from "../components/StockActions"
 import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
 import { Badge, Empty, PageHeader, Panel, Segmented, type Tone } from "../components/ui"
 import { newYorkDate, orderLabel, osiLabel } from "../lib/journal"
@@ -58,6 +59,8 @@ export function OrdersView() {
 function OrdersAccount({ trading }: { trading: TradingStatus }) {
   const orders = useAllOrders()
   const fills = useFills()
+  // Share orders have their own book (GET /api/stocks/orders); the portfolio lists the open ones.
+  const shareOrders = usePortfolio().data?.stock_orders ?? []
   const [tab, setTab] = useState<Tab>("working")
   const [search, setSearch] = useState("")
   const [side, setSide] = useState<"all" | "buy" | "sell">("all")
@@ -106,7 +109,9 @@ function OrdersAccount({ trading }: { trading: TradingStatus }) {
       : <Panel title={tab === "working" ? "Working orders" : "Order history"} actions={tab === "working" && trading.enabled && working.length > 0
           ? <button type="button" className="trade-button" onClick={() => { setNotice(null); setCancelAll(true) }}>Cancel all</button> : undefined}>
         {notice && <p className="mb-2 text-xs text-muted" role="status">{notice}</p>}
-        {orders.data ? <OrdersTable orders={visible} all={all} trading={trading} onDone={setNotice} empty={emptyText(tab === "working" ? working.length : all.length, tab)} /> : <Empty>Loading orders…</Empty>}
+        {orders.data ? <OrdersTable orders={visible} all={all} trading={trading} onDone={setNotice}
+          empty={tab === "working" && !working.length && shareOrders.length ? "No working option orders." : emptyText(tab === "working" ? working.length : all.length, tab)} /> : <Empty>Loading orders…</Empty>}
+        {shareOrders.length > 0 && <div className="mt-3"><WorkingShareOrders orders={shareOrders} trading={trading} /></div>}
       </Panel>}
     {cancelAll && <CancelAllDialog orders={working} trading={trading} onClose={() => setCancelAll(false)}
       onDone={(message) => { setNotice(message); setCancelAll(false) }} />}

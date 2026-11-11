@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { liveState, useLive } from "../api/live"
 import { tradingQueries } from "../api/trading"
-import type { ClosePositionsResponse, FlattenPreview, Order, Position, StockHolding, WhatIfAccount } from "../api/trading-types"
+import type { ClosePositionsResponse, FlattenPreview, Order, Position, StockHolding, StockOrder, WhatIfAccount } from "../api/trading-types"
 import { CancelAllDialog, EditOrderDialog, FlattenDialog, FlattenDryRun, FlattenOutcome } from "../components/OrderActions"
 import { OrderDetailDialog } from "../components/OrderDetail"
 import { ExerciseDialog } from "../components/StockActions"
@@ -65,6 +65,41 @@ describe("shares from exercise and assignment", () => {
     expect(html).toContain("buy 200 SPY shares at that price: together, the $500.00 strike")
     expect(html).toContain("gives up about $220.00 of time value")
     expect(html).toContain(">Exercise 2</button>")
+  })
+})
+
+describe("working share orders", () => {
+  const sell: StockOrder = { id: "3", client_order_id: "x", actor: "web", symbol: "SPY", side: "sell", type: "limit", time_in_force: "gtc",
+    shares: 50, limit_price: "600.00", stop_price: null, extended_hours: false, bracket: null, role: "entry", parent: null, oco: null,
+    stop_loss: null, take_profit: null, status: "working", reason: null, accepted_at: "2026-09-23T15:00:00.000Z", day_end: null,
+    triggered_at: null, ended_at: null, filled_shares: 0, fill_price: null, stock_fill: null }
+  it("are listed under Shares and on the Orders page with no shares held", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
+    clients.push(client)
+    const queries = tradingQueries(0, "17", true)
+    client.setQueryData(queries.portfolio.queryKey, { ...portfolio, stocks: [], stock_orders: [sell] })
+    client.setQueryData(queries.orders.queryKey, { account_version: "17", orders: [] })
+    client.setQueryData(queries.allOrders.queryKey, { account_version: "17", orders: [] })
+    client.setQueryData(queries.fills.queryKey, { account_version: "17", fills: [] })
+    client.setQueryData(queries.risk.queryKey, risk)
+    client.setQueryData(queries.account.queryKey, account)
+    const positions = renderToStaticMarkup(<QueryClientProvider client={client}><PositionsView /></QueryClientProvider>)
+    const orders = renderToStaticMarkup(<QueryClientProvider client={client}><OrdersView /></QueryClientProvider>)
+    expect(positions).toContain("No shares held.")
+    expect(orders).toContain("No working option orders.")
+    for (const html of [positions, orders]) {
+      expect(html).toContain("Working share orders")
+      expect(html).toContain("Sell 50 SPY · limit · limit $600.00 · GTC")
+      expect(html).toContain(">Cancel 3</button>")
+    }
+  })
+  it("that a flatten leaves are named, with the short sales they would open", () => {
+    const shares: StockHolding = { symbol: "SPY", shares: 200, average_price: "520.00", basis: "104000.00", mark: "525.00",
+      mark_time: "2026-09-23T15:00:00.000Z", market_value: "105000.00", unrealised: "1000.00", realised: "0.00", fees: "0.00",
+      fresh: true, attribution: null }
+    const html = render(<FlattenDialog positions={[portfolio.positions[0]!]} stocks={[shares]} stockOrders={[sell]} orders={[]} trading={trading} onClose={() => {}} />)
+    expect(html).toContain("1 working share order stays: closing positions does not cancel share orders.")
+    expect(html).toContain("Once the shares are sold, the sell of 50 SPY would open a short sale and reserve buying power")
   })
 })
 

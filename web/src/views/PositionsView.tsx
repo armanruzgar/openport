@@ -15,7 +15,7 @@ import { MarginBreakdown } from "../components/MarginBreakdown"
 import { FlattenDialog } from "../components/OrderActions"
 import { OrderTicket } from "../components/OrderTicket"
 import { PositionExitsDialog } from "../components/PositionExits"
-import { AbandonDialog, CloseSharesDialog, ExerciseDialog, ExerciseInstructionDialog, SettleDialog, SharesTable, TradeSharesDialog } from "../components/StockActions"
+import { AbandonDialog, CloseSharesDialog, ExerciseDialog, ExerciseInstructionDialog, SettleDialog, SharesTable, TradeSharesDialog, WorkingShareOrders } from "../components/StockActions"
 import { CloseStrategyDialog, Strategies } from "../components/StrategyActions"
 import { RiskPanel } from "../components/RiskPanel"
 import { RiskProfilePanel } from "../components/RiskProfilePanel"
@@ -279,7 +279,7 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
         <Tile label="Day P&L" value={signedMoney(data.day_pnl)} tone={toneOf(data.day_pnl)} detail={`from ${formatMoney(data.start_of_day_equity)}`} />
         <Tile label="Equity" value={formatMoney(data.equity)} />
         <Tile label="Buying power" value={formatMoney(data.buying_power?.available ?? account?.buying_power.available)}
-          detail={data.buying_power && Number(data.buying_power.reserved) ? `${formatMoney(data.buying_power.reserved)} reserved` : undefined} />
+          detail={data.buying_power && Number(data.buying_power.reserved) ? `${formatMoney(data.buying_power.reserved)} reserved by working orders` : undefined} />
         <Tile label="Cash" value={formatMoney(data.cash)} />
         <Tile label="Realized" value={signedMoney(data.realised)} tone={toneOf(data.realised)} detail={`fees ${formatMoney(data.fees)}`} />
       </div>
@@ -310,6 +310,8 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
             onTrade={trading.enabled ? (stock) => setTradingShares({ symbol: stock.symbol }) : undefined} />
           : <p className="text-sm text-muted">No shares held. Buy or sell a stock or ETF underlying's shares to hedge delta or write covered calls.</p>}
         <p className="mt-2 text-[11px] text-muted">Bought or sold here, or delivered by exercise and assignment of equity and ETF options; marked and traded at the underlying's price.</p>
+        {/* Working share orders stay when the shares are gone: a sell left then opens a short. */}
+        {(data.stock_orders?.length ?? 0) > 0 && <div className="mt-3"><WorkingShareOrders orders={data.stock_orders!} trading={trading} /></div>}
       </Panel>
       {data.margin && (data.positions.length > 0 || (data.stocks?.length ?? 0) > 0) && <Panel title={`Margin requirement · ${formatMoney(data.buying_power?.requirement ?? data.buying_power?.short_requirement)}`}>
         <MarginBreakdown margin={data.margin} />
@@ -340,7 +342,7 @@ function PositionsAccount({ trading }: { trading: TradingStatus }) {
     {instructing && <ExerciseInstructionDialog position={instructing} trading={trading} onClose={() => setInstructing(null)} />}
     {closingShares && <CloseSharesDialog stock={closingShares} trading={trading} onClose={() => setClosingShares(null)} />}
     {tradingShares && <TradeSharesDialog initial={tradingShares.symbol} trading={trading} onClose={() => setTradingShares(null)} />}
-    {flatten && data && <FlattenDialog positions={data.positions} stocks={data.stocks ?? []} orders={allOrders ?? []} trading={trading}
+    {flatten && data && <FlattenDialog positions={data.positions} stocks={data.stocks ?? []} stockOrders={data.stock_orders ?? []} orders={allOrders ?? []} trading={trading}
       initial={flatten.underlying} onClose={() => setFlatten(null)} />}
     {together && data && <CloseTogether positions={pickedPositions} trading={trading}
       onClose={() => { setTogether(false); setPicked(new Set()) }} />}

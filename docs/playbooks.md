@@ -642,6 +642,12 @@ playbooks on one account, start a joint backtest as described above.
 The terminal's chain and Positions pages offer **Trade shares** for stocks and ETFs.
 Its preview shows cash cost, buying power and dollar delta from the account's margin
 model. Shares trade only during the stock regular session, including early closes.
+Working share orders it places are listed, each with Cancel, in the dialog, under
+Positions → Shares (even with no shares held) and on the Orders page; **Close all**
+names the ones it leaves working, since a sell left once its shares are sold would
+open a short sale and reserve buying power. A ticket sent again with the same terms,
+after an error, keeps its client order ID and is answered once; changed terms go out
+as a new order.
 
 The chain's **Strategy → Templates** menu offers **Covered call** and **Collar**.
 Choose listed strikes and contracts, buy 100 shares per contract, then review and
