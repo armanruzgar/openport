@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include "trading/state.hpp"
 #include <nlohmann/json.hpp>
+#include <openssl/evp.h>
 
 #include "support/scripted_market.hpp"
 
@@ -522,6 +523,70 @@ TEST(TradingJournal, HashTamperingSequenceReorderingAndTrustedHeadDetectDamage) 
   auto recovery = verify_journal(good);
   recovery.records.back().payload = "{}";
   EXPECT_THROW(TradingSession::recover(recovery), TradingError);
+}
+/// A journal line as FileJournal::append writes it, for chains append refuses to
+/// write: "hash" is the SHA-256 of the canonical record without it.
+std::string record_line(std::uint64_t seq, Timestamp time, const std::string& previous, const std::string& type = "record") {
+  nlohmann::json record{{"seq", seq}, {"time", time}, {"type", type}, {"payload", nlohmann::json::object()},
+                        {"prev_hash", previous}};
+  const auto text = record.dump();
+  unsigned char bytes[EVP_MAX_MD_SIZE];
+  unsigned int size = 0;
+  if (EVP_Digest(text.data(), text.size(), bytes, &size, EVP_sha256(), nullptr) != 1) throw std::runtime_error("SHA-256 failed");
+  constexpr char hex[] = "0123456789abcdef";
+  std::string hash;
+  for (unsigned int i = 0; i < size; ++i) {
+    hash.push_back(hex[bytes[i] >> 4]);
+    hash.push_back(hex[bytes[i] & 15]);
+  }
+  record["hash"] = hash;
+  return record.dump() + '\n';
+}
+std::string hash_of(const std::string& line) { return nlohmann::json::parse(line).at("hash").get<std::string>(); }
+void expect_corrupt(std::string_view jsonl, std::string_view message) {
+  try {
+    (void)verify_journal(jsonl);
+    ADD_FAILURE() << "verified:\n" << jsonl;
+  } catch (const TradingError& error) {
+    EXPECT_EQ(error.code(), Reason::JOURNAL_CORRUPT) << error.what();
+    EXPECT_NE(std::string_view(error.what()).find(message), std::string_view::npos) << error.what();
+  }
+}
+TEST(TradingJournal, RewrittenLinesSwappedRecordsAndTimeRunningBackwardsAreRefused) {
+  TemporaryJournal file;
+  {
+    const auto journal = FileJournal::create(file.path);
+    journal->append(5, "first", "{}");
+    journal->append(6, "second", "{}");
+  }
+  const auto good = file.read();
+  const auto newline = good.find('\n');
+  ASSERT_NE(newline, std::string::npos);
+  const auto first = good.substr(0, newline + 1);
+  const auto second = good.substr(newline + 1);
+  const std::string genesis(64, '0');
+  // Lines made here hash as append's do, so each chain below breaks only where it is changed.
+  ASSERT_EQ(record_line(1, 5, genesis, "first"), first);
+  ASSERT_EQ(record_line(2, 6, hash_of(first), "second"), second);
+  ASSERT_EQ(verify_journal(good).records.size(), 2U);
+  // The hash covers the record as the writer serializes it, not the line's bytes, so
+  // a line that parses to the same record but is written differently would verify.
+  auto spaced = first;
+  spaced.insert(spaced.find("\"seq\":") + 6, " ");
+  expect_corrupt(spaced + second, "Noncanonical journal line");
+  const auto parsed = nlohmann::ordered_json::parse(first);
+  nlohmann::ordered_json reordered;
+  for (const auto* key : {"type", "time", "seq", "prev_hash", "payload", "hash"}) reordered[key] = parsed.at(key);
+  expect_corrupt(reordered.dump() + '\n' + second, "Noncanonical journal line");
+  // A key given twice: the parser keeps the last one, which the hash covers.
+  expect_corrupt("{\"type\":\"forged\"," + first.substr(1) + second, "Noncanonical journal line");
+  // Records out of order: the second's sequence number comes first.
+  expect_corrupt(second + first, "chain at record 2");
+  // Correctly hashed and in sequence, but with time running backwards or before 1970.
+  const auto at5 = record_line(1, 5, genesis);
+  EXPECT_EQ(verify_journal(at5 + record_line(2, 5, hash_of(at5))).records.size(), 2U) << "an equal time is in order";
+  expect_corrupt(at5 + record_line(2, 4, hash_of(at5)), "chain at record 2");
+  expect_corrupt(record_line(1, -1, genesis), "chain at record 1");
 }
 TEST(TradingJournal, TruncatedFinalLineIsReportedIgnoredAndNeverSilentlyOverwritten) {
   TemporaryJournal file;
