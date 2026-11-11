@@ -33,6 +33,7 @@ struct IbkrQuote {
   md::Timestamp ts = 0;  ///< _updated: when IBKR last updated the row, ms since the epoch
   double bid = 0, ask = 0, bid_size = 0, ask_size = 0;
   double last = 0;  ///< 0 for a closing ("C") or halted ("H") price
+  double close = 0;  ///< such a "C" or "H" last price: not current, but where the underlying last stood
   double open_interest = -1;
   double volume = -1;  ///< 7762, the day's count, from real-time rows; -1 when unknown
   double delta = std::numeric_limits<double>::quiet_NaN();

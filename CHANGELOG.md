@@ -490,6 +490,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   for one that stopped trading), and a Cboe close sent while Cboe was muted for that
   underlying was lost for the day. Both are now kept for each feed and sent with a
   switch.
+- **Interactive Brokers outside the session.** An underlying whose last price came
+  marked `C` (its previous close) or `H` (halted) with no bid or ask, as SPX always
+  has none and a stock overnight, stopped the whole chain at every poll with `no
+  underlying price yet; the gateway is warming up its market-data line`: nothing was
+  defined or quoted. That price now centres the strike window, so the chain is mapped
+  and quoted, without being published as the underlying's price. A row with no price
+  at all now says so instead of blaming the warm-up.
 
 ## 0.5.1 (2026-10-28)
 

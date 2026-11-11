@@ -170,6 +170,11 @@ std::vector<IbkrQuote> parse_ibkr_snapshot(std::string_view json) {
     quote.ts = milliseconds(field(item, "_updated"));
     const auto positive = [](double n) { return std::isfinite(n) ? std::max(0.0, n) : 0.0; };
     quote.last = positive(value(item, "31", true));
+    if (const auto& last = field(item, "31"); last.is_string()) {
+      const auto text = last.get<std::string>();
+      if (!text.empty() && (text.front() == 'C' || text.front() == 'H'))
+        quote.close = positive(parse_ibkr_number(std::string_view(text).substr(1), true));
+    }
     quote.bid = positive(value(item, "84", true));
     quote.ask = positive(value(item, "86", true));
     quote.bid_size = positive(value(item, "88", false));
@@ -312,14 +317,24 @@ std::string IbkrProvider::poll(net::HttpClient& http, const std::string& underly
   }
   md::UnderlyingQuote spot{underlying, 0, 0, 0, 0};
   char underlying_availability = 0;
+  md::Timestamp underlying_time = 0;
+  double closing = 0;
   for (const auto& row : snapshot(http, {chain.underlying.conid})) {
     if (row.conid != chain.underlying.conid || !row.fields || row.ts == 0) continue;
     underlying_availability = row.availability;
+    underlying_time = row.ts;
     if (row.last > 0) spot = {underlying, row.ts, 0, 0, row.last};
     else if (row.bid > 0 || row.ask > 0) spot = {underlying, row.ts, row.bid, row.ask, 0};
+    if (row.close > 0) closing = row.close;
   }
-  const double price = spot.last > 0 ? spot.last : (spot.bid > 0 && spot.ask > 0 ? (spot.bid + spot.ask) / 2 : 0);
-  if (price <= 0) throw std::runtime_error("no underlying price yet; the gateway is warming up its market-data line");
+  const double current = spot.last > 0 ? spot.last : (spot.bid > 0 && spot.ask > 0 ? (spot.bid + spot.ask) / 2 : 0);
+  // An index (SPX has no bid or ask) or a stock overnight may show only its last close,
+  // "C"-prefixed. That still centres the strikes, though it is never published as spot.
+  const double price = current > 0 ? current : closing;
+  if (price <= 0) {
+    if (underlying_time > 0) throw std::runtime_error("the underlying shows no current or closing price");
+    throw std::runtime_error("no underlying price yet; the gateway is warming up its market-data line");
+  }
 
   // Each option month's expiries are found from its strike nearest spot; months
   // are read in order until the nearest expiries are known.
@@ -382,7 +397,7 @@ std::string IbkrProvider::poll(net::HttpClient& http, const std::string& underly
   for (const auto& [osi, id] : wanted) conids.push_back(id);
   std::map<std::int64_t, IbkrQuote> rows;
   for (auto& row : snapshot(http, conids)) rows.insert_or_assign(row.conid, row);
-  md::Timestamp market_time = spot.ts;
+  md::Timestamp market_time = underlying_time;
   std::set<char> availability;
   if (underlying_availability) availability.insert(underlying_availability);
   for (const auto& [id, row] : rows) {
@@ -428,6 +443,7 @@ std::string IbkrProvider::poll(net::HttpClient& http, const std::string& underly
     summary = "IBKR: market-data availability unreported";
   }
   if (warming > 0) summary += "; " + std::to_string(warming) + " contracts warming up";
+  if (current <= 0) summary += "; " + underlying + " shows only its last close";
   return summary;
 }
 

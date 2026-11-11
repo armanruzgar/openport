@@ -44,6 +44,7 @@ std::string info(std::string_view url) {
 struct Gateway {
   bool warm = false;
   std::string availability = "RpB";
+  std::string underlying_fields = R"("31":"600.21","84":"600.20","86":"600.22","88":"3","85":"2")";
   net::HttpResponse operator()(std::string_view url) const {
     const auto path = url.substr(kBase.size());
     if (path == "/tickle") return {200, std::string(kTickle)};
@@ -53,8 +54,8 @@ struct Gateway {
     if (path.starts_with("/iserver/secdef/info?")) return {200, info(path)};
     if (path.starts_with("/iserver/marketdata/unsubscribeall")) return {200, R"({"unsubscribed":true})"};
     if (path.starts_with("/iserver/marketdata/snapshot?conids=756733&"))
-      return {200, R"([{"conid":756733,"conidEx":"756733","_updated":1790263799000,"server_id":"q0","31":"600.21",
-                      "84":"600.20","86":"600.22","88":"3","85":"2","6509":")" + availability + R"("}])"};
+      return {200, R"([{"conid":756733,"conidEx":"756733","_updated":1790263799000,"server_id":"q0",)" +
+                       underlying_fields + R"(,"6509":")" + availability + R"("}])"};
     if (path.starts_with("/iserver/marketdata/snapshot?conids=")) {
       if (!warm) return {200, R"([{"conid":706000,"conidEx":"706000"},{"conid":806000,"conidEx":"806000"}])"};
       return {200, R"([{"conid":706000,"conidEx":"706000","_updated":1790263800000,"31":"C2.95","84":"3.10",
@@ -247,6 +248,37 @@ TEST(Ibkr, DelayedAndFrozenAvailabilityAreReportedAsSuch) {
     EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).state, state) << code;
     EXPECT_TRUE(sink.all<md::OptionVolume>().empty()) << code;
   }
+}
+
+TEST(Ibkr, AnUnderlyingShowingOnlyItsCloseStillCentresTheChainButIsNotSpot) {
+  // SPX has no bid or ask, and outside the session IBKR marks its last "C", a close.
+  Gateway gateway;
+  gateway.warm = true;
+  gateway.availability = "ZpB";
+  gateway.underlying_fields = R"("31":"C600.21")";
+  providers::IbkrProvider provider(options());
+  test::HttpStub http;
+  http.respond = gateway;
+  test::BrokerSink sink;
+  provider.poll_once(http, "SPY", kSubscription, sink);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 2u);  // 600 C and P, around the close
+  EXPECT_EQ(sink.all<md::OptionQuote>().size(), 2u);
+  EXPECT_EQ(sink.all<md::SnapshotComplete>().size(), 1u);
+  EXPECT_TRUE(sink.all<md::UnderlyingQuote>().empty());  // a close is not a current price
+  const auto status = sink.all<md::ProviderStatus>().at(0);
+  EXPECT_EQ(status.state, md::FeedState::Stale);
+  EXPECT_EQ(status.message, "IBKR: frozen values from the last session; SPY shows only its last close");
+  // A row with no price at all centres nothing, and says so instead of blaming warm-up.
+  gateway.underlying_fields = R"("31":"")";
+  providers::IbkrProvider bare(options());
+  test::HttpStub bare_http;
+  bare_http.respond = gateway;
+  test::BrokerSink bare_sink;
+  bare.poll_once(bare_http, "SPY", kSubscription, bare_sink);
+  const auto error = bare_sink.all<md::ProviderStatus>().at(0);
+  EXPECT_EQ(error.state, md::FeedState::Error);
+  EXPECT_EQ(error.message, "ibkr SPY: the underlying shows no current or closing price");
+  EXPECT_TRUE(bare_sink.all<md::ContractDefinition>().empty());
 }
 
 TEST(Ibkr, MarketDataLinesAreCountedAcrossUnderlyings) {

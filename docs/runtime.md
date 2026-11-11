@@ -429,7 +429,11 @@ last, bid, ask size, ask, bid size, delta, gamma, open interest, the day's volum
 and availability. A contract's first snapshot only subscribes its line; until data
 arrives it is left unpriced and the status counts the contracts still warming up.
 Quote times are the row's `_updated` time, when IBKR last updated it. Prices marked
-`C` (a previous close) or `H` (halted) are not used as current. Availability `R`
+`C` (a previous close) or `H` (halted) are not used as current. When the underlying
+shows nothing else (an index such as SPX has no bid or ask, and outside the session
+its last is the close), that price still centres the strike window, so the chain is
+mapped and quoted, but it is not published as the underlying's price, and the status
+adds `shows only its last close`. Availability `R`
 reports `Live`, `D` `Delayed`, and `Z`/`Y` (frozen values from the last session)
 `Stale`. Size suffixes such as `1.2K` and thousands separators are expanded; implied
 volatility and the other Greeks stay NaN.
