@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "support/recording.hpp"
+
 namespace {
 
 using namespace openport;
@@ -20,13 +22,6 @@ md::Timestamp ny(int hour, int minute, int second = 0, md::Date day = {2026, 9, 
 
 md::Bar bar(md::Timestamp start, double open, double high, double low, double close) {
   return {start, open, high, low, close};
-}
-
-std::filesystem::path fresh_directory(const std::string& name) {
-  const auto path = std::filesystem::temp_directory_path() /
-                    ("openport-candles-" + name + "-" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
-  std::filesystem::remove_all(path);
-  return path;
 }
 
 std::size_t lines_in(const std::filesystem::path& file) {
@@ -145,8 +140,11 @@ TEST(Candles, MinutesOlderThanTheRetainedWindowAreDropped) {
   EXPECT_EQ(bars[0].close, 102.0);
 }
 
+// Each test's candle directory is new, inside a fresh mkdtemp directory removed with it,
+// so concurrent runs of one test never share files.
 TEST(Candles, FinishedMinutesPersistAndReload) {
-  const auto directory = fresh_directory("persist");
+  const test::RecordingFile scratch;
+  const auto directory = scratch.directory / "candles";
   {
     CandleStore store(CandleStore::Options{directory});
     ASSERT_EQ(store.error(), "");
@@ -174,11 +172,11 @@ TEST(Candles, FinishedMinutesPersistAndReload) {
     EXPECT_EQ(store.bars("SPX", BarInterval::Minute, 10)[0].high, 100.0);
     EXPECT_FALSE(std::filesystem::exists(directory / "BRK" / "B.csv"));
   }
-  std::filesystem::remove_all(directory);
 }
 
 TEST(Candles, RewrittenMinutesCompactTheFileOnReload) {
-  const auto directory = fresh_directory("compact");
+  const test::RecordingFile scratch;
+  const auto directory = scratch.directory / "candles";
   {
     CandleStore store(CandleStore::Options{directory});
     store.sample("QQQ", ny(10, 0), 100.0);
@@ -190,8 +188,10 @@ TEST(Candles, RewrittenMinutesCompactTheFileOnReload) {
   }
   CandleStore store(CandleStore::Options{directory});
   EXPECT_EQ(lines_in(directory / "QQQ.csv"), 2u);
-  EXPECT_EQ(store.bars("QQQ", BarInterval::Minute, 10)[0].high, 100.75);
-  std::filesystem::remove_all(directory);
+  // A reload that lost the minutes fails here instead of indexing an empty vector.
+  const auto bars = store.bars("QQQ", BarInterval::Minute, 10);
+  ASSERT_EQ(bars.size(), 2u);
+  EXPECT_EQ(bars[0].high, 100.75);
 }
 
 // One mis-stamped minute, as a vendor's millisecond time read as seconds would give,
@@ -199,7 +199,8 @@ TEST(Candles, RewrittenMinutesCompactTheFileOnReload) {
 // at the next start on disk, and later real samples were no longer persisted. A live
 // store's minutes are bounded by its wall clock instead.
 TEST(Candles, AFarFutureMinuteNeitherPrunesHistoryNorStopsPersisting) {
-  const auto directory = fresh_directory("future");
+  const test::RecordingFile scratch;
+  const auto directory = scratch.directory / "candles";
   const auto now = ny(16, 0);
   const auto far = now + 365 * md::kNanosPerDay;
   const CandleStore::Options options{directory, std::chrono::days{10}, 2600, [now] { return now; }};
@@ -227,17 +228,16 @@ TEST(Candles, AFarFutureMinuteNeitherPrunesHistoryNorStopsPersisting) {
   CandleStore simulated;
   simulated.sample("SPX", far, 50.0);
   EXPECT_EQ(simulated.bars("SPX", BarInterval::Minute, 10).size(), 1u);
-  std::filesystem::remove_all(directory);
 }
 
 TEST(Candles, AnUnwritableDirectoryIsReportedNotThrown) {
-  const auto directory = fresh_directory("blocked");
+  const test::RecordingFile scratch;
+  const auto directory = scratch.directory / "candles";
   std::ofstream(directory.string()) << "a file, not a directory";
   CandleStore store(CandleStore::Options{directory / "candles"});
   EXPECT_NE(store.error(), "");
   store.sample("SPX", ny(10, 0), 100.0);
   EXPECT_EQ(store.bars("SPX", BarInterval::Minute, 10).size(), 1u);
-  std::filesystem::remove(directory);
 }
 
 }  // namespace
