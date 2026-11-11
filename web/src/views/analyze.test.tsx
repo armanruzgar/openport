@@ -120,6 +120,39 @@ describe("Analyze tab", { timeout: renderTimeout }, () => {
       .toEqual(["Slice", "Price", "Bull call · Today", "Bull call · Expiry", "Bull call · T+30"]))
     await waitForRender(() => expect(host.textContent).toContain("BE Bull call"))
   })
+  it("waits for the edited candidate's own profile instead of drawing the previous one", async () => {
+    addAnalyzeCandidate("SPX", { name: "Bull call", units: 1, shares: 0, legs: [
+      { symbol: "SPXW  261016C07000000", underlying: "SPX", side: "buy", ratio: 1, type: "call", strike: 7000, expiry: expiry.id, quote: null },
+      { symbol: "SPXW  261016C07100000", underlying: "SPX", side: "sell", ratio: 1, type: "call", strike: 7100, expiry: expiry.id, quote: null }] })
+    await act(async () => root.render(<QueryClientProvider client={client}><AnalyzeView symbol="SPX" /></QueryClientProvider>))
+    const columns = () => [...host.querySelectorAll('[aria-label="Price slices"] th')].map((th) => th.textContent)
+    await waitForRender(() => expect(columns()).toContain("Bull call · Today"))
+    const units = host.querySelector<HTMLInputElement>('input[aria-label="Units of Bull call"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(units, "2")
+      units.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    // The 1-unit profile is not drawn under the 2-unit candidate while the edit settles.
+    expect(columns()).not.toContain("Bull call · Today")
+    expect(host.querySelector('[aria-label="Bull call · Expiry"]')).toBeNull()
+    await waitForRender(() => expect(lastProfile().legs).toEqual({ "SPXW  261016C07000000": 2, "SPXW  261016C07100000": -2 }))
+    await waitForRender(() => expect(columns()).toContain("Bull call · Today"))
+  })
+  it("marks a saved candidate whose expiry is gone, asks nothing for it, and moves it to the nearest expiry", async () => {
+    const gone = "2026-09-18PM"
+    addAnalyzeCandidate("SPX", { name: "Old call", units: 1, shares: 0, legs: [
+      { symbol: "SPXW  260918C07000000", underlying: "SPX", side: "buy", ratio: 1, type: "call", strike: 7000, expiry: gone, quote: null }] })
+    await act(async () => root.render(<QueryClientProvider client={client}><AnalyzeView symbol="SPX" /></QueryClientProvider>))
+    await waitForRender(() => expect(host.textContent).toContain("Expired: Sep 18 PM is no longer listed"))
+    expect(vi.mocked(api.chain).mock.calls.some(([, id]) => id === gone)).toBe(false)
+    expect(vi.mocked(api.riskProfile).mock.calls.some(([query]) => query.legs)).toBe(false)
+    // Its expiry shows as itself, not as the first listed one.
+    expect(host.querySelector<HTMLSelectElement>('select[aria-label="Expiry of 7000 call"]')!.value).toBe(gone)
+    expect(button("Send to ticket").disabled).toBe(true)
+    await act(async () => button("Move to nearest expiry").click())
+    await waitForRender(() => expect(lastProfile()?.legs).toEqual({ "SPXW  261016C07000000": 1 }))
+    expect(host.textContent).not.toContain("is no longer listed")
+  })
   it("searches the optimizer and analyzes a result", async () => {
     const optimizer = vi.spyOn(api, "optimizer").mockResolvedValue(search)
     await act(async () => root.render(<QueryClientProvider client={client}><AnalyzeView symbol="SPX" /></QueryClientProvider>))

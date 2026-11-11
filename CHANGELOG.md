@@ -1193,6 +1193,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   name, seed and buttons included, again and again. The banner is now a named region,
   and only a change in what the replay is doing (playing, paused, stepping, finished,
   a skip queued) is announced.
+- **Analyze draws an edited candidate only with its own P&L.** For a quarter of a
+  second after a change of units, a strike or the IV shift, the chart and price slices
+  showed the previous strategy's P&L under the edited candidate (the 1-unit P&L after
+  changing to 2 units). The curves now wait for the edited candidate's own profile.
+- **A saved Analyze candidate whose expiry has gone says so.** A candidate kept in the
+  browser past its expiry (yesterday's 0DTE, or a replay of another date) asked for its
+  dead chain on every data update, showed an `UNKNOWN_CONTRACT` error, and its expiry
+  menu showed the front expiry as if the leg were on it. It is now marked expired, asks
+  for nothing, shows its own expiry as not listed, and can be moved to the nearest
+  listed expiry or removed.
 
 ## 0.5.1 (2026-10-28)
 

@@ -131,6 +131,7 @@ function LegRow({ leg, chain, expiries, onChange, onRemove }: {
       onChange={(e) => retype(e.target.value as StrategyLeg["type"])}><option value="call">Call</option><option value="put">Put</option></select></td>
     <td className="pr-2"><select aria-label={`Expiry of ${label}`} className="trade-input !w-auto !py-0.5" value={leg.expiry}
       onChange={(e) => onChange({ ...leg, expiry: e.target.value, symbol: "", quote: null })}>
+      {!expiries.some((e) => e.id === leg.expiry) && <option value={leg.expiry} disabled>{expiryLabel(leg.expiry, true)} · not listed</option>}
       {expiries.map((e) => <option key={e.id} value={e.id}>{expiryLabel(e.id, true)}</option>)}</select></td>
     <td className="pr-2"><div className="flex items-center gap-1">
       <button type="button" className="trade-button !px-1.5 !py-0.5" aria-label={`Lower strike of ${label}`} disabled={!chain} onClick={() => step(-1)}>−</button>
@@ -170,8 +171,19 @@ export function AnalyzeView({ symbol }: { symbol: string }) {
   const [range, setRange] = useState(10)
   const [basis, setBasis] = useState<"mid" | "natural">("natural")
   const [ticket, setTicket] = useState<{ legs: StrategyLeg[]; units: number; shares: number } | null>(null)
-  const { chains } = useExpiryChains(symbol, [...state.candidates.flatMap((c) => c.legs.map((leg) => leg.expiry)), ...(front ? [front] : [])])
+  // A saved candidate can outlive its expiry (yesterday's 0DTE, a replay of another date):
+  // once the summary is in, one with a leg on an expiry it no longer lists is expired.
+  // It asks for no chain and no profile, which could only fail, until it moves or goes.
+  const listed = new Set(expiries.map((e) => e.id))
+  const expired = (c: AnalyzeCandidate) => !!data && c.legs.some((leg) => !listed.has(leg.expiry))
+  const { chains } = useExpiryChains(symbol, data
+    ? [...state.candidates.filter((c) => !expired(c)).flatMap((c) => c.legs.map((leg) => leg.expiry)), ...(front ? [front] : [])] : [])
   const candidates = state.candidates.map((c) => ({ ...c, legs: quotedLegs(c.legs, chains) }))
+  /** The listed expiry nearest an unlisted one's date. */
+  const nearestExpiry = (id: string) => {
+    const day = (expiry: string) => Date.parse(`${expiry.slice(0, 10)}T12:00:00Z`)
+    return expiries.reduce<string | null>((best, e) => best == null || Math.abs(day(e.id) - day(id)) < Math.abs(day(best) - day(id)) ? e.id : best, null)
+  }
   // A leg moved to another expiry takes that chain's nearest strike once it loads.
   useEffect(() => {
     const pending = state.candidates.some((c) => c.legs.some((leg) => !leg.symbol && chains.has(leg.expiry)))
@@ -186,7 +198,7 @@ export function AnalyzeView({ symbol }: { symbol: string }) {
   const holds = !!portfolio && (portfolio.positions.some((p) => p.underlying === symbol && !p.awaiting_settlement) || (portfolio.stocks ?? []).some((s) => s.symbol === symbol))
   const withHeld = held && holds
   const customDays = /^\d+(\.\d+)?$/.test(customText.trim()) && Number(customText) > 0 && Number(customText) <= 366 ? Number(customText) : null
-  const visible = candidates.filter((c) => c.visible && c.legs.length && c.legs.every((leg) => leg.symbol))
+  const visible = candidates.filter((c) => c.visible && !expired(c) && c.legs.length && c.legs.every((leg) => leg.symbol))
   const lines = visible.map((c) => dateLines(c, chains, now, customDays))
   const queries: RiskProfileQuery[] = visible.map((c, i) => ({ underlying: symbol, days: lines[i]!.map((line) => line.days), iv, range, steps: 81,
     legs: profileLegs(c.legs, c.units), held: withHeld }))
@@ -206,9 +218,12 @@ export function AnalyzeView({ symbol }: { symbol: string }) {
     placeholderData: (previous, prior) => sameAccountPlaceholder(previous, prior?.queryKey, live.accountScope),
   })
   // A profile answers the query it was asked; until the settled query catches up, the curves wait.
+  // Matched by candidate alone, an edit (units, a strike, the IV shift) drew the previous
+  // query's P&L under the edited candidate for the settle window.
   const results = visible.map((c, i) => {
     const at = settled.entries.findIndex((entry) => entry.id === c.id)
-    const profile = at >= 0 ? profiles[at]?.data : undefined
+    const current = at >= 0 && JSON.stringify(settled.entries[at]!.query) === JSON.stringify(queries[i])
+    const profile = current ? profiles[at]?.data : undefined
     return profile && profile.curves.length === lines[i]!.length ? profile : undefined
   })
   const selected = candidates.find((c) => c.id === state.selected) ?? candidates[0]
@@ -301,10 +316,15 @@ export function AnalyzeView({ symbol }: { symbol: string }) {
               onChange={(e) => { const u = Number(e.target.value); if (Number.isInteger(u) && u >= 1 && u <= 1000) update(c.id, (x) => ({ ...x, units: u })) }} /></label>
           <span className="text-muted">{c.legs.length ? strategyLabel(c.legs) : "No legs"}{c.shares ? ` · +${c.shares * c.units} shares` : ""}</span>
           <span className="ml-auto flex gap-1">
-            <button type="button" className="trade-button" disabled={!c.legs.length || c.legs.some((leg) => !leg.symbol)} onClick={() => setTicket({ legs: c.legs, units: c.units, shares: c.shares })}>Send to ticket</button>
+            <button type="button" className="trade-button" disabled={!c.legs.length || c.legs.some((leg) => !leg.symbol) || expired(c)} onClick={() => setTicket({ legs: c.legs, units: c.units, shares: c.shares })}>Send to ticket</button>
             <button type="button" className="trade-button" aria-label={`Remove ${c.name}`} onClick={() => updateAnalyze(symbol, (s) => ({ ...s, candidates: s.candidates.filter((x) => x.id !== c.id) }))}>Remove</button>
           </span>
         </div>
+        {expired(c) && <p role="status" className="mt-2 flex flex-wrap items-center gap-2 text-warn">
+          Expired: {[...new Set(c.legs.filter((leg) => !listed.has(leg.expiry)).map((leg) => expiryLabel(leg.expiry, true)))].join(", ")} is no longer listed, so it is not drawn.
+          <button type="button" className="trade-button" disabled={!expiries.length} onClick={() => update(c.id, (x) => ({ ...x, legs: x.legs.map((leg) =>
+            listed.has(leg.expiry) ? leg : { ...leg, expiry: nearestExpiry(leg.expiry) ?? leg.expiry, symbol: "", quote: null }) }))}>Move to nearest expiry</button>
+        </p>}
         <table className="mt-2 w-full"><tbody>{c.legs.map((leg, index) => <LegRow key={index} leg={leg} chain={chains.get(leg.expiry)} expiries={expiries}
           onChange={(next) => setLeg(c.id, index, next)} onRemove={() => update(c.id, (x) => ({ ...x, legs: x.legs.filter((_, k) => k !== index) }))} />)}</tbody></table>
         <div className="mt-1 flex gap-1">{(["call", "put"] as const).map((type) => <button key={type} type="button" className="trade-button !py-0.5"
