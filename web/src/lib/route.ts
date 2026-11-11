@@ -12,8 +12,8 @@ export const accountViews: readonly View[] = ["dashboard", "positions", "orders"
 export function navigableViews(trading: boolean, payouts: boolean): View[] {
   return primaryViews.filter((v) => (trading || !accountViews.includes(v)) && (v !== "payouts" || payouts))
 }
-/** Links from before the simulator redesign keep working. */
-const aliases: Record<string, View> = { portfolio: "positions" }
+/** Links from before the simulator redesign keep working. A map, so "constructor" or "__proto__" is no alias. */
+const aliases: ReadonlyMap<string, View> = new Map<string, View>([["portfolio", "positions"]])
 
 export interface Route {
   symbol: string | null
@@ -28,7 +28,7 @@ export function parseRoute(hash: string): Route {
   try {
     return {
       symbol: symbol ? decodeURIComponent(symbol).toUpperCase() : null,
-      view: (views as readonly string[]).includes(view) ? (view as View) : aliases[view] ?? "dashboard",
+      view: (views as readonly string[]).includes(view) ? (view as View) : aliases.get(view) ?? "dashboard",
       expiry: expiry ? decodeURIComponent(expiry) : null,
     }
   } catch {

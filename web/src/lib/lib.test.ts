@@ -19,6 +19,14 @@ describe("route", () => {
     expect(parseRoute(hash)).toEqual({ symbol: null, view: "dashboard", expiry: null })
   })
 
+  it.each(["constructor", "toString", "hasOwnProperty", "__proto__", "valueOf"])("lands on the dashboard for an object property name: %s", (view) => {
+    expect(parseRoute(`#/SPX/${view}`)).toEqual({ symbol: "SPX", view: "dashboard", expiry: null })
+  })
+
+  it("keeps the old portfolio link", () => {
+    expect(parseRoute("#/SPX/portfolio").view).toBe("positions")
+  })
+
   it("still decodes valid escaped route segments", () => {
     expect(parseRoute("#/brk%2Fb/smile")).toEqual({ symbol: "BRK/B", view: "smile", expiry: null })
   })

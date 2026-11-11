@@ -608,6 +608,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   no message, and caps typed into a new row vanished once its symbol was entered. Each
   row now carries its own caps, only the caps that will be saved are checked, and an
   invalid cap is marked and explained.
+- **Terminal links naming an object property.** A hash such as `#/SPX/constructor`
+  or `#/SPX/toString` resolved its page through a plain object of old page names and
+  got the object's own method back, so the terminal showed the chain instead of the
+  Dashboard, titled the tab "undefined · OpenPort", and the next expiry change wrote
+  the method's source into the address. Only the old `portfolio` link is an alias now;
+  any other unknown page opens the Dashboard.
 
 ## 0.5.1 (2026-10-28)
 
