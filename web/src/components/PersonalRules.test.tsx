@@ -76,3 +76,47 @@ it("says under each guardrail what it takes, and offers the write token in the d
   await set(input("Cooldown after stop-out (market minutes) (0–1440)"), "15")
   expect(streak.getAttribute("aria-invalid")).toBe("false")
 })
+it("checks the discipline settings together and sends them, the block as a boolean, when the server has them", async () => {
+  const discipline = { ...guardrails, loss_streak: 0, size_creep_percent: 0, size_creep_window: 0, size_creep_block: false }
+  const view = (value: typeof discipline) => act(async () => root.render(<QueryClientProvider client={client}><PersonalRules risk={{ ...risk, guardrails: value }} /></QueryClientProvider>))
+  const shown = (label: string) => [...host.querySelectorAll("dt")].find((term) => term.textContent === label)?.nextElementSibling?.textContent
+  await view({ ...discipline, size_creep_percent: 150, size_creep_block: true })
+  expect(shown("Size creep")).toBe("Refuses the order")
+  await view({ ...discipline, size_creep_percent: 150 })
+  expect(shown("Size creep")).toBe("Warns and flags tilt")
+  await view(discipline)
+  expect(shown("Size creep")).toBeUndefined()
+  await act(async () => [...host.querySelectorAll("button")].find((button) => button.textContent === "Edit guardrails")!.click())
+  const dialog = host.querySelector("dialog")!
+  const save = dialog.querySelector<HTMLButtonElement>('button[type="submit"]')!
+  const input = (label: string) => [...dialog.querySelectorAll("label")].find((entry) => entry.textContent?.startsWith(label))!.querySelector("input")!
+  const set = async (element: HTMLInputElement, value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value)
+    element.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  const hint = (element: HTMLInputElement) => document.getElementById(element.getAttribute("aria-describedby") ?? "")?.textContent
+  const recent = input("Size creep: recent opening orders (3–100; 0 is 20)")
+  await set(recent, "2")
+  expect(hint(recent)).toBe("Use 3 to 100, or 0 for 20.")
+  expect(save.disabled).toBe(true)
+  await set(recent, "3")
+  expect(hint(recent)).toBe("Set a size creep percent above 100 first.")
+  const block = input("Refuse size creep instead of warning")
+  expect(block.type).toBe("checkbox")
+  await act(async () => block.click())
+  expect(block.checked).toBe(true)
+  expect(hint(block)).toBe("Set a size creep percent above 100 first.")
+  expect(save.disabled).toBe(true)
+  await set(input("Size creep: opening order over % of recent median (101–10000; 0 is off)"), "150")
+  expect(hint(recent)).toBeUndefined()
+  expect(hint(block)).toBeUndefined()
+  expect(save.disabled).toBe(false)
+  await set(input("Losing closes in a row that start the cooldown (0–100)"), "3")
+  expect(save.disabled).toBe(true)
+  await set(input("Cooldown after stop-out (market minutes) (0–1440)"), "15")
+  expect(save.disabled).toBe(false)
+  await act(async () => dialog.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  expect(api.updateGuardrails).toHaveBeenCalledOnce()
+  expect(api.updateGuardrails).toHaveBeenCalledWith(risk.limits_revision,
+    { ...guardrails, cooldown_minutes: 15, loss_streak: 3, size_creep_percent: 150, size_creep_window: 3, size_creep_block: true }, "open")
+})
