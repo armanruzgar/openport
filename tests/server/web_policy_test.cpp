@@ -1903,12 +1903,12 @@ TEST(WebServer, UpgradesToAnUnknownPathOrAQueriedWsAreAnswered) {
 }
 
 // I-41: a port in use is found before anything starts, and a bad address is refused
-// by the server's start; each names what is wrong.
+// by the server's start; each names what is wrong. B-169: by its flag and value.
 TEST(WebServer, ListenFailuresNameTheAddressAndPort) {
   server::WebServer first("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
   first.start();
   const auto port = first.port();
-  const auto expected = "cannot listen on 127.0.0.1:" + std::to_string(port) + ": ";
+  const auto expected = "--port " + std::to_string(port) + " is in use on 127.0.0.1: ";
   EXPECT_NO_THROW(server::check_port("127.0.0.1", 0));
   try {
     server::check_port("127.0.0.1", port);

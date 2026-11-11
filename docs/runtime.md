@@ -29,7 +29,8 @@ than `/ws` or `/ws/events` is answered 404, and one to `/ws` with a query 400.
 `--address` must be an IP address (`127.0.0.1`, `::1`, `0.0.0.0`), not a host name; the
 web server's start refuses any other, naming the flag. openportd checks that the port
 is free before it opens any journal or starts the provider: a port another server
-holds fails at once with `cannot listen on ADDRESS:PORT: ...`, which names both.
+holds fails at once with `--port PORT is in use on ADDRESS: ...`, and any other bind
+failure with `cannot listen on --address ADDRESS --port PORT: ...`.
 
 Polling shutdown checks a shared atomic cancellation flag every 25 ms while
 connecting, handshaking TLS, writing, and reading. Pagination, ThetaData endpoint

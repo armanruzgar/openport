@@ -1258,4 +1258,21 @@ TEST(WebServer, TheBannerNamesALinkTheJournalAndAMissingTerminal) {
     ASSERT_TRUE(daemon.wait_exit(60s).has_value()) << daemon.output;
   }
 }
+
+// B-169: a port another server holds is refused before the crash log, the journal or the
+// feed exist, naming the flag and its value, so a corrected start seeds its own journal.
+TEST(Cli, ABusyPortIsRefusedByItsFlagBeforeAnythingIsCreated) {
+  openport::test::RecordingFile file;
+  const auto journal = file.directory / "journal.jsonl";
+  boost::asio::io_context io;
+  const boost::asio::ip::tcp::acceptor holder(io, {boost::asio::ip::make_address("127.0.0.1"), 0});
+  const auto port = std::to_string(holder.local_endpoint().port());
+  const auto result = run_daemon("--provider demo --plan intraday-25k --paper-journal '" + journal.string() +
+                                 "' --port " + port);
+  EXPECT_EQ(result.status, 2) << result.output;
+  EXPECT_EQ(result.output.rfind("openportd: --port " + port + " is in use on 127.0.0.1: ", 0), 0u) << result.output;
+  EXPECT_NE(result.output.find("choose another --port"), std::string::npos) << result.output;
+  EXPECT_FALSE(std::filesystem::exists(journal)) << result.output;
+  EXPECT_FALSE(std::filesystem::exists(file.directory / "crash.log")) << result.output;
+}
 }  // namespace

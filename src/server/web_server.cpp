@@ -619,11 +619,13 @@ asio::ip::address listen_address(const std::string& address) {
   return ip;
 }
 
-/// Why the server cannot listen on `address` and `port`, naming both.
+/// Why the server cannot listen on `address` and `port`, naming the flag to change and
+/// its value: --port for a port another server holds, else both.
 std::string listen_failure(const std::string& address, unsigned short port, const boost::system::error_code& error) {
-  const auto host = address.find(':') == std::string::npos ? address : "[" + address + "]";
-  return "cannot listen on " + host + ":" + std::to_string(port) + ": " + error.message() +
-         (error == asio::error::address_in_use ? " (is another openportd running? choose another --port)" : "");
+  if (error == asio::error::address_in_use)
+    return "--port " + std::to_string(port) + " is in use on " + address + ": " + error.message() +
+           " (is another openportd running? choose another --port)";
+  return "cannot listen on --address " + address + " --port " + std::to_string(port) + ": " + error.message();
 }
 
 /// No other page may frame the terminal. A framed copy's requests carry this server's

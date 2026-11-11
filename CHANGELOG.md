@@ -1179,9 +1179,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   when the web server started, after the journals, the crash log, the provider and the
   engine, and were reported as a bare Boost error (`Invalid argument [system:22]` for
   `--address localhost`). openportd now checks the port before it starts anything,
-  and reports one in use as `cannot listen on 127.0.0.1:8080: Address already in use
-  (is another openportd running? choose another --port)`; an `--address` that is not
-  an IP address is refused naming the flag.
+  and reports one in use as `--port 8080 is in use on 127.0.0.1: Address already in
+  use (is another openportd running? choose another --port)`; an `--address` that is
+  not an IP address is refused naming the flag.
 - **Notification filters keep their confirmation.** Each channel's settings were
   rebuilt whenever the server's copy changed, so "Filters saved for this server
   session." vanished as soon as the status refreshed, and an unsaved edit was thrown
