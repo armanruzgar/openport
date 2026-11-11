@@ -208,17 +208,19 @@ int usage(const char* error = nullptr) {
       "        --backfill-series FILE... [--force] rebuilds recording minutes offline and exits\n"
       "events: YYYY-MM-DD,Label lines for volatility session moves; labels are 1-160 bytes\n"
       "earnings: --event-calendar earnings events record the front straddle's implied move\n"
-      "          before each and the realized move after, in ~/.openport/earnings.json\n"
-      "analysis: imported portfolios are kept in ~/.openport/analysis (memory only for replay/demo)\n"
+      "          before each and the realized move after, in earnings.json beside the candle\n"
+      "          directory (default ~/.openport/earnings.json; memory only for replay/demo)\n"
+      "analysis: imported portfolios are kept in analysis/ beside the candle directory\n"
+      "          (default ~/.openport/analysis; memory only for replay/demo)\n"
       "rate: assumed flat zero rate in [-0.05, 0.25], default 0.04 (4%%)\n"
       "allowed origins: exact http[s]://host[:port], in addition to same-origin\n"
       "allowed hosts: names the server answers to besides IP addresses, localhost and the\n"
       "               allowed origins' hosts, such as a reverse proxy's upstream name\n"
       "databento: --expiries and --window must be 0 (whole-chain upstream subscription)\n"
       "tradier: --option sandbox=true for delayed data; poll interval follows request budget\n"
-      "         --option option_size_unit=contracts only after confirming option size units\n"
-      "tastytrade: production OAuth only; DXLink time units unknown unless confirmed with\n"
-      "            --option dxlink_time_unit=milliseconds\n"
+      "         option sizes are contracts by default; --option option_size_unit=hundreds|unknown\n"
+      "tastytrade: production OAuth only; DXLink times are milliseconds by default;\n"
+      "            --option dxlink_time_unit=unknown leaves market times at zero\n"
       "schwab: Trader API OAuth refresh token; poll interval follows the request budget\n"
       "alpaca: equity and ETF options only (no SPX); --option feed=indicative|opra\n"
       "        --option stock_feed=iex|sip|delayed_sip\n"
@@ -240,9 +242,11 @@ int usage(const char* error = nullptr) {
       "replay: --option file=PATH [--option speed=1|10|60|max] [--option loop=on|off]\n"
       "demo: simulated regular sessions, rotating forever; --option days=ID,ID,...\n"
       "      --option speed=1|2|5|10|30|60|120|300 (default 1); no network services\n"
-      "      --option revision=1|2|3|4|5|6|7|8 (default 8); older revisions keep prior symbols, calendar, timing, volume and quotes\n"
+      "      --option revision=1..%d (default %d); older revisions keep prior symbols, calendar, timing, volume and quotes\n"
       "      symbols default to the selected days; journal defaults to ~/.openport/demo/paper-journal.jsonl\n"
-      "providers:");
+      "providers:",
+      // From the generator's own constant, so a new revision cannot leave the help behind.
+      providers::kScenarioRevision, providers::kScenarioRevision);
   for (auto name : providers::provider_names()) {
     std::fprintf(out, " %.*s", static_cast<int>(name.size()), name.data());
   }

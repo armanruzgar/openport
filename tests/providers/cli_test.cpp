@@ -29,6 +29,7 @@
 #include "openport/net/http.hpp"
 #include "openport/trading/journal.hpp"
 #include "openport/pricing/black.hpp"
+#include "openport/providers/scenario.hpp"
 #include "openport/server/plans.hpp"
 #include "../../apps/openportd/startup.hpp"
 
@@ -528,10 +529,16 @@ TEST(Cli, DaemonHelpGoesToStdoutAndExitsZero) {
     ASSERT_TRUE(WIFEXITED(status)) << output;
     EXPECT_EQ(WEXITSTATUS(status), 0) << output;
     const auto usage = output.substr(0, output.find("\n\n"));
+    // The demo's revisions and default follow the generator, and the stores and provider
+    // defaults read as the code has them (G-59, G-60, G-136).
+    const auto revisions = "--option revision=1.." + std::to_string(openport::providers::kScenarioRevision) +
+                           " (default " + std::to_string(openport::providers::kScenarioRevision) + ")";
     for (const auto* expected : {"[--symbols SPX,SPY,QQQ,IWM,DIA]", "[--series-dir DIR] [--no-series]",
                                  "--backfill-series FILE... [--force]", "demo: simulated regular sessions",
-                                 "--option revision=1|2|3|4|5|6|7|8 (default 8)", "tradier tastytrade",
-                                 "[--american-model lr|bs2002|baw]"})
+                                 revisions.c_str(), "tradier tastytrade",
+                                 "[--american-model lr|bs2002|baw]", "in earnings.json beside the candle",
+                                 "kept in analysis/ beside the candle directory",
+                                 "option sizes are contracts by default", "DXLink times are milliseconds by default"})
       EXPECT_NE(output.find(expected), std::string::npos) << expected << '\n' << output;
     EXPECT_NE(usage.find("--no-series"), std::string::npos) << usage;
   }
