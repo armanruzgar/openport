@@ -219,10 +219,10 @@ TEST(TradeReview, AStrategysComboStopAndACoveredCalendarPlanTheirRisk) {
   TradingSession d({}, near.time); near.seed(d); wide.seed(d, "3.00", "3.20");
   OrderRequest diagonal = calendar; diagonal.client_order_id = "diagonal";
   diagonal.legs = {{near.symbol(), Side::Sell, 1}, {wide.symbol(), Side::Buy, 1}};
+  // It must be accepted, or there is no review whose planned risk says so.
   const auto uncovered = d.submit(diagonal, near.time);
-  if (uncovered.decision.ok()) {
-    EXPECT_FALSE(d.snapshot()->strategy_reviews.at("1").planned_risk);
-  }
+  ASSERT_TRUE(uncovered.decision.ok()) << uncovered.decision.message;
+  EXPECT_FALSE(d.snapshot()->strategy_reviews.at("1").planned_risk);
 }
 
 TEST(TradeReview, DayNotesValidateClearAndSurviveResetAndRecoveryWithExcursions) {
