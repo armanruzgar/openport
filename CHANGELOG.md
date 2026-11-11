@@ -132,6 +132,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Saving personal guardrails after gains.** An unchanged absolute soft floor can
+  be saved when the trailing plan floor has overtaken it, including with unrelated
+  guardrail tightening. A newly requested soft floor still must exceed the plan floor.
 - **Trade protection rules.** Already-reached triggers and marketable OCO legs no
   longer bypass minimum hold. Under required-stop or trade-risk rules, an open
   position's bracket stop can tighten but cannot be moved farther away.

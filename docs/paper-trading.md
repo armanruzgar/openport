@@ -1610,7 +1610,7 @@ Guardrails belong to the account, separately from its plan, and default to off.
 
 | Field | Meaning; zero disables |
 | --- | --- |
-| `soft_floor` | Decimal dollar equity level above the plan floor |
+| `soft_floor` | Decimal dollar equity level above the plan floor when changed. An unchanged stored level can be resubmitted after the plan floor trails past it, including with other guardrail edits |
 | `soft_floor_percent` | Whole percent, 0–99, of the plan's drawdown distance to keep above its current floor; the higher of this level and `soft_floor` wins. New requests for 100 return `INVALID_LIMITS`: it can put the floor at the peak, where it latches at once. Stored 100 settings still load. On practice (no drawdown floor), the percent does nothing and raises an informational `SOFT_FLOOR_UNUSED` warning |
 | `max_opening_trades` | Number of opening orders per trading day; an order counts once on its first opening fill, even if later partial fills cross rollover, and an atomic multi-leg execution counts once |
 | `cooldown_minutes` | Market minutes without new opening orders after a triggered closing stop fills, up to 1440 |

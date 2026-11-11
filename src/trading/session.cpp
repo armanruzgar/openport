@@ -6737,7 +6737,8 @@ CommandResult TradingSession::set_limits(Limits limits, Timestamp time) {
 CommandResult TradingSession::set_guardrails(Guardrails guardrails, Timestamp time) {
   validate_guardrails(guardrails);
   return impl_->transact(time, "guardrail_change", [&](State& s, Events& events) {
-    if (guardrails.soft_floor > Money{} && s.config.rules.max_drawdown > Money{} && guardrails.soft_floor <= s.evaluation.floor)
+    if ((!s.evaluation.revised_rules || guardrails.soft_floor != s.config.guardrails.soft_floor) &&
+        guardrails.soft_floor > Money{} && s.config.rules.max_drawdown > Money{} && guardrails.soft_floor <= s.evaluation.floor)
       throw TradingError(Reason::INVALID_LIMITS, "Soft floor equity must be above the plan floor");
     const auto effective = tightened_guardrails(s.config.guardrails, guardrails);
     if (s.guardrails.cooldown_until > s.time && effective.cooldown_minutes > s.config.guardrails.cooldown_minutes) {

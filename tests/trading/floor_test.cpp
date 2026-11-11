@@ -74,6 +74,28 @@ TEST(TradingFloor, FloorPercentRejects100OnWritesButRecoversStored100) {
   EXPECT_EQ(recovered.submit(f.market("blocked"), f.time).decision.code, Reason::SOFT_FLOOR);
 }
 
+TEST(TradingFloor, AnUnchangedSoftFloorDoesNotBlockOtherGuardrailEditsAfterGains) {
+  ScriptedMarket f;
+  auto c = config(); c.guardrails.soft_floor = m("9500");
+  TradingSession s(c, f.time); f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("winner", 5), f.time).decision.ok());
+  update(s, f, "6.00", "6.20");
+  ASSERT_TRUE(s.submit(f.market("close", 5, Side::Sell), f.time).decision.ok());
+  ASSERT_GT(s.snapshot()->evaluation.floor, c.guardrails.soft_floor);
+  EXPECT_TRUE(s.set_guardrails(c.guardrails, f.time).decision.ok());
+  auto edited = c.guardrails; edited.max_opening_trades = 5;
+  EXPECT_TRUE(s.set_guardrails(edited, f.time).decision.ok());
+  EXPECT_EQ(s.config().guardrails.max_opening_trades, 5);
+  EXPECT_EQ(s.config().guardrails.soft_floor, m("9500"));
+  edited.soft_floor = m("9600");
+  try {
+    s.set_guardrails(edited, f.time);
+    FAIL() << "accepted a new soft floor below the plan floor";
+  } catch (const TradingError& error) {
+    EXPECT_EQ(error.code(), Reason::INVALID_LIMITS);
+  }
+}
+
 TEST(TradingFloor, PercentWithoutDrawdownWarnsAndAbsoluteFloorRechecksAtReset) {
   ScriptedMarket f;
   auto c = config(); c.rules = {}; c.guardrails.soft_floor_percent = 50;
