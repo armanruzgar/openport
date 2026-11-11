@@ -1144,6 +1144,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   providers. They now build only where the server does, a CI job builds that
   configuration on every C++ change, and the test executable names each static
   library once, so Apple's linker no longer warns about duplicates on every link.
+- **CI compiles the benchmarks.** A default build includes them and CONTRIBUTING runs
+  them, but every CI job, the image and the release builds turned them off, so a
+  change to an interface they use (the trading session, the desk or the margin
+  internals) passed CI and broke `cmake --build build` for contributors. The Ubuntu
+  Release build now compiles them, without running them.
 
 ## 0.5.1 (2026-10-28)
 

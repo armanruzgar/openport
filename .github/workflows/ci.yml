@@ -89,7 +89,9 @@ jobs:
   # The Release build is cached with ccache, one cache per operating system, so a
   # commit recompiles only what it touched. The plain suite and the suite with
   # incremental reviews and journal changes checked against full rebuilds run
-  # side by side on the same cached build instead of one after the other.
+  # side by side on the same cached build instead of one after the other. It
+  # also compiles the benchmarks, which a default build includes, without running
+  # them, so a change that breaks them fails here and not in a contributor's build.
   cpp:
     name: ${{ matrix.verify && 'C++ (GCC 13, Ubuntu 24.04, reviews and journal checked against rebuilds)' || 'C++ (GCC 13, Ubuntu 24.04, warnings as errors)' }}
     needs: changes
@@ -123,7 +125,7 @@ jobs:
         run: >
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF
+          -DOPENPORT_WERROR=ON
       - name: Build
         id: build
         run: cmake --build build
@@ -317,6 +319,52 @@ jobs:
             fi
           done
 
+  # OPENPORT_BUILD_PROVIDERS=OFF builds the pricing, analytics and trading libraries
+  # and their tests without the provider adapters, the server or the apps. Only this
+  # job builds it, so it checks that the option still configures, compiles and links;
+  # the suites above already run those tests.
+  cpp-core:
+    name: C++ (GCC 13, without providers and server, builds only)
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: 500M
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system dependencies
+        # The trading library hashes its journal with OpenSSL's libcrypto.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build ccache libssl-dev
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-core-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-core-${{ runner.os }}-
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_PROVIDERS=OFF -DOPENPORT_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s
+      - name: Save compiler cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-core-${{ runner.os }}-${{ github.sha }}
+
   web:
     name: Web (TypeScript, Vitest, Vite)
     needs: changes
@@ -397,7 +445,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF
+            -DOPENPORT_WERROR=ON
           cmake --build build --target openportd openport_tests
           ccache -s
       - name: Tests marked cpp

@@ -34,7 +34,9 @@ test and hook must finish within 5 minutes. On a heavily loaded machine, set
 CI runs on every push and pull request: the C++ suite with GCC 13 on Ubuntu 24.04 and
 Apple Clang on macOS, both with `-DOPENPORT_WERROR=ON`, again under AddressSanitizer
 and UndefinedBehaviorSanitizer with GCC 13, the web checks, the Python client and a
-Docker smoke test. A second Ubuntu job runs the same suite at the same time with
+Docker smoke test. The Ubuntu build also compiles the benchmarks (without running
+them), and a GCC build with `-DOPENPORT_BUILD_PROVIDERS=OFF` checks that the pricing,
+analytics and trading libraries and their tests still build without the providers. A second Ubuntu job runs the same suite at the same time with
 `OPENPORT_VERIFY_REVIEWS=1` and `OPENPORT_VERIFY_JOURNAL=1`. Every C++ job runs
 each test in its own process through CTest, in parallel, starting the expensive
 ones first from the checked-in cost hints in `tests/CTestCosts.cmake` (local
