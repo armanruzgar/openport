@@ -159,6 +159,16 @@ TEST_F(Sandboxes, NewSandboxesChargeTheOperatorsFee) {
   // The visitor's own status reports the fee their orders pay.
   const auto status = json::parse(send(request("GET", "/api/status", token(own))).body);
   EXPECT_EQ(status["trading"]["fee_per_contract"], "1.00");
+  // Its trading is its own account's, as the operator's listing shows it. The operator's
+  // notification settings (channels, their errors) stay in the operator's status only.
+  const auto operator_status = json::parse(send(request("GET", "/api/status", "operator")).body);
+  json own_trading;
+  for (const auto& account : operator_status.at("accounts")) {
+    if (account.at("id") == id(own)) own_trading = account.at("trading");
+  }
+  EXPECT_EQ(status.at("trading"), own_trading);
+  EXPECT_FALSE(status.contains("notifications"));
+  EXPECT_TRUE(operator_status.contains("notifications"));
 }
 TEST_F(Sandboxes, TradesOnSharedSimulatedFeedWithoutChangingTheMainAccount) {
   const auto& market = source->market;
@@ -281,6 +291,11 @@ TEST_F(Sandboxes, ClientHeaderOnlySeparatesVisitorsWhenConfigured) {
   EXPECT_EQ(server::sandbox_client_ip(proxy, "X-Real-IP", "2001:0db8::1"), "2001:db8::1");
 }
 TEST_F(Sandboxes, ScopeCannotReadOrWriteMainOrAnotherSandbox) {
+  const auto& market = source->market;
+  source->desk->replay_batch({md::ContractDefinition{0, market.contract},
+      md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000},
+      md::OptionQuote{0, market.time, 4.0, 4.2, 20, 20},
+      md::SnapshotComplete{"SPX", market.time}}, market.time);
   const auto own = create(), other = create();
   for (const auto& account : {std::string("main"), id(other)}) {
     for (const auto& method : {"GET", "POST", "PUT", "DELETE"}) {
@@ -292,9 +307,33 @@ TEST_F(Sandboxes, ScopeCannotReadOrWriteMainOrAnotherSandbox) {
   }
   EXPECT_EQ(send(request("GET", "/api/account", token(own))).status, 200);
   EXPECT_EQ(send(request("GET", "/api/account?account=" + id(own), token(own))).status, 200);
-  for (const auto& query : {"?account=main&account=" + id(own), "?account=" + id(own) + "&account=main", "?%61ccount=" + id(own)}) {
-    EXPECT_NE(send(request("POST", "/api/orders" + query, token(own))).status, 200);
+  // An order any of the accounts would take. With the account key given twice, the
+  // scope check and the route could each read a different one: it is refused before
+  // either does, whichever comes first, and no account gets the order.
+  const json order{{"client_order_id", "scoped"}, {"symbol", market.symbol()}, {"side", "buy"}, {"type", "limit"},
+      {"quantity", 1}, {"limit_price", "4.20"}, {"time_in_force", "day"}};
+  const auto version = [&](const std::string& account) { return source->trading_view(account)->snapshot->account_version; };
+  const auto orders = [&](const std::string& account) { return source->trading_view(account)->snapshot->recent_orders.size(); };
+  const std::vector<std::string> accounts{"main", id(own), id(other)};
+  std::vector<std::uint64_t> versions;
+  for (const auto& account : accounts) versions.push_back(version(account));
+  for (const auto& query : {"?account=main&account=" + id(own), "?account=" + id(own) + "&account=main"}) {
+    const auto refused = send(request("POST", "/api/orders" + query, token(own), order.dump()));
+    EXPECT_EQ(refused.status, 400) << query << refused.body;
+    EXPECT_EQ(json::parse(refused.body)["error"]["code"], "INVALID_REQUEST") << query;
   }
+  for (std::size_t i = 0; i < accounts.size(); ++i) {
+    EXPECT_EQ(version(accounts[i]), versions[i]) << accounts[i];
+    EXPECT_EQ(orders(accounts[i]), 0U) << accounts[i];
+  }
+  // %61ccount is the account key spelt another way: it names the sandbox itself.
+  const auto placed = send(request("POST", "/api/orders?%61ccount=" + id(own), token(own), order.dump()));
+  ASSERT_EQ(placed.status, 201) << placed.body;
+  EXPECT_EQ(orders(id(own)), 1U);
+  EXPECT_EQ(orders("main"), 0U);
+  EXPECT_EQ(orders(id(other)), 0U);
+  EXPECT_EQ(version("main"), versions[0]);
+  EXPECT_EQ(version(id(other)), versions[2]);
 }
 TEST_F(Sandboxes, OmittedAccountUsesOwnSandboxOnReadsAndWrites) {
   const auto own = create();
