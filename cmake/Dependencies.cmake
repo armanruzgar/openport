@@ -41,6 +41,22 @@ if(OPENPORT_BUILD_PROVIDERS AND OPENPORT_WITH_DATABENTO)
   if(OPENPORT_STATIC_DEPS AND TARGET zstd::libzstd_static AND TARGET zstd::libzstd)
     set_target_properties(zstd::libzstd PROPERTIES INTERFACE_LINK_LIBRARIES zstd::libzstd_static)
   endif()
+  # databento-cpp fetches JSON for Modern C++, cpp-httplib and date by URL alone, and
+  # every OpenPort target compiles against that JSON copy. The first declaration of a
+  # name wins, so these, the same releases pinned by checksum, are what it builds with.
+  # Keep them at the versions its CMakeLists.txt names when it is updated.
+  FetchContent_Declare(json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_Declare(httplib
+    URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.54.1.tar.gz
+    URL_HASH SHA256=7310f5312e1423830d649b38ed028e9db86303a979ccbfdbd1c4b1574f422dfb
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_Declare(date_src
+    URL https://github.com/HowardHinnant/date/archive/refs/tags/v3.0.5.tar.gz
+    URL_HASH SHA256=ef786edc203daec76475825640b3af247bd08e31fc52217e5ce8f76107b4bb05
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
   FetchContent_Declare(databento
     URL https://github.com/databento/databento-cpp/archive/refs/tags/v0.68.0.tar.gz
     URL_HASH SHA256=de8ff21cffce4003e55b7067146f7301ba6cc9677925cbf86449b2b87018ac51
@@ -57,12 +73,6 @@ FetchContent_Declare(nlohmann_json
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
   SYSTEM)
 
-FetchContent_Declare(unordered_dense
-  URL https://github.com/martinus/unordered_dense/archive/refs/tags/v5.0.1.tar.gz
-  URL_HASH SHA256=b79f46db45fd73310211429e5d33da4a579543ac544ae7dc12f8d9a31ad0aea4
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  SYSTEM)
-
 FetchContent_Declare(simdjson
   URL https://github.com/simdjson/simdjson/archive/refs/tags/v4.6.11.tar.gz
   URL_HASH SHA256=61d948fc24f0d793829ad658058e7597d064988a89b4607ea02e401a82df98ff
@@ -74,7 +84,7 @@ set(SIMDJSON_DEVELOPER_MODE OFF CACHE INTERNAL "")
 if(NOT TARGET nlohmann_json::nlohmann_json)
   FetchContent_MakeAvailable(nlohmann_json)
 endif()
-FetchContent_MakeAvailable(unordered_dense simdjson)
+FetchContent_MakeAvailable(simdjson)
 
 if(OPENPORT_BUILD_TESTS)
   FetchContent_Declare(googletest
@@ -113,8 +123,8 @@ endif()
 # simdjson 5 a parser's destructor jumped through a vtable from simdjson 4. A
 # target's own include directories come before those of the libraries it links,
 # so naming the pinned headers here puts them ahead of every system prefix.
-foreach(pinned IN ITEMS nlohmann_json::nlohmann_json simdjson::simdjson unordered_dense::unordered_dense
-                        databento::databento GTest::gtest GTest::gmock benchmark::benchmark)
+foreach(pinned IN ITEMS nlohmann_json::nlohmann_json simdjson::simdjson databento::databento
+                        GTest::gtest GTest::gmock benchmark::benchmark)
   if(NOT TARGET ${pinned})
     continue()
   endif()

@@ -76,3 +76,16 @@ def test_release_script_attaches_only_its_own_archive_with_the_commit_revision()
     # The image has no .git: it embeds the revision only if it is given one.
     assert 'docker build --build-arg OPENPORT_BUILD_REVISION="$revision"' in script
     assert '-DCMAKE_CXX_FLAGS="-ffile-prefix-map=$root=."' in script
+
+
+def test_every_fetched_dependency_is_pinned_by_checksum():
+    cmake = (ROOT / "cmake/Dependencies.cmake").read_text()
+    blocks = re.findall(r"FetchContent_Declare\((\w+)(.*?)\)\n", cmake, re.S)
+    names = [name for name, _ in blocks]
+    assert {"databento", "nlohmann_json", "simdjson"} <= set(names)
+    for name, block in blocks:
+        assert re.search(r"\bURL_HASH SHA256=[0-9a-f]{64}\b", block), f"{name} has no checksum"
+    # databento-cpp declares these itself by URL alone; the first declaration of a name
+    # wins, so ours must come before its own is read.
+    for name in ("json", "httplib", "date_src"):
+        assert names.index(name) < names.index("databento"), name

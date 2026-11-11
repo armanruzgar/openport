@@ -281,7 +281,7 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **Third-party licences ship with every release.** The archives, the `.deb` and
   `.rpm` packages and the container image carried only OpenPort's own MIT licence
   (the image not even that), though the programs contain databento-cpp, libdbn_c,
-  simdjson, JSON for Modern C++, cpp-httplib, date and unordered_dense, the macOS
+  simdjson, JSON for Modern C++, cpp-httplib and date, the macOS
   archive also OpenSSL and zstd, and the web terminal React, TanStack Query, Tailwind
   CSS and the Geist fonts, whose licences ask for their notices to go with every copy.
   `THIRD_PARTY_NOTICES.txt` now lists them with their licence texts, beside the
@@ -1149,6 +1149,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   change to an interface they use (the trading session, the desk or the margin
   internals) passed CI and broke `cmake --build build` for contributors. The Ubuntu
   Release build now compiles them, without running them.
+- **Databento's own downloads are checked.** databento-cpp fetches JSON for Modern
+  C++, cpp-httplib (which carries the Databento key over TLS) and date by URL with no
+  checksum, and its JSON copy is the one every OpenPort target compiles against, so a
+  moved tag or a tampered archive would have been built in without any check failing.
+  The same releases are now declared first, pinned by SHA-256 as OpenPort's own
+  dependencies are, and a test fails for any fetched library without a checksum.
+  unordered_dense, fetched and configured on every build but never used, is gone, as
+  is its entry in the third-party notices.
 
 ## 0.5.1 (2026-10-28)
 

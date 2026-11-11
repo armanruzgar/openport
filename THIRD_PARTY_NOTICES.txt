@@ -46,11 +46,6 @@ date
   Copyright (c) 2019 Jiangang Zhuang
   MIT License, below.
 
-unordered_dense
-  https://github.com/martinus/unordered_dense
-  Copyright (c) 2022 Martin Leitner-Ankerl
-  MIT License, below.
-
 Boost.Asio and Boost.Beast, compiled from their headers
   https://www.boost.org
   Boost Software License 1.0, which needs no notice in compiled programs:
