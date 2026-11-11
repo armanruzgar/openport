@@ -409,7 +409,8 @@ with `--backfill-series`.
 
 `GET /api/underlyings/{symbol}/surface-history` returns `snapshots` and three
 `comparisons`: `prior_close`, `week`, and `month`. `from`/`to` accept ISO timestamps
-or New York dates (45 days by default, at most 366 days); `compare=true` omits the
+or New York dates (45 days by default, ending at `to` when only `to` is given, at most
+366 days); `compare=true` omits the
 range list. The range list holds at most `limit` (400) snapshots, the newest in the
 range; `truncated: true` says older ones were left out, so narrow `from` to read them. One week means seven calendar days and one month means the preceding
 calendar month, clamping the day at month end. Non-session targets roll back to

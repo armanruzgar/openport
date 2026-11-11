@@ -138,6 +138,18 @@ TEST(SurfaceHistory, ComparisonsUseExactTargetSessionsAndNeverFutureCloses) {
   EXPECT_EQ(json::parse(empty.body)["error"]["code"], "NOT_FOUND");
   EXPECT_EQ(json::parse(empty.body)["error"]["message"], "This source has no market data or metric series");
 }
+// B-120: a to alone ends the default 45 days, as on the series route; from is not
+// taken from the analytics time, which would put it after an older to.
+TEST(SurfaceHistory, AToAloneEndsTheDefaultRange) {
+  SurfaceSource source;
+  for (const auto date : {md::Date{2026, 7, 15}, md::Date{2026, 6, 10}})
+    ASSERT_TRUE(source.store.insert_surface("SPX", server::surface_snapshot(snapshot(at(date, 15, 59)))));
+  const auto response = server::handle_api({"GET", "/api/underlyings/SPX/surface-history?to=2026-08-01"}, source);
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto listed = json::parse(response.body)["snapshots"];
+  ASSERT_EQ(listed.size(), 1u) << listed;  // June 10 is more than 45 days before it
+  EXPECT_EQ(listed[0]["date"], "2026-07-15");
+}
 // The comparison targets are read from the store on their own: a from/to that leaves
 // their sessions out still compares against the stored closes rather than nulls.
 TEST(SurfaceHistory, ComparisonsDoNotDependOnTheListedRange) {

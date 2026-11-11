@@ -1315,6 +1315,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   that price was classified at the ask, so the flow tape counted it as bought premium
   and toward sweeps. It is at both sides at once and now counts as `mid`, toward
   neither.
+- **`surface-history` with only `to`.** The default `from` was 45 days before the
+  analytics time whatever `to` said, so a `to` more than 45 days back was refused as
+  an unordered range. The default 45 days now end at the given `to`, as on the series
+  route.
 
 ## 0.5.1 (2026-10-28)
 

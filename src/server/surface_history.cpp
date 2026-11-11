@@ -261,6 +261,8 @@ ApiResponse surface_history_response(const MetricsSource& source, const std::str
     if (!time || *time < 0) return bad("from/to must be ISO timestamps or YYYY-MM-DD");
     (std::string(key) == "from" ? from : to) = *time;
   }
+  // The default 45 days end at a given to, as the series route's do, not at now.
+  if (!query.contains("from")) from = std::max<md::Timestamp>(0, to - 45 * md::kNanosPerDay);
   if (from > to || to - from > 366 * md::kNanosPerDay) return bad("surface range must be ordered and at most 366 days");
   // Each snapshot carries every expiry's fit, so long ranges return only the newest ones.
   const bool listing = !query.contains("compare") || query.at("compare") != "true";
