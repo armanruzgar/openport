@@ -4305,7 +4305,8 @@ error names the filesystem device and directory basename, free bytes and the
 full disk stops trading without tearing the journal. If a write is torn anyway, writable resume
 refuses the journal (live accounts remain readable at the verified prefix) until, with openportd stopped, `openportd --repair-journals` cuts
 the torn last line off it and each account journal beside it, keeping the original as
-`FILE.torn-YYYYMMDDTHHMMSSZ`; damage before the last line is reported and left alone.
+`FILE.torn-YYYYMMDDTHHMMSSZ` (`-1`, `-2`… after it when a repair earlier that second
+took the name); damage before the last line is reported and left alone.
 
 An account exists from its journal's first record, its `session_start`. A new journal
 whose first record the disk refused (or that a crash cut off before it) is empty, or

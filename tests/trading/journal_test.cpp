@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -603,6 +604,66 @@ TEST(TradingJournal, ATornFirstRecordRepairsToAnEmptyJournalThatStartsAfresh) {
   EXPECT_FALSE(FileJournal::repair(file.path).empty);
   EXPECT_EQ(FileJournal::read(file.path).records.front().type, "session_start");
   std::filesystem::remove(repaired.backup);
+}
+TEST(TradingJournal, ResumingReturnsTheRecordsItVerified) {
+  TemporaryJournal file;
+  test::ScriptedMarket f;
+  {
+    auto journal = FileJournal::create(file.path);
+    TradingSession s({}, f.time, journal);
+    f.seed(s);
+  }
+  const auto expected = FileJournal::read(file.path);
+  {
+    auto [journal, recovery] = FileJournal::resume_and_read(file.path, {});
+    ASSERT_EQ(recovery.records.size(), expected.records.size());
+    for (std::size_t i = 0; i < expected.records.size(); ++i) {
+      EXPECT_EQ(recovery.records[i].hash, expected.records[i].hash);
+      EXPECT_EQ(recovery.records[i].payload, expected.records[i].payload);
+    }
+    EXPECT_EQ(recovery.head, expected.head);
+    EXPECT_EQ(journal->sequence(), expected.records.size());
+    EXPECT_EQ(journal->head(), expected.head);
+    // It holds the writer's lock, as resume does.
+    EXPECT_THROW((void)FileJournal::resume(file.path), TradingError);
+  }
+  // A torn suffix is refused, as resume refuses it.
+  file.write(file.read() + "{\"seq\":9,");
+  EXPECT_THROW((void)FileJournal::resume_and_read(file.path, {}), TradingError);
+}
+TEST(TradingJournal, RepairsWithinOneSecondKeepEveryOriginal) {
+  TemporaryJournal file;
+  const auto contents = [](const std::string& name) {
+    std::ifstream in(name, std::ios::binary);
+    std::ostringstream text;
+    text << in.rdbuf();
+    return text.str();
+  };
+  const auto stamped = [&](std::time_t at) {
+    std::tm utc{};
+    ::gmtime_r(&at, &utc);
+    char stamp[32];
+    std::strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%SZ", &utc);
+    return file.path + ".torn-" + stamp;
+  };
+  // An earlier repair in each of the next few seconds already took its name.
+  const auto now = std::time(nullptr);
+  for (std::time_t at = now; at < now + 5; ++at) {
+    std::ofstream earlier(stamped(at), std::ios::binary);
+    earlier << "earlier";
+  }
+  file.write("{\"hash\":\"0f");
+  const auto first = FileJournal::repair(file.path);
+  EXPECT_TRUE(first.backup.ends_with("-1")) << first.backup;
+  // Torn again and repaired at once: a further name, and nothing is overwritten.
+  file.write("{\"hash\":\"1a");
+  const auto second = FileJournal::repair(file.path);
+  EXPECT_EQ(second.bytes_cut, 11U);
+  EXPECT_NE(second.backup, first.backup);
+  EXPECT_EQ(file.read(), "");
+  EXPECT_EQ(contents(first.backup), "{\"hash\":\"0f");
+  EXPECT_EQ(contents(second.backup), "{\"hash\":\"1a");
+  for (std::time_t at = now; at < now + 5; ++at) EXPECT_EQ(contents(stamped(at)), "earlier");
 }
 TEST(TradingJournal, RepairLeavesDamageBeforeTheLastLineAndLiveJournalsAlone) {
   TemporaryJournal file;

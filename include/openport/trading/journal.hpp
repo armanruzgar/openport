@@ -79,13 +79,17 @@ class FileJournal final : public Journal {
   static std::shared_ptr<FileJournal> create(const std::string& path, Options options);
   static std::shared_ptr<FileJournal> resume(const std::string& path);
   static std::shared_ptr<FileJournal> resume(const std::string& path, Options options);
+  /// resume, with the verified records it read to find where the journal ends, so an
+  /// account recovering from them reads and checks the file once, not twice.
+  static std::pair<std::shared_ptr<FileJournal>, JournalRecovery> resume_and_read(const std::string& path, Options options);
   static JournalRecovery read(const std::string& path, std::string_view expected_head = {});
   /// Read-only diagnostics, stopping before the first damaged record; holds no writer lock.
   static JournalRecovery read_prefix(const std::string& path);
   /// Holds the file's lock without writing; returns only the verified prefix.
   static std::pair<std::shared_ptr<FileJournal>, JournalRecovery> inspect(const std::string& path);
   /// Cuts a torn final line, as a write the disk ran out for leaves, off a journal so
-  /// that it resumes, after copying the original beside it as FILE.torn-YYYYMMDDTHHMMSSZ.
+  /// that it resumes, after copying the original beside it as FILE.torn-YYYYMMDDTHHMMSSZ
+  /// (with -1, -2, ... after it when an earlier repair that second took the name).
   /// A torn first record leaves the journal empty. It takes the writer's lock, so
   /// openportd must be stopped. A journal that verifies is left alone; damage before
   /// the last line throws JOURNAL_CORRUPT, changing nothing.

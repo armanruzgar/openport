@@ -186,14 +186,18 @@ std::shared_ptr<FileJournal> FileJournal::resume(const std::string& path) {
   return resume(path, Options{});
 }
 std::shared_ptr<FileJournal> FileJournal::resume(const std::string& path, Options options) {
+  return resume_and_read(path, std::move(options)).first;
+}
+std::pair<std::shared_ptr<FileJournal>, JournalRecovery> FileJournal::resume_and_read(const std::string& path, Options options) {
   const int fd = open_locked(path, false);
   try {
-    const auto recovery = read(path);
+    auto recovery = read(path);
     if (recovery.truncated_final_line)
       io("Torn journal suffix, as a full disk leaves: with openportd stopped, "
          "openportd --repair-journals cuts it off and keeps the original");
-    return std::shared_ptr<FileJournal>(new FileJournal(fd, recovery.records.size(), recovery.head,
+    auto journal = std::shared_ptr<FileJournal>(new FileJournal(fd, recovery.records.size(), recovery.head,
         recovery.records.empty() ? 0 : recovery.records.back().time, std::move(options), directory_name(path)));
+    return {std::move(journal), std::move(recovery)};
   } catch (...) { ::close(fd); throw; }
 }
 JournalRepair FileJournal::repair(const std::string& path, bool dry_run) {
@@ -213,8 +217,15 @@ JournalRepair FileJournal::repair(const std::string& path, bool dry_run) {
   std::tm utc{};
   ::gmtime_r(&now, &utc);
   std::strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%SZ", &utc);
-  JournalRepair result{contents.size() - keep, path + ".torn-" + stamp, keep == 0, recovery.records.size()};
-  const int copy = ::open(result.backup.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+  JournalRepair result{contents.size() - keep, {}, keep == 0, recovery.records.size()};
+  // A journal torn and repaired again within the same second takes the next free
+  // name (-1, -2, ...): an earlier backup is never overwritten.
+  int copy = -1;
+  for (int taken = 0; copy < 0 && taken < 100; ++taken) {
+    result.backup = path + ".torn-" + stamp + (taken == 0 ? std::string() : "-" + std::to_string(taken));
+    copy = ::open(result.backup.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (copy < 0 && errno != EEXIST) break;
+  }
   if (copy < 0) io("Cannot create journal repair backup: " + std::string(std::strerror(errno)));
   std::size_t done = 0;
   while (done < contents.size()) {

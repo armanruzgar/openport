@@ -477,6 +477,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   added again for every later fill that followed a row skipped for another reason, and
   those rows were listed one by one; the notice now comes once, at the first fill past
   the cap, and reading stops there.
+- **A second journal repair within one second.** `--repair-journals`, and the repair a
+  continued replay makes, keep the original as `FILE.torn-` and the UTC second; a
+  journal torn and repaired again within that second failed with "Cannot create
+  journal repair backup: File exists" and stayed refused. The later backup now takes
+  the next free name, `-1` and up after the stamp.
+- **Reading each journal twice at startup.** openportd read, parsed and checked the
+  hash chain of every account journal once to resume it and again for the records it
+  recovers from (about 1.4 s more for a 46 MB journal); `--compact-journals` did the
+  same. Each journal is now read once.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

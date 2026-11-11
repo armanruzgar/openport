@@ -191,11 +191,10 @@ std::pair<std::shared_ptr<Journal>, std::optional<JournalRecovery>> open_journal
   for (auto path = parent; path != existing; path = path.parent_path()) sync_directory(path);
   sync_directory(existing);
   if (std::filesystem::exists(file)) {
-    // Lock before reading, then recover the same verified head held by the writer.
-    std::shared_ptr<Journal> journal = FileJournal::resume(file.string(), options);
-    auto recovery = FileJournal::read(file.string());
-    if (recovery.records.empty()) return {journal, std::nullopt};
-    return {journal, std::move(recovery)};
+    // Lock, then recover from the records resuming verified: the head the writer holds.
+    auto [journal, recovery] = FileJournal::resume_and_read(file.string(), options);
+    if (recovery.records.empty()) return {std::move(journal), std::nullopt};
+    return {std::move(journal), std::move(recovery)};
   }
   std::shared_ptr<Journal> journal = FileJournal::create(file.string(), options);
   sync_directory(parent);
@@ -592,9 +591,8 @@ JournalCompaction compact_journal(const std::filesystem::path& file, const FileJ
   JournalCompaction result{file, 0, 0, {}, {}};
   const auto temporary = std::filesystem::path(file.string() + ".compacting");
   try {
-    // The writer's lock, held until the rewrite is in place.
-    const auto lock = FileJournal::resume(file.string());
-    const auto recovery = FileJournal::read(file.string(), lock->head());
+    // The writer's lock, held until the rewrite is in place, and the records it verified.
+    const auto [lock, recovery] = FileJournal::resume_and_read(file.string(), {});
     result.bytes_before = result.bytes_after = std::filesystem::file_size(file);
     // Only records with whole states shrink; a final schema 1 record stays.
     bool whole = false;
