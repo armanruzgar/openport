@@ -24,6 +24,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Surface-history comparisons with a range.** `GET /api/underlyings/{symbol}/surface-history`
+  looked up the prior close, week and month comparisons only among the snapshots in
+  the request's `from`/`to`, so a range that left out their sessions returned them as
+  null, which the API documents as a close that was never captured. The Python client
+  and the MCP tool send `compare=true` with the range they are given, so an agent that
+  narrowed it got every comparison as null. Each target session is now read on its own,
+  up to the market's time.
 - **Retried copies to an equity-split group.** `POST /api/orders/copy` recomputed an
   equity split on every request, and after the first copy filled, the paying member's
   slightly lower equity moved the remainder unit to another member. A retry with the

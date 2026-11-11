@@ -416,7 +416,9 @@ calendar month, clamping the day at month end. Non-session targets roll back to
 the previous business session. The exact target session must have a close sample;
 missing history is null, never a substitute from a more distant recorded date.
 Close samples are withheld until the session has completed at the current
-publication's market time. Comparisons also respect an explicitly requested range.
+publication's market time. Comparisons do not depend on `from`/`to`: each target
+session is read from the store on its own, so a range that leaves it out still
+compares against its stored close.
 
 Each snapshot carries `as_of` (the actual observation), session date, capture slot,
 spot, model `svi`, and expiry ids including AM/PM and exercise-family suffixes.

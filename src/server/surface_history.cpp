@@ -263,10 +263,11 @@ ApiResponse surface_history_response(const MetricsSource& source, const std::str
     (std::string(key) == "from" ? from : to) = *time;
   }
   if (from > to || to - from > 366 * md::kNanosPerDay) return bad("surface range must be ordered and at most 366 days");
-  const auto rows = source.series() ? source.series()->surfaces(symbol, from, std::min(to, as_of)) : std::vector<SurfaceSnapshot>{};
-  json snapshots = json::array(), comparisons = json::array();
   // Each snapshot carries every expiry's fit, so long ranges return only the newest ones.
   const bool listing = !query.contains("compare") || query.at("compare") != "true";
+  const auto rows = listing && source.series() ? source.series()->surfaces(symbol, from, std::min(to, as_of))
+                                               : std::vector<SurfaceSnapshot>{};
+  json snapshots = json::array(), comparisons = json::array();
   const bool truncated = listing && rows.size() > kSurfaceHistoryLimit;
   if (listing)
     for (auto row = rows.begin() + static_cast<std::ptrdiff_t>(truncated ? rows.size() - kSurfaceHistoryLimit : 0); row != rows.end(); ++row)
@@ -280,11 +281,14 @@ ApiResponse surface_history_response(const MetricsSource& source, const std::str
       while (!md::valid_date(date)) --date.day;
     }
     if (!md::market_session(md::new_york_to_utc(date, 9, 30)).open) date = md::previous_business_day(date);
-    const auto match = std::find_if(rows.begin(), rows.end(), [&](const auto& row) {
-      return row.slot == "close" && md::new_york_time(row.time).date == date;
-    });
+    // Each target session is read on its own, up to the market's time, so a from/to
+    // that leaves it out does not make a stored close read as missing.
+    const auto session = source.series()
+        ? source.series()->surfaces(symbol, md::new_york_to_utc(date, 0, 0), std::min(close(date), as_of))
+        : std::vector<SurfaceSnapshot>{};
+    const auto match = std::find_if(session.begin(), session.end(), [](const auto& row) { return row.slot == "close"; });
     comparisons.push_back({{"label", label}, {"date", md::format_date(date)},
-        {"snapshot", match == rows.end() ? json(nullptr) : surface_snapshot_json(*match)}});
+        {"snapshot", match == session.end() ? json(nullptr) : surface_snapshot_json(*match)}});
   }
   return {200, json{{"symbol", symbol}, {"enabled", source.series() != nullptr}, {"snapshots", snapshots},
       {"limit", kSurfaceHistoryLimit}, {"truncated", truncated}, {"comparisons", comparisons}}.dump()};

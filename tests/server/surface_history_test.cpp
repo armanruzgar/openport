@@ -119,6 +119,26 @@ TEST(SurfaceHistory, ComparisonsUseExactTargetSessionsAndNeverFutureCloses) {
   EXPECT_EQ(json::parse(empty.body)["error"]["code"], "NOT_FOUND");
   EXPECT_EQ(json::parse(empty.body)["error"]["message"], "This source has no market data or metric series");
 }
+// The comparison targets are read from the store on their own: a from/to that leaves
+// their sessions out still compares against the stored closes rather than nulls.
+TEST(SurfaceHistory, ComparisonsDoNotDependOnTheListedRange) {
+  SurfaceSource source;
+  for (const auto date : {md::Date{2026, 9, 21}, md::Date{2026, 9, 15}, md::Date{2026, 8, 21}})
+    ASSERT_TRUE(source.store.insert_surface("SPX", server::surface_snapshot(snapshot(at(date, 15, 59)))));
+  for (const auto* query : {"compare=true&from=2026-09-22", "compare=true&from=2026-09-16", "compare=true&to=2026-09-18",
+                            "compare=false&from=2026-09-20", "from=2026-07-01&to=2026-08-01"}) {
+    const auto response = server::handle_api({"GET", std::string("/api/underlyings/SPX/surface-history?") + query}, source);
+    ASSERT_EQ(response.status, 200) << query << " " << response.body;
+    const auto body = json::parse(response.body);
+    ASSERT_EQ(body["comparisons"].size(), 3u) << query;
+    for (const auto& comparison : body["comparisons"])
+      EXPECT_FALSE(comparison["snapshot"].is_null()) << query << " " << comparison["label"];
+  }
+  // The listed snapshots still keep to the range.
+  const auto listed = json::parse(server::handle_api({"GET", "/api/underlyings/SPX/surface-history?from=2026-09-20"}, source).body);
+  ASSERT_EQ(listed["snapshots"].size(), 1u);
+  EXPECT_EQ(listed["snapshots"][0]["date"], "2026-09-21");
+}
 TEST(SurfaceHistory, CloseRewritesKeepOtherSlotsAndOneLinePerSession) {
   test::RecordingFile temp;
   const auto directory = temp.directory / "series";
