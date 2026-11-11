@@ -40,6 +40,20 @@ def test_event_iterator_uses_real_websocket_and_closes():
     asyncio.run(exercise())
 
 
+def test_event_iterator_warns_about_a_live_account_that_does_not_exist():
+    from websockets.asyncio.server import serve
+    async def exercise():
+        async def handler(socket):
+            await socket.send(json.dumps({"type": "event_stream", "version": 1, "account": "swnig",
+                                          "source": "live", "exists": False}))
+        async with serve(handler, "127.0.0.1", 0) as server:
+            port = server.sockets[0].getsockname()[1]
+            with pytest.warns(UserWarning, match="no live account 'swnig'"):
+                received = [event async for event in events(f"ws://127.0.0.1:{port}/ws/events", account="swnig")]
+        assert received == []
+    asyncio.run(exercise())
+
+
 def test_event_matches_openapi():
     import jsonschema
     from conftest import SPEC

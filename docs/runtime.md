@@ -7,10 +7,29 @@ sessions on their executors and drains cancellation handlers before joining.
 
 HTTP request reads have a 60-second deadline, including idle time between requests
 on a keep-alive connection. Once a request is fully read, that deadline is cleared
-while the engine prepares its response, including long replay operations. Each
-response write gets a fresh 60-second deadline; a successful keep-alive response
+while the engine prepares its response, including long replay operations. A
+response is written a piece at a time, each piece the client takes with a fresh
+60-second deadline, so a slow link receives a large file whole however long it
+takes, and a client that stops reading is cut off; a successful keep-alive response
 starts a new request read deadline. `WebServer` callers can override `read_timeout`
 at construction without changing the response write deadline.
+
+The terminal's text files (HTML, scripts, styles, JSON, SVG) of 1 KiB or more go
+gzipped, with `Vary: Accept-Encoding`, to a client whose `Accept-Encoding` takes
+gzip: the terminal's script in under a third of its bytes. Each file is compressed
+on its first request and the encoding kept in memory while the file keeps its size
+and modification time. API responses are not compressed; a proxy in front can do so.
+
+`HEAD` reads what `GET` does: an API `HEAD` is authorized and routed as a `GET` and
+answered with its status and headers and no body. An API request with any method
+but `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE` is answered 405
+`METHOD_NOT_ALLOWED` before any route sees it. A WebSocket upgrade to a path other
+than `/ws` or `/ws/events` is answered 404, and one to `/ws` with a query 400.
+
+`--address` must be an IP address (`127.0.0.1`, `::1`, `0.0.0.0`), not a host name.
+openportd checks it, and that the port is free, before it opens any journal or starts
+the provider: a port another server holds fails at once with `cannot listen on
+ADDRESS:PORT: ...`, which names both.
 
 Polling shutdown checks a shared atomic cancellation flag every 25 ms while
 connecting, handshaking TLS, writing, and reading. Pagination, ThetaData endpoint

@@ -398,6 +398,17 @@ void Notifications::remove_account(const std::string& account, bool discard_pend
   if (discard_pending) std::erase_if(queue_, [&](const auto& pending) { return pending.event.account == account; });
 }
 
+bool Notifications::observed(std::string_view account, std::string_view source) {
+  const std::lock_guard observation(observation_mutex_);
+  if (source == "live") return seen_.contains(std::string(account)) || seen_.contains("demo/" + std::string(account));
+  // A replay's accounts are "replay/RUN/ACCOUNT".
+  return std::any_of(seen_.begin(), seen_.end(), [&](const auto& entry) {
+    const std::string_view id = entry.first;
+    const auto slash = id.starts_with("replay/") ? id.find('/', 7) : std::string_view::npos;
+    return slash != std::string_view::npos && id.substr(slash + 1) == account;
+  });
+}
+
 void Notifications::observe(std::string_view account, const TradingView& view, bool history) {
   if (!view.snapshot) return;
   const std::lock_guard observation(observation_mutex_);

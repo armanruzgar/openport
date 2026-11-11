@@ -461,8 +461,11 @@ identity, purchase, historical-journal and illustrative-pricing semantics.
 of `/ws`. The existing `/ws` tick channel is unchanged. `source=replay` selects
 the active replay's events; `run_id` identifies the replay. Live also includes
 the synthetic demo market. History does not emit recovered events. The first
-message is `{type:"event_stream", version:1, account, source}`, confirming the
-subscription is installed. Subsequent messages are:
+message is `{type:"event_stream", version:1, account, source, exists}`, confirming
+the subscription is installed. `exists` says whether the account existed on that
+source when the stream opened. A stream may open before its account is created (or
+its replay starts) and follows it from then on, so `false` is not an error, but for
+a live account it is usually a typo: the Python client warns. Subsequent messages are:
 
 ```json
 {"type":"event","version":1,"sequence":"17","event":"fill","account":"main","source":"live","run_id":null,"market_time":null,"simulated":true,"message":"Synthetic example","details":{"id":"1","order_id":"1","symbol":"example","side":"buy","quantity":1,"price":"1.25"}}

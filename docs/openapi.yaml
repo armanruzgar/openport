@@ -30825,13 +30825,18 @@
               "live",
               "replay"
             ]
+          },
+          "exists": {
+            "type": "boolean",
+            "description": "Whether the account existed on this source when the stream opened. The stream also follows an account created later."
           }
         },
         "required": [
           "type",
           "version",
           "account",
-          "source"
+          "source",
+          "exists"
         ],
         "additionalProperties": false
       },

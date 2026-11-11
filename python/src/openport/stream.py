@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from typing import AsyncIterator, Literal
+import warnings
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
@@ -73,6 +74,11 @@ async def events(url: str = "ws://127.0.0.1:8080/ws/events", *, token: str | Non
             if value.get("type") == "event_stream":
                 if value.get("version") != 1:
                     raise ValueError("Unsupported OpenPort event version")
+                # The stream also follows an account created later, so this is no
+                # error; but a live account that does not exist is usually a typo.
+                if source == "live" and value.get("exists") is False:
+                    warnings.warn(f"OpenPort has no live account {value.get('account')!r} yet; "
+                                  "the stream waits for its events", stacklevel=2)
                 if ready is not None:
                     ready.set()
                 continue

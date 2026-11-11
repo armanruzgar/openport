@@ -26,14 +26,17 @@
 #include <future>
 #include <fstream>
 #include <cstdio>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <mutex>
+#include <stdexcept>
 #include <optional>
 #include <thread>
 #include <vector>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #include "openport/server/web_policy.hpp"
 
@@ -349,9 +352,14 @@ std::optional<ApiResponse> check_api_write(const ApiRequest& request, const Writ
   // nothing, so they take read access; they still pass the origin check of a POST.
   const auto bare = request.target.substr(0, request.target.find('?'));
   const bool computes = request.method == "POST" && (bare == "/api/account/rules-compare" || bare == "/api/rule-packs/validate");
-  const bool read = request.method == "GET" || computes;
-  if (!read && request.method != "POST" && request.method != "PUT" && request.method != "PATCH" && request.method != "DELETE") return {};
-  if (request.ambiguous_headers || (request.method != "GET" && !websocket_origin_allowed(
+  // HEAD reads what GET does, without the body.
+  const bool safe = request.method == "GET" || request.method == "HEAD";
+  const bool read = safe || computes;
+  // No route takes another method: refuse it here, before any credential or scope
+  // check could be skipped for it.
+  if (!read && request.method != "POST" && request.method != "PUT" && request.method != "PATCH" && request.method != "DELETE")
+    return api_error(405, "METHOD_NOT_ALLOWED", "Use GET, HEAD, POST, PUT, PATCH or DELETE");
+  if (request.ambiguous_headers || (!safe && !websocket_origin_allowed(
           request.origin ? std::optional<std::string_view>(*request.origin) : std::nullopt,
           request.host, policy.allowed_origins)))
     return api_error(403, "ORIGIN_REJECTED", "Origin or security headers are ambiguous or not allowed");
@@ -546,6 +554,74 @@ std::string_view mime_type(std::string_view path) {
   return "application/octet-stream";
 }
 
+/// Text, scripts, styles, JSON and SVG shrink several times over; images and fonts
+/// are compressed already.
+bool compressible(std::string_view type) {
+  return type.starts_with("text/") || type == "application/json" || type == "image/svg+xml";
+}
+
+/// Whether an Accept-Encoding value takes `coding` (RFC 9110 12.5.3): named with a
+/// weight above zero, or, when not named, matched by "*" with one.
+bool accepts_coding(std::string_view header, std::string_view coding) {
+  const auto trim = [](std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.remove_suffix(1);
+    return text;
+  };
+  std::optional<bool> named, any;
+  while (!header.empty()) {
+    const auto comma = header.find(',');
+    const auto item = header.substr(0, comma);
+    header = comma == std::string_view::npos ? std::string_view{} : header.substr(comma + 1);
+    const auto semicolon = item.find(';');
+    const auto name = trim(item.substr(0, semicolon));
+    bool weighted = true;
+    if (semicolon != std::string_view::npos) {
+      const auto parameter = trim(item.substr(semicolon + 1));
+      // q=0 in any spelling (0, 0.0, 0.000) refuses the coding.
+      if (parameter.size() >= 2 && (parameter[0] == 'q' || parameter[0] == 'Q') && parameter[1] == '=')
+        weighted = parameter.substr(2).find_first_not_of("0.") != std::string_view::npos;
+    }
+    if (beast::iequals(name, coding)) named = weighted;
+    else if (name == "*") any = weighted;
+  }
+  return named ? *named : any.value_or(false);
+}
+
+/// The gzip encoding of `bytes` (RFC 1952), or nothing when zlib fails.
+std::optional<std::string> gzip(const std::string& bytes) {
+  z_stream stream{};
+  if (deflateInit2(&stream, Z_BEST_COMPRESSION, Z_DEFLATED, MAX_WBITS + 16, 9, Z_DEFAULT_STRATEGY) != Z_OK)
+    return std::nullopt;
+  std::string out(deflateBound(&stream, static_cast<uLong>(bytes.size())), '\0');
+  stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(bytes.data()));
+  stream.avail_in = static_cast<uInt>(bytes.size());
+  stream.next_out = reinterpret_cast<Bytef*>(out.data());
+  stream.avail_out = static_cast<uInt>(out.size());
+  const int status = deflate(&stream, Z_FINISH);
+  const auto written = stream.total_out;
+  deflateEnd(&stream);
+  if (status != Z_STREAM_END) return std::nullopt;
+  out.resize(written);
+  return out;
+}
+
+/// The address a server listens on: an IP address, never a host name.
+asio::ip::address listen_address(const std::string& address) {
+  boost::system::error_code error;
+  const auto ip = asio::ip::make_address(address, error);
+  if (error)
+    throw std::invalid_argument("--address " + address + " is not an IP address; use one such as 127.0.0.1, ::1 or 0.0.0.0");
+  return ip;
+}
+
+/// Why the server cannot listen on `address` and `port`, naming both.
+std::string listen_failure(const std::string& address, unsigned short port, const boost::system::error_code& error) {
+  const auto host = address.find(':') == std::string::npos ? address : "[" + address + "]";
+  return "cannot listen on " + host + ":" + std::to_string(port) + ": " + error.message() +
+         (error == asio::error::address_in_use ? " (is another openportd running? choose another --port)" : "");
+}
+
 /// No other page may frame the terminal. A framed copy's requests carry this server's
 /// own Origin, so on a loopback bind with open writes a page laid over it could turn a
 /// visitor's clicks into orders, resets or a tripped kill switch. Every response says
@@ -679,7 +755,10 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
     if (events_) {
       // The strand writes this after on_accept returns, with the subscription
       // installed. Queue it first so concurrent publications cannot overtake it.
-      event({{"type", "event_stream"}, {"version", 1}, {"account", account_}, {"source", source_}});
+      // A stream may open before its account is created (or its replay starts) and
+      // follows it from then on; `exists` lets a client tell a mistyped account.
+      event({{"type", "event_stream"}, {"version", 1}, {"account", account_}, {"source", source_},
+             {"exists", events_->observed(account_, source_)}});
       subscription_ = events_->subscribe(account_, source_, [weak = weak_from_this()](const nlohmann::json& event) {
         if (auto self = weak.lock()) self->event(event);
       });
@@ -807,6 +886,14 @@ struct Shared {
   /// Open HTTP connections, idle ones included; each holds a descriptor until read_timeout.
   std::atomic<std::size_t> http_sessions{0};
   std::size_t http_session_max = kHttpSessionMax;
+  /// Each static file's gzip encoding, kept while the file keeps its size and time.
+  struct Gzipped {
+    std::filesystem::file_time_type time;
+    std::uintmax_t size = 0;
+    std::shared_ptr<const std::string> bytes;
+  };
+  std::mutex gzipped_mutex;
+  std::map<std::filesystem::path, Gzipped> gzipped;
 };
 
 class HttpSession : public Session, public std::enable_shared_from_this<HttpSession> {
@@ -890,14 +977,22 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (host_refused(request)) {
       const std::string reason(kHostRejected);
       if (request.target().starts_with("/api/"))
-        return send_api(api_error(403, "HOST_REJECTED", reason), request.version(), false);
+        return send_api(api_error(403, "HOST_REJECTED", reason), request.version(), false,
+                        request.method() == http::verb::head);
       return reject_upgrade(request, http::status::forbidden, reason);
     }
 
     if (websocket::is_upgrade(request)) {
       const std::string target(request.target());
-      const bool event_stream = target.substr(0, target.find('?')) == "/ws/events";
-      if (target == "/ws" || event_stream) {
+      const auto path = std::string_view(target).substr(0, target.find('?'));
+      const bool event_stream = path == "/ws/events";
+      // Every upgrade is answered: an unknown path or a query /ws does not take gets
+      // its status, not a connection closed without a word.
+      if (path != "/ws" && !event_stream)
+        return reject_upgrade(request, http::status::not_found, "No WebSocket endpoint at this path; use /ws or /ws/events");
+      if (!event_stream && path.size() != target.size())
+        return reject_upgrade(request, http::status::bad_request, "/ws takes no query parameters");
+      {
         const auto origin = request.find(http::field::origin);
         const auto origin_value = origin == request.end()
                                       ? std::nullopt
@@ -968,15 +1063,27 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     respond(http::message_generator(std::move(response)));
   }
 
-  void send_api(ApiResponse api, unsigned version, bool keep_alive) {
+  /// Answers `api`; to a HEAD request, with the headers a GET gets and no body.
+  void send_api(ApiResponse api, unsigned version, bool keep_alive, bool head = false) {
     if (stopped_) return;
+    const auto decorate = [&](auto& response) {
+      response.set(http::field::content_type, api.content_type);
+      if (!api.download.empty()) response.set(http::field::content_disposition, "attachment; filename=\"" + api.download + "\"");
+      response.set(http::field::cache_control, "no-store");
+      forbid_framing(response);
+      if (api.retry_after > 0) response.set(http::field::retry_after, std::to_string(api.retry_after));
+      response.keep_alive(keep_alive);
+    };
+    if (head) {
+      // Otherwise the body would follow on a kept-alive connection, where the client
+      // reads it as the start of the next response.
+      http::response<http::empty_body> response{static_cast<http::status>(api.status), version};
+      decorate(response);
+      response.content_length(api.body.size());
+      return respond(http::message_generator(std::move(response)));
+    }
     http::response<http::string_body> response{static_cast<http::status>(api.status), version};
-    response.set(http::field::content_type, api.content_type);
-    if (!api.download.empty()) response.set(http::field::content_disposition, "attachment; filename=\"" + api.download + "\"");
-    response.set(http::field::cache_control, "no-store");
-    forbid_framing(response);
-    if (api.retry_after > 0) response.set(http::field::retry_after, std::to_string(api.retry_after));
-    response.keep_alive(keep_alive);
+    decorate(response);
     response.body() = std::move(api.body);
     response.prepare_payload();
     respond(http::message_generator(std::move(response)));
@@ -1043,8 +1150,11 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
 
   void handle_api_request(const http::request<http::string_body>& request) {
     ApiRequest api = api_request(request);
+    // A HEAD request is a GET answered without its body: every route sees GET.
+    const bool head = request.method() == http::verb::head;
+    if (head) api.method = "GET";
     if (auto rejection = check_api_write(api, shared_.write_policy, &api.actor, &api.access))
-      return send_api(std::move(*rejection), request.version(), request.keep_alive());
+      return send_api(std::move(*rejection), request.version(), request.keep_alive(), head);
     // One check for every route: no handler sees a body it cannot parse, print or
     // copy within an HTTP thread's stack.
     if (api.method == "POST" || api.method == "PUT" || api.method == "PATCH") {
@@ -1053,12 +1163,12 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
     if (api.target.starts_with("/api/signals/")) {
       if (auto rejection = shared_.signals->check(api))
-        return send_api(std::move(*rejection), request.version(), request.keep_alive());
+        return send_api(std::move(*rejection), request.version(), request.keep_alive(), head);
       api.signal_verified = true;
     }
     if (const auto path = api.target.substr(0, api.target.find('?'));
         path.starts_with("/api/playbooks/") && path.ends_with("/signal-secret"))
-      return send_api(signal_secret(api, path.substr(15, path.size() - 15 - 14)), request.version(), request.keep_alive());
+      return send_api(signal_secret(api, path.substr(15, path.size() - 15 - 14)), request.version(), request.keep_alive(), head);
     if (api.method == "POST" && api.target.substr(0, api.target.find('?')) == "/api/tokens/reload") {
       if (api.target != "/api/tokens/reload")
         return send_api(api_error(400, "INVALID_REQUEST", "Unknown query parameter"), request.version(), request.keep_alive());
@@ -1076,7 +1186,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     }
     // The gate severs late engine completions during stop. No executor or socket
     // may outlive the server's io_context, even when a command is still queued.
-    auto deliver = [gate = completion_gate_, life = shared_.life, version = request.version(), keep_alive = request.keep_alive(),
+    auto deliver = [gate = completion_gate_, life = shared_.life, version = request.version(), keep_alive = request.keep_alive(), head,
                      token_file = shared_.write_policy.token_file, status = api.target == "/api/status"](ApiResponse response) {
       if (status && token_file && response.status == 200) {
         const auto loaded = token_file->snapshot();
@@ -1090,10 +1200,10 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
       const auto self = gate->session.lock();
       if (!self) return;
       gate->session.reset();
-      asio::post(self->stream_.get_executor(), [self, response = std::move(response), version, keep_alive]() mutable {
+      asio::post(self->stream_.get_executor(), [self, response = std::move(response), version, keep_alive, head]() mutable {
         self->awaiting_.reset();
         self->stop_watching();
-        self->send_api(std::move(response), version, keep_alive);
+        self->send_api(std::move(response), version, keep_alive, head);
       });
     };
     // A handler that drops its completion without calling it (an exception on the
@@ -1126,33 +1236,76 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (resolved.status != 200)
       return text(static_cast<http::status>(resolved.status), resolved.reason);
     const auto& file = resolved.path;
+    const auto type = mime_type(file.string());
+    const bool fingerprinted = target.starts_with("/assets/");
+    const bool head = request.method() == http::verb::head;
+    const auto decorate = [&](auto& response) {
+      response.set(http::field::content_type, type);
+      forbid_framing(response);
+      // Built assets carry a content hash in their name and never change; the shell must.
+      response.set(http::field::cache_control, fingerprinted ? "public, max-age=31536000, immutable" : "no-cache");
+      // Caches keep the encoded and the plain copy apart.
+      if (compressible(type)) response.set(http::field::vary, "Accept-Encoding");
+      response.keep_alive(request.keep_alive());
+    };
+
+    // Text goes gzipped to a client that takes it: the terminal's script in under a
+    // third of its bytes.
+    if (compressible(type) && accepts_coding(request[http::field::accept_encoding], "gzip")) {
+      if (const auto encoded = gzipped(file)) {
+        if (head) {
+          http::response<http::empty_body> response{http::status::ok, request.version()};
+          decorate(response);
+          response.set(http::field::content_encoding, "gzip");
+          response.content_length(encoded->size());
+          return response;
+        }
+        http::response<http::string_body> response{http::status::ok, request.version()};
+        decorate(response);
+        response.set(http::field::content_encoding, "gzip");
+        response.body() = *encoded;
+        response.prepare_payload();
+        return response;
+      }
+    }
 
     beast::error_code open_error;
     http::file_body::value_type body;
     body.open(file.string().c_str(), beast::file_mode::scan, open_error);
     if (open_error) return text(http::status::internal_server_error, "cannot read file\n");
     const auto size = body.size();
-
-    const bool fingerprinted = target.starts_with("/assets/");
-    if (request.method() == http::verb::head) {
+    if (head) {
       http::response<http::empty_body> response{http::status::ok, request.version()};
-      response.set(http::field::content_type, mime_type(file.string()));
-      forbid_framing(response);
+      decorate(response);
       response.content_length(size);
-      response.keep_alive(request.keep_alive());
       return response;
     }
     http::response<http::file_body> response{std::piecewise_construct,
                                              std::make_tuple(std::move(body)),
                                              std::make_tuple(http::status::ok, request.version())};
-    response.set(http::field::content_type, mime_type(file.string()));
-    forbid_framing(response);
-    // Built assets carry a content hash in their name and never change; the shell must.
-    response.set(http::field::cache_control,
-                 fingerprinted ? "public, max-age=31536000, immutable" : "no-cache");
+    decorate(response);
     response.content_length(size);
-    response.keep_alive(request.keep_alive());
     return response;
+  }
+
+  /// `file`'s gzip encoding, compressed on its first request and kept while the file
+  /// is unchanged; null for a small or very large file, or one that does not shrink.
+  std::shared_ptr<const std::string> gzipped(const std::filesystem::path& file) {
+    constexpr std::uintmax_t kSmallest = 1024, kLargest = 64 * 1024 * 1024;
+    std::error_code error;
+    const auto time = std::filesystem::last_write_time(file, error);
+    if (error) return nullptr;
+    const auto size = std::filesystem::file_size(file, error);
+    if (error || size < kSmallest || size > kLargest) return nullptr;
+    const std::lock_guard lock(shared_.gzipped_mutex);
+    auto& entry = shared_.gzipped[file];
+    if (entry.time == time && entry.size == size) return entry.bytes;
+    std::ifstream input(file, std::ios::binary);
+    const std::string bytes(std::istreambuf_iterator<char>(input), {});
+    if (input.bad() || bytes.size() != size) return nullptr;  // unreadable, or changed while read
+    auto encoded = gzip(bytes);
+    entry = {time, size, encoded && encoded->size() < bytes.size() ? std::make_shared<const std::string>(std::move(*encoded)) : nullptr};
+    return entry.bytes;
   }
 
   /// While a response is awaited nothing reads the socket, so a wait for it to turn
@@ -1176,14 +1329,32 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
 
   void respond(http::message_generator&& message) {
     const bool keep_alive = message.keep_alive();
-    // Bound a stalled client from the start of this write, not the request read.
+    outgoing_.emplace(std::move(message));
+    write_some(keep_alive);
+  }
+
+  /// Writes the outgoing response a piece at a time. Each piece gets 60 seconds, not
+  /// the whole response: a client on a slow link receives a large asset whole, and a
+  /// client that stops reading is still cut off.
+  void write_some(bool keep_alive) {
+    beast::error_code error;
+    const auto buffers = outgoing_->prepare(error);
+    if (error) {
+      outgoing_.reset();
+      return close();
+    }
     stream_.expires_after(std::chrono::seconds(60));
-    beast::async_write(stream_, std::move(message),
-                       [self = shared_from_this(), keep_alive](beast::error_code ec, std::size_t) {
-                         if (ec) return;
-                         if (!keep_alive) return self->close();
-                         self->read();
-                       });
+    stream_.async_write_some(buffers, [self = shared_from_this(), keep_alive](beast::error_code ec, std::size_t written) {
+      if (ec) {
+        self->outgoing_.reset();
+        return;
+      }
+      self->outgoing_->consume(written);
+      if (!self->outgoing_->is_done()) return self->write_some(keep_alive);
+      self->outgoing_.reset();
+      if (!keep_alive) return self->close();
+      self->read();
+    });
   }
 
   void close() {
@@ -1223,6 +1394,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
   static constexpr std::uint64_t kBodyLimit = 64 * 1024;
   static constexpr std::uint64_t kImportBodyLimit = 4 * 1024 * 1024;
   std::optional<http::request_parser<http::string_body>> parser_;
+  std::optional<http::message_generator> outgoing_;  ///< the response being written
   std::uint64_t body_limit_ = kBodyLimit;
   Shared& shared_;
   bool stopped_ = false;
@@ -1300,6 +1472,18 @@ struct WebServer::Impl {
   std::optional<asio::executor_work_guard<asio::io_context::executor_type>> work;
 };
 
+void check_listen(const std::string& address, unsigned short port) {
+  const tcp::endpoint endpoint{listen_address(address), port};
+  asio::io_context io;
+  tcp::acceptor acceptor(io);
+  boost::system::error_code error;
+  acceptor.open(endpoint.protocol(), error);
+  // As the listener binds: a port another socket only waits to close is free.
+  if (!error) acceptor.set_option(asio::socket_base::reuse_address(true), error);
+  if (!error) acceptor.bind(endpoint, error);
+  if (error) throw std::runtime_error(listen_failure(address, port, error));
+}
+
 WebServer::WebServer(std::string address, unsigned short port, std::filesystem::path web_root,
                      AsyncApiHandler api, std::vector<std::string> allowed_origins, std::string write_token,
                      std::vector<std::string> allowed_hosts, std::vector<NamedToken> tokens, bool require_token,
@@ -1328,9 +1512,14 @@ void WebServer::start(int threads) {
   if (impl_->started)
     throw std::logic_error("WebServer::start may be called only once; construct a new WebServer");
   impl_->started = true;
+  const tcp::endpoint endpoint{listen_address(impl_->address), impl_->requested_port};
   impl_->work.emplace(impl_->io.get_executor());
-  const tcp::endpoint endpoint{asio::ip::make_address(impl_->address), impl_->requested_port};
-  impl_->listener = std::make_shared<Listener>(impl_->io, endpoint, impl_->shared);
+  try {
+    impl_->listener = std::make_shared<Listener>(impl_->io, endpoint, impl_->shared);
+  } catch (const boost::system::system_error& error) {
+    impl_->work.reset();
+    throw std::runtime_error(listen_failure(impl_->address, impl_->requested_port, error.code()));
+  }
   impl_->listener->accept();
   try {
     for (int i = 0; i < std::max(1, threads); ++i) {

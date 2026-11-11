@@ -882,3 +882,22 @@ TEST(Notifications, StreamFloorEventsOnlyMarkEnteringAndLeavingTheWarningBand) {
   EXPECT_EQ(floors[1].at("details").at("warning"), false);
   EXPECT_TRUE(other.empty());
 }
+
+// B-122: an event stream's first message says whether its account exists on its source.
+TEST(Notifications, ObservedSaysWhetherAnAccountExistsOnEachSource) {
+  Harness h;
+  auto snapshot = std::make_shared<trading::TradingSnapshot>();
+  const auto current = view(snapshot);
+  EXPECT_FALSE(h.notifications->observed("main", "live"));
+  h.notifications->observe("main", current, true);
+  h.notifications->observe("demo/practice", current, true);
+  h.notifications->observe("replay/run/swing", current, true);
+  EXPECT_TRUE(h.notifications->observed("main", "live"));
+  EXPECT_TRUE(h.notifications->observed("practice", "live"));
+  EXPECT_TRUE(h.notifications->observed("swing", "replay"));
+  EXPECT_FALSE(h.notifications->observed("main", "replay"));
+  EXPECT_FALSE(h.notifications->observed("swing", "live"));
+  EXPECT_FALSE(h.notifications->observed("run/swing", "replay"));
+  h.notifications->remove_account("main");
+  EXPECT_FALSE(h.notifications->observed("main", "live"));
+}

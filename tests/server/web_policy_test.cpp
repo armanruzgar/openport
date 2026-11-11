@@ -9,6 +9,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
+#include <algorithm>
 #include <fstream>
 #include <openssl/hmac.h>
 #include <nlohmann/json.hpp>
@@ -19,6 +20,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <zlib.h>
 
 #include "openport/server/sandboxes.hpp"
 #include "openport/server/web_server.hpp"
@@ -1291,7 +1293,10 @@ TEST(WebServer, EventChannelIsVersionedFilteredAndDoesNotCoalesce) {
     ws.read(buffer);
     return nlohmann::json::parse(beast::buffers_to_string(buffer.data()));
   };
-  EXPECT_EQ(read().at("type"), "event_stream");
+  const auto hello = read();
+  EXPECT_EQ(hello.at("type"), "event_stream");
+  // Nothing has published "practice": a client can tell a mistyped account (B-122).
+  EXPECT_FALSE(hello.at("exists").get<bool>());
   events->publish({"fill", "main", 0, "Other account", {}});
   events->publish({"fill", "replay/run/main", 0, "Other source", {}});
   for (int i = 0; i < 20; ++i) events->publish({"fill", "demo/practice", 0, "Synthetic", {{"id", i}}});
@@ -1568,4 +1573,196 @@ TEST(WebPolicy, CopiedOrdersNeedEveryAccountsScopeAndGroupsNeedAdmin) {
     EXPECT_FALSE(check(method, path, "owner-secret")) << method << path;
   }
   EXPECT_FALSE(check("GET", "/api/account-groups", "read-secret"));
+}
+
+namespace {
+std::string gunzip(const std::string& bytes) {
+  z_stream stream{};
+  if (inflateInit2(&stream, MAX_WBITS + 16) != Z_OK) return {};
+  std::string out(std::max<std::size_t>(bytes.size() * 64, 1 << 20), '\0');
+  stream.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(bytes.data()));
+  stream.avail_in = static_cast<uInt>(bytes.size());
+  stream.next_out = reinterpret_cast<Bytef*>(out.data());
+  stream.avail_out = static_cast<uInt>(out.size());
+  const int status = inflate(&stream, Z_FINISH);
+  out.resize(stream.total_out);
+  inflateEnd(&stream);
+  return status == Z_STREAM_END ? out : std::string{};
+}
+}  // namespace
+
+// I-40: text goes gzipped to a client that takes it; others, and images, get the file.
+TEST_F(StaticFiles, TextGoesGzippedToAClientThatTakesIt) {
+  std::string script;
+  for (int i = 0; i < 4000; ++i) script += "console.log(\"line " + std::to_string(i) + "\");\n";
+  std::ofstream(root / "assets" / "big.js") << script;
+  std::ofstream(root / "assets" / "big.png") << std::string(4096, 'x');
+  server::WebServer web("127.0.0.1", 0, root, [](const auto&) { return server::ApiResponse{}; });
+  web.start();
+  asio::io_context io;
+  const auto fetch = [&](http::verb verb, const std::string& path, const std::string& accept) {
+    tcp::socket socket(io);
+    socket.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    http::request<http::empty_body> request{verb, path, 11};
+    request.set(http::field::host, "localhost");
+    if (!accept.empty()) request.set(http::field::accept_encoding, accept);
+    http::write(socket, request);
+    beast::flat_buffer buffer;
+    http::response_parser<http::string_body> parser;
+    parser.skip(verb == http::verb::head);
+    parser.body_limit(16 * 1024 * 1024);
+    http::read(socket, buffer, parser);
+    return parser.release();
+  };
+  const auto plain = fetch(http::verb::get, "/assets/big.js", "");
+  EXPECT_EQ(plain.body(), script);
+  EXPECT_TRUE(plain[http::field::content_encoding].empty());
+  EXPECT_EQ(std::string(plain[http::field::vary]), "Accept-Encoding");
+  std::size_t encoded_size = 0;
+  for (const std::string accept : {"gzip", "br, gzip;q=0.5", "*", "GZIP", "deflate, gzip"}) {
+    const auto encoded = fetch(http::verb::get, "/assets/big.js", accept);
+    EXPECT_EQ(encoded.result_int(), 200) << accept;
+    EXPECT_EQ(std::string(encoded[http::field::content_encoding]), "gzip") << accept;
+    EXPECT_EQ(std::string(encoded[http::field::vary]), "Accept-Encoding") << accept;
+    EXPECT_LT(encoded.body().size(), script.size() / 3) << accept;
+    EXPECT_EQ(gunzip(encoded.body()), script) << accept;
+    encoded_size = encoded.body().size();
+  }
+  for (const std::string accept : {"br", "gzip;q=0", "gzip;q=0.000, br", "*;q=0", "identity"}) {
+    const auto sent = fetch(http::verb::get, "/assets/big.js", accept);
+    EXPECT_TRUE(sent[http::field::content_encoding].empty()) << accept;
+    EXPECT_EQ(sent.body(), script) << accept;
+  }
+  // HEAD names the encoding and the length the GET sends.
+  const auto head = fetch(http::verb::head, "/assets/big.js", "gzip");
+  EXPECT_EQ(std::string(head[http::field::content_encoding]), "gzip");
+  EXPECT_EQ(std::string(head[http::field::content_length]), std::to_string(encoded_size));
+  // Images are compressed already, and a file under 1 KiB is not worth it.
+  const auto image = fetch(http::verb::get, "/assets/big.png", "gzip");
+  EXPECT_TRUE(image[http::field::content_encoding].empty());
+  EXPECT_TRUE(image[http::field::vary].empty());
+  EXPECT_EQ(image.body().size(), 4096u);
+  const auto small = fetch(http::verb::get, "/assets/app.js", "gzip");
+  EXPECT_TRUE(small[http::field::content_encoding].empty());
+  EXPECT_EQ(small.body(), "asset");
+  // A changed file is compressed again.
+  std::ofstream(root / "assets" / "big.js") << script << script;
+  const auto changed = fetch(http::verb::get, "/assets/big.js", "gzip");
+  EXPECT_EQ(gunzip(changed.body()), script + script);
+  web.stop();
+}
+
+// B-121: HEAD reads what GET does, with no body on a kept-alive connection, and no
+// other method reaches a route.
+TEST(WebServer, ApiHeadAnswersWithoutABodyAndOtherMethodsAreRefused) {
+  std::mutex mutex;
+  std::vector<std::string> methods;
+  server::WebServer web("127.0.0.1", 0, {}, [&](const server::ApiRequest& request) {
+    const std::lock_guard lock(mutex);
+    methods.push_back(request.method);
+    return server::ApiResponse{200, R"({"ok":true})"};
+  }, {}, {}, {}, server::parse_token_file("reader read reader-secret"), true);
+  web.start();
+  asio::io_context io;
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  tcp::socket socket(io);
+  socket.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+  // Both on one connection: a body after the HEAD answer would read as the next response.
+  const std::string pipelined =
+      "HEAD /api/status HTTP/1.1\r\nHost: " + host + "\r\nAuthorization: Bearer reader-secret\r\n\r\n"
+      "GET /api/status HTTP/1.1\r\nHost: " + host + "\r\nAuthorization: Bearer reader-secret\r\n\r\n";
+  asio::write(socket, asio::buffer(pipelined));
+  beast::flat_buffer buffer;
+  http::response_parser<http::string_body> head;
+  head.skip(true);
+  http::read(socket, buffer, head);
+  EXPECT_EQ(head.get().result_int(), 200);
+  EXPECT_EQ(std::string(head.get()[http::field::content_length]), "11");
+  http::response<http::string_body> get;
+  http::read(socket, buffer, get);
+  EXPECT_EQ(get.result_int(), 200);
+  EXPECT_EQ(get.body(), R"({"ok":true})");
+  {
+    const std::lock_guard lock(mutex);
+    EXPECT_EQ(methods, (std::vector<std::string>{"GET", "GET"}));
+  }
+  const auto send = [&](std::string_view method, const std::string& authorization) {
+    tcp::socket connection(io);
+    connection.connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    http::request<http::empty_body> request{http::verb::get, "/api/analysis/portfolios", 11};
+    request.method_string(method);
+    request.set(http::field::host, host);
+    if (!authorization.empty()) request.set(http::field::authorization, authorization);
+    http::write(connection, request);
+    beast::flat_buffer received;
+    http::response_parser<http::string_body> parser;
+    parser.skip(method == "HEAD");
+    http::read(connection, received, parser);
+    return parser.release();
+  };
+  // HEAD needs the credentials GET does: here, any token for reads, admin for portfolios.
+  const auto anonymous = send("HEAD", "");
+  EXPECT_EQ(anonymous.result_int(), 403);
+  EXPECT_FALSE(std::string(anonymous[http::field::content_length]).empty());
+  EXPECT_EQ(send("HEAD", "Bearer reader-secret").result_int(), 403);
+  for (const auto* method : {"FOO", "OPTIONS", "PROPFIND"}) {
+    const auto refused = send(method, "Bearer reader-secret");
+    EXPECT_EQ(refused.result_int(), 405) << method;
+    EXPECT_EQ(nlohmann::json::parse(refused.body()).at("error").at("code"), "METHOD_NOT_ALLOWED") << method;
+  }
+  {
+    const std::lock_guard lock(mutex);
+    EXPECT_EQ(methods.size(), 2u);
+  }
+  web.stop();
+}
+
+// B-123: every upgrade is answered, an unknown path or a query on /ws included.
+TEST(WebServer, UpgradesToAnUnknownPathOrAQueriedWsAreAnswered) {
+  server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
+  web.start();
+  asio::io_context io;
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  for (const auto& [path, status] : std::vector<std::pair<std::string, http::status>>{
+           {"/ws?x=1", http::status::bad_request}, {"/ws/", http::status::not_found},
+           {"/nope", http::status::not_found}, {"/api/status", http::status::not_found}}) {
+    websocket::stream<tcp::socket> ws(io);
+    ws.next_layer().connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    beast::error_code ec;
+    websocket::response_type upgrade;
+    ws.handshake(upgrade, host, path, ec);
+    EXPECT_TRUE(ec) << path;
+    EXPECT_EQ(upgrade.result(), status) << path;
+  }
+  websocket::stream<tcp::socket> ws(io);
+  ws.next_layer().connect({asio::ip::make_address("127.0.0.1"), web.port()});
+  EXPECT_NO_THROW(ws.handshake(host, "/ws"));
+  web.stop();
+}
+
+// I-41: a bad address or a port in use fails at once, naming the address and port.
+TEST(WebServer, ListenFailuresNameTheAddressAndPort) {
+  server::WebServer first("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
+  first.start();
+  const auto port = first.port();
+  const auto expected = "cannot listen on 127.0.0.1:" + std::to_string(port) + ": ";
+  EXPECT_NO_THROW(server::check_listen("127.0.0.1", 0));
+  try {
+    server::check_listen("127.0.0.1", port);
+    ADD_FAILURE() << "the port is in use";
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()).rfind(expected, 0), 0u) << error.what();
+    EXPECT_NE(std::string(error.what()).find("another openportd"), std::string::npos) << error.what();
+  }
+  server::WebServer second("127.0.0.1", port, {}, [](const auto&) { return server::ApiResponse{}; });
+  try {
+    second.start();
+    ADD_FAILURE() << "the port is in use";
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()).rfind(expected, 0), 0u) << error.what();
+  }
+  for (const auto* address : {"localhost", "256.1.1.1", "nonsense", ""}) {
+    EXPECT_THROW(server::check_listen(address, 0), std::invalid_argument) << address;
+  }
+  first.stop();
 }

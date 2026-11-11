@@ -268,7 +268,9 @@ hook errors too.
 `openport.stream.events(url, token=..., account=..., source="live")` yields typed
 v1 `Event` instances, separately from coalescing `ticks()`. It closes on context
 exit and does not reconnect automatically. The stream is bounded, not a durable
-log; reconcile fills/orders after disconnect. See [event semantics](../docs/api.md#paper-event-stream-v1).
+log; reconcile fills/orders after disconnect. A live account that does not exist yet
+draws a `UserWarning` (usually a typo); the stream still follows it once created.
+See [event semantics](../docs/api.md#paper-event-stream-v1).
 `examples/bot_monitor.py` observes live/history; `examples/bot_replay.py SCENARIO`
 uses the previewed spread example on a synthetic replay once it has fast-forwarded
 to its start, leaving a finished run paused and stopping one that failed.

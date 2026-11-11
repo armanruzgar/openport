@@ -73,6 +73,9 @@ class Notifications {
   void unsubscribe(std::uint64_t subscription);
   /// History primes observation without delivering recovered or fast-forwarded events.
   void observe(std::string_view account, const TradingView& view, bool history = false);
+  /// Whether `account` has been observed on `source` ("live", the demo market's
+  /// included, or "replay") and not removed since: whether it exists there now.
+  [[nodiscard]] bool observed(std::string_view account, std::string_view source);
   void remove_account(const std::string& account, bool discard_pending = true);
   [[nodiscard]] bool includes_simulated() const { return include_simulated_; }
   /// 202 queued, 404 unknown channel, 409 disabled, 429 full, 503 stopped.

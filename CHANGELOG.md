@@ -1086,6 +1086,32 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   shared writer no longer reports that; openportd now also makes the journal path
   absolute at startup, so every file kept beside it (halts, playbooks, sandboxes,
   replays, backtests) names its real directory.
+- **`HEAD` and other methods on the API.** `HEAD /api/...` went to the routes
+  without any credential, origin or scope check, as did any method openportd does
+  not use, and an API answer to `HEAD` carried its body, which a client on a
+  kept-alive connection read as the start of the next response. `HEAD` is now
+  checked and routed as `GET` and answered without a body; any other method is
+  refused with 405 `METHOD_NOT_ALLOWED` before a route sees it.
+- **Every WebSocket upgrade is answered.** An upgrade to `/ws?x=1`, `/ws/` or any
+  path but `/ws` and `/ws/events` closed the connection without a word. It now gets
+  404 for an unknown path and 400 for a query on `/ws`.
+- **An event stream says whether its account exists.** `/ws/events` takes an
+  account before it exists (or before its replay starts) and follows it from then on,
+  so a mistyped account looked like a quiet one. The first message now carries
+  `exists`, and the Python client warns when a live account does not exist.
+- **Slow links get the whole terminal.** A response had to be delivered within 60
+  seconds in full, so a client slower than about 150 kbit/s (a phone, an SSH
+  tunnel) got the 1.1 MB script cut short and a blank terminal. Each piece the client
+  takes now has its own 60 seconds. The terminal's text files also go gzipped to a
+  browser that takes it, under a third of the bytes, and the public demo's proxy
+  compresses API answers.
+- **A busy port or a bad `--address` fails at once.** Both were found only when the
+  web server started, after the journals, the crash log, the provider and the engine,
+  and were reported as a bare Boost error (`Invalid argument [system:22]` for
+  `--address localhost`). openportd now checks them before it starts anything:
+  `--address` must be an IP address, and a port in use is reported as `cannot
+  listen on 127.0.0.1:8080: Address already in use (is another openportd running?
+  choose another --port)`.
 
 ## 0.5.1 (2026-10-28)
 

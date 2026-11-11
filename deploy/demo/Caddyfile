@@ -6,6 +6,8 @@
 		header_up -Authorization
 		header_up Host {upstream_hostport}
 	}
+	# Compress API answers too; openportd gzips the terminal's own files.
+	encode zstd gzip
 	reverse_proxy openport:8080 {
 		header_up X-Real-IP {remote_host}
 	}

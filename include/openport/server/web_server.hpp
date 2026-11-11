@@ -16,6 +16,12 @@ namespace openport::server {
 using AsyncApiHandler = std::function<void(const ApiRequest&, ApiCompletion)>;
 using ApiHandler = std::function<ApiResponse(const ApiRequest&)>;
 
+/// Fails as WebServer::start would on `address` and `port`, before anything else
+/// starts: std::invalid_argument when the address is not an IP address, and
+/// std::runtime_error naming the address and port when it cannot be bound now (a
+/// port another server holds, say). Binds nothing that outlives the call.
+void check_listen(const std::string& address, unsigned short port);
+
 /// HTTP and WebSocket server for the web terminal.
 ///
 /// - `/api/...` goes to the API handler.
@@ -28,7 +34,8 @@ class WebServer {
   /// `allowed_hosts` names the server may be addressed by besides IP addresses,
   /// localhost and the allowed origins' hosts (see host_allowed).
   /// `read_timeout` bounds each HTTP request read, including keep-alive idle time.
-  /// API completion waits have no deadline; response writes get a fresh 60 seconds.
+  /// API completion waits have no deadline; a response write gets 60 seconds for each
+  /// piece the client takes, however long the whole response takes.
   WebServer(std::string address, unsigned short port, std::filesystem::path web_root,
             AsyncApiHandler api, std::vector<std::string> allowed_origins = {}, std::string write_token = {},
             std::vector<std::string> allowed_hosts = {}, std::vector<NamedToken> tokens = {}, bool require_token = false,
@@ -50,7 +57,8 @@ class WebServer {
   WebServer& operator=(const WebServer&) = delete;
 
   /// Binds once per instance. A second start throws, even after stop or failure.
-  /// Throws if the port is taken.
+  /// Throws std::invalid_argument for an address that is not an IP address, and
+  /// std::runtime_error naming the address and port if it cannot bind them.
   void start(int threads = 1);
   void stop();
 
