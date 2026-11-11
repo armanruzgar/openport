@@ -143,6 +143,8 @@ it("keeps picked legs on Escape and clears the ticket and legs when the saved mo
     await act(async () => root.render(<QueryClientProvider client={client}><ChainView symbol="SPX" expiry={selection.expiry.id} onExpiry={() => {}} /></QueryClientProvider>))
     await act(async () => ask().click())
     expect(legs()?.textContent).toContain("1 of 4 legs")
+    // Below the docked width the bar is fixed to the viewport; from lg it starts right of the 15rem sidebar.
+    expect(legs()?.className).toContain("lg:left-[calc(15rem_+_0.75rem)]")
     await act(async () => ask().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })))
     expect(legs()?.textContent).toContain("1 of 4 legs")
     await saveMode("single", "storage")

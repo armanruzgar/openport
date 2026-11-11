@@ -1171,6 +1171,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   most ranges were not in the labels. Each field now gives its range and, when a value
   will not do, says why under it; the dialog also offers the write token, as the risk
   limits editor does.
+- **The strategy leg bar beside the sidebar.** Between 1024 and 1279 pixels wide, the
+  bar that collects a strategy's legs on the chain spanned the whole window, and the
+  sidebar covered its left part, which holds the strategy's name and leg count, so
+  only Clear and Review showed. The bar now starts beside the sidebar.
 
 ## 0.5.1 (2026-10-28)
 

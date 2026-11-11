@@ -249,7 +249,8 @@ export function ChainView({ symbol, expiry, onExpiry }: { symbol: string; expiry
           trading={live.trading} variant="panel" onClose={() => editLegs([])} />
       </div> : reviewing ? <StrategyTicket smiles={smiles} template={template} legs={liveLegs} onLegs={(next) => { editLegs(next); if (!next.length) setReviewing(false) }}
           expiries={legExpiries} underlying={symbol} spot={data.spot} trading={live.trading} variant="dialog" onClose={() => setReviewing(false)} />
-      : <div role="region" aria-label="Strategy legs" className="fixed inset-x-3 bottom-3 z-20 flex items-center justify-between gap-3 rounded-lg border border-accent/50 bg-panel p-3 shadow-chart">
+      : /* From lg the sidebar (w-60, z-40) covers the viewport's left 15rem: the bar starts beside it. */
+        <div role="region" aria-label="Strategy legs" className="fixed inset-x-3 bottom-3 z-20 flex items-center justify-between gap-3 rounded-lg border border-accent/50 bg-panel p-3 shadow-chart lg:left-[calc(15rem_+_0.75rem)]">
           <div className="min-w-0 text-sm">
             <div className="truncate font-medium">{symbol} {strategyLabel(liveLegs)}</div>
             <div className="text-xs text-muted">{legs.length} of {MAX_LEGS} legs{legExpiries.length > 1 ? ` · ${legExpiries.length} expiries` : ""} · {legs.length < 2 ? "tap another bid or ask" : "tap to add or remove"}</div>
