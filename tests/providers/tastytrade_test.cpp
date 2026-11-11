@@ -4,14 +4,20 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
+#include <stdexcept>
+#include <string>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #include "openport/analytics/chain_book.hpp"
 #include "openport/providers/factory.hpp"
@@ -312,7 +318,10 @@ struct DxlinkServer {
   std::mutex mutex;
   std::deque<std::string> replies;
   std::vector<Json> subscriptions;  ///< FEED_SUBSCRIPTION messages, in order
+  std::vector<std::string> tokens;  ///< the quote token of each AUTH, in order
   int connections = 0;
+  int refused = 0;   ///< the connection that fails with the transport's own text; 0 for none
+  int rejected = 0;  ///< the connection whose AUTH is refused; 0 for none
 };
 
 class FakeDxlink final : public net::WebSocket {
@@ -320,7 +329,9 @@ class FakeDxlink final : public net::WebSocket {
   explicit FakeDxlink(std::shared_ptr<DxlinkServer> server) : server_(std::move(server)) {}
   void connect(std::string_view, const std::atomic<bool>*) override {
     const std::lock_guard lock(server_->mutex);
-    ++server_->connections;
+    server_->replies.clear();  // nothing carries over from an earlier connection
+    if (++server_->connections == server_->refused)
+      throw std::runtime_error("wss://example.test/feed?token=quote-1: connection reset by peer");
   }
   void send(std::string_view frame) override {
     const auto message = Json::parse(frame);
@@ -331,7 +342,11 @@ class FakeDxlink final : public net::WebSocket {
       replies.emplace_back(R"({"type":"SETUP","channel":0,"keepaliveTimeout":60,"acceptKeepaliveTimeout":60,"version":"1.0"})");
       replies.emplace_back(R"({"type":"AUTH_STATE","channel":0,"state":"UNAUTHORIZED"})");
     } else if (type == "AUTH") {
-      replies.emplace_back(R"({"type":"AUTH_STATE","channel":0,"state":"AUTHORIZED"})");
+      server_->tokens.push_back(message.value("token", std::string()));
+      if (server_->connections == server_->rejected)
+        replies.emplace_back(R"({"type":"AUTH_STATE","channel":0,"state":"UNAUTHORIZED"})");
+      else
+        replies.emplace_back(R"({"type":"AUTH_STATE","channel":0,"state":"AUTHORIZED"})");
     } else if (type == "CHANNEL_REQUEST") {
       replies.emplace_back(R"({"type":"CHANNEL_OPENED","channel":3,"service":"FEED"})");
     } else if (type == "FEED_SETUP") {
@@ -415,6 +430,107 @@ TEST(Tastytrade, ChainRefreshesKeepTheStreamAndSendDxlinkOnlyTheChange) {
   std::set<std::pair<std::string, std::string>> expected{{"Quote", "SPX"}, {"Trade", "SPX"}};
   for (const auto* type : {"Quote", "Greeks", "Summary", "Trade"}) expected.insert({type, ".SPXW991016C7500"});
   EXPECT_EQ(active, expected);
+}
+
+TEST(Tastytrade, ATransportErrorKeepsTheQuoteTokenAndARefusedOneIsFetchedAgain) {
+  std::atomic<int> quote_tokens{0};
+  auto server = std::make_shared<DxlinkServer>();
+  server->refused = 1;   // the first connection fails with the transport's own text
+  server->rejected = 2;  // DXLink refuses the second one's token
+  test::EventCollector sink;
+  providers::TastytradeProvider::Options options;
+  options.credentials = {"secret", "refresh", ""};
+  options.http = [&quote_tokens] {
+    auto http = std::make_unique<test::HttpStub>();
+    http->respond = [&quote_tokens](std::string_view url) -> net::HttpResponse {
+      if (url.ends_with("/oauth/token")) return {200, R"({"access_token":"token","expires_in":900})"};
+      if (url.ends_with("/api-quote-tokens"))
+        return {200, R"({"data":{"token":"quote-)" + std::to_string(++quote_tokens) +
+                         R"(","dxlink-url":"wss://example.test/feed"}})"};
+      if (url.find("/instruments/equities/") != std::string_view::npos) return {200, R"({"data":{"streamer-symbol":"SPX"}})"};
+      return {200, chain_with_call_at(7400)};
+    };
+    return http;
+  };
+  options.websocket = [server] { return std::make_unique<FakeDxlink>(server); };
+  options.retry_wait = [](unsigned) { return std::chrono::milliseconds(1); };
+  providers::TastytradeProvider provider(options);
+  provider.start({{"SPX"}}, sink);
+  // The third connection gets as far as subscribing.
+  ASSERT_TRUE(test::recording_eventually([&] {
+    const std::lock_guard lock(server->mutex);
+    return !server->subscriptions.empty();
+  }));
+  provider.stop();
+  // The token outlived the transport error and was fetched again once DXLink refused it.
+  EXPECT_EQ(quote_tokens.load(), 2);
+  {
+    const std::lock_guard lock(server->mutex);
+    EXPECT_EQ(server->connections, 3);
+    EXPECT_EQ(server->tokens, (std::vector<std::string>{"quote-1", "quote-2"}));
+  }
+  // The transport's own text, which can carry URLs and tokens, is never published;
+  // DXLink's explanation is.
+  std::vector<std::string> errors;
+  for (const auto& event : sink.snapshot())
+    if (const auto* status = std::get_if<md::ProviderStatus>(&event); status && status->state == md::FeedState::Error)
+      errors.push_back(status->message);
+  EXPECT_EQ(errors, (std::vector<std::string>{"tastytrade: transport or response failure",
+                                              "DXLink: quote token rejected; refresh required"}));
+}
+
+/// Options whose OAuth service is down: each attempt fails, then waits ten minutes.
+providers::TastytradeProvider::Options failing_for_ten_minutes() {
+  providers::TastytradeProvider::Options options;
+  options.credentials = {"secret", "refresh", ""};
+  options.http = [] {
+    auto http = std::make_unique<test::HttpStub>();
+    http->respond = [](std::string_view) { return net::HttpResponse{503, "{}"}; };
+    return http;
+  };
+  options.websocket = [] { return std::make_unique<FakeDxlink>(std::make_shared<DxlinkServer>()); };
+  options.retry_wait = [](unsigned) { return std::chrono::milliseconds(std::chrono::minutes(10)); };
+  return options;
+}
+
+TEST(Tastytrade, StopEndsALongWaitBeforeTheNextAttempt) {
+  std::atomic<bool> waiting{false};
+  auto options = failing_for_ten_minutes();
+  options.retry_wait = [&waiting](unsigned) {
+    waiting = true;
+    return std::chrono::milliseconds(std::chrono::minutes(10));
+  };
+  test::EventCollector sink;
+  providers::TastytradeProvider provider(options);
+  provider.start({{"SPX"}}, sink);
+  ASSERT_TRUE(test::recording_eventually([&] { return waiting.load(); }));
+  const auto stopping = std::chrono::steady_clock::now();
+  provider.stop();
+  EXPECT_LT(std::chrono::steady_clock::now() - stopping, std::chrono::minutes(1));
+  const auto events = sink.snapshot();
+  ASSERT_FALSE(events.empty());
+  const auto* last = std::get_if<md::ProviderStatus>(&events.back());
+  ASSERT_TRUE(last != nullptr);
+  EXPECT_EQ(last->state, md::FeedState::Stopped);
+}
+
+TEST(Tastytrade, ASixthSessionIsRefusedUntilAnotherStops) {
+  // Every provider is stopped before the test ends: the count is the process's.
+  test::DiscardEvents sink;
+  std::vector<std::unique_ptr<providers::TastytradeProvider>> feeds;
+  for (int i = 0; i < 6; ++i) feeds.push_back(std::make_unique<providers::TastytradeProvider>(failing_for_ten_minutes()));
+  for (std::size_t i = 0; i < 5; ++i) feeds[i]->start({{"SPX"}}, sink);
+  try {
+    feeds[5]->start({{"SPX"}}, sink);
+    ADD_FAILURE() << "a sixth session started";
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()), "tastytrade: five sessions already active in this process");
+  }
+  // A stopped provider gives its session back, and the refused start took none.
+  feeds[0]->stop();
+  EXPECT_NO_THROW(feeds[5]->start({{"SPX"}}, sink));
+  EXPECT_THROW(feeds[0]->start({{"SPX"}}, sink), std::runtime_error);
+  for (const auto& feed : feeds) feed->stop();
 }
 
 TEST(Tastytrade, MapsDocumentedGreeksWithoutInventingClocksOrSnapshots) {
@@ -636,41 +752,72 @@ TEST(Tastytrade, MappedEventsRoundTripWithoutNewRecordingFields) {
   EXPECT_FALSE(reader.next());
 }
 
+/// Sets an environment variable, or unsets it for nullptr, until the end of the scope.
+class ScopedEnvironment {
+ public:
+  ScopedEnvironment(const char* name, const char* value) : name_(name) {
+    if (const char* previous = std::getenv(name)) previous_ = previous;
+    if (value) {
+      setenv(name, value, 1);
+    } else {
+      unsetenv(name);
+    }
+  }
+  ~ScopedEnvironment() {
+    if (previous_) {
+      setenv(name_, previous_->c_str(), 1);
+    } else {
+      unsetenv(name_);
+    }
+  }
+  ScopedEnvironment(const ScopedEnvironment&) = delete;
+  ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+ private:
+  const char* name_;
+  std::optional<std::string> previous_;
+};
+
 TEST(BrokerFactory, NamesAndStrictOptionsKeepCredentialsOutOfFlags) {
   const auto names = providers::provider_names();
   EXPECT_NE(std::find(names.begin(), names.end(), "tradier"), names.end());
   EXPECT_NE(std::find(names.begin(), names.end(), "tastytrade"), names.end());
-  for (const auto* name : {"tradier", "tastytrade"}) {
-    for (const auto* option : {"access_token", "client_secret", "refresh_token", "base_url"})
-      EXPECT_THROW((void)providers::make_provider({name, "", {{option, "secret"}}}), std::invalid_argument);
-    EXPECT_THROW((void)providers::make_provider({name, "", {{"sandbox", "yes"}}}), std::invalid_argument);
+  // Every credential is set, so a refusal can only be the option's own. Without them,
+  // the missing credential was refused instead and hid a check that had gone.
+  const ScopedEnvironment token("TRADIER_ACCESS_TOKEN", "generated-test-credential");
+  const ScopedEnvironment secret("TASTYTRADE_CLIENT_SECRET", "generated-test-credential");
+  const ScopedEnvironment refresh("TASTYTRADE_REFRESH_TOKEN", "generated-test-credential");
+  const auto refuses = [](const md::ProviderConfig& config, std::string_view reason) {
+    try {
+      (void)providers::make_provider(config);
+      ADD_FAILURE() << config.name << " accepted, expected: " << reason;
+    } catch (const std::invalid_argument& error) {
+      EXPECT_NE(std::string_view(error.what()).find(reason), std::string_view::npos) << error.what();
+    }
+  };
+  for (const std::string name : {"tradier", "tastytrade"}) {
+    for (const std::string option : {"access_token", "client_secret", "refresh_token", "base_url"})
+      refuses({name, "", {{option, "secret"}}}, name + ": unknown provider option " + option);
+    refuses({name, "", {{"sandbox", "yes"}}}, "sandbox must be true or false");
   }
-  EXPECT_THROW((void)providers::make_provider({"tastytrade", "", {{"poll_seconds", "10"}}}), std::invalid_argument);
-  EXPECT_THROW((void)providers::make_provider({"tastytrade", "", {{"dxlink_time_unit", "seconds"}}}), std::invalid_argument);
-  EXPECT_THROW((void)providers::make_provider({"tradier", "", {{"poll_seconds", "0"}}}), std::invalid_argument);
-  EXPECT_THROW((void)providers::make_provider({"tradier", "", {{"option_size_unit", "lots"}}}), std::invalid_argument);
-  // "hundreds" is a valid unit: the only complaint left is the missing token.
-  try {
-    (void)providers::make_provider({"tradier", "", {{"option_size_unit", "hundreds"}}});
-  } catch (const std::invalid_argument& error) {
-    EXPECT_NE(std::string(error.what()).find("TRADIER_ACCESS_TOKEN"), std::string::npos) << error.what();
-  }
+  refuses({"tastytrade", "", {{"poll_seconds", "10"}}}, "tastytrade: unknown provider option poll_seconds");
+  refuses({"tastytrade", "", {{"dxlink_time_unit", "seconds"}}}, "tastytrade: dxlink_time_unit must be unknown or milliseconds");
+  refuses({"tradier", "", {{"poll_seconds", "0"}}}, "poll_seconds must be an integer");
+  refuses({"tradier", "", {{"option_size_unit", "lots"}}}, "tradier: option_size_unit must be contracts, hundreds or unknown");
+  // The valid values are taken.
+  EXPECT_NO_THROW((void)providers::make_provider({"tradier", "", {{"option_size_unit", "hundreds"}}}));
+  EXPECT_NO_THROW((void)providers::make_provider({"tradier", "", {{"sandbox", "true"}, {"poll_seconds", "10"}}}));
+  EXPECT_NO_THROW((void)providers::make_provider({"tastytrade", "", {{"sandbox", "false"}, {"dxlink_time_unit", "unknown"}}}));
+  // Without the token, "hundreds" leaves only the missing token to complain about.
+  const ScopedEnvironment no_token("TRADIER_ACCESS_TOKEN", nullptr);
+  refuses({"tradier", "", {{"option_size_unit", "hundreds"}}}, "tradier: set TRADIER_ACCESS_TOKEN");
 }
 
 TEST(BrokerFactory, ReadsBrokerCredentialsFromEnvironment) {
-  struct Environment {
-    const char* name;
-    std::optional<std::string> previous;
-    explicit Environment(const char* variable) : name(variable) {
-      if (const auto* value = std::getenv(name)) previous = value;
-      setenv(name, "generated-test-credential", 1);
-    }
-    ~Environment() {
-      if (previous) setenv(name, previous->c_str(), 1);
-      else unsetenv(name);
-    }
-  } tradier("TRADIER_ACCESS_TOKEN"), secret("TASTYTRADE_CLIENT_SECRET"),
-    refresh("TASTYTRADE_REFRESH_TOKEN"), client("TASTYTRADE_CLIENT_ID");
+  const ScopedEnvironment tradier("TRADIER_ACCESS_TOKEN", "generated-test-credential");
+  const ScopedEnvironment secret("TASTYTRADE_CLIENT_SECRET", "generated-test-credential");
+  const ScopedEnvironment refresh("TASTYTRADE_REFRESH_TOKEN", "generated-test-credential");
+  const ScopedEnvironment client("TASTYTRADE_CLIENT_ID", "generated-test-credential");
   const auto polling = providers::make_provider({"tradier", "", {}});
   EXPECT_EQ(polling->name(), "tradier");
   const auto streaming = providers::make_provider({"tastytrade", "", {}});

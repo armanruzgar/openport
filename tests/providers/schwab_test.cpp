@@ -1,8 +1,14 @@
 #include "openport/providers/schwab.hpp"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <map>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
+#include <string_view>
 
 #include "openport/providers/factory.hpp"
 #include "providers/broker_json.hpp"
@@ -327,10 +333,59 @@ TEST(RequestBudget, RollsItsWindowAndBacksOffAfterThrottling) {
   EXPECT_THROW(providers::RequestBudget(0, md::kNanosPerSecond), std::invalid_argument);
 }
 
+/// Sets an environment variable, or unsets it for nullptr, until the end of the scope.
+class ScopedEnvironment {
+ public:
+  ScopedEnvironment(const char* name, const char* value) : name_(name) {
+    if (const char* previous = std::getenv(name)) previous_ = previous;
+    if (value) {
+      setenv(name, value, 1);
+    } else {
+      unsetenv(name);
+    }
+  }
+  ~ScopedEnvironment() {
+    if (previous_) {
+      setenv(name_, previous_->c_str(), 1);
+    } else {
+      unsetenv(name_);
+    }
+  }
+  ScopedEnvironment(const ScopedEnvironment&) = delete;
+  ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+ private:
+  const char* name_;
+  std::optional<std::string> previous_;
+};
+
 TEST(BrokerFactory, SchwabReadsCredentialsOnlyFromTheEnvironment) {
-  EXPECT_THROW((void)providers::make_provider({"schwab", "", {{"refresh_token", "x"}}}), std::invalid_argument);
-  EXPECT_THROW((void)providers::make_provider({"schwab", "", {{"poll_seconds", "0"}}}), std::invalid_argument);
   const auto names = providers::provider_names();
   EXPECT_NE(std::find(names.begin(), names.end(), "schwab"), names.end());
+  // Every credential is set, so a refusal can only be the option's own. Without them,
+  // the missing credentials were refused instead and hid a check that had gone.
+  const ScopedEnvironment client_id("SCHWAB_CLIENT_ID", "generated-test-client-id");
+  const ScopedEnvironment client_secret("SCHWAB_CLIENT_SECRET", "generated-test-client-secret");
+  const ScopedEnvironment refresh_token("SCHWAB_REFRESH_TOKEN", "generated-test-refresh-token");
+  const auto provider = providers::make_provider({"schwab", "", {}});
+  EXPECT_EQ(provider->name(), "schwab");
+  EXPECT_NO_THROW((void)providers::make_provider({"schwab", "", {{"poll_seconds", "10"}}}));
+  const auto refuses = [](const std::map<std::string, std::string>& chosen, std::string_view reason) {
+    try {
+      (void)providers::make_provider({"schwab", "", chosen});
+      ADD_FAILURE() << "accepted, expected: " << reason;
+    } catch (const std::invalid_argument& error) {
+      EXPECT_NE(std::string_view(error.what()).find(reason), std::string_view::npos) << error.what();
+    }
+  };
+  for (const std::string option : {"client_id", "client_secret", "refresh_token", "access_token"})
+    refuses({{option, "x"}}, "schwab: unknown provider option " + option);
+  refuses({{"poll_seconds", "0"}}, "poll_seconds must be an integer");
+  // Each credential is read: with any one unset, no provider is made.
+  for (const auto* variable : {"SCHWAB_CLIENT_ID", "SCHWAB_CLIENT_SECRET", "SCHWAB_REFRESH_TOKEN"}) {
+    SCOPED_TRACE(variable);
+    const ScopedEnvironment unset(variable, nullptr);
+    refuses({}, "schwab: set SCHWAB_CLIENT_ID, SCHWAB_CLIENT_SECRET and SCHWAB_REFRESH_TOKEN");
+  }
 }
 }  // namespace
