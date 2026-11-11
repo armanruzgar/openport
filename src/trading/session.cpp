@@ -270,6 +270,23 @@ Decision price_check(const State& s, const QuoteObservation& q, Money price, std
             static_cast<double>(difference / 1'000'000), static_cast<double>(band / 1'000'000), q.symbol};
   return {};
 }
+/// A two-sided quote so wide that its bid or ask lies outside the price band around
+/// its own midpoint: no order could trade at either side.
+bool wide_quote(const State& s, const QuoteObservation& q) {
+  return valid_quote(q) && (!price_check(s, q, *q.bid).ok() || !price_check(s, q, *q.ask).ok());
+}
+/// Whether `quote`, observed at `time` after `previous`, leaves its contract's mark as
+/// it is. Width alone does not move a mark: a wide quote keeps the mark a narrower
+/// quote set within the quote age, so it moves no equity and decides no plan. A wide
+/// market that outlasts that marks again, and then follows its midpoints. Replay
+/// drivers 1-6 mark every quote.
+bool keeps_mark(const State& s, const QuoteObservation& previous, const QuoteObservation& quote, Timestamp time) {
+  if (!s.evaluation.revised_rules || !wide_quote(s, quote)) return false;
+  const auto mark = s.marks.find(quote.symbol);
+  if (mark == s.marks.end() || time - mark->second.time > s.config.limits.max_quote_age) return false;
+  // The mark already follows a wide market when the wide quote before this one set it.
+  return !(wide_quote(s, previous) && previous.time == mark->second.time && mark_of(previous) == mark->second.price);
+}
 Quantity magnitude(Quantity q) { return q < 0 ? -q : q; }
 Quantity held(const State& s, const std::string& symbol) {
   const auto it = s.ledger.positions().find(symbol);
@@ -4695,6 +4712,7 @@ State prepared(const State& state, Timestamp time, const PreviewMarket& market) 
   for (const auto& quote : market.quotes) {
     if (!before.contracts.contains(quote.symbol) || quote.time > time || quote.time < 0) continue;
     const auto prior = before.books.find(quote.symbol);
+    const bool keep_mark = prior != before.books.end() && keeps_mark(before, prior->second.quote, quote, quote.time);
     if (prior != before.books.end() && prior->second.quote.observation == quote.observation) {
       auto& book = before.books[quote.symbol];
       const auto first = book.quote.first_time();
@@ -4703,7 +4721,7 @@ State prepared(const State& state, Timestamp time, const PreviewMarket& market) 
     } else {
       before.books[quote.symbol] = {quote, valid_quote(quote) ? quote.bid_size : 0, markable_quote(quote) ? quote.ask_size : 0};
     }
-    if (markable_quote(quote)) before.marks[quote.symbol] = {mark_of(quote), quote.time};
+    if (markable_quote(quote) && !keep_mark) before.marks[quote.symbol] = {mark_of(quote), quote.time};
   }
   for (const auto& valuation : market.valuations)
     if (before.contracts.contains(valuation.symbol) && valuation.time <= time && valuation.time >= 0)
@@ -6618,19 +6636,21 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
         // fresh, and it keeps what is left of its displayed size and when it was
         // first given.
         if (quote.time > book.quote.time) {
+          const bool keep_mark = keeps_mark(s, book.quote, book.quote, quote.time);
           book.quote.quoted = book.quote.first_time();
           book.quote.time = quote.time;
-          if (markable_quote(book.quote)) s.marks[quote.symbol] = {mark_of(book.quote), quote.time};
+          if (markable_quote(book.quote) && !keep_mark) s.marks[quote.symbol] = {mark_of(book.quote), quote.time};
         }
         offered_again.insert(quote.symbol);
         continue;
       }
       if (quote.observation <= book.quote.observation || quote.time < book.quote.time) continue;
+      const bool keep_mark = keeps_mark(s, book.quote, quote, quote.time);
       // A quote with only an ask offers it to the exits that may buy there (ask_only).
       auto measured = s.config.rules.stop_stress_ticks > 0 ? std::optional(next_activity(s, book, quote)) : std::nullopt;
       book = {quote, valid_quote(quote) ? quote.bid_size : 0, markable_quote(quote) ? quote.ask_size : 0, std::move(measured)};
       changed.insert(quote.symbol);
-      if (markable_quote(quote) && time - quote.time <= s.config.limits.max_quote_age)
+      if (markable_quote(quote) && time - quote.time <= s.config.limits.max_quote_age && !keep_mark)
         s.marks[quote.symbol] = {mark_of(quote), quote.time};
     }
     seen.clear();

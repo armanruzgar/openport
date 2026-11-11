@@ -168,6 +168,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Quote width alone no longer decides a plan.** A single two-sided quote far wider
+  than the price band, such as 4.00 × 16.00 on a call bought at 4.20, marked the
+  position at its midpoint: it could pass a losing attempt, raise a trailing floor the
+  next ordinary quote then failed, or fail it outright, while the bid had not moved.
+  Such a quote now keeps the mark a narrower quote set within `max_quote_age`; a wide
+  market that lasts longer marks at its midpoints again.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

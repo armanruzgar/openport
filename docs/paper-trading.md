@@ -1406,7 +1406,12 @@ Fresh valid two-sided books establish a midpoint mark, rounded to the nearest
 micro-dollar (a half micro-dollar rounds up). A quote with an ask and no bid, as a far
 option nobody bids for shows (0.00 / 0.05), marks its position halfway to the ask and
 keeps it current, though only a two-sided quote trades. An invalid or stale observation
-never replaces the last valid mark with zero. Snapshots retain mark time/age, the last-mark
+never replaces the last valid mark with zero. A two-sided quote so wide that its bid or
+ask lies outside the [price band](#risk-and-kill-switch) around its own midpoint does not
+replace a mark a narrower quote set within `max_quote_age`: the position keeps that mark,
+so quote width alone moves no equity and cannot pass or fail a plan or raise its floor. A
+wide market that lasts longer marks again and then follows its midpoints (runs recorded
+with replay driver 6 or earlier mark every quote). Snapshots retain mark time/age, the last-mark
 equity estimate and `valuation_complete = false`. Execution fails closed if any
 held position lacks a fresh mark. Freshness (`max_quote_age`, and `max_valuation_age`
 for Greeks) is measured at the market time while the contract's market is open, and at

@@ -660,5 +660,39 @@ TEST(TradingEvaluation, SchemaOneJournalsRecoverWithoutRulesAndContinueInTheCurr
   EXPECT_EQ(TradingSession::recover(FileJournal::read(compacted)).snapshot_json(), s.snapshot_json());
 }
 
+TEST(TradingEvaluation, AWideQuoteKeepsAFreshMarkSoWidthAloneDecidesNothing) {
+  for (const bool revised : {false, true}) {
+    ScriptedMarket f;
+    TradingSession s(rules_config("10000", drawdown("1000", "500")), f.time, {}, "system", revised);
+    f.seed(s);
+    ASSERT_TRUE(s.submit(f.market("long", 2), f.time).decision.ok());
+    const auto equity = s.snapshot()->equity;  // marked at the 4.10 midpoint
+    // Only the ask moves out, to a 10.00 midpoint that would pass the target.
+    quote(s, f, "4.00", "16.00");
+    if (!revised) {
+      // Replay drivers 1-6 mark every quote.
+      EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Passed);
+      continue;
+    }
+    EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Active);
+    EXPECT_EQ(s.snapshot()->equity, equity);
+    // Nor does a 7.00 midpoint raise the peak, or a vanished bid move equity.
+    quote(s, f, "4.00", "10.00");
+    EXPECT_EQ(s.snapshot()->evaluation.peak, m("10000"));
+    quote(s, f, "0.05", "4.20");
+    EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Active);
+    EXPECT_EQ(s.snapshot()->equity, equity);
+    // An ordinary quote marks at once.
+    quote(s, f, "4.10", "4.30");
+    EXPECT_EQ(s.snapshot()->equity, equity + m("20"));
+    // A wide market that outlasts the quote age marks again, then follows its midpoints.
+    f.time += 60 * md::kNanosPerSecond;
+    quote(s, f, "4.00", "8.00");
+    EXPECT_EQ(s.snapshot()->equity, equity + m("380"));
+    quote(s, f, "4.00", "8.20");
+    EXPECT_EQ(s.snapshot()->equity, equity + m("400"));
+  }
+}
+
 }  // namespace
 }  // namespace openport::trading
