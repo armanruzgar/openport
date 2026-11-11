@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -25,7 +26,7 @@ TEST(TradingNotes, TradesTakeANoteAndTagsThatSurviveRecovery) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s({}, f.time, FileJournal::create(path));
+    TradingSession s({}, f.time, test::create_journal(path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
     ASSERT_TRUE(s.submit(f.market("close", 1, Side::Sell), f.time).decision.ok());
@@ -43,7 +44,7 @@ TEST(TradingNotes, TradesTakeANoteAndTagsThatSurviveRecovery) {
     ASSERT_TRUE(s.annotate(trade, "Reviewed.", {"breakout"}, f.time).decision.ok());
     expected = s.snapshot_json();
   }
-  auto s = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
   EXPECT_EQ(s.snapshot_json(), expected);
   EXPECT_EQ(s.snapshot()->annotations.at("1").note, "Reviewed.");
   // An empty note without tags clears it.
@@ -125,7 +126,7 @@ TEST(TradingNotes, FixedMistakesAreSeparateValidatedAndRecovered) {
   const auto path = (std::filesystem::temp_directory_path() / ("openport-mistakes-" + std::to_string(::getpid()) + ".jsonl")).string();
   std::filesystem::remove(path);
   {
-    TradingSession s({}, f.time, FileJournal::create(path));
+    TradingSession s({}, f.time, test::create_journal(path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
     ASSERT_TRUE(s.annotate(1, "review", {"chased"}, f.time, {"chased", "A+ setup", "chased"}).decision.ok());

@@ -5,6 +5,7 @@
 
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -96,7 +97,7 @@ TEST_P(TradePhases, BestWholeTradeWaitsForEveryLegAndRecovers) {
   AccountRules rules; rules.phase = GetParam(); rules.trade_consistency_percent = 50; rules.min_trades = 2; rules.profit_target = m("10000");
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s); g.seed(s);
     auto combo = f.market("combo");
     combo.symbol.clear(); combo.legs = {{f.symbol(), Side::Buy, 1}, {g.symbol(), Side::Buy, 1}};
@@ -110,7 +111,7 @@ TEST_P(TradePhases, BestWholeTradeWaitsForEveryLegAndRecovers) {
     EXPECT_EQ(s.snapshot()->evaluation.best_trade->pnl, m("157.40"));
   }
   const auto recovery = FileJournal::read(file.path);
-  auto s = TradingSession::recover(recovery, FileJournal::resume(file.path));
+  auto s = TradingSession::recover(recovery, test::resume_journal(file.path));
   ASSERT_TRUE(s.snapshot()->evaluation.best_trade);
   EXPECT_EQ(s.snapshot()->evaluation.best_trade->id, "1");
   EXPECT_EQ(s.snapshot()->evaluation.best_trade->pnl, m("157.40"));
@@ -152,7 +153,7 @@ TEST_P(TradePhases, CachedObjectivesMatchColdRecoveryAfterTradesAndMarketTicks) 
   rules.microscalp_percent = 50;
   rules.profit_target = m("10000");
   JournalFile file;
-  TradingSession cached(config(rules), f.time, FileJournal::create(file.path));
+  TradingSession cached(config(rules), f.time, test::create_journal(file.path));
   // Recovery deliberately drops all derived caches. Applying the same command
   // to it is an uncached oracle, including every intermediate observation.
   const auto check = [&](auto action) {
@@ -189,7 +190,7 @@ TEST_P(TradePhases, MinimumHoldUsesFirstFillExactMarketAgeAndRecovers) {
   JournalFile file;
   const auto opened = f.time;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
     for (const auto& [age, text] : {std::pair{0LL, "0 seconds"}, {1'000'000'000LL, "1 second"},
@@ -212,7 +213,7 @@ TEST_P(TradePhases, MinimumHoldUsesFirstFillExactMarketAgeAndRecovers) {
     EXPECT_EQ(preview.decision.scope, f.symbol());
     EXPECT_EQ(s.submit(f.market("early", 1, Side::Sell), f.time).decision.code, Reason::MIN_HOLD);
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   f.time = opened + 60 * md::kNanosPerSecond - 1; ++f.observation; f.seed(s);
   EXPECT_EQ(s.preview(f.market("boundary", 1, Side::Sell), f.time).decision.code, Reason::MIN_HOLD);
   ++f.time; ++f.observation; f.seed(s);
@@ -365,7 +366,7 @@ TEST_P(TradePhases, MicroscalpProfitSurvivesRecoveryAndExcludesLossesAndBoundary
   AccountRules rules; rules.phase = GetParam(); rules.microscalp_seconds = 60; rules.microscalp_percent = 50;
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("win"), f.time).decision.ok());
     f.next(); f.seed(s, "5.00", "5.20");
@@ -384,7 +385,7 @@ TEST_P(TradePhases, MicroscalpProfitSurvivesRecoveryAndExcludesLossesAndBoundary
     ASSERT_TRUE(s.submit(f.market("boundary", 1, Side::Sell), f.time).decision.ok());
     EXPECT_EQ(s.snapshot()->evaluation.short_profit, m("78.70"));
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   EXPECT_EQ(s.snapshot()->evaluation.short_profit, m("78.70"));
   f.next(); f.seed(s);
   EXPECT_EQ(s.snapshot()->evaluation.short_profit, m("78.70"));
@@ -410,7 +411,7 @@ TEST_P(TradePhases, MicroscalpingSharesResetsAtSameTimestampAndRecoversBoundary)
   AccountRules rules; rules.phase = GetParam(); rules.microscalp_seconds = 60; rules.microscalp_percent = 50; rules.min_trades = 2;
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     s.on_quotes({}, {}, f.time, {{"SPY", f.time, m("500")}});
     ASSERT_TRUE(s.trade_stock("SPY", 1, f.time).decision.ok());
     s.on_quotes({}, {}, f.time, {{"SPY", f.time, m("510")}});
@@ -421,7 +422,7 @@ TEST_P(TradePhases, MicroscalpingSharesResetsAtSameTimestampAndRecoversBoundary)
     EXPECT_EQ(s.snapshot()->evaluation.short_profit, Money{});
     EXPECT_EQ(s.snapshot()->evaluation.first_stock_fill, 3);
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   EXPECT_EQ(s.snapshot()->evaluation.first_stock_fill, 3);
   s.on_quotes({}, {}, f.time, {{"SPY", f.time, m("500")}});
   EXPECT_EQ(s.snapshot()->evaluation.short_profit, Money{});
@@ -461,7 +462,7 @@ TEST_P(TradePhases, RolledWholeTradeClosesOnlyAfterItsNewLeg) {
   AccountRules rules; rules.phase = GetParam(); rules.min_trades = 1; rules.trade_consistency_percent = 100;
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s); g.seed(s);
     ASSERT_TRUE(s.submit(f.market("first"), f.time).decision.ok());
     f.next(); g.next(); f.seed(s, "5.00", "5.20"); g.seed(s);
@@ -471,7 +472,7 @@ TEST_P(TradePhases, RolledWholeTradeClosesOnlyAfterItsNewLeg) {
     EXPECT_EQ(s.snapshot()->evaluation.closed_trades, 0);
     EXPECT_FALSE(s.snapshot()->evaluation.best_trade);
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   g.next(); g.seed(s, "5.00", "5.20");
   ASSERT_TRUE(s.submit(g.market("finish", 1, Side::Sell), g.time).decision.ok());
   EXPECT_EQ(s.snapshot()->evaluation.closed_trades, 1);
@@ -670,13 +671,13 @@ TEST(TradeRules, StopAndRiskRulesSurviveJournalRecovery) {
   JournalFile file;
   OrderId stop = 0;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     const auto result = s.submit(stopped(f.market("entry")), f.time);
     ASSERT_TRUE(result.decision.ok());
     stop = s.snapshot()->recent_orders.at(*result.order_id - 1).stop_loss;
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   EXPECT_EQ(s.config().rules, rules);
   EXPECT_EQ(s.cancel(stop, f.time).decision.code, Reason::STOP_REQUIRED);
   EXPECT_EQ(s.submit(f.market("bare"), f.time).decision.code, Reason::STOP_REQUIRED);
@@ -764,12 +765,12 @@ TEST(TradeRules, ContractCapSurvivesJournalRecovery) {
   rules.max_contracts_held = 3;
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("held", 2), f.time).decision.ok());
     ASSERT_TRUE(s.submit(f.limit("reserved", 1, "4.00"), f.time).decision.ok());
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   EXPECT_EQ(s.config().rules, rules);
   EXPECT_EQ(s.submit(f.market("after-restart"), f.time).decision.code, Reason::MAX_CONTRACTS_HELD);
   EXPECT_TRUE(s.submit(f.market("close", 2, Side::Sell), f.time).decision.ok());
@@ -779,7 +780,7 @@ TEST(TradeRules, DisabledRulesAreAbsentFromJournalBytes) {
   ScriptedMarket f;
   JournalFile file;
   {
-    TradingSession s(config(), f.time, FileJournal::create(file.path));
+    TradingSession s(config(), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("entry", 2), f.time).decision.ok());
     ASSERT_TRUE(s.submit(f.market("close", 2, Side::Sell), f.time).decision.ok());
@@ -809,7 +810,7 @@ TEST(TradeRules, DisabledRulesAreAbsentFromJournalBytes) {
   defaults.rules.max_trade_risk = {};
   defaults.rules.max_trade_risk_percent = 0;
   {
-    TradingSession t(defaults, f.time, FileJournal::create(repeated.path));
+    TradingSession t(defaults, f.time, test::create_journal(repeated.path));
     f.seed(t);
     ASSERT_TRUE(t.submit(f.market("entry", 2), f.time).decision.ok());
     ASSERT_TRUE(t.submit(f.market("close", 2, Side::Sell), f.time).decision.ok());
@@ -827,7 +828,7 @@ TEST(TradeRules, ServerVolumeRuleValidatesAndRecoversWithoutReducerVolumeInputs)
   ScriptedMarket f;
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("server-accepted"), f.time).decision.ok());
   }
@@ -855,7 +856,7 @@ TEST_P(TradePhases, HedgingChecksNetDeltaAndAllowsReductionsAndSystemExitsAcross
   put.contract.type = pricing::OptionType::Put;
   AccountRules rules; rules.phase = GetParam(); rules.no_hedging = true;
   JournalFile file;
-  TradingSession s(config(rules), call.time, FileJournal::create(file.path));
+  TradingSession s(config(rules), call.time, test::create_journal(file.path));
   call.seed(s); put.seed(s);
   s.on_quotes({}, {call.valuation(0.059152861928), put.valuation(-0.060631543814)}, put.time);
   ASSERT_TRUE(s.submit(call.market("long"), call.time).decision.ok());
@@ -911,7 +912,7 @@ TEST(TradeRules, OpeningFillInputsRecheckEachPartialFillAndRecoverDeterministica
     JournalFile file;
     ScriptedMarket f;
     AccountRules rules; rules.max_volume_percent = 10; rules.no_counter_positions = true;
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     OpeningRuleInputs inputs; inputs.volumes[f.symbol()] = 20;
     s.set_opening_rule_inputs(inputs);
@@ -973,7 +974,7 @@ TEST(TradeRules, OpeningFillJournalContainsOnlyTheAttemptedLegsAndUnderlyings) {
     ScriptedMarket f, other;
     other.contract.strike += 5;
     AccountRules rules; rules.max_volume_percent = 10; rules.no_counter_positions = true;
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s); other.seed(s);
     OpeningRuleInputs inputs;
     inputs.volumes = {{f.symbol(), 100}, {other.symbol(), std::nullopt}, {"unused", 9000}};

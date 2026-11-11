@@ -9,6 +9,7 @@
 #include "openport/trading/session.hpp"
 #include "openport/pricing/black.hpp"
 #include "trading/margin_detail.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -1090,7 +1091,7 @@ TEST(TradingAccountType, AccountSettingsSurviveRecovery) {
   rules.house_margin_percent = 30;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(config("600000", rules), f.time, journal);
     f.define(s, {C5100});
     f.quote(s, {{C5100, "3.00", "3.20", 0.25}});
@@ -1098,7 +1099,7 @@ TEST(TradingAccountType, AccountSettingsSurviveRecovery) {
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto s = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   EXPECT_EQ(s.snapshot_json(), expected);
   EXPECT_EQ(s.config().rules, rules);
   std::filesystem::remove_all(directory);
@@ -1238,7 +1239,7 @@ TEST(TradingMultiLeg, CombosSurviveRecoveryAndCancelAtTheSessionEnd) {
   Chain f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(config(), f.time, journal);
     f.define(s, {P4900, P4890});
     f.quote(s, {{P4900, "5.00", "5.20", -0.30}, {P4890, "4.00", "4.20", -0.28}});
@@ -1246,7 +1247,7 @@ TEST(TradingMultiLeg, CombosSurviveRecoveryAndCancelAtTheSessionEnd) {
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto s = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   EXPECT_EQ(s.snapshot_json(), expected);
   const auto order = s.snapshot()->open_orders.at(0);
   ASSERT_EQ(order.request.legs.size(), 2);
@@ -1679,7 +1680,7 @@ TEST(TradingMultiLeg, GtcBracketAndAttachedExitsRecoverWithOcoAndMetadata) {
   Chain f;
   std::string expected;
   {
-    TradingSession s(config(), f.time, FileJournal::create(path));
+    TradingSession s(config(), f.time, test::create_journal(path));
     f.define(s, {P4900, P4890});
     f.quote(s, {{P4900, "5.00", "5.20", -0.30}, {P4890, "4.00", "4.20", -0.28}}, 1);
     auto r = combo("entry", credit_legs(), 2, "-0.80", TimeInForce::Gtc);
@@ -1687,7 +1688,7 @@ TEST(TradingMultiLeg, GtcBracketAndAttachedExitsRecoverWithOcoAndMetadata) {
     ASSERT_TRUE(s.submit(r, f.time).decision.ok());
     expected = s.snapshot_json();
   }
-  auto s = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
   EXPECT_EQ(s.snapshot_json(), expected);
   f.quote(s, {{P4900, "5.00", "5.20", -0.30}, {P4890, "4.00", "4.20", -0.28}}, 1);
   EXPECT_EQ(s.snapshot()->recent_orders[1].request.quantity, 2);

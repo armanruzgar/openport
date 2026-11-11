@@ -5,6 +5,7 @@
 
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 // F44: alerts on a contract, a spread, an underlying or the account, kept with it.
 namespace openport::trading {
@@ -127,7 +128,7 @@ TEST(TradingAlerts, TermsAreCheckedAndAlertsAreJournaledOnlyOnceUsedAndRecover) 
   ScriptedMarket f;
   std::string head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s);
     {
@@ -154,7 +155,7 @@ TEST(TradingAlerts, TermsAreCheckedAndAlertsAreJournaledOnlyOnceUsedAndRecover) 
     EXPECT_EQ(find(s, 2).fired, 1U);
     head = journal->head();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   ASSERT_EQ(recovered.snapshot()->alerts.size(), 2U);
   EXPECT_EQ(find(recovered, 2).fired, 1U);
   EXPECT_FALSE(find(recovered, 2).armed);
@@ -308,7 +309,7 @@ TEST(TradingAlerts, JournalsWithoutAlertsKeepTheirPreFeatureBytes) {
   {
     // This head was captured from F43, before alerts existed, with these inputs.
     ScriptedMarket f;
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s({}, f.time, journal);
     f.seed(s);
     s.submit(f.limit("resting", 1, "3.50"), f.time);
@@ -328,14 +329,14 @@ TEST(TradingAlerts, RepeatingAlertsAndDeletedBooksRecoverAndReplayDeterministica
   const auto run = [&](const std::string& path) {
     ScriptedMarket f;
     {
-      auto journal = FileJournal::create(path);
+      auto journal = test::create_journal(path);
       TradingSession s(roomy(), f.time, journal);
       f.seed(s);
       s.set_actor("trader");
       s.create_alert(alert(AlertScope::Contract, "mark", f.symbol(), TriggerDirection::AtOrAbove, "4", true), f.time);
       EXPECT_EQ(find(s, 1).actor, "trader");
     }
-    auto journal = FileJournal::resume(path);
+    auto journal = test::resume_journal(path);
     auto s = TradingSession::recover(FileJournal::read(path), journal);
     EXPECT_EQ(find(s, 1).fired, 1U);
     EXPECT_FALSE(find(s, 1).armed);

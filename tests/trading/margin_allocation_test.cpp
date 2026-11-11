@@ -13,6 +13,7 @@
 #include "trading/margin_detail.hpp"
 #include "openport/trading/session.hpp"
 #include "support/sanitizer.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -273,7 +274,7 @@ TEST(TradingMarginAllocation, JointBuyingPowerFillsAndRecoversIdenticalJournals)
     config.rules.buying_power = true;
     config.limits.aggregate = {1e9, 1e9};
     config.limits.per_underlying = {1e9, 1e9};
-    auto sink = FileJournal::create(path);
+    auto sink = test::create_journal(path);
     TradingSession session(config, time, sink);
     OrderRequest request;
     request.client_order_id = "ratio";

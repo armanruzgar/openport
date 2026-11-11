@@ -5,6 +5,7 @@
 #include "support/scripted_market.hpp"
 #include "openport/trading/history.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -227,7 +228,7 @@ TEST(TradeReview, AStrategysComboStopAndACoveredCalendarPlanTheirRisk) {
 TEST(TradeReview, DayNotesValidateClearAndSurviveResetAndRecoveryWithExcursions) {
   ReviewDirectory directory;
   ScriptedMarket f;
-  auto sink = FileJournal::create(directory.file("journal"));
+  auto sink = test::create_journal(directory.file("journal"));
   TradingSession s({}, f.time, sink); f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
   mark(s, f, "5.00", "5.20", 5001);
@@ -248,15 +249,15 @@ TEST(TradeReview, JournalsFromBeforeReviewLoadWithoutInventingContextOrExcursion
   ReviewDirectory directory;
   ScriptedMarket f;
   {
-    TradingSession s({}, f.time, FileJournal::create(directory.file("new"))); f.seed(s);
+    TradingSession s({}, f.time, test::create_journal(directory.file("new"))); f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
   }
   {
-    auto expanded = FileJournal::create(directory.file("expanded"));
+    auto expanded = test::create_journal(directory.file("expanded"));
     TradingSession::expand(FileJournal::read(directory.file("new")), *expanded);
   }
   {
-    auto old = FileJournal::create(directory.file("old"));
+    auto old = test::create_journal(directory.file("old"));
     for (const auto& record : FileJournal::read(directory.file("expanded")).records) {
       auto payload = Json::parse(record.payload);
       for (auto* object : {&payload["state"], &payload["snapshot"]}) {
@@ -278,7 +279,7 @@ TEST(TradeReview, JournalsFromBeforeReviewLoadWithoutInventingContextOrExcursion
 TEST(TradeReview, RecoveryContinuesIdenticallyAcrossScaleInsAndReversals) {
   ReviewDirectory directory;
   ScriptedMarket f;
-  TradingSession s({}, f.time, FileJournal::create(directory.file("journal"))); f.seed(s);
+  TradingSession s({}, f.time, test::create_journal(directory.file("journal"))); f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 2), f.time).decision.ok());
   mark(s, f, "5.00", "5.20", 5003);
   auto recovered = TradingSession::recover(FileJournal::read(directory.file("journal")));

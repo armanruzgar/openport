@@ -2,6 +2,7 @@
 
 #include "openport/trading/session.hpp"
 #include "support/recording.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -33,7 +34,7 @@ TEST(StockOrders, RestingLimitsWaitForALaterPriceAndFillAtIt) {
   test::RecordingFile file;
   auto path = (file.directory / "shares.jsonl").string();
   const auto open = ny(10);
-  TradingSession s(config(), open, FileJournal::create(path));
+  TradingSession s(config(), open, test::create_journal(path));
   // Below the price, a buy limit rests; it fills on the first later print at or under it.
   const auto placed = s.submit_stock_order(order("dip", Side::Buy, StockOrderType::Limit, 100, "495.00"), open,
                                            StockPrice{"SPY", open, m("500")});
@@ -124,7 +125,7 @@ TEST(StockOrders, BracketsProtectTheFilledEntryAndOneExitCancelsTheOther) {
   test::RecordingFile file;
   auto path = (file.directory / "bracket.jsonl").string();
   const auto open = ny(10);
-  TradingSession s(config(), open, FileJournal::create(path));
+  TradingSession s(config(), open, test::create_journal(path));
   auto entry = order("entry", Side::Buy, StockOrderType::Limit, 50, "500.00");
   entry.stop_loss = m("490");
   entry.take_profit = m("520");

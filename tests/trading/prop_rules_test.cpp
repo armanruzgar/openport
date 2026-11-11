@@ -8,6 +8,7 @@
 #include "openport/md/time.hpp"
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -166,7 +167,7 @@ TEST(PropRules, ValidationRefusesIncoherentPropRules) {
 TEST(PropRules, AnOpenLossCapFlattensThePositionAndJournalsTheBreach) {
   ScriptedMarket f;
   JournalFile file;
-  TradingSession s(config(open_loss(OpenLossAction::Flatten)), f.time, FileJournal::create(file.path));
+  TradingSession s(config(open_loss(OpenLossAction::Flatten)), f.time, test::create_journal(file.path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
   // Marked at the 3.70 mid the open loss is $250, inside the $300 cap.
@@ -219,7 +220,7 @@ struct Vertical {
 TEST(PropRules, AnOpenLossCapMeasuresASpreadNetAndClosesItWhole) {
   Vertical v;
   JournalFile file;
-  TradingSession s(config(open_loss(OpenLossAction::Flatten)), v.a.time, FileJournal::create(file.path));
+  TradingSession s(config(open_loss(OpenLossAction::Flatten)), v.a.time, test::create_journal(file.path));
   v.seed(s);
   const auto opened = s.submit(v.open(), v.a.time);
   ASSERT_TRUE(opened.decision.ok()) << opened.decision.message;
@@ -288,7 +289,7 @@ TEST(PropRules, AFlattenPendingForAnOpenLossBlocksAddingToTheTrade) {
 TEST(PropRules, AnOpenLossFlattenRetriesAfterAPartialCloseAndPriceRecovery) {
   ScriptedMarket f;
   JournalFile file;
-  TradingSession s(config(open_loss(OpenLossAction::Flatten, "100")), f.time, FileJournal::create(file.path));
+  TradingSession s(config(open_loss(OpenLossAction::Flatten, "100")), f.time, test::create_journal(file.path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
   f.next(); f.seed(s, "3.90", "4.10", 3);
@@ -309,7 +310,7 @@ TEST(PropRules, PercentageOpenLossRoomStaysAtTheDaysOpeningFloor) {
     AccountRules rules; rules.max_drawdown = m("1000");
     rules.open_loss_cap = OpenLossCap{basis, {}, 30, OpenLossAction::Flatten};
     JournalFile file;
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(config(rules), f.time, test::create_journal(file.path)); f.seed(s);
     EXPECT_EQ(open_loss_limit(s.snapshot()->evaluation, rules, plan_inputs(*s.snapshot())), m("300"));
     profit_day(s, f, "1200");
     EXPECT_GT(s.snapshot()->evaluation.floor, m("10000"));
@@ -466,7 +467,7 @@ void quick_win(TradingSession& s, ScriptedMarket& f) {
 TEST(PropRules, PayoutReviewsWarnThenForfeitThenCapOffendingTrades) {
   ScriptedMarket f;
   JournalFile file;
-  TradingSession s(config(reviewed()), f.time, FileJournal::create(file.path));
+  TradingSession s(config(reviewed()), f.time, test::create_journal(file.path));
   f.seed(s);
   quick_win(s, f);
   next_day(s, f, {2026, 9, 23});
@@ -587,7 +588,7 @@ TEST(PropRules, AfterAPayoutTheFloorCanMoveUpToTheStartingBalance) {
 TEST(PropRules, AfterAPayoutTheAccountCanResetToItsStartingBalance) {
   ScriptedMarket f;
   JournalFile file;
-  TradingSession s(config(floor_after(PayoutFloor::Reset)), f.time, FileJournal::create(file.path));
+  TradingSession s(config(floor_after(PayoutFloor::Reset)), f.time, test::create_journal(file.path));
   f.seed(s);
   profit_day(s, f, "300");
   next_day(s, f, {2026, 9, 23});
@@ -611,7 +612,7 @@ TEST(PropRules, ALosingStreakStartsTheCooldownAndFlagsTilt) {
   g.loss_streak = 2;
   g.cooldown_minutes = 5;
   JournalFile file;
-  TradingSession s(config({}, g), f.time, FileJournal::create(file.path));
+  TradingSession s(config({}, g), f.time, test::create_journal(file.path));
   f.seed(s);
   for (int i = 0; i < 2; ++i) {
     quote(s, f, "4.00", "4.20");

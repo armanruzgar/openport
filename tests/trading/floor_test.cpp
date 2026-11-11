@@ -5,6 +5,7 @@
 
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -63,10 +64,10 @@ TEST(TradingFloor, FloorPercentRejects100OnWritesButRecoversStored100) {
   EXPECT_FALSE(s.snapshot()->risk.kill_latched);
   // Rewrite the checkpoint before hashing it, as a historical file with 100.
   File source, legacy;
-  { TradingSession original(c, f.time, FileJournal::create(source.path)); }
+  { TradingSession original(c, f.time, test::create_journal(source.path)); }
   auto payload = Json::parse(FileJournal::read(source.path).records.front().payload);
   payload["state"]["config"]["guardrails"]["soft_floor_percent"] = 100;
-  { auto out = FileJournal::create(legacy.path); out->append(f.time, "session_start", payload.dump()); }
+  { auto out = test::create_journal(legacy.path); out->append(f.time, "session_start", payload.dump()); }
   auto recovered = TradingSession::recover(FileJournal::read(legacy.path));
   EXPECT_EQ(recovered.config().guardrails.soft_floor_percent, 100);
   f.seed(recovered);
@@ -131,7 +132,7 @@ TEST(TradingFloor, ResetPreservesDailyLatchesAndCooldownThroughJournalRecovery) 
       if (reason == Reason::PROFIT_LOCK) c.guardrails.profit_lock = m("50");
       if (reason == Reason::TRADE_LIMIT) c.guardrails.max_opening_trades = 1;
       if (reason == Reason::COOLDOWN) { c.guardrails.cooldown_minutes = 30; c.guardrails.cooldown_loss = m("1"); }
-      TradingSession s(c, f.time, FileJournal::create(file.path)); f.seed(s);
+      TradingSession s(c, f.time, test::create_journal(file.path)); f.seed(s);
       ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
       if (reason == Reason::PROFIT_LOCK) update(s, f, "5", "5.20");
       if (reason == Reason::COOLDOWN) { ASSERT_TRUE(s.submit(f.market("close", 1, Side::Sell), f.time).decision.ok()); }
@@ -174,7 +175,7 @@ TEST(TradingFloor, AccountResetHistoryOnlyClearsReasonsItActuallyRemoves) {
     auto c = config(); c.guardrails.soft_floor = m("9990");
     std::string expected;
     {
-      TradingSession s(c, f.time, FileJournal::create(file.path)); f.seed(s);
+      TradingSession s(c, f.time, test::create_journal(file.path)); f.seed(s);
       ASSERT_TRUE(s.submit(f.market("entry"), f.time).decision.ok());
       ASSERT_EQ(s.snapshot()->risk.kill_reason, "SOFT_FLOOR");
       EXPECT_NE(s.snapshot()->kill_reset.message.find("account reset"), std::string::npos);
@@ -207,7 +208,7 @@ TEST(TradingFloor, PartialOpeningOrderFinishesAtLimitAcrossRecoveryButOtherOrder
   OrderId id = 0;
   {
     auto c = config(); c.guardrails.max_opening_trades = 1;
-    TradingSession s(c, f.time, FileJournal::create(file.path)); f.seed(s, "4", "4.20", 1);
+    TradingSession s(c, f.time, test::create_journal(file.path)); f.seed(s, "4", "4.20", 1);
     ASSERT_TRUE(s.submit(f.limit("other", 1, "3.50"), f.time).decision.ok());
     const auto first = s.submit(f.limit("parts", 3), f.time);
     ASSERT_TRUE(first.decision.ok()); id = *first.order_id;
@@ -528,7 +529,7 @@ TEST(TradingFloor, OverrideChangesAndRolloverRecoverWithBothRemovalDirections) {
   c.limits.underlying_overrides["QQQ"] = {500, 50};
   std::string expected;
   {
-    TradingSession s(c, f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(c, f.time, test::create_journal(file.path)); f.seed(s);
     auto limits = c.limits; limits.underlying_overrides.clear();
     limits.underlying_overrides["IWM"] = {2000, 50};
     ASSERT_TRUE(s.set_limits(limits, f.time).decision.ok());
@@ -540,7 +541,7 @@ TEST(TradingFloor, OverrideChangesAndRolloverRecoverWithBothRemovalDirections) {
     expected = s.snapshot_json();
   }
   {
-    auto restored = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+    auto restored = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
     EXPECT_EQ(restored.snapshot_json(), expected);
     roll(restored, f);
     EXPECT_FALSE(restored.snapshot()->pending_limits);
@@ -795,7 +796,7 @@ TEST(TradingFloor, PendingAndGuardrailStateSurviveJournalRecoveryAndOlderRecords
   std::string expected;
   {
     auto c = config(); c.guardrails.max_opening_trades = 1;
-    TradingSession s(c, f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(c, f.time, test::create_journal(file.path)); f.seed(s);
     s.submit(f.market("open"), f.time);
     s.set_guardrails({}, f.time);
     auto limits = s.config().limits; limits.max_order_contracts = 200; s.set_limits(limits, f.time);
@@ -820,7 +821,7 @@ TEST(TradingFloor, PendingAndGuardrailStateSurviveJournalRecoveryAndOlderRecords
 }
 TEST(TradingPreview, PureChecksMatchSubmitAndDoNotConsumeIdsJournalOrLiquidity) {
   File file; ScriptedMarket f;
-  auto sink = FileJournal::create(file.path);
+  auto sink = test::create_journal(file.path);
   TradingSession s(config(), f.time, sink); f.seed(s, "4", "4.20", 1);
   const auto snapshot = s.snapshot_json(), head = sink->head();
   const auto sequence = sink->sequence();

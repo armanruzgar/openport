@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include "openport/trading/events.hpp"
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -67,14 +68,14 @@ TEST(EventRules, FlattenOnceWithRecoveryAndIdenticalReplay) {
   ScriptedMarket f; auto r = news(f, "flatten"); JournalFile file;
   std::string before;
   {
-    TradingSession s(config(r), f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(config(r), f.time, test::create_journal(file.path)); f.seed(s);
     ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
     tick(s, f, f.time + md::kNanosPerMinute);
     EXPECT_TRUE(s.snapshot()->positions.empty());
     EXPECT_TRUE(s.snapshot()->recent_orders.back().request.client_order_id.starts_with("system:news:"));
     before = s.snapshot_json();
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   EXPECT_EQ(s.snapshot_json(), before);
   const auto orders = s.snapshot()->recent_orders.size();
   tick(s, f, f.time + md::kNanosPerSecond);
@@ -108,7 +109,7 @@ TEST(EventRules, FundedScalingWithFlatNewsAndHoldingRulesSurvivesResetAndRecover
     EXPECT_THROW(TradingSession(config(evaluation_phase), f.time), TradingError);
 
     JournalFile file;
-    TradingSession s(config(r), f.time, FileJournal::create(file.path));
+    TradingSession s(config(r), f.time, test::create_journal(file.path));
     const auto recorded_rules = s.config().rules;
     ASSERT_TRUE(recorded_rules.hold_calendar);
     f.seed(s);
@@ -183,7 +184,7 @@ TEST(EventRules, HoldingFailurePreventsAnOtherwiseEarnedFundedSizeIncrease) {
     r.hold_restrictions = {"weekend"};
     EXPECT_TRUE(r.evaluation()); // F59 alone activates failure checks when overnight is off.
     JournalFile file;
-    TradingSession s(config(r), f.time, FileJournal::create(file.path));
+    TradingSession s(config(r), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("profit-open"), f.time).decision.ok());
     f.next();
@@ -306,7 +307,7 @@ TEST(EventRules, HoldingSkipsSettlementAwaitingPositionAndRecordsReplayIdentical
   r.events = {{"split", "2026-09-23", "SPX"}};
   JournalFile first, second;
   const auto run = [&](const std::string& path) {
-    TradingSession s(config(r), f.time, FileJournal::create(path)); f.seed(s);
+    TradingSession s(config(r), f.time, test::create_journal(path)); f.seed(s);
     EXPECT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
     const auto cutoff = md::new_york_to_utc({2026, 9, 22}, 16, 5);
     s.on_quotes({}, {}, cutoff);
@@ -363,7 +364,7 @@ TEST(EventRules, CombinedRolloverPrecedenceAndRecoveryBeforeLateCloses) {
       r.events = {{"earnings", "2026-09-28", "SPX"}, {"news", "2026-09-28T14:00:00Z"}};
       r.news_after_minutes = 10; r.news_action = "flatten";
       JournalFile file;
-      TradingSession s(config(r), f.time, FileJournal::create(file.path)); f.seed(s);
+      TradingSession s(config(r), f.time, test::create_journal(file.path)); f.seed(s);
       ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
       const auto rollover = md::new_york_to_utc({2026, 9, 25}, 17, 0);
       if (explicit_roll) { ASSERT_TRUE(s.roll_day(rollover).decision.ok()); }
@@ -397,7 +398,7 @@ TEST(EventRules, CombinedCutoffsKeepFirstCloseLabelWithoutDuplicates) {
           {"split", "2026-09-23", "SPY"}};
       r.hold_restrictions = {"split"}; r.hold_cutoff = trigger == "hold" || trigger == "tie" ? 601 : 602;
       JournalFile file;
-      TradingSession s(config(r), f.time, FileJournal::create(file.path)); f.seed(s);
+      TradingSession s(config(r), f.time, test::create_journal(file.path)); f.seed(s);
       ASSERT_TRUE(s.submit(f.market("held", 2), f.time).decision.ok());
       ASSERT_TRUE(s.trade_stock("SPY", 1, f.time, StockPrice{"SPY", f.time, m("500")}).decision.ok());
       tick(s, f, f.time + md::kNanosPerSecond);

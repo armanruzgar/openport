@@ -6,6 +6,7 @@
 
 #include "openport/trading/history.hpp"
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -559,7 +560,7 @@ TEST(TradingEvaluation, JournalRecoveryRestoresRulesProgressAndSystemOrders) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(rules_config("10000", drawdown("1000", "100")), f.time, journal);
     f.seed(s);
     s.submit(f.market("open", 5), f.time);
@@ -570,7 +571,7 @@ TEST(TradingEvaluation, JournalRecoveryRestoresRulesProgressAndSystemOrders) {
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto resumed = FileJournal::resume(path);
+  auto resumed = test::resume_journal(path);
   auto s = TradingSession::recover(FileJournal::read(path, head), resumed);
   EXPECT_EQ(s.snapshot_json(), expected);
   EXPECT_EQ(s.snapshot()->evaluation.attempt, 2);
@@ -587,7 +588,7 @@ TEST(TradingEvaluation, SchemaOneJournalsRecoverWithoutRulesAndContinueInTheCurr
   auto capture = std::make_shared<CapturingJournal>();
   std::shared_ptr<const TradingSnapshot> original;
   {
-    TradingSession s({}, f.time, FileJournal::create(current));
+    TradingSession s({}, f.time, test::create_journal(current));
     f.seed(s);
     s.submit(f.market("open", 2), f.time);
     s.submit(f.limit("rest", 1, "4.00"), f.time);
@@ -596,13 +597,13 @@ TEST(TradingEvaluation, SchemaOneJournalsRecoverWithoutRulesAndContinueInTheCurr
   // Every state whole, as schema 2 wrote it, to rewrite as schema 1.
   TradingSession::expand(FileJournal::read(current), *capture);
   {
-    auto file = FileJournal::create(path);
+    auto file = test::create_journal(path);
     for (const auto& entry : capture->entries) file->append(entry.time, entry.type, schema_one(entry.payload));
   }
   // Keys that schema 1 always had remain required.
   {
     const auto broken_path = (directory.path / "broken.jsonl").string();
-    auto broken = FileJournal::create(broken_path);
+    auto broken = test::create_journal(broken_path);
     for (const auto& entry : capture->entries) {
       auto j = nlohmann::json::parse(schema_one(entry.payload));
       j["state"].erase("kill_reason");
@@ -617,7 +618,7 @@ TEST(TradingEvaluation, SchemaOneJournalsRecoverWithoutRulesAndContinueInTheCurr
   const auto legacy = FileJournal::read(path);
   {
     const auto compacted = (directory.path / "compacted-legacy.jsonl").string();
-    EXPECT_EQ(TradingSession::compact(legacy, *FileJournal::create(compacted)), TradingSession::recover(legacy).snapshot_json());
+    EXPECT_EQ(TradingSession::compact(legacy, *test::create_journal(compacted)), TradingSession::recover(legacy).snapshot_json());
     const auto records = FileJournal::read(compacted).records;
     ASSERT_EQ(records.size(), legacy.records.size());
     for (std::size_t i = 0; i < records.size(); ++i)
@@ -625,7 +626,7 @@ TEST(TradingEvaluation, SchemaOneJournalsRecoverWithoutRulesAndContinueInTheCurr
     EXPECT_EQ(records.back().payload, legacy.records.back().payload);
     EXPECT_EQ(TradingSession::recover(FileJournal::read(compacted)).snapshot_json(), TradingSession::recover(legacy).snapshot_json());
   }
-  auto resumed = FileJournal::resume(path);
+  auto resumed = test::resume_journal(path);
   auto s = TradingSession::recover(legacy, resumed);
   const auto snap = s.snapshot();
   EXPECT_EQ(snap->account.cash, original->account.cash);
@@ -649,12 +650,12 @@ TEST(TradingEvaluation, SchemaOneJournalsRecoverWithoutRulesAndContinueInTheCurr
   // Schema 1 records followed by schema 2 ones, as a schema 2 build left them,
   // compact whole.
   const auto upgraded = (directory.path / "upgraded.jsonl").string();
-  TradingSession::expand(FileJournal::read(path), *FileJournal::create(upgraded));
+  TradingSession::expand(FileJournal::read(path), *test::create_journal(upgraded));
   const auto both = FileJournal::read(upgraded);
   EXPECT_EQ(nlohmann::json::parse(both.records.front().payload).at("schema"), 1);
   EXPECT_EQ(nlohmann::json::parse(both.records.back().payload).at("schema"), 2);
   const auto compacted = (directory.path / "compacted-upgraded.jsonl").string();
-  EXPECT_EQ(TradingSession::compact(both, *FileJournal::create(compacted)), s.snapshot_json());
+  EXPECT_EQ(TradingSession::compact(both, *test::create_journal(compacted)), s.snapshot_json());
   for (const auto& record : FileJournal::read(compacted).records)
     EXPECT_EQ(nlohmann::json::parse(record.payload).at("schema"), 3);
   EXPECT_EQ(TradingSession::recover(FileJournal::read(compacted)).snapshot_json(), s.snapshot_json());

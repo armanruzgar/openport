@@ -4,6 +4,7 @@
 
 #include "support/scripted_market.hpp"
 #include "openport/trading/history.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -214,7 +215,7 @@ TEST(TradeGroups, UngroupingPlansFromTheRemainingOpenLegsThenKeepsThatRiskWithou
 TEST(TradeGroups, ARecoveredSessionGroupsARollAsTheLiveOneDoes) {
   GroupDirectory directory;
   Calls m;
-  TradingSession s({}, m.a.time, FileJournal::create(directory.file("journal")));
+  TradingSession s({}, m.a.time, test::create_journal(directory.file("journal")));
   m.seed(s);
   ASSERT_TRUE(s.submit(m.open(), m.a.time).decision.ok());
   m.quote(s, "4.50", "2.20");
@@ -229,9 +230,9 @@ TEST(TradeGroups, ARecoveredSessionGroupsARollAsTheLiveOneDoes) {
 TEST(TradeGroups, AClosedRootNamesTheSameTradeBeforeAndAfterRecovery) {
   GroupDirectory directory;
   Calls m;
-  auto live_journal = FileJournal::create(directory.file("live"));
-  auto repeated_journal = FileJournal::create(directory.file("repeated"));
-  auto recovered_journal = FileJournal::create(directory.file("recovered"));
+  auto live_journal = test::create_journal(directory.file("live"));
+  auto repeated_journal = test::create_journal(directory.file("repeated"));
+  auto recovered_journal = test::create_journal(directory.file("recovered"));
   TradingSession live({}, m.a.time, live_journal);
   TradingSession repeated({}, m.a.time, repeated_journal);
   TradingSession recovered({}, m.a.time, recovered_journal);
@@ -264,8 +265,8 @@ TEST(TradeGroups, AClosedRootNamesTheSameTradeBeforeAndAfterRecovery) {
   EXPECT_EQ(live_journal->sequence(), recovered_journal->sequence());
   // Recovery deliberately writes a checkpoint on the next command. Expanding
   // both histories compares every recorded state and event regardless of that.
-  auto live_expanded = FileJournal::create(directory.file("live-expanded"));
-  auto recovered_expanded = FileJournal::create(directory.file("recovered-expanded"));
+  auto live_expanded = test::create_journal(directory.file("live-expanded"));
+  auto recovered_expanded = test::create_journal(directory.file("recovered-expanded"));
   TradingSession::expand(FileJournal::read(directory.file("live")), *live_expanded);
   TradingSession::expand(FileJournal::read(directory.file("recovered")), *recovered_expanded);
   EXPECT_EQ(live_expanded->head(), recovered_expanded->head());

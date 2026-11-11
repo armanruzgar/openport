@@ -2,6 +2,7 @@
 
 #include "openport/trading/session.hpp"
 #include "support/recording.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -15,7 +16,7 @@ SessionConfig config() {
 TEST(TradingCashFlows, TransfersArePracticeOnlyRetryableAndNeverProfit) {
   const auto time = at({2026, 9, 22});
   test::RecordingFile file;
-  auto sink = FileJournal::create((file.directory / "cash.jsonl").string());
+  auto sink = test::create_journal((file.directory / "cash.jsonl").string());
   TradingSession s(config(), time, sink);
   ASSERT_TRUE(s.transfer_cash("deposit", m("500"), time).decision.ok());
   const auto version = s.snapshot()->account_version;
@@ -41,7 +42,7 @@ TEST(TradingCashFlows, CreditInterestIncludesCalendarDaysAndPreservesTheLossBase
   auto c = config(); c.rules.cash_credit_rate_bps = 365; c.rules.daily_loss_limit = m("1000");
   const auto friday = at({2026, 9, 25}), monday = at({2026, 9, 28});
   test::RecordingFile file;
-  TradingSession s(c, friday, FileJournal::create((file.directory / "interest.jsonl").string()));
+  TradingSession s(c, friday, test::create_journal((file.directory / "interest.jsonl").string()));
   ASSERT_TRUE(s.roll_day(monday).decision.ok());
   EXPECT_EQ(s.snapshot()->account.cash, m("100030"));
   EXPECT_EQ(s.snapshot()->account.realised, m("30"));

@@ -5,6 +5,7 @@
 #include "openport/trading/history.hpp"
 #include "openport/trading/session.hpp"
 #include "support/recording.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -61,7 +62,7 @@ TEST(CorporateActions, AForwardSplitKeepsACoveredCallCoveredAndDeliversTheSplitS
   const auto path = (file.directory / "split.jsonl").string();
   const auto call = *md::parse_osi("SPY261016C00500000");
   Spy f;
-  TradingSession s(roomy(), f.time, FileJournal::create(path));
+  TradingSession s(roomy(), f.time, test::create_journal(path));
   ASSERT_TRUE(s.define(call, f.time).decision.ok());
   f.quote(s, call, "14.00", "14.20");
   ASSERT_TRUE(s.trade_stock("SPY", 150, f.time).decision.ok());

@@ -8,6 +8,7 @@
 #endif
 
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -875,7 +876,7 @@ TEST(TradingFunded, SizeScalingJournalRoundTripsAndContinuesTheSameReview) {
   rules.inactivity_days = 14;
   rules.underlyings = {"SPX"};
   rules.trading_start = 570; rules.trading_end = 960;
-  TradingSession s(config(rules), f.time, FileJournal::create(path));
+  TradingSession s(config(rules), f.time, test::create_journal(path));
   f.seed(s);
   profit_day(s, f, "150");
   const auto last_activity = f.time;
@@ -930,7 +931,7 @@ TEST(TradingFunded, SizeScalingPreservesPurchasedTermsResetCountsAndRecovery) {
   auto rules = size_plan(1, 0);
   rules.lock_balance = m("10000");
   rules.evaluation_fee = m("100.000001"); rules.reset_fee = m("25.000002"); rules.max_resets = 2;
-  TradingSession s(config(rules), f.time, FileJournal::create(path));
+  TradingSession s(config(rules), f.time, test::create_journal(path));
   f.seed(s);
   ASSERT_TRUE(s.reset_account(m("10000"), rules, "first reset", f.time).decision.ok());
   profit_day(s, f, "200");
@@ -973,7 +974,7 @@ TEST(TradingFunded, SizeScalingPreservesPurchasedTermsResetCountsAndRecovery) {
   EXPECT_EQ(refused.decision.actual, 3); EXPECT_EQ(refused.decision.limit, 2);
   const auto recovery = FileJournal::read(path);
   const auto compacted = (directory / "compacted.jsonl").string();
-  EXPECT_EQ(TradingSession::compact(recovery, *FileJournal::create(compacted)), s.snapshot_json());
+  EXPECT_EQ(TradingSession::compact(recovery, *test::create_journal(compacted)), s.snapshot_json());
   EXPECT_EQ(FileJournal::read(compacted).head, recovery.head);
   for (const bool contracts : {true, false}) {
     auto changed = rules;
@@ -1031,7 +1032,7 @@ TEST(TradingFunded, EarlierSchemaTwoJournalsRecoverAsEvaluations) {
   rules.plan = "Earlier";
   rules.max_drawdown = m("1000");
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(current));
+    TradingSession s(config(rules), f.time, test::create_journal(current));
     f.seed(s);
     winning_trade(s, f);
     next_day(s, f, {2026, 9, 23});
@@ -1039,10 +1040,10 @@ TEST(TradingFunded, EarlierSchemaTwoJournalsRecoverAsEvaluations) {
   // Every state whole, as schema 2 wrote it, to rewrite as the earlier schema 2.
   TradingSession::expand(FileJournal::read(current), *capture);
   {
-    auto file = FileJournal::create(path);
+    auto file = test::create_journal(path);
     for (const auto& entry : capture->entries) file->append(entry.time, entry.type, earlier_schema_two(entry.payload));
   }
-  auto s = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
   EXPECT_EQ(s.config().rules.phase, Phase::Evaluation);
   EXPECT_FALSE(s.snapshot()->recent_orders.empty());
   EXPECT_TRUE(s.snapshot()->recent_orders.front().request.legs.empty());
@@ -1071,7 +1072,7 @@ TEST(TradingFunded, JournalRecoveryRestoresPayoutsAndQualifyingDays) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(config(funded("100")), f.time, journal);
     f.seed(s);
     winning_trade(s, f);
@@ -1081,7 +1082,7 @@ TEST(TradingFunded, JournalRecoveryRestoresPayoutsAndQualifyingDays) {
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto s = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   EXPECT_EQ(s.snapshot_json(), expected);
   const auto e = s.snapshot()->evaluation;
   EXPECT_TRUE(e.floor_locked);
@@ -1116,7 +1117,7 @@ TEST(TradingFunded, ConsistencyJournalRecoversRulesAndTheCycle) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(path));
+    TradingSession s(config(rules), f.time, test::create_journal(path));
     f.seed(s);
     winning_trade(s, f);
     next_day(s, f, {2026, 9, 23});
@@ -1127,7 +1128,7 @@ TEST(TradingFunded, ConsistencyJournalRecoversRulesAndTheCycle) {
     next_day(s, f, {2026, 9, 25});
     expected = s.snapshot_json();
   }
-  auto s = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  auto s = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
   EXPECT_EQ(s.snapshot_json(), expected);
   EXPECT_EQ(s.config().rules, rules);
   const auto q = payout_quote(*s.snapshot(), s.config().rules);

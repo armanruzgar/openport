@@ -4,6 +4,7 @@
 
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -139,14 +140,14 @@ TEST(FillAudit, TheFirstQuotedTimeSurvivesRecoveryAndOlderFillsLoadWithoutIt) {
   const auto first = market.time;
   std::string continuous;
   {
-    TradingSession session(config(), market.time, FileJournal::create(path));
+    TradingSession session(config(), market.time, test::create_journal(path));
     market.seed(session, "4.00", "4.20", 10);
     market.time += 5 * md::kNanosPerSecond;
     session.on_quotes({market.quote("4.00", "4.20", 10)}, {market.valuation()}, market.time);
     ASSERT_TRUE(session.submit(market.market("buy", 1), market.time).decision.ok());
     continuous = session.snapshot_json();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
   EXPECT_EQ(recovered.snapshot_json(), continuous);
   // The book recovered with its first time: a later fill on it still reports it.
   market.time += md::kNanosPerSecond;
@@ -170,7 +171,7 @@ TEST(FillAudit, FillsNameTheFeedThatPricedThemAndKeepItThroughRecovery) {
   ScriptedMarket market;
   std::string continuous;
   {
-    TradingSession session(config(), market.time, FileJournal::create(path));
+    TradingSession session(config(), market.time, test::create_journal(path));
     market.seed(session, "4.00", "4.20", 10);
     ASSERT_TRUE(session.submit(market.market("single", 1), market.time).decision.ok());
     // A single feed names nothing, and its fills keep their bytes.
@@ -184,7 +185,7 @@ TEST(FillAudit, FillsNameTheFeedThatPricedThemAndKeepItThroughRecovery) {
     EXPECT_EQ(session.snapshot()->recent_fills.back().feed, "cboe");
     continuous = session.snapshot_json();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
   EXPECT_EQ(recovered.snapshot_json(), continuous);
   const auto fills = recovered.snapshot()->recent_fills;
   ASSERT_EQ(fills.size(), 2U);
@@ -380,7 +381,7 @@ TEST(FeeSchedule, ExerciseAndDeliveryPayPerContractWhileCashSettlementIsFree) {
   auto c = itemized();
   TemporaryDirectory directory;
   const auto path = directory.file("delivery.jsonl");
-  TradingSession session(c, time, FileJournal::create(path));
+  TradingSession session(c, time, test::create_journal(path));
   std::uint64_t observation = 0;
   const auto quote = [&](const md::OptionContract& contract, md::Timestamp at) {
     ++observation;
@@ -461,15 +462,15 @@ TEST(FeeSchedule, AChangePreviewUsesTheCommissionAlreadyPaidAndRecoveryContinues
   TemporaryDirectory directory;
   ScriptedMarket market;
   const auto path = directory.file("resumed.jsonl");
-  TradingSession continuous(itemized(), market.time, FileJournal::create(directory.file("whole.jsonl")));
-  auto resumed = std::make_unique<TradingSession>(itemized(), market.time, FileJournal::create(path));
+  TradingSession continuous(itemized(), market.time, test::create_journal(directory.file("whole.jsonl")));
+  auto resumed = std::make_unique<TradingSession>(itemized(), market.time, test::create_journal(path));
   for (auto* s : {&continuous, resumed.get()}) {
     market.seed(*s, "4.00", "4.20", 8);
     ASSERT_TRUE(s->submit(market.limit("cap", 15, "4.20"), market.time).decision.ok());
   }
   EXPECT_EQ(FileJournal::read(path).head, FileJournal::read(directory.file("whole.jsonl")).head);
   resumed.reset();
-  resumed = std::make_unique<TradingSession>(TradingSession::recover(FileJournal::read(path), FileJournal::resume(path)));
+  resumed = std::make_unique<TradingSession>(TradingSession::recover(FileJournal::read(path), test::resume_journal(path)));
   // The remaining seven contracts pay only $2 commission, plus $5.04 in other fees.
   const auto before = resumed->snapshot_json();
   OrderChange change;
@@ -484,8 +485,8 @@ TEST(FeeSchedule, AChangePreviewUsesTheCommissionAlreadyPaidAndRecoveryContinues
     s->on_quotes({market.quote("4.00", "4.20", 10)}, {market.valuation()}, market.time);
   EXPECT_EQ(continuous.snapshot_json(), resumed->snapshot_json());
   // Recovery starts a checkpoint instead of a delta; expanded records still agree byte for byte.
-  const auto expanded = FileJournal::create(directory.file("expanded.jsonl"));
-  const auto whole = FileJournal::create(directory.file("whole-expanded.jsonl"));
+  const auto expanded = test::create_journal(directory.file("expanded.jsonl"));
+  const auto whole = test::create_journal(directory.file("whole-expanded.jsonl"));
   TradingSession::expand(FileJournal::read(path), *expanded);
   TradingSession::expand(FileJournal::read(directory.file("whole.jsonl")), *whole);
   EXPECT_EQ(expanded->head(), whole->head());
@@ -564,7 +565,7 @@ TEST(FeeSchedule, ItemizedFeesSurviveRecoveryAndAreValidated) {
   ScriptedMarket market;
   std::string expected;
   {
-    TradingSession session(itemized(), market.time, FileJournal::create(path));
+    TradingSession session(itemized(), market.time, test::create_journal(path));
     market.seed(session, "4.00", "4.20", 4);
     ASSERT_TRUE(session.submit(market.limit("cap", 15, "4.20"), market.time).decision.ok());
     market.next();

@@ -5,6 +5,7 @@
 
 #include "openport/md/time.hpp"
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -41,7 +42,7 @@ TEST(TimeRules, LegacyPlanJournalBytes) {
   rules.max_drawdown = m("1000");
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+    TradingSession s(config(rules), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
     f.next();
@@ -69,7 +70,7 @@ TEST(TimeRules, LegacyPlanJournalBytes) {
   ScriptedMarket g;
   JournalFile again;
   {
-    TradingSession s(config(rules), g.time, FileJournal::create(again.path));
+    TradingSession s(config(rules), g.time, test::create_journal(again.path));
     g.seed(s);
     ASSERT_TRUE(s.submit(g.market("open", 5), g.time).decision.ok());
     g.next(); s.on_quotes({g.quote("4.40", "4.60")}, {g.valuation()}, g.time);
@@ -248,14 +249,14 @@ TEST_P(EvaluationTimeRules, RulesAndActivityRecoverAndTheRecoveredDeadlineStillF
   JournalFile file;
   std::string snapshot;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(config(rules), f.time, test::create_journal(file.path)); f.seed(s);
     auto entry = f.market("own");
     entry.bracket = Bracket{ExitSpec{Trigger{TriggerSource::Option, TriggerDirection::AtOrBelow, m("3.50")}, {}}, {}};
     ASSERT_TRUE(s.submit(entry, f.time).decision.ok());
     snapshot = s.snapshot_json();
   }
   const auto recovery = FileJournal::read(file.path);
-  auto s = TradingSession::recover(recovery, FileJournal::resume(file.path));
+  auto s = TradingSession::recover(recovery, test::resume_journal(file.path));
   EXPECT_EQ(s.config().rules, rules); EXPECT_EQ(s.snapshot_json(), snapshot);
   EXPECT_EQ(s.snapshot()->evaluation.last_activity, f.time);
   next_day(s, f, {2026, 9, 25});
@@ -290,14 +291,14 @@ TEST(TimeRules, RecoveredPositionsOutsideWhitelistCanStillBeReduced) {
   ScriptedMarket f;
   JournalFile source, restricted;
   {
-    TradingSession s(config(plan()), f.time, FileJournal::create(source.path)); f.seed(s);
+    TradingSession s(config(plan()), f.time, test::create_journal(source.path)); f.seed(s);
     ASSERT_TRUE(s.submit(f.market("held", 2), f.time).decision.ok());
     ASSERT_TRUE(s.trade_stock("SPY", 2, f.time, StockPrice{"SPY", f.time, m("500")}).decision.ok());
   }
   // Import held positions under a restricted plan. Recovery preserves outcomes;
   // its next own orders must still be able to reduce every inherited holding.
   {
-    const auto journal = FileJournal::create(restricted.path);
+    const auto journal = test::create_journal(restricted.path);
     for (const auto& record : FileJournal::read(source.path).records) {
       auto payload = nlohmann::json::parse(record.payload);
       if (payload.contains("state")) payload["state"]["config"]["rules"]["underlyings"] = {"XSP"};
@@ -479,13 +480,13 @@ TEST_P(EvaluationTimeRules, FlatTimeRunsOncePerDateRecoversAndCatchesGaps) {
   ScriptedMarket f; auto rules = plan(); rules.flat_time = 601;
   JournalFile file;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(config(rules), f.time, test::create_journal(file.path)); f.seed(s);
     ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
     f.time += 5 * md::kNanosPerMinute;
     s.on_quotes({}, {}, f.time); // first transaction is already past flat time
     EXPECT_TRUE(s.snapshot()->evaluation.flat_pending);
   }
-  auto s = TradingSession::recover(FileJournal::read(file.path), FileJournal::resume(file.path));
+  auto s = TradingSession::recover(FileJournal::read(file.path), test::resume_journal(file.path));
   EXPECT_EQ(s.config().rules, rules);
   EXPECT_EQ(s.snapshot()->evaluation.flat_time_day, (md::Date{2026, 9, 22}));
   ++f.observation; s.on_quotes({f.quote()}, {f.valuation()}, f.time);
@@ -515,7 +516,7 @@ TEST(TimeRules, NoOvernightFailsWithoutMarksInAllPhasesAndDecisionsAreSticky) {
     ScriptedMarket f; auto rules = plan(); rules.no_overnight = true; rules.phase = phase;
     if (phase == Phase::Funded) rules.payouts.qualifying_days = 1;
     JournalFile file;
-    TradingSession s(config(rules), f.time, FileJournal::create(file.path)); f.seed(s);
+    TradingSession s(config(rules), f.time, test::create_journal(file.path)); f.seed(s);
     ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
     // Advancing beyond quote freshness does not defer the position-only verdict.
     f.time = md::new_york_to_utc({2026, 9, 22}, 17, 0);
@@ -555,11 +556,11 @@ TEST(TimeRules, OvernightPositionFailureDoesNotWaitForMissingMarks) {
   ScriptedMarket f; auto rules = plan(); rules.no_overnight = true;
   JournalFile source, imported;
   {
-    TradingSession s(config(rules), f.time, FileJournal::create(source.path)); f.seed(s);
+    TradingSession s(config(rules), f.time, test::create_journal(source.path)); f.seed(s);
     ASSERT_TRUE(s.submit(f.market("held"), f.time).decision.ok());
   }
   {
-    auto s = TradingSession::recover(FileJournal::read(source.path), FileJournal::resume(source.path));
+    auto s = TradingSession::recover(FileJournal::read(source.path), test::resume_journal(source.path));
     // The first transaction after recovery writes a complete checkpoint.
     f.next(); s.on_quotes({}, {}, f.time);
   }
@@ -568,7 +569,7 @@ TEST(TimeRules, OvernightPositionFailureDoesNotWaitForMissingMarks) {
   ASSERT_TRUE(payload.contains("state"));
   payload["state"]["marks"] = nlohmann::json::object();
   {
-    const auto journal = FileJournal::create(imported.path);
+    const auto journal = test::create_journal(imported.path);
     for (std::size_t i = 0; i + 1 < recovery.records.size(); ++i) {
       const auto& record = recovery.records[i];
       journal->append(record.time, record.type, record.payload);

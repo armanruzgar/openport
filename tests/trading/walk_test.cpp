@@ -2,6 +2,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -288,7 +289,7 @@ TEST(WalkingLimits, RecoveryContinuesScheduleAndRepeatedRunsHaveIdenticalJournal
     const auto start = f.time;
     std::string snapshot;
     {
-      TradingSession s(settings(75), start, FileJournal::create(path));
+      TradingSession s(settings(75), start, test::create_journal(path));
       f.seed(s, "4.00", "4.40");
       ASSERT_TRUE(s.submit(walking(f), start).decision.ok());
       quote(s, f, start + 10 * md::kNanosPerSecond);
@@ -300,7 +301,7 @@ TEST(WalkingLimits, RecoveryContinuesScheduleAndRepeatedRunsHaveIdenticalJournal
       snapshot = s.snapshot_json();
     }
     {
-      auto s = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+      auto s = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
       EXPECT_EQ(s.snapshot_json(), snapshot);
       quote(s, f, start + 30 * md::kNanosPerSecond);
       EXPECT_EQ(latest(s).status, OrderStatus::Filled);

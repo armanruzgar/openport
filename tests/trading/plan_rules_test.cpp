@@ -6,6 +6,7 @@
 #include "openport/md/time.hpp"
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -76,7 +77,7 @@ TEST(PlanRules, VerificationContractScalingStillPassesAndNeverEnablesFundedGrowt
   rules.scaling = {{m("0"), 1}, {m("100"), 2}};
   rules.time_limit_days = 30;
   JournalFile file;
-  TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+  TradingSession s(config(rules), f.time, test::create_journal(file.path));
   f.seed(s);
   EXPECT_EQ(s.submit(f.market("too-big", 2), f.time).decision.code, Reason::SCALING_LIMIT);
   ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
@@ -188,7 +189,7 @@ TEST(PlanRules, ScalingRechecksOtoChildrenAndDoesNotCountShares) {
 TEST(PlanRules, ScalingUsesClosedBalanceOnlyAtRolloverAndKeepsHoldingsOnAStepDown) {
   ScriptedMarket f;
   JournalFile file;
-  TradingSession s(config(scaling_plan()), f.time, FileJournal::create(file.path));
+  TradingSession s(config(scaling_plan()), f.time, test::create_journal(file.path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 2), f.time).decision.ok());
   quote(s, f, "5.50", "5.70");
@@ -253,7 +254,7 @@ TEST(PlanRules, ScalingValidationAndDisabledJournalCompatibility) {
   JournalFile file;
   ScriptedMarket f;
   {
-    TradingSession s(config(plan()), f.time, FileJournal::create(file.path));
+    TradingSession s(config(plan()), f.time, test::create_journal(file.path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("old"), f.time).decision.ok());
   }
@@ -270,7 +271,7 @@ TEST(ProgramCosts, ExactFeesLimitsPurchasesAndRecoveryLeaveTheLedgerAlone) {
   rules.phase = Phase::Verification;
   rules.evaluation_fee = m("100.000001"); rules.reset_fee = m("25.000002"); rules.max_resets = 1;
   JournalFile file;
-  TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+  TradingSession s(config(rules), f.time, test::create_journal(file.path));
   EXPECT_EQ(program_costs(*s.snapshot(), rules).total(), m("100.000001"));
   EXPECT_EQ(s.snapshot()->equity, m("10000"));
   auto changed = rules;
@@ -301,7 +302,7 @@ TEST(ProgramCosts, ExactFeesLimitsPurchasesAndRecoveryLeaveTheLedgerAlone) {
   // Re-encoding uses the reference JSON delta writer and must retain every byte.
   const auto recovery = FileJournal::read(file.path);
   const auto compacted = (file.directory / "compacted.jsonl").string();
-  EXPECT_EQ(TradingSession::compact(recovery, *FileJournal::create(compacted)), s.snapshot_json());
+  EXPECT_EQ(TradingSession::compact(recovery, *test::create_journal(compacted)), s.snapshot_json());
   EXPECT_EQ(FileJournal::read(compacted).head, recovery.head);
 }
 
@@ -322,7 +323,7 @@ TEST(ProgramCosts, TradingRestrictionsStartANewPurchaseButExecutionMarginAndCost
     const auto different = altered.get<AccountRules>();
     EXPECT_FALSE(same_program_rules(rules, different));
     JournalFile file;
-    TradingSession s(config(rules), 0, FileJournal::create(file.path));
+    TradingSession s(config(rules), 0, test::create_journal(file.path));
     ASSERT_TRUE(s.reset_account(m("10000"), rules, "last reset", 0).decision.ok());
     EXPECT_EQ(s.reset_account(m("10000"), rules, "exhausted", 0).decision.code, Reason::RESET_LIMIT);
     ASSERT_TRUE(s.reset_account(m("10000"), different, "new plan rules", 0).decision.ok());
@@ -379,7 +380,7 @@ TEST(ProgramCosts, ActivationAndPayoutsSurviveResets) {
   auto rules = plan("100", "1000");
   rules.phase = Phase::Verification; rules.min_trading_days = 2;
   JournalFile file;
-  TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+  TradingSession s(config(rules), f.time, test::create_journal(file.path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
   quote(s, f, "4.40", "4.60");
@@ -530,7 +531,7 @@ TEST(PlanRules, ALockedDayRecoversLockedAndRolloverReleasesIt) {
   auto rules = plan("1000", "1000");
   rules.daily_loss_limit = m("200");
   JournalFile file;
-  TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+  TradingSession s(config(rules), f.time, test::create_journal(file.path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
   quote(s, f, "3.70", "3.90");
@@ -564,7 +565,7 @@ TEST(PlanRules, ADailyLossLimitCanFailTheAttemptAndRecoversWithItsCode) {
   rules.daily_loss_limit = m("200");
   rules.daily_loss_action = BreachAction::Fail;
   JournalFile file;
-  TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+  TradingSession s(config(rules), f.time, test::create_journal(file.path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
   quote(s, f, "3.70", "3.90");
@@ -815,7 +816,7 @@ TEST(PlanRules, RulesThatAreOffKeepTheJournalUnchanged) {
   rules.profitable_day_profit = m("25");
   rules.day_end_minutes = 18 * 60;
   JournalFile file;
-  { TradingSession t(config(rules), f.time, FileJournal::create(file.path)); }
+  { TradingSession t(config(rules), f.time, test::create_journal(file.path)); }
   const auto recovery = FileJournal::read(file.path);
   const auto recorded = nlohmann::json::parse(recovery.records.at(0).payload).at("state").at("config").at("rules");
   EXPECT_EQ(recorded.at("daily_loss_basis"), "higher");
@@ -944,7 +945,7 @@ TEST(PlanRules, AttemptRulesAndDecisionRoundTripAndOldSummariesStayAbsent) {
     Evaluation ended;
     std::string expected;
     {
-      TradingSession s(config(rules), f.time, FileJournal::create(file.path));
+      TradingSession s(config(rules), f.time, test::create_journal(file.path));
       f.seed(s);
       ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
       if (status != EvaluationStatus::Active)
@@ -983,7 +984,7 @@ TEST(PlanRules, AttemptRulesAndDecisionRoundTripAndOldSummariesStayAbsent) {
     TradingSession::expand(records, expanded);
     JournalFile older;
     {
-      auto journal = FileJournal::create(older.path);
+      auto journal = test::create_journal(older.path);
       for (std::size_t i = 0; i < expanded.payloads.size(); ++i) {
         auto payload = nlohmann::json::parse(expanded.payloads[i]);
         if (i + 1 == expanded.payloads.size()) {

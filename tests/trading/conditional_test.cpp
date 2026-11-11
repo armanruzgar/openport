@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -808,7 +809,7 @@ TEST(TradingConditional, ATrailedLevelSurvivesRecovery) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s);
     s.submit(with_bracket(f.limit("entry", 1, "4.20"), trailing(TriggerDirection::AtOrBelow, "3.00", TrailUnit::Amount, "0.40",
@@ -819,7 +820,7 @@ TEST(TradingConditional, ATrailedLevelSurvivesRecovery) {
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   EXPECT_EQ(recovered.snapshot_json(), expected);
   quote(recovered, f, "5.20", "5.40");
   EXPECT_EQ(order(recovered, 2).request.trigger->level, m("4.90"));
@@ -983,14 +984,14 @@ TEST(TradingConditional, APendingChainSurvivesRecovery) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s);
     s.submit(then(f.limit("scale", 1, "3.90"), or_else(f.limit("", 1, "3.50"), f.limit("", 1, "4.30", Side::Sell))), f.time);
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   EXPECT_EQ(recovered.snapshot_json(), expected);
   quote(recovered, f, "3.80", "3.90");
   // The fill places the next order and the one that cancels it, together.
@@ -1010,7 +1011,7 @@ TEST(TradingConditional, TriggersWaitForTheRegularSessionAndSurviveRecovery) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s);
     s.submit(with_bracket(f.limit("entry", 1, "4.20"), stop_at("3.50"), target_at("5.00")), f.time);
@@ -1022,7 +1023,7 @@ TEST(TradingConditional, TriggersWaitForTheRegularSessionAndSurviveRecovery) {
     expected = s.snapshot_json();
     head = journal->head();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   EXPECT_EQ(recovered.snapshot_json(), expected);
   f.time = md::new_york_to_utc({2026, 9, 23}, 9, 31);
   ++f.observation;

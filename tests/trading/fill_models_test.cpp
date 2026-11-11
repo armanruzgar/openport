@@ -8,6 +8,7 @@
 
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -362,7 +363,7 @@ TEST(QueueFills, TheSeedDecidesFractionsAndTheSameFeedAlwaysGivesTheSameAccount)
   const auto run = [](std::int64_t seed, const std::string& path = {}) {
     ScriptedMarket market;
     std::shared_ptr<Journal> journal;
-    if (!path.empty()) journal = FileJournal::create(path);
+    if (!path.empty()) journal = test::create_journal(path);
     auto session = std::make_unique<TradingSession>(config(queued(seed)), market.time, journal);
     market.seed(*session);
     EXPECT_TRUE(session->submit(market.limit("join", 1, "4.00"), market.time).decision.ok());
@@ -397,7 +398,7 @@ TEST(QueueFills, OffByDefaultSoTradesChangeNoJournalByte) {
   const auto run = [](bool activity) {
     JournalFile file;
     ScriptedMarket market;
-    TradingSession session(config(), market.time, FileJournal::create(file.path));
+    TradingSession session(config(), market.time, test::create_journal(file.path));
     market.seed(session);
     EXPECT_TRUE(session.submit(market.limit("rest", 1, "4.00"), market.time).decision.ok());
     market.next();
@@ -456,7 +457,7 @@ TEST(QueueFills, RulesAreValidatedOmittedAtDefaultsAndCountAsProgramRules) {
 TradingSession stopped(ScriptedMarket& market, std::int64_t ticks, int ordinary = 8, const std::string& journal = {}) {
   AccountRules rules;
   rules.stop_stress_ticks = ticks;
-  TradingSession session(config(rules), market.time, journal.empty() ? nullptr : FileJournal::create(journal));
+  TradingSession session(config(rules), market.time, journal.empty() ? nullptr : test::create_journal(journal));
   market.seed(session);
   EXPECT_TRUE(session.submit(market.market("entry"), market.time).decision.ok());
   auto stop = market.market("stop", 1, Side::Sell);

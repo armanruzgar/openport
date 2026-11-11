@@ -5,6 +5,7 @@
 
 #include "support/scripted_market.hpp"
 #include "openport/trading/history.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -84,7 +85,7 @@ TEST(TradingAttribution, EachDayKeepsItsOwnAndTheNextStartsFromTheClose) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s(roomy(), f.time, FileJournal::create(path));
+    TradingSession s(roomy(), f.time, test::create_journal(path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open", 2), f.time).decision.ok());
     tick(s, f, "4.50", "4.70", 5008, 0.2);
@@ -187,7 +188,7 @@ TEST(TradingAttribution, EachRoundTripKeepsItsOwnAcrossFillsDaysAndAReversal) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s(roomy(), f.time, FileJournal::create(path));
+    TradingSession s(roomy(), f.time, test::create_journal(path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("open", 2), f.time).decision.ok());
     tick(s, f, "4.50", "4.70", 5006, 0.21);

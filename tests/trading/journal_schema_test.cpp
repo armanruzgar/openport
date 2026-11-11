@@ -6,6 +6,7 @@
 
 #include "support/scripted_market.hpp"
 #include "trading/state_delta.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -52,7 +53,7 @@ void expect_corrupt(const std::function<void()>& action) {
 std::string rewritten(const TemporaryDirectory& directory, std::string_view name, const std::string& source,
                       const std::function<void(std::size_t, Json&)>& change) {
   const auto path = directory.file(name);
-  auto out = FileJournal::create(path);
+  auto out = test::create_journal(path);
   const auto recovery = FileJournal::read(source);
   for (std::size_t i = 0; i < recovery.records.size(); ++i) {
     auto payload = Json::parse(recovery.records[i].payload);
@@ -167,7 +168,7 @@ TEST(TradingJournalSchema, OptionalExecutionRulesRoundTripAndOlderRulesKeepTheir
     config.rules.margin = MarginMode::Portfolio;
     config.rules.house_margin_percent = 25;
     config.rules.pm_vol_shock = 5;
-    TradingSession s(config, f.time, FileJournal::create(source));
+    TradingSession s(config, f.time, test::create_journal(source));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("buy"), f.time).decision.ok());
     expected = s.snapshot_json();
@@ -185,7 +186,7 @@ TEST(TradingJournalSchema, OptionalExecutionRulesRoundTripAndOlderRulesKeepTheir
   EXPECT_EQ(recovered.snapshot()->recent_fills.back().price, Money::parse("3.80"));
 
   const auto defaults = directory.file("defaults.jsonl");
-  { TradingSession s({}, f.time, FileJournal::create(defaults)); }
+  { TradingSession s({}, f.time, test::create_journal(defaults)); }
   const auto legacy = rewritten(directory, "legacy.jsonl", defaults, [](std::size_t, Json& payload) {
     auto& rules = payload["state"]["config"]["rules"];
     rules.erase("slippage_ticks");
@@ -224,7 +225,7 @@ TEST(TradingJournalSchema, FillModelsRecoverPendingLatencyAndConsumedImpactDepth
   config.rules.impact_ticks = 1;
   config.rules.slippage_ticks = 1;
   const auto path = directory.file("fills.jsonl");
-  TradingSession session(config, f.time, FileJournal::create(path));
+  TradingSession session(config, f.time, test::create_journal(path));
   f.seed(session, "4.00", "4.20", 1);
   ASSERT_TRUE(session.submit(f.market("pending", 3), f.time).decision.ok());
   auto recovered = TradingSession::recover(FileJournal::read(path));
@@ -250,7 +251,7 @@ TEST(TradingJournalSchema, DisabledFillModelsOmitFieldsAndOldRecordsKeepExactByt
   TemporaryDirectory directory;
   test::ScriptedMarket f;
   const auto path = directory.file("off.jsonl");
-  { TradingSession session({}, f.time, FileJournal::create(path)); f.seed(session); session.submit(f.market("old"), f.time); }
+  { TradingSession session({}, f.time, test::create_journal(path)); f.seed(session); session.submit(f.market("old"), f.time); }
   const auto recovery = FileJournal::read(path);
   for (const auto& record : recovery.records) {
     EXPECT_EQ(record.payload.find("fill_latency_ms"), std::string::npos);
@@ -287,7 +288,7 @@ TEST(TradingJournalSchema, RecordsCarryTheChangeAndStaySmallAsHistoryGrows) {
   test::ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s({}, f.time, FileJournal::create(path));
+    TradingSession s({}, f.time, test::create_journal(path));
     f.seed(s);
     expected = trade(s, f, 60);
   }
@@ -345,14 +346,14 @@ TEST(TradingJournalSchema, RecoveryRebuildsEveryStateAndTheNextRecordIsWhole) {
   const auto path = directory.file("account.jsonl");
   test::ScriptedMarket f;
   {
-    TradingSession s({}, f.time, FileJournal::create(path));
+    TradingSession s({}, f.time, test::create_journal(path));
     f.seed(s);
     trade(s, f, 5);
     ASSERT_TRUE(s.submit(f.market("hold", 2), f.time).decision.ok());
   }
   std::string expected;
   {
-    auto s = TradingSession::recover(FileJournal::read(path), FileJournal::resume(path));
+    auto s = TradingSession::recover(FileJournal::read(path), test::resume_journal(path));
     f.next();
     s.on_quotes({f.quote("4.10", "4.30")}, {f.valuation()}, f.time);
     f.next();
@@ -372,7 +373,7 @@ TEST(TradingJournalSchema, OlderJournalsCompactToTheSameAccount) {
   test::ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s({}, f.time, FileJournal::create(current));
+    TradingSession s({}, f.time, test::create_journal(current));
     f.seed(s);
     trade(s, f, 12);
     ASSERT_TRUE(s.submit(f.market("hold", 2), f.time).decision.ok());
@@ -380,7 +381,7 @@ TEST(TradingJournalSchema, OlderJournalsCompactToTheSameAccount) {
   }
   // A schema 2 journal, as builds before schema 3 wrote it.
   const auto expanded = directory.file("expanded.jsonl");
-  TradingSession::expand(FileJournal::read(current), *FileJournal::create(expanded));
+  TradingSession::expand(FileJournal::read(current), *test::create_journal(expanded));
   const auto older = FileJournal::read(expanded);
   for (const auto& record : older.records) {
     const auto payload = Json::parse(record.payload);
@@ -390,7 +391,7 @@ TEST(TradingJournalSchema, OlderJournalsCompactToTheSameAccount) {
   EXPECT_EQ(TradingSession::recover(older).snapshot_json(), expected);
 
   const auto compacted = directory.file("compacted.jsonl");
-  EXPECT_EQ(TradingSession::compact(older, *FileJournal::create(compacted)), expected);
+  EXPECT_EQ(TradingSession::compact(older, *test::create_journal(compacted)), expected);
   const auto rewritten = FileJournal::read(compacted);
   ASSERT_EQ(rewritten.records.size(), older.records.size());
   for (std::size_t i = 0; i < older.records.size(); ++i) {
@@ -408,13 +409,13 @@ TEST(TradingJournalSchema, OlderJournalsCompactToTheSameAccount) {
   EXPECT_EQ(TradingSession::recover(rewritten).snapshot_json(), expected);
   // A compacted journal compacts to itself, and a resumed older journal carries on in schema 3.
   const auto again = directory.file("again.jsonl");
-  EXPECT_EQ(TradingSession::compact(rewritten, *FileJournal::create(again)), expected);
+  EXPECT_EQ(TradingSession::compact(rewritten, *test::create_journal(again)), expected);
   EXPECT_EQ(FileJournal::read(again).head, rewritten.head);
-  auto s = TradingSession::recover(older, FileJournal::resume(expanded));
+  auto s = TradingSession::recover(older, test::resume_journal(expanded));
   f.next();
   s.on_quotes({f.quote("4.30", "4.50")}, {f.valuation()}, f.time);
   EXPECT_EQ(TradingSession::recover(FileJournal::read(expanded)).snapshot_json(), s.snapshot_json());
-  EXPECT_THROW(TradingSession::compact(older, *FileJournal::resume(again)), TradingError);
+  EXPECT_THROW(TradingSession::compact(older, *test::resume_journal(again)), TradingError);
 }
 
 TEST(TradingJournalSchema, DamagedDeltasAreCorrupt) {
@@ -422,7 +423,7 @@ TEST(TradingJournalSchema, DamagedDeltasAreCorrupt) {
   const auto source = directory.file("source.jsonl");
   test::ScriptedMarket f;
   {
-    TradingSession s({}, f.time, FileJournal::create(source));
+    TradingSession s({}, f.time, test::create_journal(source));
     f.seed(s);
     trade(s, f, 2);
   }
@@ -466,7 +467,7 @@ TEST(TradingJournalSchema, GtcAndOrderMetadataSurviveRecoveryAndOldRequestsGetDe
   const auto path = directory.file("gtc.jsonl");
   std::string expected;
   {
-    TradingSession s({}, f.time, FileJournal::create(path));
+    TradingSession s({}, f.time, test::create_journal(path));
     f.seed(s);
     auto r = f.limit("tagged", 1, "4.10", Side::Buy, TimeInForce::Gtc);
     r.tags = {" Plan "}; r.note = " Journalled ";
@@ -513,7 +514,7 @@ TEST(TradingJournalSchema, ActorsSurviveRecoveryAndOlderRecordsRemainUnknown) {
   const auto file = directory.file("actors.jsonl");
   test::ScriptedMarket market;
   {
-    auto journal = FileJournal::create(file);
+    auto journal = test::create_journal(file);
     TradingSession session({}, market.time, journal);
     market.seed(session);
     session.set_actor("alice");
@@ -529,7 +530,7 @@ TEST(TradingJournalSchema, ActorsSurviveRecoveryAndOlderRecordsRemainUnknown) {
     if (record.type == "submit") { found = true; }
   }
   EXPECT_TRUE(found);
-  auto recovered = TradingSession::recover(recovery, FileJournal::resume(file));
+  auto recovered = TradingSession::recover(recovery, test::resume_journal(file));
   EXPECT_EQ(recovered.snapshot()->recent_orders.front().actor, "alice");
   EXPECT_EQ(recovered.snapshot()->recent_fills.front().actor, "alice");
   recovered.set_actor("bob");
@@ -537,7 +538,7 @@ TEST(TradingJournalSchema, ActorsSurviveRecoveryAndOlderRecordsRemainUnknown) {
   EXPECT_EQ(recovered.snapshot()->recent_fills.back().actor, "bob");
   // Expand first so every record has a whole state, like older schema-2 writers.
   const auto expanded = directory.file("expanded.jsonl");
-  { auto out = FileJournal::create(expanded); TradingSession::expand(recovery, *out); }
+  { auto out = test::create_journal(expanded); TradingSession::expand(recovery, *out); }
   const auto old = rewritten(directory, "old.jsonl", expanded, [](std::size_t, Json& payload) {
     std::function<void(Json&)> remove_actor = [&](Json& value) {
       if (value.is_object()) value.erase("actor");
@@ -595,7 +596,7 @@ TEST(TradingJournalSchema, ExerciseInstructionsAreSparseAndEveryPrefixRecovers) 
   TemporaryDirectory directory;
   test::ScriptedMarket f;
   const auto path = directory.file("instructions.jsonl");
-  auto journal = FileJournal::create(path);
+  auto journal = test::create_journal(path);
   TradingSession s({}, f.time, journal);
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("long"), f.time).decision.ok());
@@ -621,7 +622,7 @@ TEST(JournalSchema, ExtendedOrdersAndGtdRecoverWithSparseFields) {
   test::ScriptedMarket f;
   const auto path = directory.file("extended.jsonl");
   const auto until = md::new_york_to_utc({2026, 9, 23}, 10, 15);
-  TradingSession s({}, f.time, FileJournal::create(path));
+  TradingSession s({}, f.time, test::create_journal(path));
   f.seed(s);
   auto gtd = f.limit("gtd", 1, "4.10", Side::Buy, TimeInForce::Gtd);
   gtd.good_till = until;
@@ -646,7 +647,7 @@ TEST(JournalSchema, LimitFlattenRecoversItsAutomaticRepricing) {
   TemporaryDirectory directory;
   test::ScriptedMarket f;
   const auto path = directory.file("limit-close.jsonl");
-  TradingSession s({}, f.time, FileJournal::create(path));
+  TradingSession s({}, f.time, test::create_journal(path));
   f.seed(s);
   ASSERT_TRUE(s.submit(f.market("held", 3), f.time).decision.ok());
   f.time = md::new_york_to_utc({2026, 9, 22}, 21, 0); ++f.observation;

@@ -4,6 +4,7 @@
 
 #include "openport/trading/history.hpp"
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -89,7 +90,7 @@ TEST(TradingDelivery, ExpiryShortfallRefusesOpeningsAllowsClosesAndRecovers) {
     std::string pattern = (std::filesystem::temp_directory_path() / "openport-shortfall-XXXXXX").string();
     ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
     const auto path = (std::filesystem::path(pattern) / "session.jsonl").string();
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(c, f.time, journal);
     f.define(s, expiring); f.define(s, later);
     f.quote(s, expiring, "10", "10.20");
@@ -712,7 +713,7 @@ TEST(TradingDelivery, SharesAreMarkedRiskedAndClosedAtTheUnderlyingsPrice) {
   f.spot = 520;
   std::string expected;
   {
-    TradingSession s(roomy(), f.time, FileJournal::create(path));
+    TradingSession s(roomy(), f.time, test::create_journal(path));
     f.define(s, call);
     f.quote(s, call, "21.00", "21.20");
     ASSERT_TRUE(s.submit(f.market("calls", call, 3), f.time).decision.ok());
@@ -1082,7 +1083,7 @@ TEST(TradingDelivery, AnExerciseInstructionCanBeWithdrawnEndsWithThePositionAndR
   Spy f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.define(s, call);
     f.quote(s, call, "10.00", "10.20");
@@ -1240,7 +1241,7 @@ TEST(TradingDelivery, OpenedSharesRecoverFromTheJournal) {
   Spy f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     ASSERT_TRUE(s.trade_stock("SPY", 300, f.time, StockPrice{"SPY", f.time, m("510")}).decision.ok());
     ASSERT_TRUE(s.trade_stock("SPY", -100, f.time).decision.ok());

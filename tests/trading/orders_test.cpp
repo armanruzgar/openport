@@ -4,6 +4,7 @@
 
 #include "openport/trading/history.hpp"
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -219,7 +220,7 @@ TEST(TradingOrders, ARetryOfAChangedOrderStillGetsTheOrderAsItNowStands) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s(roomy(), f.time, FileJournal::create(path));
+    TradingSession s(roomy(), f.time, test::create_journal(path));
     f.seed(s);
     const auto request = f.limit("rest", 2, "3.90");
     ASSERT_TRUE(s.submit(request, f.time).decision.ok());
@@ -271,7 +272,7 @@ TEST(TradingOrders, AClientIdNamesOneOrderPerAttempt) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s(roomy(), f.time, FileJournal::create(path));
+    TradingSession s(roomy(), f.time, test::create_journal(path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.market("c1"), f.time).decision.ok());
     // Conflicting reuses are refused, name the order holding the ID, and record nothing.
@@ -701,7 +702,7 @@ TEST(TradingOrders, AWorkingFlattenCloseRecoversFromTheJournal) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s, "4.00", "4.20", 1);
     ASSERT_TRUE(s.submit(f.limit("open", 1, "4.20"), f.time).decision.ok());
@@ -752,7 +753,7 @@ TEST(TradingOrders, ChangesAndFlattensRecoverFromTheJournal) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s);
     ASSERT_TRUE(s.submit(f.limit("rest", 2, "3.90"), f.time).decision.ok());
@@ -777,7 +778,7 @@ TEST(TradingOrders, EachOrderKeepsWhenItEndedAndEveryChangeAskedOfIt) {
   ScriptedMarket f;
   std::string expected;
   {
-    TradingSession s(roomy(), f.time, FileJournal::create(path));
+    TradingSession s(roomy(), f.time, test::create_journal(path));
     f.seed(s);
     ASSERT_TRUE(s.submit(f.limit("rest", 3, "3.90"), f.time).decision.ok());
     EXPECT_EQ(order(s, 1).ended_at, 0) << "open orders have not ended";
@@ -982,7 +983,7 @@ TEST(TradingOrders, AbandonmentRecoversFromTheJournal) {
   ScriptedMarket f;
   std::string expected, head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s, "0.05", "0.10");
     ASSERT_TRUE(s.submit(f.market("long", 2), f.time).decision.ok());

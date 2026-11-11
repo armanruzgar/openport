@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include "support/scripted_market.hpp"
+#include "support/journal.hpp"
 
 // F43: orders conditional on another underlying, a study or the time of day.
 namespace openport::trading {
@@ -149,7 +150,7 @@ TEST(TradingConditions, IndicatorsAreJournaledOnlyOnceUsedAndRecoverWithTheAccou
   ScriptedMarket f;
   std::string head;
   {
-    auto journal = FileJournal::create(path);
+    auto journal = test::create_journal(path);
     TradingSession s(roomy(), f.time, journal);
     f.seed(s);
     ASSERT_TRUE(s.submit(f.limit("plain", 1, "4.20"), f.time).decision.ok());
@@ -171,7 +172,7 @@ TEST(TradingConditions, IndicatorsAreJournaledOnlyOnceUsedAndRecoverWithTheAccou
     tick(s, f, {{"VIX", "", f.time + md::kNanosPerSecond, m("29")}});
     head = journal->head();
   }
-  auto recovered = TradingSession::recover(FileJournal::read(path, head), FileJournal::resume(path));
+  auto recovered = TradingSession::recover(FileJournal::read(path, head), test::resume_journal(path));
   // The kept value recovers with the account: a new order reads it at submission.
   auto low = f.market("vix-low", 1, Side::Sell);
   low.trigger = watching("VIX", "", TriggerDirection::AtOrBelow, "29.50");
