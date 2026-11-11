@@ -121,6 +121,10 @@ bool Sandboxes::active(const std::string& account, bool touch) {
   if (touch) found->second.used = now;
   return true;
 }
+bool Sandboxes::contains(const std::string& account) {
+  const std::lock_guard lock(mutex_);
+  return entries_.contains(account);
+}
 std::optional<ApiResponse> Sandboxes::check_order(const std::string& account) {
   const std::lock_guard lock(mutex_);
   const auto found = entries_.find(account);

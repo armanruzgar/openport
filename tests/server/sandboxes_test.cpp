@@ -4,8 +4,10 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/beast/websocket.hpp>
 #include <nlohmann/json.hpp>
 
+#include "openport/server/notifications.hpp"
 #include "openport/server/sandboxes.hpp"
 #include "openport/server/web_server.hpp"
 #include "openport/server/web_policy.hpp"
@@ -354,6 +356,70 @@ TEST_F(Sandboxes, ListingsStatusTicksAndGuessedIdsRespectVisibility) {
   EXPECT_NE(private_tick.find(id(own)), std::string::npos);
   EXPECT_EQ(private_tick.find(id(other)), std::string::npos);
   EXPECT_EQ(json::parse(send(request("GET", "/api/status")).body)["sandboxes"]["enabled"], true);
+}
+TEST_F(Sandboxes, EventStreamOpensOnlyForItsOwnTokenOrAnAdmin) {
+  namespace asio = boost::asio;
+  namespace beast = boost::beast;
+  namespace http = beast::http;
+  namespace websocket = beast::websocket;
+  using Socket = websocket::stream<asio::ip::tcp::socket>;
+  const auto own = create(), other = create();
+  server::Notifications::Options options;
+  options.worker = false;
+  auto events = std::make_shared<server::Notifications>(server::NotificationConfig{}, nullptr, options);
+  server::WebServer web("127.0.0.1", 0, {},
+      [&](const server::ApiRequest& input, server::ApiCompletion complete) {
+        server::handle_api_async(input, *source, std::move(complete));
+      }, {}, "operator", {}, {{"reader", {"read", "trade:*"}, "reader-secret"}}, false, manager);
+  web.set_event_stream(events);
+  web.start(1);
+  asio::io_context io;
+  const auto open = [&](Socket& ws, const std::string& query, const std::string& secret) {
+    ws.next_layer().connect({asio::ip::make_address("127.0.0.1"), web.port()});
+    if (!secret.empty())
+      ws.set_option(websocket::stream_base::decorator([secret](websocket::request_type& upgrade) {
+        upgrade.set(http::field::authorization, "Bearer " + secret);
+      }));
+    websocket::response_type response;
+    beast::error_code error;
+    ws.handshake(response, "localhost", "/ws/events?version=1&" + query, error);
+    return response;
+  };
+  const auto next = [](Socket& ws) {
+    beast::flat_buffer buffer;
+    ws.read(buffer);
+    return json::parse(beast::buffers_to_string(buffer.data()));
+  };
+  // Like its REST routes, a sandbox's stream is unknown to a client without a token,
+  // to a token without admin scope, and however its key or ID is spelled.
+  for (const auto& [query, secret] : std::vector<std::pair<std::string, std::string>>{
+           {"account=" + id(own), ""}, {"account=" + id(own), "reader-secret"},
+           {"%61ccount=" + id(own), ""}, {"account=%73" + id(own).substr(1), ""},
+           {"account=" + id(own) + "&source=replay", ""}}) {
+    Socket refused(io);
+    const auto response = open(refused, query, secret);
+    EXPECT_EQ(response.result(), http::status::not_found) << query << " " << secret;
+    EXPECT_NE(response.body().find("UNKNOWN_ACCOUNT"), std::string::npos) << response.body();
+  }
+  Socket stranger(io);
+  EXPECT_EQ(open(stranger, "account=" + id(own), token(other)).result(), http::status::forbidden);
+  Socket anonymous(io);
+  ASSERT_EQ(open(anonymous, "account=main", "").result(), http::status::switching_protocols);
+  EXPECT_EQ(next(anonymous).at("account"), "main");
+  // Its own token and the operator's follow it.
+  for (const auto& secret : {token(own), std::string("operator")}) {
+    Socket ws(io);
+    ASSERT_EQ(open(ws, "account=" + id(own), secret).result(), http::status::switching_protocols) << secret;
+    EXPECT_EQ(next(ws).at("type"), "event_stream");
+    events->publish({"fill", id(other), 0, "Other sandbox", {{"id", 1}}});
+    events->publish({"fill", id(own), 0, "Own sandbox", {{"id", 2}}});
+    const auto event = next(ws);
+    EXPECT_EQ(event.at("account"), id(own));
+    EXPECT_EQ(event.at("details").at("id"), 2);
+    ws.close(websocket::close_code::normal);
+  }
+  anonymous.close(websocket::close_code::normal);
+  web.stop();
 }
 TEST_F(Sandboxes, EncodedAccountKeysCannotReachAnotherAccountOrAHiddenSandbox) {
   const auto own = create();

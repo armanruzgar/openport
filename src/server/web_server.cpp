@@ -674,9 +674,16 @@ class WsSession : public Session, public std::enable_shared_from_this<WsSession>
     if (idle) asio::post(ws_.get_executor(), [self = shared_from_this()] { self->write_event(); });
   }
 
+  /// A sandbox token's event stream lasts while its sandbox does. A sandbox's events
+  /// go to no other stream but an authenticated admin's; the upgrade refuses the rest.
+  bool may_follow() const {
+    if (!access_.sandbox.empty()) return sandboxes_->active(access_.sandbox);
+    return access_.admin || !sandboxes_->contains(account_);
+  }
+
   void write_event() {
     if (!open_ || stopped_) return;
-    if ((authorized_ && !authorized_()) || (sandboxes_ && !access_.sandbox.empty() && !sandboxes_->active(access_.sandbox))) {
+    if ((authorized_ && !authorized_()) || (sandboxes_ && !may_follow())) {
       (void)stop(); return;
     }
     std::shared_ptr<const std::string> message;
@@ -890,6 +897,11 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
           if ((source != "live" && source != "replay") || (!auth.access.sandbox.empty() && source != "live"))
             return reject_upgrade(request, http::status::forbidden, "Event source unavailable");
           account = *query_account(target, auth.access.sandbox);
+          // As on REST (sandbox_visibility): a visitor's sandbox, and so its fills and
+          // orders, is seen only with its own token or an authenticated admin's.
+          if (const auto& sandboxes = shared_.write_policy.sandboxes;
+              sandboxes && auth.access.sandbox != account && !auth.access.admin && sandboxes->contains(account))
+            return reject_upgrade(request, http::status::not_found, api_error(404, "UNKNOWN_ACCOUNT", "Unknown paper account").body);
           if (!shared_.events) return reject_upgrade(request, http::status::service_unavailable, "Event channel unavailable");
         }
         auto slot = shared_.slots.acquire();

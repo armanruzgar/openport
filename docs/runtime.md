@@ -1287,8 +1287,9 @@ exercise, stock closure, alerts, notes and tags. They cannot change limits, guar
 kill switches, plans, playbook definitions or notification settings, create normal
 accounts, reset accounts, run replays or backtests, or access another account.
 Public API reads, account listings and WebSocket ticks omit sandboxes. Only their
-own token or an authenticated admin sees them. Sandbox trading does not send
-external notifications.
+own token or an authenticated admin sees them, or opens their `/ws/events` stream;
+anyone else gets 404 `UNKNOWN_ACCOUNT` there, as from their REST routes. Sandbox
+trading does not send external notifications.
 
 Accounts expire after 24 hours without authenticated requests. Set
 `--sandbox-idle-seconds N` to change that interval. Keeping the terminal open and

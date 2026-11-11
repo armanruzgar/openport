@@ -476,7 +476,9 @@ gaps can belong to another account. It is not a durable cursor.
 
 Authentication, named-token revocation, Host, Origin and sandbox restrictions
 match the existing WebSocket transport. Sandbox credentials may subscribe only
-to their own live account. Read access follows the HTTP read policy; use
+to their own live account, and a sandbox's stream opens only for its own token or
+an authenticated admin: anyone else gets 404 `UNKNOWN_ACCOUNT`, as from its REST
+routes. Read access follows the HTTP read policy; use
 `--require-token` for private reads. A 256-message FIFO bounds each connection;
 a slow consumer is disconnected rather than silently losing a fill. There is no
 resume or exactly-once delivery guarantee. On startup and every disconnect,

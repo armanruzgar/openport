@@ -117,6 +117,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   v5 header, and wrote no recording for that day or any later one in the range. The
   CLI's source did not pass on that ThetaData trades carry venues; it now does, and
   the import writes a v5 recording that keeps each print's exchange.
+- **A visitor's sandbox events stay private.** On a public demo, anyone who knew a
+  sandbox's ID (it shows in `?account=` links, logs and screenshots) could open
+  `/ws/events` for it without a token and watch that visitor's fills, orders and
+  rejections, though REST and ticks hide sandboxes. Its stream now opens only for
+  the sandbox's own token or an authenticated admin; anyone else gets 404
+  `UNKNOWN_ACCOUNT`, as from its REST routes.
 
 ## 0.5.1 (2026-10-28)
 
