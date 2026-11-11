@@ -553,7 +553,7 @@ function Shares({ trades, trading }: { trades: ShareTrade[]; trading: TradingSta
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-[11px] text-muted">Shares come only from exercise and assignment and trade without fees. Net P&L includes dividends; they count in the totals, calendar and reports above.</p>
+      <p className="mt-2 text-[11px] text-muted">Shares are bought or sold with Trade shares, or delivered by exercise and assignment; they trade without fees. Net P&L includes dividends; they count in the totals, calendar and reports above.</p>
     </Panel>
   )
 }
