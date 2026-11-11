@@ -112,6 +112,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   order ticket failed with `crypto.randomUUID is not a function` and offered a retry
   that failed the same way. IDs now fall back to `crypto.getRandomValues`, and a
   ticket offers a retry only for an order it actually sent.
+- **ThetaData imports keep trade venues.** `openportd --import-day thetadata` stopped
+  at the first trade row with an exchange code, saying an OptionTrade venue needs a
+  v5 header, and wrote no recording for that day or any later one in the range. The
+  CLI's source did not pass on that ThetaData trades carry venues; it now does, and
+  the import writes a v5 recording that keeps each print's exchange.
 
 ## 0.5.1 (2026-10-28)
 

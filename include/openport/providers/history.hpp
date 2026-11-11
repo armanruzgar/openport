@@ -75,6 +75,11 @@ using HistoryWait = std::function<void(std::chrono::milliseconds)>;
 
 [[nodiscard]] std::unique_ptr<HistorySource> massive_history(net::HttpClient& http, std::string key,
                                                            HistoryWait wait);
+/// The ThetaData or Massive source make_history_source builds for the CLI, owning
+/// `http` and waiting through `wait`, so saved-response tests run that same object.
+[[nodiscard]] std::unique_ptr<HistorySource> make_history_source(const std::string& provider,
+                                                               std::unique_ptr<net::HttpClient> http,
+                                                               HistoryWait wait);
 /// Quote/trade page size for `streams` streams: Massive's 50,000-row maximum,
 /// lowered so one page per stream fits the one-million-record buffer (minimum 100).
 [[nodiscard]] std::size_t massive_history_page_size(std::size_t streams) noexcept;

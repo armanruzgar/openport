@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <type_traits>
@@ -644,5 +645,59 @@ TEST(HistoryImport, FailedRangeKeepsEarlierDaysAndRetryCreatesOnlyMissingDays) {
   sources = 0;
   providers::import_days(input, dates, kToday, [&]() { ++sources; return std::make_unique<DailyHistory>(); });
   EXPECT_EQ(sources, 2);
+}
+}  // namespace
+
+namespace {
+// `openportd --import-day` reads through make_history_source's wrapper, which must
+// forward every HistorySource member. It once dropped trade_venues(), so a ThetaData
+// trade row with an exchange code stopped the import at a v4 header.
+TEST(HistoryImport, CliSourcesForwardTradeVenuesAndReceiptClocks) {
+  {
+    test::RecordingFile file;
+    auto http = std::make_unique<test::HttpStub>();
+    theta_responses(*http);
+    const auto* stub = http.get();
+    auto source = providers::make_history_source("thetadata", std::move(http), [](auto) {});
+    EXPECT_TRUE(source->trade_venues());
+    const auto path = providers::import_day(request(file.directory), *source, kToday);
+    const md::RecordingReader reader(path);
+    EXPECT_TRUE(reader.header().trade_venues);
+    const auto trades = events_of<md::OptionTrade>(read(path));
+    ASSERT_EQ(trades.size(), 2U);
+    EXPECT_EQ(trades[0].venue, 5);  // tests/data/history/trades.ndjson's exchange code
+    EXPECT_EQ(trades[1].venue, 0);
+    EXPECT_FALSE(stub->urls.empty());
+  }
+  // Massive's SIP receipt clock reaches the import through the same wrapper.
+  struct MassiveKey {
+    std::optional<std::string> previous;
+    MassiveKey() {
+      if (const auto* value = std::getenv("MASSIVE_API_KEY")) previous = value;
+      setenv("MASSIVE_API_KEY", "test-key", 1);
+    }
+    ~MassiveKey() {
+      if (previous) setenv("MASSIVE_API_KEY", previous->c_str(), 1);
+      else unsetenv("MASSIVE_API_KEY");
+    }
+  } key;
+  test::RecordingFile file;
+  auto http = std::make_unique<test::HttpStub>();
+  massive_responses(*http);
+  auto source = providers::make_history_source("massive", std::move(http), [](auto) {});
+  EXPECT_FALSE(source->trade_venues());
+  auto input = request(file.directory, "massive");
+  input.subscription.strike_window = 0;
+  const auto records = read(providers::import_day(input, *source, kToday));
+  const auto open = md::new_york_to_utc(input.date, 9, 30);
+  std::size_t trades = 0;
+  for (const auto& record : records) {
+    if (!std::holds_alternative<md::OptionTrade>(record.event)) continue;
+    ++trades;
+    EXPECT_EQ(record.received, open + 16 * md::kNanosPerSecond + 789);
+  }
+  EXPECT_GT(trades, 0U);
+  EXPECT_THROW((void)providers::make_history_source("databento", std::make_unique<test::HttpStub>(), [](auto) {}),
+               std::invalid_argument);
 }
 }  // namespace

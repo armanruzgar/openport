@@ -355,6 +355,30 @@ void import_days(const ImportDay& request, const std::vector<md::Date>& dates, m
   }
 }
 
+namespace {
+// Owns the HTTP client its ThetaData or Massive source borrows. It forwards every
+// HistorySource member: one it missed would answer with the base default, as
+// trade_venues() once did, making the CLI's ThetaData imports refuse venue prints.
+class OwnedHistory final : public HistorySource {
+ public:
+  OwnedHistory(const std::string& provider, std::unique_ptr<net::HttpClient> http, HistoryWait wait)
+      : http_(std::move(http)) {
+    if (!http_) throw std::invalid_argument("import: missing HTTP client");
+    const auto* key = std::getenv("MASSIVE_API_KEY");
+    source_ = provider == "massive" ? massive_history(*http_, key ? key : "", std::move(wait))
+                                    : theta_history(*http_, std::move(wait));
+  }
+  void prepare(const ImportDay& request, HistoryWindow day, md::EventSink& sink) override { source_->prepare(request, day, sink); }
+  void read(HistoryWindow window, md::EventSink& sink) override { source_->read(window, sink); }
+  md::Timestamp receipt_time() const noexcept override { return source_->receipt_time(); }
+  bool trade_venues() const noexcept override { return source_->trade_venues(); }
+
+ private:
+  std::unique_ptr<net::HttpClient> http_;  // declared first: the source borrows it until destroyed
+  std::unique_ptr<HistorySource> source_;
+};
+}  // namespace
+
 std::unique_ptr<HistorySource> make_history_source(const std::string& provider) {
   if (provider == "databento") {
     const char* key = std::getenv("DATABENTO_API_KEY");
@@ -365,24 +389,16 @@ std::unique_ptr<HistorySource> make_history_source(const std::string& provider) 
     throw std::invalid_argument("import: Databento support is not built");
 #endif
   }
-  if (provider == "thetadata" || provider == "massive") {
-    // The wrapper owns the HTTP client for the lifetime of its injectable source.
-    class OwnedHistory final : public HistorySource {
-     public:
-      explicit OwnedHistory(const std::string& name) {
-        const auto wait = [](auto delay) { std::this_thread::sleep_for(delay); };
-        const auto* key = std::getenv("MASSIVE_API_KEY");
-        source = name == "massive" ? massive_history(http, key ? key : "", wait) : theta_history(http, wait);
-      }
-      md::Timestamp receipt_time() const noexcept override { return source->receipt_time(); }
-      void prepare(const ImportDay& request, HistoryWindow day, md::EventSink& sink) override { source->prepare(request, day, sink); }
-      void read(HistoryWindow window, md::EventSink& sink) override { source->read(window, sink); }
-     private:
-      net::HttpClient http;
-      std::unique_ptr<HistorySource> source;
-    };
-    return std::make_unique<OwnedHistory>(provider);
-  }
+  if (provider == "thetadata" || provider == "massive")
+    return make_history_source(provider, std::make_unique<net::HttpClient>(),
+                               [](std::chrono::milliseconds delay) { std::this_thread::sleep_for(delay); });
   throw std::invalid_argument("import: provider must be databento, thetadata or massive");
+}
+
+std::unique_ptr<HistorySource> make_history_source(const std::string& provider,
+                                                   std::unique_ptr<net::HttpClient> http, HistoryWait wait) {
+  if (provider != "thetadata" && provider != "massive")
+    throw std::invalid_argument("import: only thetadata and massive take an HTTP client");
+  return std::make_unique<OwnedHistory>(provider, std::move(http), std::move(wait));
 }
 }  // namespace openport::providers
