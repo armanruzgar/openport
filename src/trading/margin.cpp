@@ -1030,9 +1030,7 @@ void detail::MarginCache::insert(std::string key, MarginUnderlying answer) {
                                          [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
     entries_.erase(oldest);
   }
-  auto& entry = entries_[std::move(key)];
-  entry.answer = std::move(answer);
-  entry.used = ++clock_;
+  entries_.insert_or_assign(std::move(key), Entry{std::move(answer), ++clock_});
 }
 std::size_t detail::MarginCache::size() const {
   const std::lock_guard lock(mutex_);
