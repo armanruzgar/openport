@@ -134,13 +134,21 @@ def scripted_run(api, repeat=False, commands=None, **kwargs):
 
 
 class RestartAPI(ScriptAPI):
-    """Complete source tape, two transactions at T, and a rebuilding restart."""
+    """Complete source tape, two transactions at T, and a rebuilding restart that
+    journals its restart input after the copied prefix, as the server does."""
     def __init__(self, directory, damage=None, **kwargs):
         super().__init__(**kwargs)
         self.directory, self.damage = Path(directory), damage
         self.rebuilding = False
         self.lines = [json.dumps(dict(seq=i, time=fuzz.market_ns(t), hash=f"hash-{i}", payload={})).encode() + b"\n"
                       for i, t in enumerate((NOW, MID, MID, END), 1)]
+
+    @staticmethod
+    def restart_input(source, at, seq=4):
+        payload = {"kind": "restart", "from": source, "at": fuzz.market_ns(at)}
+        record = dict(seq=seq, time=fuzz.market_ns(at), type="run_input", hash=f"hash-restart-{seq}",
+                      payload=dict(schema=3, events=[dict(type="run_input", payload=payload)]))
+        return json.dumps(record).encode() + b"\n"
 
     def entry(self, run):
         entry = super().entry(run)
@@ -157,11 +165,22 @@ class RestartAPI(ScriptAPI):
                 raw = b"".join(self.lines)
                 if "restart" in body:
                     self.current["portfolio"]["time"] = body["at"]
-                    raw = b"".join(self.lines[:3])
+                    restart = self.restart_input(body["restart"], body["at"])
+                    raw = b"".join(self.lines[:3]) + restart
                     if self.damage == "missing_boundary":
-                        raw = b"".join(self.lines[:2])
+                        raw = b"".join(self.lines[:2]) + restart
                     elif self.damage == "extra":
                         raw += self.lines[3]
+                    elif self.damage == "no_restart_input":
+                        raw = b"".join(self.lines[:3])
+                    elif self.damage == "torn_restart_input":
+                        raw = raw[:-1]
+                    elif self.damage == "other_source":
+                        raw = b"".join(self.lines[:3]) + self.restart_input("run-0", body["at"])
+                    elif self.damage == "other_time":
+                        raw = b"".join(self.lines[:3]) + self.restart_input(body["restart"], END)
+                    elif self.damage == "sequence":
+                        raw = b"".join(self.lines[:3]) + self.restart_input(body["restart"], body["at"], seq=5)
                     elif self.damage == "bytes":
                         raw = raw.replace(b'"payload": {}', b'"payload": []')
                     elif self.damage == "source":
@@ -387,6 +406,12 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(api.started[1], dict(restart="run-1", at=MID))
             self.assertEqual(result["restart"]["prefix"]["transactions"], 3)
             self.assertEqual(result["restart"]["files"], "identical_prefix")
+            # The restart input follows the prefix and is the restarted run's head.
+            prefix = result["restart"]["prefix"]["bytes"]
+            restart = RestartAPI.restart_input("run-1", MID)
+            self.assertEqual(result["restart"]["restart_record"],
+                             dict(head="hash-restart-4", bytes=prefix + len(restart), transactions=4))
+            self.assertEqual(Path(directory, "run-2.jsonl").read_bytes(), b"".join(api.lines[:3]) + restart)
             self.assertEqual(result["restart"]["settled_through"], MID)
             self.assertEqual(result["restart"]["verification"]["status"], "passed")
             self.assertEqual(result["restart"]["cli_verification"]["status"], "passed")
@@ -397,7 +422,10 @@ class FlowTest(unittest.TestCase):
             self.assertEqual(result["runs"][1]["run_id"], "run-3")
 
     def test_restart_detects_cut_errors_changed_bytes_and_source_mutation(self):
-        for damage in ("missing_boundary", "extra", "bytes", "source"):
+        # A restart input missing, torn, naming another source or time, or numbered out
+        # of sequence is a mismatch, as is any record after it.
+        for damage in ("missing_boundary", "extra", "bytes", "source", "no_restart_input",
+                       "torn_restart_input", "other_source", "other_time", "sequence"):
             with self.subTest(damage=damage), tempfile.TemporaryDirectory() as directory:
                 api = RestartAPI(directory, damage)
                 with patch.object(fuzz.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")):

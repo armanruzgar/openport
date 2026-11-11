@@ -31,7 +31,9 @@ verification or byte comparison. Verification never repairs or compacts a journa
 enables the same version in auto on each replay. Tagged orders and their fills are
 counted by actor; no automatic fills is a coverage failure unless every automatic
 attempt was refused by plan rules, which is reported as a warning. --restart-check needs
---openportd and --replays-dir and checks an inclusive, mid-run journal prefix.
+--openportd and --replays-dir and checks an inclusive, mid-run journal prefix: the
+restarted journal is the source's prefix byte for byte, then the one run_input record
+the server journals for the restart, {"kind": "restart", "from": SOURCE, "at": T}.
 """
 import argparse
 from collections import Counter
@@ -570,13 +572,39 @@ def journal_prefix(path, at):
 
 
 def identical_prefix(source, restarted, length):
+    """Both files start with the same `length` bytes."""
     with open(source, "rb") as a, open(restarted, "rb") as b:
         while length:
             chunk = a.read(min(length, 1024 * 1024))
             if not chunk or chunk != b.read(len(chunk)):
                 return False
             length -= len(chunk)
-        return not b.read(1)  # An extra transaction is also a mismatch.
+        return True
+
+
+def restart_record(restarted, prefix, source_id, at):
+    """The checkpoint after the restart input that follows the copied prefix.
+
+    A restarted run re-executes the source's prefix, then journals one run_input
+    record, {"kind": "restart", "from": SOURCE, "at": T}. None unless that record,
+    complete and alone, is all the restarted journal holds after the prefix: a second
+    record, a torn one or another input is a mismatch."""
+    with open(restarted, "rb") as stream:
+        stream.seek(prefix["bytes"])
+        line = stream.readline()
+        if not line.endswith(b"\n") or stream.read(1):
+            return None
+    try:
+        record = json.loads(line)
+        inputs = [event["payload"] for event in record["payload"]["events"] if event["type"] == "run_input"]
+        checkpoint = dict(head=record["hash"], bytes=prefix["bytes"] + len(line), transactions=record["seq"])
+        marker = {"kind": "restart", "from": source_id, "at": market_ns(at)}
+        if (record["seq"] != prefix["transactions"] + 1 or record["type"] != "run_input"
+                or type(record["time"]) is not int or record["time"] < prefix["last_time_ns"] or inputs != [marker]):
+            return None
+    except (ValueError, KeyError, TypeError, AttributeError, FuzzError):
+        return None
+    return checkpoint
 
 
 def restart_check(client, source, binary, directory, out=print):
@@ -619,10 +647,14 @@ def restart_check(client, source, binary, directory, out=print):
             if current != prefix:
                 failure("restart_source_changed", before=prefix, after=current)
             entry = result["history"]
-            equal = identical_prefix(source_path, journal_path(entry, directory), prefix["bytes"])
-            result["files"] = "identical_prefix" if equal else "different"
-            if not equal or entry["journal"] != {k: prefix[k] for k in ("head", "bytes", "transactions")}:
-                failure("restart_prefix", expected=prefix, actual=entry["journal"])
+            restarted = journal_path(entry, directory)
+            # The source's inclusive prefix byte for byte, then only the restart input.
+            marker = (restart_record(restarted, prefix, source["run_id"], at)
+                      if identical_prefix(source_path, restarted, prefix["bytes"]) else None)
+            result["files"] = "identical_prefix" if marker else "different"
+            result["restart_record"] = marker
+            if not marker or entry["journal"] != marker:
+                failure("restart_prefix", expected=prefix, restart_record=marker, actual=entry["journal"])
         except (FuzzError, KeyError, TypeError, ValueError, OSError) as exc:
             failure("restart_prefix", message=str(exc))
     result["status"] = "failed" if result["failures"] else "passed"
@@ -800,7 +832,8 @@ def main(argv=None):
     parser.add_argument("--plan", default="practice")
     parser.add_argument("--repeat", action="store_true")
     parser.add_argument("--playbook", action="store_true", help="create a one-unit SPX time-window spread and enable replay auto")
-    parser.add_argument("--restart-check", action="store_true", help="restart at a recorded mid-run time; require exact prefix and both verifiers")
+    parser.add_argument("--restart-check", action="store_true",
+                        help="restart at a recorded mid-run time; require the exact prefix, then only the restart input, and both verifiers")
     parser.add_argument("--token")
     parser.add_argument("--json", metavar="PATH", help="sorted JSON summary; - writes stdout")
     parser.add_argument("--openportd", metavar="BIN")

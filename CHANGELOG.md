@@ -143,6 +143,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the server kept running unseen, holding its port and journal lock, and a
   `--backtest` run went on. Without `--token-file` it now stops the server, or cancels
   the backtest and writes its report, as Ctrl-C does; under `nohup` it stays ignored.
+- **The order fuzzer's restart check.** `tools/order_fuzz.py --restart-check` required
+  a restarted run's journal to be exactly the source's prefix, but a restart has
+  journaled a restart input after that prefix since restarts could start mid-run, so
+  every campaign failed with `restart_prefix` although the prefix matched byte for
+  byte and both verifiers passed. It now requires the prefix, then exactly that one
+  `run_input` naming the source run and the restart time.
 - **A paper journal that cannot open is named at startup.** Only a journal held by
   another openportd was reported on the console. One that could not be opened
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
