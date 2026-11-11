@@ -43,15 +43,54 @@ class Openport < Formula
   def post_install
     (var/"openport").mkpath
     (var/"log").mkpath
+    (etc/"openport").mkpath
   end
 
   service do
-    run [opt_bin/"openportd", "--address", "127.0.0.1",
-         "--paper-journal", var/"openport/paper-journal.jsonl",
-         "--candle-dir", var/"openport/candles",
-         "--series-dir", var/"openport/series",
-         "--write-token-file", var/"openport/write-token",
-         "--web-root", opt_pkgshare/"web"]
+    # openportd with the data paths below, then the settings in etc/openport, which
+    # upgrades keep: openportd.args holds flags, one per line with its value after a
+    # blank, and openportd.env NAME=VALUE lines, such as provider keys, which launchd
+    # does not take from a shell. Blank lines and # comments are skipped. The script is
+    # the command itself, so it needs nothing installed beside openportd.
+    run ["/bin/sh", "-c", <<~SH, "openport-service"]
+      settings="#{etc}/openport"
+      number=0
+      if [ -f "$settings/openportd.env" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+          number=$((number + 1))
+          line="${line#"${line%%[![:blank:]]*}"}"
+          line="${line%"${line##*[![:blank:]]}"}"
+          case "$line" in ''|'#'*) continue ;; esac
+          name="${line%%=*}"
+          case "$name" in
+            "$line"|''|[0-9]*|*[!A-Za-z0-9_]*)
+              echo "$0: $settings/openportd.env line $number: expected NAME=VALUE" >&2
+              exit 2 ;;
+          esac
+          export "$name=${line#*=}"
+        done < "$settings/openportd.env"
+      fi
+      set --
+      if [ -f "$settings/openportd.args" ]; then
+        while IFS= read -r line || [ -n "$line" ]; do
+          line="${line#"${line%%[![:blank:]]*}"}"
+          line="${line%"${line##*[![:blank:]]}"}"
+          case "$line" in
+            ''|'#'*) ;;
+            *[[:blank:]]*)
+              value="${line#*[[:blank:]]}"
+              set -- "$@" "${line%%[[:blank:]]*}" "${value#"${value%%[![:blank:]]*}"}" ;;
+            *) set -- "$@" "$line" ;;
+          esac
+        done < "$settings/openportd.args"
+      fi
+      exec "#{opt_bin}/openportd" --address 127.0.0.1 \\
+        --paper-journal "#{var}/openport/paper-journal.jsonl" \\
+        --candle-dir "#{var}/openport/candles" \\
+        --series-dir "#{var}/openport/series" \\
+        --write-token-file "#{var}/openport/write-token" \\
+        --web-root "#{opt_pkgshare}/web" "$@"
+    SH
     keep_alive true
     working_dir var/"openport"
     log_path var/"log/openport.log"
@@ -70,6 +109,13 @@ class Openport < Formula
       The link saves the token in that browser tab for paper-trading writes.
       Accounts and chart history are kept under #{var}/openport.
       Protect the token file and logs; the link grants write access.
+
+      The service watches Cboe's delayed SPX, SPY, QQQ, IWM and DIA. Other flags,
+      such as --provider, --symbols, --record-dir or --notify-config, go in
+        #{etc}/openport/openportd.args
+      one per line with its value after a space; provider keys and OPENPORT_NOTIFY_*
+      settings go in #{etc}/openport/openportd.env as NAME=VALUE
+      lines (chmod 600 it). Then: brew services restart openport
 
       Apple Silicon uses the release archive; Intel Macs build the release tag
       from source. For upgrades and backups, see docs/upgrade-and-backup.md.

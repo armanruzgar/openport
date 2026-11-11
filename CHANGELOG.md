@@ -166,6 +166,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the server kept running unseen, holding its port and journal lock, and a
   `--backtest` run went on. Without `--token-file` it now stops the server, or cancels
   the backtest and writes its report, as Ctrl-C does; under `nohup` it stays ignored.
+- **The Homebrew service takes settings.** `brew services` ran openportd with fixed
+  flags and no environment, and launchd does not read the shell's, so the service
+  always watched Cboe's delayed SPX, SPY, QQQ, IWM and DIA, without recordings,
+  notifications or another provider's key. It now adds the flags in
+  `$(brew --prefix)/etc/openport/openportd.args`, one per line with its value, and
+  the `NAME=VALUE` lines of `openportd.env` to its environment; `brew services
+  restart openport` applies them. The service command carries this itself, so it
+  works with the installed 0.5.1 as soon as the tap is updated.
 - **The macOS archive names and keeps its oldest macOS.** It was compiled for whatever
   macOS built it: 0.5.1 is stamped for macOS 27, with OpenSSL built for 27, and needs
   C++ library functions that macOS 14 and older lack, so it cannot start there, and

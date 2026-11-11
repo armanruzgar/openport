@@ -26,6 +26,30 @@ Intel Macs build the release tag with Homebrew's CMake, Node, Boost, OpenSSL and
 zstd dependencies. This takes longer and needs network access to fetch build
 dependencies. No Intel bottle is claimed.
 
+The service watches Cboe's delayed SPX, SPY, QQQ, IWM and DIA. launchd does not
+read your shell's environment, and `brew services` rebuilds the service from the
+formula, so settings of your own go in two files in `$(brew --prefix)/etc/openport`,
+which upgrades keep: `openportd.args` holds openportd flags, one per line with its
+value after a space, and `openportd.env` holds `NAME=VALUE` lines for provider keys
+and [notification](runtime.md#external-notifications) channels. For example, Tradier
+with NVDA added, a recording of every session for the Replay page, and Discord alerts:
+
+```bash
+mkdir -p "$(brew --prefix)/etc/openport" && cd "$(brew --prefix)/etc/openport"
+printf '%s\n' '--provider tradier' '--symbols SPX,SPY,QQQ,NVDA' \
+  "--record-dir $(brew --prefix)/var/openport/recordings" > openportd.args
+printf '%s\n' 'TRADIER_ACCESS_TOKEN=your-token' \
+  'OPENPORT_NOTIFY_DISCORD_URL=https://discord.com/api/webhooks/...' > openportd.env
+chmod 600 openportd.env
+brew services restart openport
+```
+
+Blank lines and lines starting with `#` are skipped, and values are used as written,
+without quotes or `$` expansion. A malformed `openportd.env` line stops the service
+and names its line number in `var/log/openport.error.log`. The data paths come first,
+so a flag given again here wins. With `--provider demo`, also give a
+`--paper-journal` of its own: a journal does not record which feed it traded.
+
 For a foreground session, run `openportd --open`. Browser launching is opt-in;
 services, SSH and headless runs never open a browser by default. `--open` creates
 a private `write-token` beside the journal unless a token is already configured.
