@@ -447,7 +447,7 @@ unknown ids are 404. Verification of the source in progress is 409
 `VERIFICATION_RUNNING`. Missing/changed recordings or scenarios, older drivers,
 changed calendars, torn/inconsistent journals and runs that changed their recording
 part way return 409 `REPLAY_NOT_RESTARTABLE`. These refusals preserve the source.
-Restart uses driver 6's existing recovery and byte verification, and regenerates
+Restart uses the current driver's (7) recovery and byte verification, and regenerates
 supported older scenario revisions at their saved revision; old sidecars need
 no new fields. The new journal passes the same `--verify-run` as the source.
 `start_at` for ordinary starts still names receipt time; restart `at` names market

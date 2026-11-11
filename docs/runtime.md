@@ -1000,7 +1000,8 @@ overrides the source speed and `paused:false` continues afterwards. The source m
 be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
-their existing journal bytes; restart creates a byte-identical prefix on driver 6.
+their existing journal bytes; restart creates a byte-identical prefix on the current
+driver (7).
 
 ### Verifying a run
 
@@ -1102,6 +1103,12 @@ bytes. Older cancel commands omit the optional `cancel_reason` and default to
 `USER_CANCEL`; existing account journals and saved reports still load. Resuming
 an interrupted run requires the current driver, as before.
 
+Driver 7 applies this build's evaluation, payout and order-rule fixes: equity
+targets wait for a flat account under trade consistency or microscalping, payout
+floors stay fixed, and minimum hold covers triggered and OCO closes
+([paper trading](paper-trading.md)). Runs recorded with drivers 1–6 verify with
+their original decisions; they can no longer be resumed or restarted.
+
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).
 For example: "Trading is halted market-wide by the scenario; it resumes at 10:30 ET".
@@ -1119,7 +1126,7 @@ new live automatic commands use the existing journal encoding.
 Removing an underlying override takes effect immediately when the common cap is
 tighter; a looser fallback remains queued. This needs no new driver: older runs
 cannot contain underlying overrides, so dropping redundant entries changes none
-of their journal bytes. New runs still record driver 6, and interrupted driver-6
+of their journal bytes. New runs record the current driver, and interrupted runs on
 runs remain resumable. Existing journals recover both active and pending overrides.
 
 The guardrail changes of this build retain the replay driver and recover existing

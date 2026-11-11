@@ -183,7 +183,7 @@ reproduce exactly.
 
 Underlying override removal needs no new replay driver. Older runs cannot contain
 overrides, so dropping redundant entries leaves their journal bytes unchanged;
-new runs with overrides verify and resume with driver 6.
+new runs with overrides verify and resume with the current driver.
 
 Replay, drill and scenario journals write each line at once but sync it to disk at
 most every 250 ms, and at pause, stop, finish and teardown, so a kept run is synced

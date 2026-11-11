@@ -9,6 +9,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   package of that name is not from this project. Install a `python-v*` tag from
   GitHub into a virtual environment, as the
   [client's README](python/README.md#python-releases) shows.
+- **Replay driver 7.** New reproducible runs record driver 7, which applies the
+  evaluation, payout and order-rule fixes below. Runs recorded earlier still pass
+  `--verify-run` with their original decisions, but an interrupted one can no longer
+  be resumed and none can be restarted from a time: start a new run instead.
 
 ### Providers
 

@@ -18287,7 +18287,7 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/RiskCaps"
             },
-            "description": "Optional full replacement map; omission or {} removes all overrides. Unsubscribed symbols are allowed. Each cap is finite and nonnegative. Tightening applies immediately in evaluations; loosening, including removal to a looser common cap, waits for rollover. GET includes active and pending maps. Replay stays on driver 6: older runs cannot contain overrides, so dropping redundant entries preserves their journal bytes and resumability."
+            "description": "Optional full replacement map; omission or {} removes all overrides. Unsubscribed symbols are allowed. Each cap is finite and nonnegative. Tightening applies immediately in evaluations; loosening, including removal to a looser common cap, waits for rollover. GET includes active and pending maps. Needs no replay driver of its own: older runs cannot contain overrides, so dropping redundant entries preserves their journal bytes and resumability."
           },
           "tag_overrides": {
             "type": "object",
@@ -21154,7 +21154,7 @@
           },
           "restart": {
             "type": "string",
-            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires driver 6, unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
+            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (7), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
           },
           "at": {
             "type": "string",
