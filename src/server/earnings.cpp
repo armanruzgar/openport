@@ -343,7 +343,7 @@ std::optional<ApiResponse> earnings_request(const ApiRequest& request, EarningsS
   const auto query = query_parameters(mark == std::string_view::npos ? std::string_view{} : target.substr(mark + 1));
   if (!query) return api_error(400, "INVALID_REQUEST", "Duplicate or malformed query parameter");
   if (path == "/api/earnings") {
-    if (request.method != "GET") return api_error(405, "METHOD_NOT_ALLOWED", "Earnings history supports GET");
+    if (request.method != "GET") return method_refused(path, "Earnings history supports GET");
     std::string symbol;
     for (const auto& [key, value] : *query) {
       if (key != "symbol") return api_error(400, "INVALID_REQUEST", "Earnings accepts only symbol");
@@ -373,10 +373,10 @@ std::optional<ApiResponse> earnings_request(const ApiRequest& request, EarningsS
                   "Over means the straddle priced a larger move than came."}}.dump()};
   }
   if (path == "/api/earnings/imported") {
-    if (request.method != "DELETE") return api_error(405, "METHOD_NOT_ALLOWED", "Imported earnings support DELETE");
+    if (request.method != "DELETE") return method_refused(path, "Imported earnings support DELETE");
     return ApiResponse{200, json{{"removed", store.remove_imported()}}.dump()};
   }
-  if (request.method != "POST") return api_error(405, "METHOD_NOT_ALLOWED", "Earnings import supports POST");
+  if (request.method != "POST") return method_refused(path, "Earnings import supports POST");
   try {
     const auto body = json::parse(request.body);
     if (!body.is_object() || body.size() != 1 || !body.contains("csv") || !body.at("csv").is_string())

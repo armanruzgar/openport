@@ -6,7 +6,7 @@ std::optional<ApiResponse> event_calendar_read(const ApiRequest& request, const 
   const std::string_view target = request.target;
   const auto mark = target.find('?');
   if (target.substr(0, mark) != "/api/calendar/events") return std::nullopt;
-  if (request.method != "GET") return api_error(405, "METHOD_NOT_ALLOWED", "Calendar events support GET");
+  if (request.method != "GET") return method_refused(target.substr(0, mark), "Calendar events support GET");
   const auto query = query_parameters(mark == std::string_view::npos ? std::string_view{} : target.substr(mark + 1));
   if (!query) return api_error(400, "INVALID_REQUEST", "Duplicate or malformed calendar query");
   md::Timestamp from = 0, to = std::numeric_limits<md::Timestamp>::max();

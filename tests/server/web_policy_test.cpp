@@ -1565,6 +1565,11 @@ TEST(SignalSecrets, HmacBindsOnePlaybookAccountTimestampAndBodyWithinFiveMinutes
   const auto secret = issued(secrets, "morning", "practice");
   const auto other = issued(secrets, "morning", "main");
   const std::string target = "/api/signals/morning?account=practice";
+  // A signal is a POST: anything else is 405 naming it.
+  const auto polled = secrets.check({"GET", target});
+  ASSERT_TRUE(polled);
+  EXPECT_EQ(polled->status, 405);
+  EXPECT_EQ(polled->allow, "POST");
   now += 10 * md::kNanosPerSecond;
   EXPECT_FALSE(secrets.check(signed_signal(secret, target, seconds + 10, "one")));
   EXPECT_EQ(secrets.check(signed_signal(secret, target, seconds + 10, "one"))->status, 409);  // replay

@@ -153,6 +153,17 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
   EXPECT_EQ(json::parse(response->body)["removed"], 4);
   EXPECT_EQ(store.moves().size(), 1u);
   EXPECT_FALSE(server::earnings_request(server::ApiRequest("GET", "/api/calendar/events"), store));
+  // A method a route does not take is 405 with the methods it does take.
+  const auto posted = server::earnings_request(server::ApiRequest("POST", "/api/earnings"), store);
+  ASSERT_TRUE(posted);
+  EXPECT_EQ(posted->status, 405);
+  EXPECT_EQ(posted->allow, "GET, HEAD");
+  const auto fetched = server::earnings_request(server::ApiRequest("GET", "/api/earnings/import"), store);
+  ASSERT_TRUE(fetched);
+  EXPECT_EQ(fetched->allow, "POST");
+  const auto removed = server::earnings_request(server::ApiRequest("POST", "/api/earnings/imported"), store);
+  ASSERT_TRUE(removed);
+  EXPECT_EQ(removed->allow, "DELETE");
   std::filesystem::remove(file);
 }
 

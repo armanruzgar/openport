@@ -5951,6 +5951,8 @@ TEST(EventCalendarApi, CsvAndFilteredReadRoute) {
   ASSERT_TRUE(all); EXPECT_EQ(all->status, 200); EXPECT_EQ(json::parse(all->body)["events"].size(), 2U);
   const auto range = server::event_calendar_read({"GET", "/api/calendar/events?from=2026-09-23&to=2026-09-24"}, events);
   ASSERT_TRUE(range); ASSERT_EQ(range->status, 200); EXPECT_EQ(json::parse(range->body)["events"].size(), 1U);
+  const auto posted = server::event_calendar_read({"POST", "/api/calendar/events"}, events);
+  ASSERT_TRUE(posted); EXPECT_EQ(posted->status, 405); EXPECT_EQ(posted->allow, "GET, HEAD");
   for (const auto* query : {"from=bad", "from=2026-09-24&to=2026-09-23", "x=1", "from=2026-09-23&from=2026-09-24"}) {
     const auto response = server::event_calendar_read({"GET", std::string("/api/calendar/events?") + query}, events);
     ASSERT_TRUE(response); EXPECT_EQ(response->status, 400);

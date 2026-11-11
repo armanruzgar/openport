@@ -1326,7 +1326,7 @@ void ReplayHost::history(const ApiRequest& request, const ApiCompletion& complet
         return;
       }
       if (request.method != "POST") {
-        complete(api_error(405, "METHOD_NOT_ALLOWED", "Use GET or POST for verification"));
+        complete(method_refused(std::string_view(request.target).substr(0, request.target.find('?')), "Use GET or POST for verification"));
         return;
       }
       if (!history_->writable() || options_.engine.write_mode == "disabled") {
@@ -1760,7 +1760,10 @@ void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete)
       }
       complete(ok({{"packs", packs}})); return;
     }
-    if (request.method != "POST" || request.target != "/api/replay/packs") { complete(api_error(405, "METHOD_NOT_ALLOWED", "Use GET to export, POST /api/replay/packs to import")); return; }
+    if (request.method != "POST" || request.target != "/api/replay/packs") {
+      complete(method_refused(std::string_view(request.target).substr(0, request.target.find('?')), "Use GET to export, POST /api/replay/packs to import"));
+      return;
+    }
     if (!options_.demo || !history_->writable()) { complete(api_error(403, "WRITE_DISABLED", "Scenario packs require demo mode and writable replay storage")); return; }
     auto pack = parse_body(request, {"version", "scenario", "seed", "plan", "challenge"});
     if (!pack.contains("version") || !pack.at("version").is_number_integer() || pack.at("version") != 1)
@@ -2127,7 +2130,7 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
       stop_session();
       complete(ok({{"replay", nullptr}}));
     } else {
-      complete(api_error(405, "METHOD_NOT_ALLOWED", "Use GET, POST, PUT or DELETE"));
+      complete(method_refused(std::string_view(request.target).substr(0, request.target.find('?')), "Use GET, POST, PUT or DELETE"));
     }
   } catch (const json::exception& error) {
     complete(api_error(400, "INVALID_REQUEST", error.what()));

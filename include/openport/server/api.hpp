@@ -89,6 +89,9 @@ inline constexpr int kRequestJsonDepthMax = 64;
 /// The answer to a `method` `path` does not take: 405 METHOD_NOT_ALLOWED with Allow
 /// for a known route, otherwise (or when the route does take it, elsewhere) 404 NOT_FOUND.
 [[nodiscard]] ApiResponse method_not_allowed(std::string_view path, std::string_view method);
+/// A host's own 405 for a method its route does not take: its message, with the Allow
+/// header the route table gives `path` (none for a path the table does not list).
+[[nodiscard]] ApiResponse method_refused(std::string_view path, std::string message);
 /// Writes enqueue on the owner thread. Never wait for completion on an I/O thread.
 void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompletion complete);
 

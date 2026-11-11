@@ -172,7 +172,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
     const auto query = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
     if (!query) throw std::invalid_argument("Invalid query parameters");
     if (sweep && request.method != "GET" && request.method != "POST" && request.method != "DELETE") {
-      complete(api_error(405, "METHOD_NOT_ALLOWED", "Unsupported sweep method")); return true;
+      complete(method_refused(path, "Unsupported sweep method")); return true;
     }
     if (!id.empty() && id != "compare") {
       const auto state = !host.current.is_null() && host.current.at("id") == id ? host.current
@@ -221,7 +221,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         try { response.body = compare_backtests(runs).dump(); }
         catch (const trading::TradingError& error) { response = api_error(422, "BACKTEST_COMPARISON_UNAVAILABLE", error.what()); }
       }
-    } else if (id == "compare") response = api_error(405, "METHOD_NOT_ALLOWED", "Unsupported comparison method");
+    } else if (id == "compare") response = method_refused(path, "Unsupported comparison method");
     else if (request.method == "GET") {
       if (!id.empty()) {
         if (!std::filesystem::is_regular_file(host.options.directory / id / "state.json")) response = api_error(404, "NOT_FOUND", "Unknown backtest");
@@ -372,7 +372,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         response.status = 202;
         response.body = host.current.dump();
       }
-    } else response = api_error(405, "METHOD_NOT_ALLOWED", "Unsupported backtest method");
+    } else response = method_refused(path, "Unsupported backtest method");
     // A newly queued job may not have created its directory yet.
     if (request.method == "GET" && !id.empty() && !host.current.is_null() && host.current.at("id") == id && host.current.value("kind", "backtest") == (sweep ? "sweep" : "backtest") && response.status == 404) {
       response.status = 200;

@@ -771,7 +771,12 @@ TEST(BacktestApi, ContractFixture) {
   EXPECT_EQ(call(reopened, {"DELETE", "/api/backtests/" + id + "?purge=true"}).status, 200);
   EXPECT_FALSE(std::filesystem::exists(options.directory / id));
   EXPECT_EQ(call(reopened, {"GET", "/api/backtests/" + id}).status, 404);
-  EXPECT_EQ(call(reopened, {"PUT", "/api/backtests"}, false).status, 405);
+  const auto put = call(reopened, {"PUT", "/api/backtests"}, false);
+  EXPECT_EQ(put.status, 405);
+  EXPECT_EQ(put.allow, "GET, HEAD, POST, DELETE");
+  const auto sweeps = call(reopened, {"PUT", "/api/backtests/sweeps"}, false);
+  EXPECT_EQ(sweeps.status, 405);
+  EXPECT_EQ(sweeps.allow, "GET, HEAD, POST");
   server::BacktestHost disabled({storage.directory / "disabled", {}, {}, {}, {}, false});
   EXPECT_EQ(call(disabled, {"POST", "/api/backtests", "{}"}).status, 403);
 }

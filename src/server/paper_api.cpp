@@ -3203,6 +3203,12 @@ ApiResponse method_not_allowed(std::string_view path, std::string_view method) {
   return refused;
 }
 
+ApiResponse method_refused(std::string_view path, std::string message) {
+  auto refused = api_error(405, "METHOD_NOT_ALLOWED", std::move(message));
+  refused.allow = allowed_methods(path);
+  return refused;
+}
+
 namespace {
 constexpr std::size_t kMaxProfileCurves = 8;
 constexpr std::size_t kMaxProfileLegs = 8;

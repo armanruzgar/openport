@@ -1815,6 +1815,16 @@ TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs)
   server::ReplayHost restored({file.directory, base});
   const auto listing = json::parse(call(restored, "GET", "/api/replay/packs").body)["packs"];
   EXPECT_NE(std::find(listing.begin(), listing.end(), pack), listing.end());
+  // A method a replay route does not take is 405 with the methods it does take.
+  const auto put_packs = call(restored, "PUT", "/api/replay/packs");
+  EXPECT_EQ(put_packs.status, 405);
+  EXPECT_EQ(put_packs.allow, "GET, HEAD, POST");
+  const auto put_verify = call(restored, "PUT", "/api/replay/history/" + id + "/verify");
+  EXPECT_EQ(put_verify.status, 405) << put_verify.body;
+  EXPECT_EQ(put_verify.allow, "GET, HEAD, POST");
+  const auto patched = call(restored, "PATCH", "/api/replay");
+  EXPECT_EQ(patched.status, 405) << patched.body;
+  EXPECT_EQ(patched.allow, "GET, HEAD, POST, PUT, DELETE");
   const auto verified = server::verify_run(file.directory / "replays" / (id + ".jsonl"));
   EXPECT_TRUE(verified.matched) << verified.message;
   EXPECT_EQ(verified.run["inputs"][0]["challenge"], pack);

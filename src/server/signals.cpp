@@ -151,8 +151,8 @@ ApiResponse SignalSecrets::describe(const std::string& playbook, const std::stri
 }
 
 std::optional<ApiResponse> SignalSecrets::check(const ApiRequest& request) {
-  if (request.method != "POST") return api_error(405, "METHOD_NOT_ALLOWED", "Signals use POST");
   const auto question = request.target.find('?');
+  if (request.method != "POST") return method_refused(std::string_view(request.target).substr(0, question), "Signals use POST");
   const auto playbook = request.target.substr(0, question).substr(std::string_view("/api/signals/").size());
   const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
   const auto account = query_account(request.target);
