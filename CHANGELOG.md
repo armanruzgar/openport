@@ -1214,6 +1214,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   request fail before it was sent, so the terminal never loaded. The token now goes as
   its UTF-8 bytes, which is what openportd compares, and a `#token=` link holding a
   control character is ignored.
+- **The navigation drawer on narrow screens.** Below 1024 px the closed sidebar was
+  only moved off screen: its 15 links and controls stayed first in the tab order and
+  were read out by screen readers, and opening it left focus on the menu button
+  behind the backdrop. A closed drawer is now inert, opening it moves focus to the
+  current page's link and closing returns it to the menu button, which says whether
+  the drawer is open.
+- **The sidebar's System pages stay reachable.** On a 768 px tall window the account
+  block (larger once an evaluation is active) left the page list too little room, and
+  Replay, Backtest and Status sat in a scroll area that nothing showed was there. The
+  whole sidebar now scrolls as one, the page list first.
 
 ## 0.5.1 (2026-10-28)
 

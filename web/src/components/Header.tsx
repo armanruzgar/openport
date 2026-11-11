@@ -8,17 +8,21 @@ import { useTheme } from "../lib/theme"
 import { AlertsButton } from "./Alerts"
 import { AsOf } from "./AsOf"
 import { Flash } from "./Flash"
+import { navigationId } from "./Sidebar"
 import { FeedBadge } from "./ui"
 
 export function Header({
   symbol,
   onSymbol,
   onMenu,
+  menuOpen = false,
 }: {
   symbol: string | null
   onSymbol: (symbol: string) => void
   /** Opens the navigation drawer on narrow screens. */
   onMenu?: () => void
+  /** Whether that drawer is open. */
+  menuOpen?: boolean
 }) {
   const live = useLive()
   const { status, tick, connection, version, market, underlyings, offline } = live
@@ -42,7 +46,7 @@ export function Header({
     <header className="relative z-20 border-b border-border bg-panel/95 backdrop-blur lg:sticky lg:top-0">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-2">
         {onMenu && (
-          <button type="button" onClick={onMenu} aria-label="Open navigation"
+          <button type="button" onClick={onMenu} aria-label="Open navigation" aria-expanded={menuOpen} aria-controls={navigationId}
             className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted hover:bg-raised hover:text-foreground lg:hidden">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           </button>

@@ -124,7 +124,7 @@ export function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <ReplayBanner />
         <DemoPrompt onNavigate={(next) => navigate({ view: next })} />
-        <Header symbol={symbol} onSymbol={(s) => navigate({ symbol: s, expiry: null })} onMenu={() => setMenu(true)} />
+        <Header symbol={symbol} onSymbol={(s) => navigate({ symbol: s, expiry: null })} onMenu={() => setMenu(true)} menuOpen={menu} />
         <CircuitBreakerBanner />
         <AccountStorageBanner damaged={storage?.damaged} journal={storage?.journal_size} reason={live.trading?.reason} />
         <UpdateNotice />

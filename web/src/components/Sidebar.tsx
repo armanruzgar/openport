@@ -1,8 +1,9 @@
-import { useEffect, type ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { useLive } from "../api/live"
 import { useAccount, usePortfolio } from "../api/trading"
 import type { Account } from "../api/trading-types"
 import { signedPercent } from "../lib/format"
+import { useMediaQuery } from "../lib/media"
 import { payoutsVisible } from "../lib/payouts"
 import { navigableViews, type View } from "../lib/route"
 import { formatMoney, ratio, signedMoney, subtractMoney } from "../lib/trading"
@@ -105,17 +106,33 @@ export function AccountSummary() {
   )
 }
 
+/** The sidebar's id, for the header's Open navigation button. */
+export const navigationId = "sidebar-navigation"
+
 export function Sidebar({ view, onView, open, onClose }: { view: View; onView: (view: View) => void; open: boolean; onClose: () => void }) {
   const { trading } = useLive()
   const account = useAccount().data
   const current = view === "smile" || view === "exposure" || view === "vol-scanner" || view === "flow" || view === "analyze" ? "chain" : view
   const items = navigableViews(trading != null, payoutsVisible(account))
+  // Below lg the sidebar is a drawer. Closed, it is only moved off screen, so it is made
+  // inert: out of the tab order and hidden from assistive technology.
+  const docked = useMediaQuery("(min-width: 64rem)")
+  const hidden = !open && !docked
+  const aside = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose() }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
   }, [open, onClose])
+  // Opening the drawer moves focus into it; closing returns it where it was (the menu button).
+  useEffect(() => {
+    if (!open || docked) return
+    const previous = document.activeElement
+    const target = aside.current?.querySelector<HTMLElement>('[aria-current="page"]') ?? aside.current?.querySelector<HTMLElement>("a, button, select")
+    target?.focus()
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus() }
+  }, [open, docked])
   const link = (v: View, index?: number) => (
     <button key={v} type="button" onClick={() => { onView(v); onClose() }} aria-current={current === v ? "page" : undefined}
       title={index != null ? `${viewLabels[v]} (${index + 1})` : viewLabels[v]}
@@ -127,7 +144,9 @@ export function Sidebar({ view, onView, open, onClose }: { view: View; onView: (
   return (
     <>
       {open && <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={onClose} aria-hidden="true" />}
-      <aside aria-label="Navigation" className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-panel max-lg:transition-transform lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+      {/* The whole sidebar scrolls, so a tall account block never hides the System pages below the fold. */}
+      <aside ref={aside} id={navigationId} aria-label="Navigation" inert={hidden} aria-hidden={hidden || undefined}
+        className={`fixed inset-y-0 left-0 z-40 flex w-60 flex-col overflow-y-auto border-r border-border bg-panel max-lg:transition-transform lg:sticky lg:top-0 lg:h-dvh lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
         <a href="#/" className="flex items-center gap-2 border-b border-border px-4 py-3 font-semibold tracking-tight">
           <svg viewBox="0 0 32 32" className="h-5 w-5 text-accent" aria-hidden="true">
             <rect width="32" height="32" rx="7" className="fill-raised" />
@@ -136,7 +155,7 @@ export function Sidebar({ view, onView, open, onClose }: { view: View; onView: (
           </svg>
           OpenPort
         </a>
-        <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-3" aria-label="Pages">
+        <nav className="shrink-0 grow space-y-4 px-2 py-3" aria-label="Pages">
           <div className="space-y-0.5">
             <div className="px-2.5 pb-1 text-[10px] font-medium uppercase tracking-wider text-faint">{trading ? "Account" : "Market"}</div>
             {items.map((v, index) => link(v, index))}
@@ -148,7 +167,7 @@ export function Sidebar({ view, onView, open, onClose }: { view: View; onView: (
             {link("engine")}
           </div>
         </nav>
-        {trading && <div className="space-y-3 border-t border-border p-3"><AccountSwitcher /><AccountSummary /></div>}
+        {trading && <div className="shrink-0 space-y-3 border-t border-border p-3"><AccountSwitcher /><AccountSummary /></div>}
       </aside>
     </>
   )
