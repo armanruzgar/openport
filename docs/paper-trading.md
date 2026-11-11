@@ -2063,9 +2063,13 @@ side, no buying-power check. All rule money is exact.
 These trade-entry rules leave reducing orders, managed exits and system closes available.
 Risk caps are checked at acceptance and changes, not retroactively when a floor moves.
 Stops may slip or stop-limits remain unfilled: trade risk assumes execution at the
-trigger price, without fees or slippage, and is not a guaranteed loss bound. Share
-entries cannot attach brackets, so a stop-required plan refuses them; with only a
-risk cap, a long share entry risks its purchase price and a short is unbounded.
+trigger price, without fees or slippage, and is not a guaranteed loss bound. An
+immediate share trade (`POST /api/stocks/trade`) cannot carry a bracket, so a
+stop-required plan refuses it, as it does an exercise that would open shares; open
+shares there with a working order whose `bracket.stop_loss` sets the stop (see
+[working share orders](#working-share-orders)). A share entry's trade risk is the
+move to that stop; without one, a long risks its purchase price and a short's risk
+is unbounded, which any risk cap refuses.
 
 Equity-based outcomes use **fully marked equity**: every position has a mark, fresh or not. A
 position without any mark defers the decision rather than counting as zero. Every

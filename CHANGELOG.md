@@ -20,6 +20,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Stop-required plans and share entries.** The plan rules in
+  [paper trading](docs/paper-trading.md) said a stop-required plan refuses every share
+  entry. It refuses an immediate share trade, which cannot carry a bracket; a working
+  share order with a `bracket.stop_loss` is accepted, and its trade risk is measured to
+  that stop.
 - **The Docker `--verify-run` example.** The [install guide](docs/install.md) verified
   the main paper journal, which always fails: `--verify-run` reproduces replay and
   scenario runs and backtest journals, and an account journal is not a run. The
