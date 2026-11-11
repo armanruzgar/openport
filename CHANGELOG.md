@@ -1166,6 +1166,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   its first snapshot, and the chain showed "ApiError: no data for SPX yet". It now
   says it is waiting for the first snapshot and gives the feed's state; and the
   terminal's other panels show an error's message without the "ApiError:" prefix.
+- **The guardrails editor says what it takes.** **Save guardrails** turned off with no
+  message when a field was out of range (size creep must exceed 100, for one), and
+  most ranges were not in the labels. Each field now gives its range and, when a value
+  will not do, says why under it; the dialog also offers the write token, as the risk
+  limits editor does.
 
 ## 0.5.1 (2026-10-28)
 

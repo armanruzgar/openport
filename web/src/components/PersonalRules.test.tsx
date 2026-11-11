@@ -50,3 +50,29 @@ it.each([null, "2500.00"])("explains when percent floors do nothing and rejects 
   await act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
   expect(api.updateGuardrails).toHaveBeenCalledWith(risk.limits_revision, { ...guardrails, soft_floor_percent: 99 }, "open")
 })
+it("says under each guardrail what it takes, and offers the write token in the dialog", async () => {
+  const discipline = { ...guardrails, loss_streak: 0, size_creep_percent: 0, size_creep_window: 0, size_creep_block: false }
+  vi.mocked(useLive).mockReturnValue(liveState({ ...status, trading: { ...status.trading!, write: "token" } }, null, "open"))
+  await act(async () => root.render(<QueryClientProvider client={client}><PersonalRules risk={{ ...risk, guardrails: discipline }} /></QueryClientProvider>))
+  await act(async () => [...host.querySelectorAll("button")].find((button) => button.textContent === "Edit guardrails")!.click())
+  const dialog = host.querySelector("dialog")!
+  expect([...dialog.querySelectorAll("button")].some((button) => button.textContent === "Enter write token")).toBe(true)
+  const input = (label: string) => [...dialog.querySelectorAll("label")].find((entry) => entry.textContent?.startsWith(label))!.querySelector("input")!
+  const set = async (element: HTMLInputElement, value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(element, value)
+    element.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  const hint = (element: HTMLInputElement) => document.getElementById(element.getAttribute("aria-describedby") ?? "")?.textContent
+  const creep = input("Size creep: opening order over % of recent median (101–10000; 0 is off)")
+  await set(creep, "50")
+  expect(creep.getAttribute("aria-invalid")).toBe("true")
+  expect(hint(creep)).toBe("Use 101 to 10000, or 0 to turn it off.")
+  await set(creep, "150")
+  expect(creep.getAttribute("aria-invalid")).toBe("false")
+  expect(hint(creep)).toBeUndefined()
+  const streak = input("Losing closes in a row that start the cooldown (0–100)")
+  await set(streak, "3")
+  expect(hint(streak)).toBe("A losing streak needs a cooldown of at least one minute.")
+  await set(input("Cooldown after stop-out (market minutes) (0–1440)"), "15")
+  expect(streak.getAttribute("aria-invalid")).toBe("false")
+})

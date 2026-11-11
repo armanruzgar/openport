@@ -1,6 +1,6 @@
 import { useActionApi } from "../api/action-client"
 import { PendingSettingsNotice } from "./PendingSettingsNotice"
-import { useState } from "react"
+import { useId, useState } from "react"
 
 import { useLive } from "../api/live"
 import { useAccount, useRefreshTrading, useTradingSession } from "../api/trading"
@@ -11,17 +11,18 @@ import { timestampET } from "../lib/freshness"
 import { useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
 import { LimitsEditor } from "./LimitsEditor"
-import { TradingError, writeBlocked } from "./TradingControls"
+import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
 
-const fields: { key: keyof Guardrails; label: string; money?: boolean }[] = [
+/** `range` is what the editor accepts, shown beside the label there. */
+const fields: { key: keyof Guardrails; label: string; money?: boolean; range?: string }[] = [
   { key: "soft_floor", label: "Soft floor equity ($)", money: true },
-  { key: "soft_floor_percent", label: "Soft floor (% of drawdown above plan floor)" },
+  { key: "soft_floor_percent", label: "Soft floor (% of drawdown above plan floor)", range: "0–99" },
   { key: "max_opening_trades", label: "Maximum opening orders per day" },
   { key: "cooldown_loss", label: "Closing loss that starts cooldown ($)", money: true },
-  { key: "cooldown_minutes", label: "Cooldown after stop-out (market minutes)" },
+  { key: "cooldown_minutes", label: "Cooldown after stop-out (market minutes)", range: "0–1440" },
   { key: "profit_lock", label: "Daily profit lock ($)", money: true },
-  { key: "loss_streak", label: "Losing closes in a row that start the cooldown" },
-  { key: "size_creep_percent", label: "Size creep: opening order over % of recent median" },
+  { key: "loss_streak", label: "Losing closes in a row that start the cooldown", range: "0–100" },
+  { key: "size_creep_percent", label: "Size creep: opening order over % of recent median", range: "101–10000; 0 is off" },
   { key: "size_creep_window", label: "Size creep: recent opening orders (3–100; 0 is 20)" },
 ]
 /** Discipline settings older servers do not have; sent only when the server reports them. */
@@ -79,11 +80,23 @@ function GuardrailsEditor({ risk, onClose }: { risk: Risk; onClose: () => void }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>()
   const creep = Number(draft.size_creep_percent), window = Number(draft.size_creep_window), streak = Number(draft.loss_streak)
-  const valid = shown.every(({ key, money }) => money ? validMoney(draft[key] ?? "") : /^\d+$/.test(draft[key] ?? "") && Number.isSafeInteger(Number(draft[key]))) &&
-    Number(draft.soft_floor_percent) <= 99 && Number(draft.cooldown_minutes) <= 1440 &&
-    streak <= 100 && (streak === 0 || Number(draft.cooldown_minutes) > 0) &&
-    (creep === 0 || (creep > 100 && creep <= 10000)) && (window === 0 || (window >= 3 && window <= 100)) &&
-    (creep > 0 || (window === 0 && draft.size_creep_block !== "true"))
+  // Each field's problem, said under it: Save stays off while any remains.
+  const errors: Partial<Record<keyof Guardrails, string>> = {}
+  for (const { key, money } of shown) {
+    const value = draft[key] ?? ""
+    if (money ? !validMoney(value) : !(/^\d+$/.test(value) && Number.isSafeInteger(Number(value))))
+      errors[key] = money ? "Enter an amount in dollars; 0 turns it off." : "Enter a whole number; 0 turns it off."
+  }
+  if (!errors.soft_floor_percent && Number(draft.soft_floor_percent) > 99) errors.soft_floor_percent = "Use 0 to 99."
+  if (!errors.cooldown_minutes && Number(draft.cooldown_minutes) > 1440) errors.cooldown_minutes = "Use 0 to 1440 minutes."
+  if (!errors.loss_streak && streak > 100) errors.loss_streak = "Use 0 to 100."
+  else if (!errors.loss_streak && streak !== 0 && !(Number(draft.cooldown_minutes) > 0)) errors.loss_streak = "A losing streak needs a cooldown of at least one minute."
+  if (!errors.size_creep_percent && creep !== 0 && !(creep > 100 && creep <= 10000)) errors.size_creep_percent = "Use 101 to 10000, or 0 to turn it off."
+  if (!errors.size_creep_window && window !== 0 && !(window >= 3 && window <= 100)) errors.size_creep_window = "Use 3 to 100, or 0 for 20."
+  else if (!errors.size_creep_window && window !== 0 && !(creep > 0)) errors.size_creep_window = "Set a size creep percent above 100 first."
+  if (draft.size_creep_block === "true" && !(creep > 0)) errors.size_creep_block = "Set a size creep percent above 100 first."
+  const valid = Object.keys(errors).length === 0
+  const ids = useId()
   async function save() {
     if (!trading || busy || !valid) return
     setBusy(true); setError(undefined)
@@ -95,11 +108,17 @@ function GuardrailsEditor({ risk, onClose }: { risk: Risk; onClose: () => void }
   }
   return <Dialog title="Edit personal guardrails" onClose={onClose}>
     <p className="text-xs text-muted">Use a dollar equity level or a percentage floor. If both are set, the higher wins. Any triggered closing stop (including a trailing stop or OCO stop) starts the configured cooldown; the dollar loss threshold also covers other closing fills. Zero disables a field. Floor percent is 0–99; 100 can put it at the peak and latch at once.</p>
+    <WriteAccess trading={trading} />
     <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save() }}>
       {known.length > 0 && <p className="text-xs text-muted">Discipline: a losing streak starts the same cooldown; size creep compares each opening order with the median of your recent ones and flags tilt in the journal, or refuses the order when blocking. Opt-in; zero turns each off.</p>}
-      <fieldset disabled={busy} className="grid min-w-0 grid-cols-2 gap-3">{shown.map(({ key, label, money }) => <label key={key} className="trade-label">{label}<input className="trade-input" inputMode={money ? "decimal" : "numeric"} max={key === "soft_floor_percent" ? 99 : undefined} value={draft[key]} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} />{key === "soft_floor_percent" && unusedPercent && <span className="text-xs text-muted">This plan has no drawdown floor, so a soft floor percent does nothing. Use an absolute soft floor instead.</span>}</label>)}
-        {known.includes("size_creep_block") && <label className="trade-label flex items-center gap-2"><input type="checkbox" checked={draft.size_creep_block === "true"}
-          onChange={(event) => setDraft({ ...draft, size_creep_block: String(event.target.checked) })} />Refuse size creep instead of warning</label>}</fieldset>
+      <fieldset disabled={busy} className="grid min-w-0 grid-cols-2 gap-3">{shown.map(({ key, label, money, range }) => <label key={key} className="trade-label">{label}{range ? ` (${range})` : ""}<input className="trade-input" inputMode={money ? "decimal" : "numeric"} max={key === "soft_floor_percent" ? 99 : undefined} value={draft[key]}
+          aria-invalid={!!errors[key]} aria-describedby={errors[key] ? `${ids}-${key}` : undefined} onChange={(event) => setDraft({ ...draft, [key]: event.target.value })} />
+          {errors[key] && <span id={`${ids}-${key}`} className="text-xs text-warn">{errors[key]}</span>}
+          {key === "soft_floor_percent" && unusedPercent && <span className="text-xs text-muted">This plan has no drawdown floor, so a soft floor percent does nothing. Use an absolute soft floor instead.</span>}</label>)}
+        {known.includes("size_creep_block") && <div><label className="trade-label flex items-center gap-2"><input type="checkbox" checked={draft.size_creep_block === "true"}
+          aria-invalid={!!errors.size_creep_block} aria-describedby={errors.size_creep_block ? `${ids}-size_creep_block` : undefined}
+          onChange={(event) => setDraft({ ...draft, size_creep_block: String(event.target.checked) })} />Refuse size creep instead of warning</label>
+          {errors.size_creep_block && <span id={`${ids}-size_creep_block`} className="text-xs text-warn">{errors.size_creep_block}</span>}</div>}</fieldset>
       <TradingError error={error} />
       {!!error && <p className="text-xs text-muted">If the revision changed, close and reopen this editor to review the latest rules.</p>}
       <button type="submit" className="trade-button" disabled={!valid || busy || !trading || writeBlocked(trading, token)}>Save guardrails</button>
