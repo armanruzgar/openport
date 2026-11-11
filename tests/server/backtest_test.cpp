@@ -313,6 +313,47 @@ TEST(Backtest, GeneratedDaysMatchSingleReplayAndParallelReportsAreByteIdentical)
     EXPECT_EQ((verified.equity - request.config.initial_cash).str(), sequential.at("days")[index].at("pnl").get<std::string>());
   }
 }
+// The definition docs/playbooks.md offers for POST /api/playbooks: its first JSON block.
+json documented_playbook() {
+  const auto file = std::filesystem::path(OPENPORT_TEST_DATA_DIR).parent_path().parent_path() / "docs" / "playbooks.md";
+  const auto text = bytes(file);
+  const auto fence = text.find("```json\n");
+  if (fence == std::string::npos) throw std::runtime_error("No JSON example in " + file.string());
+  const auto begin = fence + std::string_view("```json\n").size();
+  const auto end = text.find("\n```", begin);
+  if (end == std::string::npos) throw std::runtime_error("Unterminated JSON example in " + file.string());
+  return json::parse(text.substr(begin, end - begin));
+}
+TEST(Backtest, DocumentedPlaybookSurvivesItsEntrySnapshot) {
+  const test::SanitizerScenarioScale scale;
+  test::RecordingFile storage;
+  server::Playbooks store;
+  store.change({{"action", "create"}, {"definition", documented_playbook()}}, "main", false);
+  // The documented command's plan and seed. On these days the earlier example, 5 points
+  // wide with a 2x credit stop, filled with its stop already reached and closed at once.
+  auto request = server::parse_backtest({{"playbook", "morning-put"}, {"plan", "eod-50k"}, {"scenarios", 2}, {"seed", "81723"}},
+      store.catalogue(), providers::builtin_scenarios(), {});
+  // SPX-only sources keep it small; the SPX path does not depend on the other symbols.
+  for (std::size_t index = 0; index < request.days.size(); ++index) {
+    auto source = json::parse(request.days[index].scenario->source);
+    source["symbols"] = {"SPX"};
+    const auto file = storage.directory / ("scenario-" + std::to_string(index) + ".json");
+    std::ofstream(file) << source.dump();
+    request.days[index].scenario = providers::read_scenario(file);
+  }
+  const std::atomic_bool cancel{false};
+  request.workers = 2;
+  const auto report = server::run_backtest(request, storage.directory / "run", cancel);
+  ASSERT_EQ(report.at("status"), "completed") << report.dump();
+  std::size_t trades = 0;
+  for (const auto& day : report.at("days"))
+    for (const auto& trade : day.at("trades")) {
+      ++trades;
+      // A stop that the entry's own closing natural reaches closes it at the entry's time.
+      EXPECT_NE(trade.at("closed"), trade.at("opened")) << trade.dump();
+    }
+  EXPECT_GT(trades, 0U) << report.dump();
+}
 TEST(Backtest, CancellationPreservesCompletedDaysAndNeverInventsAttempts) {
   test::RecordingFile storage;
   auto request = request_for({recorded_day(storage.directory, {2026, 9, 14}), recorded_day(storage.directory, {2026, 9, 15})});

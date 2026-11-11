@@ -29,13 +29,13 @@ Tag filter can narrow that to one version.
   "structure": {
     "template": {
       "kind": "vertical", "type": "put", "direction": "credit",
-      "target": {"mode": "delta", "value": 15}, "width": 5
+      "target": {"mode": "delta", "value": 15}, "width": 15
     },
     "expiry": {"min": 0, "max": 1}
   },
   "sizing": {"units": 1},
   "management": {
-    "take_profit_percent": 50, "stop_credit_multiple": 2, "close_by": "15:45"
+    "take_profit_percent": 50, "stop_credit_multiple": 3, "close_by": "15:45"
   },
   "guardrails": {"max_entries_per_day": 1, "cooldown_minutes": 30}
 }
@@ -104,7 +104,10 @@ the closing premium as a percentage of the entry premium: 50 buys back half a
 credit; 150 receives one and a half times a debit. `stop_credit_multiple` must be
 greater than one and needs a credit entry. A stop already reached by the current
 closing natural fires as soon as the entry fills, so the room allowed by
-`stop_credit_multiple` must exceed the spread's own bid-ask cost. Alternatively,
+`stop_credit_multiple` must exceed the spread's own bid-ask cost. In the demo
+market a 5-point SPX put spread at 15 delta takes in about $0.20, no more than
+its two legs' bid-ask, so a 2× stop closes it at entry; the example's 15-point
+width and 3× stop leave room. Alternatively,
 `stop_underlying` takes
 `level` and `direction: above|below`. Bracket levels are fixed at submission and do
 not follow later entry fills. The take-profit limit sits on the legs' smallest tick,

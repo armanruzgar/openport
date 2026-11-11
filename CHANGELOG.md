@@ -20,6 +20,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **The playbook guide's example trades in the demo market.** The example definition in
+  [playbooks](docs/playbooks.md), a 5-point SPX put spread with a 2× credit stop, takes
+  in about $0.20 there, no more than its legs' bid-ask, so on every demo day it traded
+  its stop was already reached when the entry filled and it closed at once for a loss.
+  The example is now 15 points wide with a 3× stop, and a test runs it from the guide
+  on the guide's own backtest days.
 - **Covered calls in the strategy optimizer.** A covered call's share cost was charged
   twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
   `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the
