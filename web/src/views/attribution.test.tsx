@@ -35,4 +35,11 @@ describe("P&L by Greek beyond held positions", () => {
     expect(row({ round_trips: 1, realised: "40.00", fees: "0.65", net: "39.35" })).not.toContain("lifetime")
     expect(row(undefined)).not.toContain("lifetime")
   })
+  it("nets a sub-cent fee exactly, as every other net is formatted", () => {
+    // 40.00 − 0.685 is 39.315, which rounds half up to +$39.32; in binary floating point it rounded to 39.31.
+    const html = renderToStaticMarkup(<table><tbody><tr><RealizedCell realised="40.00" fees="0.685" /></tr></tbody></table>)
+    expect(html).toContain("<div>+$39.32</div>")
+    expect(html).toContain("realized +$40.00 before fees, fees $0.69, net +$39.32")
+    expect(renderToStaticMarkup(<table><tbody><tr><RealizedCell realised="0.00" fees="0.65" /></tr></tbody></table>)).toContain("−$0.65")
+  })
 })

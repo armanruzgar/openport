@@ -32,7 +32,7 @@ import { contractLabel, osiLabel } from "../lib/journal"
 import { strategyGroups, type StrategyGroup } from "../lib/positions"
 import { closingLegs } from "../lib/strategy"
 import { describeTrigger } from "../lib/ticket"
-import { deliversShares, formatMoney, paperNotice, ratio, signedMoney } from "../lib/trading"
+import { deliversShares, formatMoney, paperNotice, ratio, signedMoney, subtractMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 
 /** Right-aligned numeric table; the first `left` columns are labels, aligned left. */
@@ -85,10 +85,14 @@ function protection(position: Position, orders: Order[]): string | null {
   return exits.map((o) => `${o.role === "stop_loss" ? "Stop" : "Target"} ${o.trigger ? describeTrigger(o.trigger, o.side ?? "sell", o.underlying)
     + (o.limit_price != null ? `, limit ${formatMoney(o.limit_price)}` : "") : formatMoney(o.limit_price)}`).join(" · ")
 }
-/** The round trip's realised P&L after fees, and the contract's lifetime this attempt once it has had more than one. */
+/**
+ * The round trip's realised P&L after fees, exactly, under the "Net realized" column (the
+ * Realized tile and the sidebar show it before fees), and the contract's lifetime this
+ * attempt once it has had more than one.
+ */
 export function RealizedCell({ realised, fees, lifetime }: { realised: string; fees: string; lifetime?: Lifetime | null }) {
-  const net = (Number(realised) - Number(fees)).toFixed(2)
-  return <td className={toneText[toneOf(net)]} title={`This round trip: realized ${signedMoney(realised)}, fees ${formatMoney(fees)}${lifetime
+  const net = subtractMoney(realised, fees)
+  return <td className={toneText[toneOf(net)]} title={`This round trip: realized ${signedMoney(realised)} before fees, fees ${formatMoney(fees)}, net ${signedMoney(net)}${lifetime
     ? ` · All ${lifetime.round_trips} round trip${lifetime.round_trips === 1 ? "" : "s"} this attempt: net ${signedMoney(lifetime.net)}` : ""}`}>
     <div>{signedMoney(net)}</div>
     {lifetime && lifetime.round_trips > 1 && <div className="mt-1 text-[11px] text-muted">lifetime {signedMoney(lifetime.net)}</div>}
@@ -109,7 +113,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
   if (!positions.length) return <p className="text-sm text-muted">No open positions. Click a bid or ask on the Trade page to build a ticket.</p>
   const picking = onSelect != null && selected != null
   const underlying = picking ? positions.find((p) => selected.has(p.symbol))?.underlying : undefined
-  return <Table label="Positions" left={picking ? 2 : 1} headers={[...(picking ? ["Pick"] : []), "Contract", "Qty", "Avg price", "Mark / age", "Market value", "Unrealized", "P&L %", "Realized", "Today", "Dollar delta", "Vega", "Theta", ""]}>
+  return <Table label="Positions" left={picking ? 2 : 1} headers={[...(picking ? ["Pick"] : []), "Contract", "Qty", "Avg price", "Mark / age", "Market value", "Unrealized", "P&L %", "Net realized", "Today", "Dollar delta", "Vega", "Theta", ""]}>
     {positions.map((position) => {
       const change = position.unrealised != null ? ratio(position.unrealised, position.basis.replace("-", "")) : null
       return <tr key={position.symbol} tabIndex={0} aria-label={`${contractLabel(position)} position${onClose && !position.awaiting_settlement ? "; F to close" : ""}`}

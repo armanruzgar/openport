@@ -819,6 +819,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   nearest strike, the **By strike and expiry** grid jumped back to centre the spot
   row, even after you had scrolled elsewhere. It now follows spot only until you
   scroll it.
+- **The Positions table's realized P&L is exact and says it is net.** The column took
+  fees from realized P&L in binary floating point, so a sub-cent fee (from an itemized
+  fee schedule) could show a cent less than the same net everywhere else, $39.31
+  instead of $39.32. It also read "Realized", like the Realized tile and the sidebar,
+  which show P&L before fees, so one label had two meanings. The column is now "Net
+  realized", subtracted exactly, and its tooltip gives the gross, the fees and the net.
 
 ## 0.5.1 (2026-10-28)
 
