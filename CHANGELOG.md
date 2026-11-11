@@ -596,6 +596,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   two tabs, whichever added a candidate last dropped the other's after a reload. A
   tab now drops its copy when another tab saves the list (or clears storage), and
   reads the other's before it shows or changes it.
+- **The publishing workflows pin their actions.** The release, image and Pages
+  workflows, which run with tokens that can upload release archives and checksums,
+  push the image users pull as `latest` and deploy the site, named third-party actions
+  by movable major tags (`docker/build-push-action@v7`). Each is now pinned to the
+  commit of its current release, with the version in a comment, and Dependabot keeps
+  the pins current.
 
 ## 0.5.1 (2026-10-28)
 

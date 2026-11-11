@@ -1,0 +1,11 @@
+# The workflows that publish releases, the image and the site name each action by
+# commit, with its version in a comment; Dependabot keeps those pins current.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
