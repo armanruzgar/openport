@@ -313,6 +313,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   below zero, so its level never trailed. The limit now stays where it was set while
   the level trails spot. The simulator also refuses a reference or a trail on a
   trigger on a study, the clock or another underlying, as the API already did.
+- **A walking order's `then`.** A walking limit whose step came due at another
+  command's market time (a definition, or a day's rollover ahead of its quotes) and
+  filled there never placed its `then` order. It now places it in that transaction.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

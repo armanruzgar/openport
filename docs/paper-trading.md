@@ -562,6 +562,11 @@ on the current fresh book after the batch installs quotes; it does not invent
 intermediate quotes or retroactive fills. Elapsed market time includes gaps and
 closed sessions; normal session and expiry gates still control fills and cancellation.
 Cancellation at the order's deadline takes precedence over catching up missed steps.
+A step can also come due at another command's market time, such as a definition or a
+day's rollover ahead of the next batch's quotes, and fill the order there. Its
+[`then`](#order-chains-one-cancels-other-and-one-triggers-other) order is placed in
+that command's transaction, as after any other fill (runs recorded with replay
+driver 7 or earlier never placed it).
 Orders return the current `limit_price`, `walk` and `next_walk` (`time`,
 `limit_price`). `next_walk` is null at the cap, after completion or when the next
 interval would reach the order's deadline. New and change previews show

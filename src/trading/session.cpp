@@ -5904,6 +5904,9 @@ struct TradingSession::Impl {
       match_symbols(next, next.walked, events);
       next.walked.clear();
       check_triggers(next, events);
+      // An order its walk filled here places its `then` now: reindex below drops it
+      // from the orders a later place_chained visits. Replay drivers 1-7 never placed it.
+      if (next.revised_fills) place_chained(next, events);
     }
     next.opening_rule_inputs.reset();
     detail::update_reviews(next);

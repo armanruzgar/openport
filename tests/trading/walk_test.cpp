@@ -179,6 +179,35 @@ TEST(WalkingLimits, ClockStepsFillFreshBooksAndNewQuotesReplaceOldBooksFirst) {
   EXPECT_EQ(latest(moved).status, OrderStatus::Working);
 }
 
+TEST(WalkingLimits, AWalkThatFillsAheadOfAnotherCommandStillPlacesItsThen) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket f;
+    TradingSession s(settings(), f.time);
+    s.set_revised_fills(revised);
+    f.seed(s, "4.00", "4.20");
+    auto r = walking(f);
+    r.then = {f.limit("", 1, "4.60", Side::Sell, TimeInForce::Gtc)};
+    ASSERT_TRUE(s.submit(r, f.time).decision.ok());
+    // Another command 25 seconds on, before any new quote: the walk's steps reach the
+    // ask, 4.20, and the order fills ahead of that command.
+    ASSERT_TRUE(s.define(f.contract, f.time + 25 * md::kNanosPerSecond).decision.ok());
+    const auto parent = s.snapshot()->recent_orders.front();
+    EXPECT_EQ(parent.status, OrderStatus::Filled);
+    if (revised) {
+      ASSERT_EQ(s.snapshot()->recent_orders.size(), 2U);
+      EXPECT_EQ(parent.chained, 2U);
+      EXPECT_EQ(latest(s).request.client_order_id, "walk:then");
+      EXPECT_EQ(latest(s).chained_from, 1U);
+      EXPECT_EQ(latest(s).status, OrderStatus::Working);
+    } else {
+      // Replay drivers 1-7 never placed it, not even on later quotes.
+      quote(s, f, f.time + 30 * md::kNanosPerSecond, "4.00", "4.20");
+      EXPECT_EQ(s.snapshot()->recent_orders.size(), 1U);
+      EXPECT_EQ(s.snapshot()->recent_orders.front().chained, 0U);
+    }
+  }
+}
+
 TEST(WalkingLimits, ChangesRestartIntervalAndMayChangeOrRemoveWalk) {
   ScriptedMarket f;
   TradingSession s(settings(), f.time);
