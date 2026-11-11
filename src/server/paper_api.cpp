@@ -3348,13 +3348,55 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
     horizons.push_back({{"until", md::format_timestamp(target)}, {"sigma", variance ? number(std::sqrt(*variance)) : json(nullptr)},
                         {"one_sd", cone(1)}, {"two_sd", cone(2)}});
   }
+  // With legs, the profile is the held book in scope (none with held=false) and the
+  // legs together, each leg valued from the analytics that quote it unless the
+  // account already values that contract.
+  std::map<std::string, Position> leg_positions;
+  std::map<std::string, StockPosition> leg_stocks;
+  std::map<std::string, double> share_prices;
+  auto valuations = view->valuations;
+  json leg_list = json::array();
+  if (!legs.empty()) {
+    if (held_book) {
+      for (const auto& marked : s.positions)
+        if (marked.position.contract.underlying == underlying) leg_positions.emplace(marked.position.contract.osi_symbol(), marked.position);
+      for (const auto& marked : s.stocks) {
+        if (marked.position.symbol != underlying) continue;
+        leg_stocks.emplace(marked.position.symbol, marked.position);
+        if (marked.fresh && marked.mark) share_prices[marked.position.symbol] = marked.mark->dollars();
+      }
+    }
+    for (std::size_t i = 0; i < legs.size(); ++i) {
+      const auto& [symbol, quantity] = legs[i];
+      auto& position = leg_positions.try_emplace(symbol, Position{leg_options[i]->contract, 0, {}, {}, {}}).first->second;
+      const bool was_long = position.quantity > 0;
+      position.quantity += quantity;
+      if (position.quantity == 0) leg_positions.erase(symbol);
+      // A leg past the held size flips its side; the profile values marks, not
+      // cost, so the flipped hypothetical position carries no basis.
+      else if ((position.quantity > 0) != was_long) position.basis = position.fees = Money{};
+      if (!valuations.contains(symbol)) valuations[symbol] = valuation_for(symbol, leg_options[i]->contract, leg_metrics);
+      leg_list.push_back({{"symbol", symbol}, {"quantity", quantity}});
+    }
+  }
+  // Analytics can publish ahead of the account's view of the same quotes.
+  const auto now = legs.empty() ? s.time : std::max(s.time, leg_metrics->as_of);
+  const auto leg_book = Ledger::restore({}, std::move(leg_positions), std::move(leg_stocks));
+  // The rows' dollar deltas are the profiled book's, as its curves are: the account's
+  // own risk without legs, and with them the ledger above (the legs alone when the
+  // held book is left out), never the held book's beside curves that are not.
+  const auto leg_risk = legs.empty() ? RiskSnapshot{}
+      : portfolio_risk(leg_book, {}, view->contracts, valuations, view->config.limits, now, share_prices);
+  const auto& book_risk = legs.empty() ? s.risk : leg_risk;
   json betas = json::array();
   double weighted = 0;
-  bool weighted_complete = s.risk.complete;
+  bool weighted_complete = book_risk.complete;
   for (const auto& symbol : held) {
     const auto beta = underlying.empty() && beta_weighted ? profile_beta(source, symbol, reference, given) : BetaEstimate{1, analytics::kNaN, 0, "reference"};
-    const auto bucket = s.risk.underlyings.find(symbol);
-    const std::optional<double> dollar_delta = bucket != s.risk.underlyings.end() ? std::optional(bucket->second.position.dollar_delta) : std::nullopt;
+    const auto bucket = book_risk.underlyings.find(symbol);
+    // Legs that leave the profiled book flat in an underlying leave it no bucket: no delta.
+    const std::optional<double> dollar_delta = bucket != book_risk.underlyings.end() ? std::optional(bucket->second.position.dollar_delta)
+        : legs.empty() ? std::nullopt : std::optional(0.0);
     if (!beta.source.empty()) config.betas[symbol] = beta.beta;
     if (beta.source.empty() || !dollar_delta) weighted_complete = false;
     else weighted += *dollar_delta * beta.beta;
@@ -3407,40 +3449,10 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
                   "Term scaling uses sqrt(30/max(1,remaining days)). Trading rules retain their configured parallel, zero-day, sticky-strike grid."}}.dump()};
   }
   RiskProfile profile;
-  json leg_list = json::array();
   if (legs.empty()) profile = snapshot_profile(s, view->config, view->valuations, config, spot, underlying);
   else {
-    // The held book in scope plus the legs, each leg valued from the analytics that
-    // quote it unless the account already values that contract.
-    std::map<std::string, Position> positions;
-    std::map<std::string, StockPosition> stocks;
-    std::map<std::string, double> share_prices;
-    if (held_book) {
-      for (const auto& marked : s.positions)
-        if (marked.position.contract.underlying == underlying) positions.emplace(marked.position.contract.osi_symbol(), marked.position);
-      for (const auto& marked : s.stocks) {
-        if (marked.position.symbol != underlying) continue;
-        stocks.emplace(marked.position.symbol, marked.position);
-        if (marked.fresh && marked.mark) share_prices[marked.position.symbol] = marked.mark->dollars();
-      }
-    }
-    auto valuations = view->valuations;
-    for (std::size_t i = 0; i < legs.size(); ++i) {
-      const auto& [symbol, quantity] = legs[i];
-      auto& position = positions.try_emplace(symbol, Position{leg_options[i]->contract, 0, {}, {}, {}}).first->second;
-      const bool was_long = position.quantity > 0;
-      position.quantity += quantity;
-      if (position.quantity == 0) positions.erase(symbol);
-      // A leg past the held size flips its side; the profile values marks, not
-      // cost, so the flipped hypothetical position carries no basis.
-      else if ((position.quantity > 0) != was_long) position.basis = position.fees = Money{};
-      if (!valuations.contains(symbol)) valuations[symbol] = valuation_for(symbol, leg_options[i]->contract, leg_metrics);
-      leg_list.push_back({{"symbol", symbol}, {"quantity", quantity}});
-    }
-    // Analytics can publish ahead of the account's view of the same quotes.
-    const auto now = std::max(s.time, leg_metrics->as_of);
     const bool floors = held_book;
-    profile = risk_profile(Ledger::restore({}, std::move(positions), std::move(stocks)), valuations, config, spot, s.equity,
+    profile = risk_profile(leg_book, valuations, config, spot, s.equity,
         floors && view->config.rules.max_drawdown > Money{} ? std::optional(s.evaluation.floor) : std::nullopt,
         floors ? s.soft_floor : std::nullopt, now, view->config.limits.max_valuation_age, share_prices);
     if (held_book && !s.valuation_complete) {

@@ -4768,6 +4768,18 @@ TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
   EXPECT_TRUE(closed["held"]);
   const auto doubled = read(*engine, query + leg + ":%2B1");
   EXPECT_NEAR(doubled["curves"][1]["pnl"][4].get<double>(), 2 * held["curves"][1]["pnl"][4].get<double>(), 1e-6);
+  // The beta rows and weighted deltas are the profiled book's, as the curves are: the
+  // legs alone without the held book, the two together with it.
+  const auto delta_of = [](const json& profile) { return profile["betas"][0]["dollar_delta"].get<double>(); };
+  const double held_delta = delta_of(held);
+  ASSERT_GT(held_delta, 0);
+  EXPECT_NEAR(delta_of(alone), held_delta, 1e-6 * held_delta);
+  EXPECT_NEAR(delta_of(doubled), 2 * held_delta, 1e-6 * held_delta);
+  EXPECT_NEAR(doubled["weighted_dollar_delta"].get<double>(), 2 * held_delta, 1e-6 * held_delta);
+  EXPECT_EQ(delta_of(closed), 0.0);
+  const auto short_alone = read(*engine, query + leg + ":-1&held=false");
+  EXPECT_NEAR(delta_of(short_alone), -held_delta, 1e-6 * held_delta);
+  EXPECT_NEAR(short_alone["weighted_delta"].get<double>() * short_alone["spot"].get<double>(), -held_delta, 1e-6 * held_delta);
   test::capture_contract("paper", "GET", query + leg + ":1", server::handle_api({"GET", query + leg + ":1"}, *engine));
   for (const auto* bad : {"&legs=SPXW%20%20261022C05000000:0", "&legs=SPXW261022C05000000:1", "&legs=SPXW%20%20261022C05000000:x",
                           "&legs=SPXW%20%20261022C05000000:-9223372036854775808", "&legs=SPXW%20%20261022C05000000:9223372036854775807",

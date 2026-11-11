@@ -3878,8 +3878,10 @@ underlying's current analytics (404 `UNKNOWN_CONTRACT` otherwise) and valued wit
 same model, from `valuation_for` unless the account already values that contract, so
 a candidate's curve and the held book's add up exactly. A leg on a held contract adds
 to or offsets it. With `held=false` the profile is the legs alone: `room` and the floor
-levels are null, because the account's floors measure its whole equity. The response
-echoes `held` and `legs`. P&L is from the contracts' model values now, as for the held
+levels are null, because the account's floors measure its whole equity. The `betas`
+row's `dollar_delta`, `weighted_dollar_delta` and `weighted_delta` describe the same
+book as the curves: the held book in scope plus the legs, or the legs alone (0 when
+the legs close the held contracts). The response echoes `held` and `legs`. P&L is from the contracts' model values now, as for the held
 book; what entering costs beyond the mids is the client's to subtract.
 
 The Trade page's **Analyze** tab draws up to four candidate strategies (one to four

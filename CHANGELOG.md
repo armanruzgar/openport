@@ -37,6 +37,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Risk profile betas with hypothetical legs.** `GET /api/risk/profile` with `legs`
+  took each beta row's dollar delta from the account's own risk, so `betas[].dollar_delta`,
+  `weighted_dollar_delta` and `weighted_delta` reported the held book even with
+  `held=false`, where the curves are the legs alone, and left the legs out with
+  `held=true`. They now describe the same book as the curves: the held book in scope
+  plus the legs, or the legs alone.
 - **A playbook named `staged`.** Every POST under `/api/playbooks/staged/` was read
   as a staged order's action, so `POST /api/playbooks/staged/evaluate` failed for a
   playbook of that name with "Unknown staged-order action", and a trade-scoped token
