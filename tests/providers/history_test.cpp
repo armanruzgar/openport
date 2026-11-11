@@ -626,9 +626,23 @@ TEST(HistoryImport, MassivePaginationRetryAndFailuresAreBoundedAndPrivate) {
       const auto path = providers::import_day(input, *source, kToday);
       EXPECT_EQ(events_of<md::OptionQuote>(read(path)).size(), 4U);
     } else {
+      // Each failure for its own reason: a foreign next_url and a cycle are both refused
+      // as pagination, which only the requests below tell apart.
+      const auto* reason = mode == "denied"         ? "Massive history: HTTP 403"
+                           : mode == "missing-time" ? "Massive history: missing or invalid market timestamp"
+                           : mode == "correction"   ? "Massive history: corrected trades are unsupported"
+                                                    : "Massive history: invalid pagination URL";
       try { (void)providers::import_day(input, *source, kToday); FAIL() << "expected failure"; }
-      catch (const std::exception& error) { EXPECT_EQ(std::string(error.what()).find("test-key"), std::string::npos); }
+      catch (const std::exception& error) {
+        EXPECT_EQ(std::string(error.what()).find("test-key"), std::string::npos);
+        EXPECT_NE(std::string(error.what()).find(reason), std::string::npos) << error.what();
+      }
       EXPECT_TRUE(std::filesystem::is_empty(file.directory));
+    }
+    // The key goes to Massive's API alone, never to a next_url on another host.
+    for (const auto& url : http.urls) {
+      EXPECT_TRUE(url.starts_with("https://api.massive.com/")) << url;
+      EXPECT_EQ(url.find("example.com"), std::string::npos) << url;
     }
     EXPECT_NE(std::find(waits.begin(), waits.end(), std::chrono::seconds(2)), waits.end());
   }
