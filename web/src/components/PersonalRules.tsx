@@ -108,7 +108,7 @@ function GuardrailsEditor({ risk, onClose }: { risk: Risk; onClose: () => void }
   }
   return <Dialog title="Edit personal guardrails" onClose={onClose}>
     <p className="text-xs text-muted">Use a dollar equity level or a percentage floor. If both are set, the higher wins. Any triggered closing stop (including a trailing stop or OCO stop) starts the configured cooldown; the dollar loss threshold also covers other closing fills. Zero disables a field. Floor percent is 0–99; 100 can put it at the peak and latch at once.</p>
-    <WriteAccess trading={trading} />
+    <WriteAccess trading={trading ?? undefined} />
     <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save() }}>
       {known.length > 0 && <p className="text-xs text-muted">Discipline: a losing streak starts the same cooldown; size creep compares each opening order with the median of your recent ones and flags tilt in the journal, or refuses the order when blocking. Opt-in; zero turns each off.</p>}
       <fieldset disabled={busy} className="grid min-w-0 grid-cols-2 gap-3">{shown.map(({ key, label, money, range }) => <label key={key} className="trade-label">{label}{range ? ` (${range})` : ""}<input className="trade-input" inputMode={money ? "decimal" : "numeric"} max={key === "soft_floor_percent" ? 99 : undefined} value={draft[key]}
