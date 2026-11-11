@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -40,7 +41,13 @@ class CandleStore {
     std::filesystem::path directory;  ///< empty keeps history in memory only
     std::chrono::days keep{10};       ///< minute history kept per underlying
     std::size_t max_days = 2600;      ///< daily bars kept per underlying, about ten years
+    /// A live feed's wall clock. A minute starting more than kMaxLead after it is
+    /// ignored, whether sampled, merged or read back from a file, so one mis-stamped
+    /// sample or bar cannot become the newest minute and prune the real ones before it.
+    /// Empty for demo and replay, whose market time can run ahead of the wall clock.
+    std::function<md::Timestamp()> clock = {};
   };
+  static constexpr md::Timestamp kMaxLead = 5 * md::kNanosPerMinute;
 
   CandleStore() : CandleStore(Options{}) {}
   explicit CandleStore(Options options);
@@ -86,6 +93,7 @@ class CandleStore {
   void persist(const std::string& symbol, Series& series, bool forming);
   void compact(const std::string& symbol, Series& series);
   void prune(Series& series) const;
+  [[nodiscard]] bool ahead(md::Timestamp start) const;
   [[nodiscard]] std::vector<md::Bar> sessions(const Series& series, std::size_t limit) const;
   [[nodiscard]] std::filesystem::path file_for(const std::string& symbol) const;
 

@@ -194,6 +194,42 @@ TEST(Candles, RewrittenMinutesCompactTheFileOnReload) {
   std::filesystem::remove_all(directory);
 }
 
+// One mis-stamped minute, as a vendor's millisecond time read as seconds would give,
+// became the newest and pruned every real minute ten days before it, in memory and
+// at the next start on disk, and later real samples were no longer persisted. A live
+// store's minutes are bounded by its wall clock instead.
+TEST(Candles, AFarFutureMinuteNeitherPrunesHistoryNorStopsPersisting) {
+  const auto directory = fresh_directory("future");
+  const auto now = ny(16, 0);
+  const auto far = now + 365 * md::kNanosPerDay;
+  const CandleStore::Options options{directory, std::chrono::days{10}, 2600, [now] { return now; }};
+  {
+    CandleStore store(options);
+    for (int minute = 0; minute < 30; ++minute) store.sample("SPX", ny(10, minute), 100.0 + minute);
+    store.sample("SPX", far, 50.0);
+    store.merge_minutes("SPX", {bar(now + 30 * md::kNanosPerDay, 1, 1, 1, 1)});
+    store.sample("SPX", ny(10, 30), 130.0);
+    store.sample("SPX", ny(10, 31), 131.0);
+    const auto bars = store.bars("SPX", BarInterval::Minute, 100);
+    ASSERT_EQ(bars.size(), 32u);
+    EXPECT_EQ(bars.front().start, ny(10, 0));
+    EXPECT_EQ(bars.back().start, ny(10, 31));
+  }
+  EXPECT_EQ(lines_in(directory / "SPX.csv"), 32u);
+  // A file an earlier version wrote with such a minute heals at the next start.
+  { std::ofstream out(directory / "SPX.csv", std::ios::app); out << far / md::kNanosPerSecond << ",1,1,1,1,s\n"; }
+  {
+    CandleStore reopened(options);
+    EXPECT_EQ(reopened.bars("SPX", BarInterval::Minute, 100).size(), 32u);
+  }
+  EXPECT_EQ(lines_in(directory / "SPX.csv"), 32u);
+  // Demo and replay market time can run ahead of the wall clock: no clock, no bound.
+  CandleStore simulated;
+  simulated.sample("SPX", far, 50.0);
+  EXPECT_EQ(simulated.bars("SPX", BarInterval::Minute, 10).size(), 1u);
+  std::filesystem::remove_all(directory);
+}
+
 TEST(Candles, AnUnwritableDirectoryIsReportedNotThrown) {
   const auto directory = fresh_directory("blocked");
   std::ofstream(directory.string()) << "a file, not a directory";

@@ -127,7 +127,7 @@ void CandleStore::load(const std::filesystem::path& file) {
         (source != 'o' && source != 's'))
       continue;  // a line cut short by a crash
     bar.start = static_cast<md::Timestamp>(seconds) * md::kNanosPerSecond;
-    if (!md::valid_bar(bar) || bar.start != floor_to(bar.start, kMinute)) continue;
+    if (!md::valid_bar(bar) || bar.start != floor_to(bar.start, kMinute) || ahead(bar.start)) continue;
     const bool official = source == 'o';
     series.minutes[bar.start] =
         Minute{bar, bar.start, official ? bar.start + kMinute - 1 : bar.start, official, true};
@@ -138,9 +138,10 @@ void CandleStore::load(const std::filesystem::path& file) {
 
 void CandleStore::sample(const std::string& symbol, md::Timestamp time, double price) {
   if (!std::isfinite(price) || price <= 0.0) return;
+  const md::Timestamp start = floor_to(time, kMinute);
+  if (ahead(start)) return;
   const std::lock_guard lock(mutex_);
   Series& series = series_[symbol];
-  const md::Timestamp start = floor_to(time, kMinute);
   const bool newest = series.minutes.empty() || start > series.minutes.rbegin()->first;
   auto [it, inserted] = series.minutes.try_emplace(start);
   Minute& minute = it->second;
@@ -172,7 +173,7 @@ void CandleStore::merge_minutes(const std::string& symbol, const std::vector<md:
   const std::lock_guard lock(mutex_);
   Series& series = series_[symbol];
   for (const md::Bar& bar : bars) {
-    if (!md::valid_bar(bar) || bar.start != floor_to(bar.start, kMinute)) continue;
+    if (!md::valid_bar(bar) || bar.start != floor_to(bar.start, kMinute) || ahead(bar.start)) continue;
     Minute& minute = series.minutes[bar.start];
     if (minute.official && minute.bar == bar) continue;
     minute = Minute{bar, bar.start, bar.start + kMinute - 1, true, false};
@@ -187,6 +188,10 @@ void CandleStore::merge_days(const std::string& symbol, const std::vector<md::Ba
   for (const md::Bar& bar : bars)
     if (std::isfinite(bar.close) && bar.close > 0) series.days[bar.start] = bar;
   while (series.days.size() > options_.max_days) series.days.erase(series.days.begin());
+}
+
+bool CandleStore::ahead(md::Timestamp start) const {
+  return options_.clock && start > options_.clock() + kMaxLead;
 }
 
 void CandleStore::prune(Series& series) const {
