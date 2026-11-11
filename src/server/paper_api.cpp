@@ -3229,6 +3229,7 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
   std::vector<std::pair<std::string, Quantity>> legs;
   bool held_book = true;
   bool valid = true;
+  std::string invalid;  // the parameter at fault
   for (const auto& [key, value] : query) {
     if (key == "account" && valid_account(value)) account = value;
     else if (!grid && key == "legs") {
@@ -3292,9 +3293,12 @@ ApiResponse risk_profile_response(const std::map<std::string, std::string>& quer
         if (valid) given[symbol] = beta;
       }
     } else valid = false;
-    if (!valid) break;
+    if (!valid) {
+      invalid = key;
+      break;
+    }
   }
-  if (!valid) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+  if (!valid) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter " + invalid);
   if (!legs.empty() && underlying.empty()) return api_error(400, "INVALID_REQUEST", "legs require an underlying");
   if (legs.empty() && !held_book) return api_error(400, "INVALID_REQUEST", "held=false requires legs");
   if (!known_account(source, account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + account);
@@ -3540,10 +3544,10 @@ ApiResponse hedge_response(const std::map<std::string, std::string>& query, cons
         const std::string symbol(item.substr(0, colon));
         if (colon == std::string_view::npos || !underlying_symbol(symbol) || given.contains(symbol) ||
             !query_decimal(std::string(item.substr(colon + 1)), beta) || std::abs(beta) > 10)
-          return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+          return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter " + key);
         given[symbol] = beta;
       }
-    } else return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+    } else return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter " + key);
   }
   if (target.empty()) return api_error(400, "INVALID_REQUEST", "target must be delta, vega or grid");
   if (!known_account(source, account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + account);
@@ -4023,6 +4027,22 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
       {"pack", errors.empty() ? normalized : json(nullptr)},
       {"label", "Imported terms are the pack author's; this server checks only that they are well formed"}}.dump()};
 }
+namespace {
+/// A from or to bound of a paper read, read the same on every route that takes one: a
+/// New York date (YYYY-MM-DD, its first instant, or its last for `to`) or a UTC
+/// instant (YYYY-MM-DDTHH:MM:SS, optionally with a fraction and Z or an offset).
+std::optional<Timestamp> query_bound(const std::string& text, bool end) {
+  if (const auto date = csv_date(text)) {
+    const auto start = md::new_york_to_utc(end ? md::date_from_days(md::days_since_epoch(*date) + 1) : *date, 0, 0);
+    if (start == md::kInvalidTimestamp) return std::nullopt;
+    return end ? start - 1 : start;
+  }
+  const auto parsed = md::parse_datetime(text, md::Zone::Utc);
+  if (!parsed || *parsed < 0) return std::nullopt;
+  return parsed;
+}
+}  // namespace
+
 std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSource& source) {
   const auto question = request.target.find('?');
   const auto path = request.target.substr(0, question);
@@ -4034,12 +4054,12 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       path != "/api/fills/quality" && path != "/api/stocks/orders") return {};
   if (path == "/api/risk/hedges") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
-    if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+    if (!pairs) return api_error(400, "INVALID_REQUEST", "Duplicate or malformed query parameter");
     return hedge_response(*pairs, source, request.access.sandbox);
   }
   if (path == "/api/risk/profile" || path == "/api/risk/scenarios") {
     const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
-    if (!pairs) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+    if (!pairs) return api_error(400, "INVALID_REQUEST", "Duplicate or malformed query parameter");
     return risk_profile_response(*pairs, source, request.access.sandbox, path == "/api/risk/scenarios");
   }
   const auto query = question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1);
@@ -4047,16 +4067,20 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   // trades take status=open|closed|all and attempt=current|all. Each key at most once.
   const auto pairs = query_parameters(query);
   const bool csv = path == "/api/trades.csv" || path == "/api/fills.csv";
-  // CSV exports filter by New York date; the equity history by instant.
-  std::string account = request.access.sandbox, status = "all", attempt = csv ? "all" : "current", from, to;
+  // Fills, the equity history and the CSV exports take from and to (query_bound).
+  const bool bounded = csv || path == "/api/account/equity" || path == "/api/fills";
+  std::string account = request.access.sandbox, status = "all", attempt = csv ? "all" : "current";
   std::optional<std::string> client_order_id;
   std::optional<Timestamp> since, until;
   std::optional<std::uint64_t> limit;
   Timestamp cursor_time = 0;
   std::uint64_t cursor_ordinal = 0;
-  bool valid_query = pairs.has_value(), archived = false;
+  bool archived = false;
   SmileDynamics dynamics = SmileDynamics::StickyStrike;
+  // The first fault, naming the parameter and what it takes.
+  std::string problem = pairs ? "" : "Duplicate or malformed query parameter";
   for (const auto& [key, value] : pairs.value_or(std::map<std::string, std::string>{})) {
+    if (!problem.empty()) break;
     if ((key == "limit" || key == "cursor") && path == "/api/account/equity") {
       const auto positive = [](std::string_view text, auto& number) {
         const auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), number);
@@ -4064,33 +4088,47 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       };
       std::uint64_t count = 0;
       if (key == "limit") {
-        if (!positive(value, count) || count > 2000) valid_query = false;
+        if (!positive(value, count) || count > 2000) problem = "limit must be a whole number from 1 to 2000";
         else limit = count;
       } else {
         const auto colon = value.find(':');
         if (colon == std::string::npos || !positive(std::string_view(value).substr(0, colon), cursor_time) ||
-            !positive(std::string_view(value).substr(colon + 1), cursor_ordinal)) valid_query = false;
+            !positive(std::string_view(value).substr(colon + 1), cursor_ordinal))
+          problem = "cursor must be the next value an earlier page returned";
       }
-    } else if ((key == "from" || key == "to") && path == "/api/account/equity") {
-      const auto parsed = md::parse_datetime(value, md::Zone::Utc);
-      if (!parsed || *parsed < 0) valid_query = false;
-      else if (key == "from") since = parsed; else until = parsed;
-    } else if (key == "archived" && path == "/api/accounts" && (value == "true" || value == "false")) archived = value == "true";
-    else if (key == "account" && path != "/api/accounts" && valid_account(value)) account = value;
-    else if (key == "dynamics" && path == "/api/risk" && parse_smile_dynamics(value)) dynamics = *parse_smile_dynamics(value);
-    else if (key == "status" && (path == "/api/orders" || path == "/api/stocks/orders") && (value == "open" || value == "all")) status = value;
-    else if (key == "client_order_id" && path == "/api/orders" && valid_client_order_id(value)) client_order_id = value;
-    else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv") && (value == "open" || value == "closed" || value == "all")) status = value;
-    else if (key == "attempt" && (path == "/api/trades" || path == "/api/trades.csv" || path == "/api/fills/quality") &&
-             (value == "current" || value == "all")) attempt = value;
-    else if (csv && key == "from" && csv_date(value)) from = value;
-    else if (csv && key == "to" && csv_date(value)) to = value;
-    else valid_query = false;
+    } else if ((key == "from" || key == "to") && bounded) {
+      const auto bound = query_bound(value, key == "to");
+      if (!bound) problem = key + " must be a New York date (YYYY-MM-DD) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ)";
+      else if (key == "from") since = bound;
+      else until = bound;
+    } else if (key == "archived" && path == "/api/accounts") {
+      if (value == "true" || value == "false") archived = value == "true";
+      else problem = "archived must be true or false";
+    } else if (key == "account" && path != "/api/accounts") {
+      if (valid_account(value)) account = value;
+      else problem = "account must be an account ID: lowercase letters, digits and single hyphens";
+    } else if (key == "dynamics" && path == "/api/risk") {
+      if (const auto named = parse_smile_dynamics(value)) dynamics = *named;
+      else problem = "dynamics must be sticky_strike, sticky_moneyness or sticky_delta";
+    } else if (key == "status" && (path == "/api/orders" || path == "/api/stocks/orders")) {
+      if (value == "open" || value == "all") status = value;
+      else problem = "status must be open or all";
+    } else if (key == "client_order_id" && path == "/api/orders") {
+      if (valid_client_order_id(value)) client_order_id = value;
+      else problem = "client_order_id must be 1 to 128 bytes, none of them a control character";
+    } else if (key == "status" && (path == "/api/trades" || path == "/api/trades.csv")) {
+      if (value == "open" || value == "closed" || value == "all") status = value;
+      else problem = "status must be open, closed or all";
+    } else if (key == "attempt" && (path == "/api/trades" || path == "/api/trades.csv" || path == "/api/fills/quality")) {
+      if (value == "current" || value == "all") attempt = value;
+      else problem = "attempt must be current or all";
+    } else {
+      problem = "Unknown query parameter " + key + " for " + path;
+    }
   }
-  if (!from.empty() && !to.empty() && from > to) valid_query = false;
-  if (since && until && *since > *until) valid_query = false;
-  if (cursor_time && !limit) valid_query = false;
-  if (!valid_query) return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter");
+  if (problem.empty() && since && until && *since > *until) problem = "from must not be after to";
+  if (problem.empty() && cursor_time && !limit) problem = "cursor needs limit";
+  if (!problem.empty()) return api_error(400, "INVALID_REQUEST", problem);
   if (path == "/api/plans") return ApiResponse{200, plans_json().dump()};
   if (path == "/api/accounts") return ApiResponse{200, json{{"accounts", accounts_json(source, request.access, archived)}}.dump()};
   if (!known_account(source, account)) return api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + account);
@@ -4207,7 +4245,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
       for (const auto& row : trades.at("share_trades")) rows.push_back(row);
     }
     return ApiResponse{200, paper_csv(rows, fills, account.empty() ? std::string(kMainAccount) : account,
-                                    source.status().provider, s.account_version, from, to, view->run),
+                                    source.status().provider, s.account_version, since, until, view->run),
                        "text/csv; charset=utf-8", fills ? "fills.csv" : "trades.csv"};
   }
   json body{{"account_version", std::to_string(s.account_version)}};
@@ -4218,7 +4256,8 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
         body["orders"].push_back(order_json(*it, *view));
   } else {
     body["fills"] = json::array();
-    for (auto it = s.recent_fills.rbegin(); it != s.recent_fills.rend(); ++it) body["fills"].push_back(fill_json(*it, *view));
+    for (auto it = s.recent_fills.rbegin(); it != s.recent_fills.rend(); ++it)
+      if ((!since || it->time >= *since) && (!until || it->time <= *until)) body["fills"].push_back(fill_json(*it, *view));
   }
   return ApiResponse{200, body.dump()};
 }

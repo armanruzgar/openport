@@ -156,7 +156,7 @@ TEST(TradeReviewApi, GivesBackProfitAndReportsRAndHeatOnlyWithKnownRisk) {
 
 TEST(TradeReviewApi, CsvDateUsesNewYorkCalendarDateIncludingDst) {
   const json fills = json::array({{{"time", "2026-03-09T01:00:00Z"}, {"id", "1"}}, {{"time", "2026-11-02T01:00:00Z"}, {"id", "2"}}});
-  const auto rows = csv_rows(server::paper_csv(fills, true, "practice", "cboe", 1, "", ""));
+  const auto rows = csv_rows(server::paper_csv(fills, true, "practice", "cboe", 1, {}, {}));
   ASSERT_EQ(rows.size(), 3U);
   EXPECT_EQ(csv_record(rows[0], rows[1])["new_york_date"], "2026-03-08");
   EXPECT_EQ(csv_record(rows[0], rows[2])["new_york_date"], "2026-11-01");

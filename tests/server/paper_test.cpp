@@ -2343,6 +2343,48 @@ TEST(PaperRecovery, AnUnderlyingWithoutAPriceIsNotAnalysedAndCannotDisableTradin
   std::filesystem::remove_all(path.parent_path());
 }
 
+// A paper read names the parameter at fault and what it takes, and every route that
+// takes from and to reads a New York date or a UTC instant alike.
+TEST_F(PaperEngine, PaperReadsNameTheFaultyParameterAndShareTheirTimeBounds) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "bounded", "4.20")).status, 201);
+  engine->synchronize().get();
+  const auto message = [&](const std::string& target) {
+    const auto response = server::handle_api({"GET", target}, *engine);
+    EXPECT_EQ(response.status, 400) << target << " " << response.body;
+    return json::parse(response.body)["error"]["message"].get<std::string>();
+  };
+  EXPECT_EQ(message("/api/fills?limit=5"), "Unknown query parameter limit for /api/fills");
+  EXPECT_EQ(message("/api/fills/quality?attempt=nope"), "attempt must be current or all");
+  EXPECT_EQ(message("/api/orders?status=closed"), "status must be open or all");
+  EXPECT_EQ(message("/api/trades?status=gone"), "status must be open, closed or all");
+  EXPECT_NE(message("/api/account/equity?from=1793975400").find("from must be a New York date (YYYY-MM-DD) or a UTC instant"), std::string::npos);
+  EXPECT_NE(message("/api/trades.csv?to=2026-02-30").find("to must be a New York date"), std::string::npos);
+  EXPECT_EQ(message("/api/account/equity?cursor=1:1"), "cursor needs limit");
+  EXPECT_EQ(message("/api/fills.csv?from=2026-09-23&to=2026-09-22"), "from must not be after to");
+  EXPECT_EQ(message("/api/risk/hedges?target=nope"), "Unknown or invalid query parameter target");
+  EXPECT_EQ(message("/api/risk/profile?steps=4"), "Unknown or invalid query parameter steps");
+  // A date bounds whole New York days; an instant bounds to the nanosecond, inclusive.
+  const auto day = md::new_york_time(market.time).date;
+  const auto today = md::format_date(day), tomorrow = md::format_date(md::date_from_days(md::days_since_epoch(day) + 1));
+  const auto instant = md::format_timestamp(market.time);
+  EXPECT_EQ(read(*engine, "/api/fills?from=" + today + "&to=" + today)["fills"].size(), 1U);
+  EXPECT_EQ(read(*engine, "/api/fills?from=" + instant + "&to=" + instant)["fills"].size(), 1U);
+  EXPECT_TRUE(read(*engine, "/api/fills?from=" + tomorrow)["fills"].empty());
+  EXPECT_TRUE(read(*engine, "/api/fills?to=" + md::format_timestamp(market.time - 1))["fills"].empty());
+  EXPECT_EQ(server::handle_api({"GET", "/api/account/equity?from=" + today}, *engine).status, 200);
+  const auto rows = [&](const std::string& target) {
+    const auto body = server::handle_api({"GET", target}, *engine).body;
+    std::size_t lines = 0;
+    for (std::size_t at = body.find("\r\n"); at != std::string::npos; at = body.find("\r\n", at + 2)) ++lines;
+    return lines - 1;
+  };
+  EXPECT_EQ(rows("/api/fills.csv?from=" + instant), 1U);
+  EXPECT_EQ(rows("/api/fills.csv?to=" + today), 1U);
+  EXPECT_EQ(rows("/api/fills.csv?from=" + tomorrow), 0U);
+  EXPECT_EQ(rows("/api/trades.csv?from=" + today + "&to=" + instant), 1U);
+}
+
 TEST(PaperAvailability, DisabledFailedJournalFullInboxAndStoppingFailClosed) {
   for (int mode = 0; mode < 4; ++mode) {
     PaperProvider provider;

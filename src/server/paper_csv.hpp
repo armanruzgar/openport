@@ -120,9 +120,12 @@ inline std::string csv_value(const nlohmann::json& row, std::string_view path) {
   return value->dump();
 }
 /// `run` names the replay account on every row; its metadata columns stay empty for a live account.
+/// `since` and `until` keep the rows whose instant (a fill's time; a trade's close, or
+/// its open while it is open) lies within them, inclusive.
 inline std::string paper_csv(const nlohmann::json& rows, bool fills, const std::string& account,
                              const std::string& provider, std::uint64_t version,
-                             const std::string& from, const std::string& to, const std::optional<RunIdentity>& run = {}) {
+                             std::optional<md::Timestamp> since, std::optional<md::Timestamp> until,
+                             const std::optional<RunIdentity>& run = {}) {
   const auto columns = paper_csv_columns(fills);
   std::string out;
   const auto line = [&](const std::vector<std::string>& cells) {
@@ -134,7 +137,7 @@ inline std::string paper_csv(const nlohmann::json& rows, bool fills, const std::
     const auto instant = fills ? row.at("time") : (row.at("closed").is_null() ? row.at("opened") : row.at("closed"));
     const auto time = md::parse_datetime(instant.get<std::string>(), md::Zone::Utc);
     const auto day = time ? md::format_date(md::new_york_time(*time).date) : std::string{};
-    if ((!from.empty() && day < from) || (!to.empty() && day > to)) continue;
+    if ((since && (!time || *time < *since)) || (until && (!time || *time > *until))) continue;
     row["account"] = run ? run->id : account;
     row["account_version"] = std::to_string(version);
     row["provider"] = provider;

@@ -37,6 +37,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Paper read errors and time bounds.** The paper read routes (`/api/account/equity`,
+  `/api/fills`, `/api/orders`, `/api/trades`, the CSV exports, fill quality, the risk
+  profile and hedges) answered any unknown key or bad value with the same 400 "Unknown
+  or invalid query parameter"; the message now names the parameter and what it takes.
+  `from` and `to` were read differently per route: the equity history took only a UTC
+  instant and the CSV exports only a New York date. Both now take either (a date is the
+  whole New York day, inclusive), and `GET /api/fills` takes them too.
 - **Blank and duplicate account names.** `POST /api/accounts` and
   `PATCH /api/accounts/{id}` accepted a name of only spaces or invisible characters (a
   zero-width space), and one equal to another account's, `Main` included, so the

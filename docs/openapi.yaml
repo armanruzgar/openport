@@ -926,11 +926,29 @@
       "parameters": [
         {
           "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive lower bound on the fill time: a New York date (YYYY-MM-DD, from its first instant) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive upper bound on the fill time: a New York date (YYYY-MM-DD, through its last instant) or a UTC instant.",
+          "schema": {
+            "type": "string"
+          }
         }
       ],
       "get": {
         "summary": "GET /api/fills",
-        "description": "Read the current publication.",
+        "description": "Read the current publication, newest first; from and to keep the fills executed within them.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -1395,7 +1413,7 @@
       ],
       "get": {
         "summary": "GET /api/account/equity",
-        "description": "Equity samples in inclusive from/to UTC range. Omit limit for all, or use limit=1..2000 then cursor=next. Live history: concurrent retention may remove older samples. Storage errors include times and recovery state.",
+        "description": "Equity samples in the inclusive from/to range; each bound is a New York date (YYYY-MM-DD, the whole day) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ). Omit limit for all, or use limit=1..2000 then cursor=next. Live history: concurrent retention may remove older samples. Storage errors include times and recovery state.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -3595,7 +3613,7 @@
       ],
       "get": {
         "summary": "GET /api/account/equity",
-        "description": "Equity samples in inclusive from/to UTC range. Omit limit for all, or use limit=1..2000 then cursor=next. Live history: concurrent retention may remove older samples. Storage errors include times and recovery state.",
+        "description": "Equity samples in the inclusive from/to range; each bound is a New York date (YYYY-MM-DD, the whole day) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ). Omit limit for all, or use limit=1..2000 then cursor=next. Live history: concurrent retention may remove older samples. Storage errors include times and recovery state.",
         "x-scope": "read",
         "responses": {
           "200": {
