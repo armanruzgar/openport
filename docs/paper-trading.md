@@ -4996,7 +4996,8 @@ admin routes, playbook actions, replays or backtests. The response returns the
 secret once. Sandbox tokens, accounts and files expire after 24 hours unused and
 are removed on restart. An expired sandbox token returns 403 `SANDBOX_EXPIRED`.
 Creation returns 429 `SANDBOX_CAPACITY` when all account slots are occupied,
-`SANDBOX_CLIENT_RATE` after 3 creations per client in a rolling hour, or
+`SANDBOX_CLIENT_RATE` after 3 creations per client in a rolling hour or while the
+client holds 3 unexpired sandboxes, or
 `SANDBOX_GLOBAL_RATE` after 30 globally. Order submissions, previews, what-if
 requests, modifications, share trades and their previews share 60 requests per
 account per rolling minute; excess requests return 429 `SANDBOX_ORDER_RATE`.

@@ -199,6 +199,8 @@ TEST_F(Sandboxes, CreationRateRetryAfterUsesOldestRequestInEachBucket) {
     SCOPED_TRACE(global ? "global" : "client");
     limits.global = global ? 2 : 30;
     limits.per_client = global ? 3 : 2;
+    // Left unused past the hour, the client's sandboxes stop counting as held.
+    limits.idle = 30min;
     now = {};
     configure();
     if (!global) {
@@ -228,6 +230,38 @@ TEST_F(Sandboxes, CreationRateRetryAfterUsesOldestRequestInEachBucket) {
     if (!global) { create("192.0.2.2"); }
     EXPECT_EQ(source->desk->market_time(), market_time);
   }
+}
+// The per-client limit counted creations in the last hour, not sandboxes held: one
+// address creating 3 an hour and using each within the idle period took all 20 slots
+// of the public demo after seven hours and kept them from every other visitor.
+TEST_F(Sandboxes, AClientHoldsAtMostItsLimitOfLiveSandboxes) {
+  limits.capacity = 20;
+  limits.idle = 1h;
+  configure();
+  std::vector<std::string> tokens;
+  for (int hour = 0; hour < 7; ++hour) {
+    for (int i = 0; i < 3; ++i) {
+      auto input = request("POST", "/api/sandboxes");
+      input.client_ip = "203.0.113.5";
+      const auto response = send(input);
+      if (response.status == 201) tokens.push_back(token(json::parse(response.body)));
+      else {
+        EXPECT_EQ(response.status, 429);
+        EXPECT_EQ(json::parse(response.body)["error"]["code"], "SANDBOX_CLIENT_RATE");
+      }
+    }
+    for (int half = 0; half < 2; ++half) {
+      now += 30min;
+      for (const auto& secret : tokens) EXPECT_TRUE(manager->authenticate(secret));
+    }
+  }
+  EXPECT_EQ(tokens.size(), 3U);
+  const auto other = create("198.51.100.7");
+  EXPECT_EQ(other.at("simulated"), true);
+  // A sandbox left idle until it expires frees one of the client's places.
+  now += 2h;
+  for (const auto& secret : tokens) EXPECT_FALSE(manager->authenticate(secret));
+  create("203.0.113.5");
 }
 TEST_F(Sandboxes, ClientHeaderOnlySeparatesVisitorsWhenConfigured) {
   limits.per_client = 1;

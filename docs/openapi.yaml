@@ -5176,7 +5176,7 @@
             }
           },
           "429": {
-            "description": "SANDBOX_CAPACITY: all account slots are occupied, including pending creations. SANDBOX_CLIENT_RATE: 3 creations per client in a rolling hour. SANDBOX_GLOBAL_RATE: 30 creations globally in a rolling hour.",
+            "description": "SANDBOX_CAPACITY: all account slots are occupied, including pending creations. SANDBOX_CLIENT_RATE: 3 creations per client in a rolling hour, or 3 unexpired sandboxes (pending ones included) held by the client. SANDBOX_GLOBAL_RATE: 30 creations globally in a rolling hour.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5186,7 +5186,7 @@
             },
             "headers": {
               "Retry-After": {
-                "description": "For SANDBOX_CLIENT_RATE and SANDBOX_GLOBAL_RATE, seconds until the oldest counted creation leaves that bucket's rolling hour, rounded up to at least 1. Omitted for SANDBOX_CAPACITY because the next free time is unknown.",
+                "description": "For SANDBOX_CLIENT_RATE and SANDBOX_GLOBAL_RATE creation limits, seconds until the oldest counted creation leaves that bucket's rolling hour, rounded up to at least 1. Omitted for SANDBOX_CAPACITY and for a client's held sandboxes because the next free time is unknown.",
                 "schema": {
                   "type": "integer",
                   "minimum": 1

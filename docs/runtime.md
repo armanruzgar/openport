@@ -1318,10 +1318,12 @@ memory. The terminal saves the token in session storage, falls back to memory
 when storage is unavailable, and switches to that account. A refused sandbox
 token is cleared so the visitor can create another. Operator token entry remains.
 
-Creation permits 3 accounts per client and 30 globally in a rolling hour.
-Pending creations count toward capacity. Creation returns HTTP 429 with
-`SANDBOX_CAPACITY` when all slots are occupied, `SANDBOX_CLIENT_RATE` when the
-client's creation limit is reached, or `SANDBOX_GLOBAL_RATE` at the global limit.
+Creation permits 3 accounts per client and 30 globally in a rolling hour, and a
+client may hold 3 unexpired sandboxes at once, pending ones included, however
+often it uses them. Pending creations count toward capacity. Creation returns
+HTTP 429 with `SANDBOX_CAPACITY` when all slots are occupied, `SANDBOX_CLIENT_RATE`
+when the client's creation or holding limit is reached, or `SANDBOX_GLOBAL_RATE`
+at the global limit.
 Each account permits 60 order requests per rolling minute, including previews,
 what-if requests, modifications, share trades and their previews; excess requests
 return HTTP 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and its preview, share closes,

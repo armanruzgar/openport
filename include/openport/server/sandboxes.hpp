@@ -20,6 +20,7 @@ class Sandboxes {
   struct Options {
     std::size_t capacity = 0;
     std::chrono::seconds idle{24 * 60 * 60};
+    /// Creations per client address per creation_window, and sandboxes it may hold at once.
     std::size_t per_client = 3;
     std::size_t global = 30;
     std::chrono::seconds creation_window{60 * 60};
@@ -55,6 +56,7 @@ class Sandboxes {
     bool ready = false;
     std::deque<Clock::time_point> orders;
     std::deque<Clock::time_point> exits = {};
+    std::string client = {};  ///< the address that created it, which may hold per_client at once
   };
   [[nodiscard]] std::optional<ApiResponse> charge(const std::string& account, bool exit_budget);
   Options options_;

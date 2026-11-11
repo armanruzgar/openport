@@ -57,6 +57,12 @@ void Sandboxes::create(const ApiRequest& request, MetricsSource& source, ApiComp
     for (auto& [client_ip, times] : clients_) { (void)client_ip; prune(times, now - options_.creation_window); }
     std::erase_if(clients_, [](const auto& item) { return item.second.empty(); });
     const auto client = clients_.find(request.client_ip);
+    // Touching each sandbox within the idle period keeps it, so a cap on creations
+    // alone let one address collect every slot, per_client an hour, and keep them.
+    const auto held = static_cast<std::size_t>(std::count_if(entries_.begin(), entries_.end(), [&](const auto& item) {
+      const auto& entry = item.second;
+      return entry.client == request.client_ip && !(entry.ready && now - entry.used >= options_.idle);
+    }));
     if (entries_.size() >= options_.capacity)
       rejection = api_error(429, "SANDBOX_CAPACITY", "All sandbox accounts are in use. Try again later.");
     else if (creations_.size() >= options_.global) {
@@ -65,10 +71,13 @@ void Sandboxes::create(const ApiRequest& request, MetricsSource& source, ApiComp
     } else if (client != clients_.end() && client->second.size() >= options_.per_client) {
       rejection = api_error(429, "SANDBOX_CLIENT_RATE", "Too many sandbox accounts from this client. Try again later.");
       rejection->retry_after = retry_seconds(client->second.front() + options_.creation_window - now);
+    } else if (held >= options_.per_client) {
+      // No Retry-After: the next free time depends on the visitor's own use.
+      rejection = api_error(429, "SANDBOX_CLIENT_RATE", "Too many sandbox accounts from this client. Try again later.");
     } else {
       do { id = "sbox-" + random_hex(); } while (entries_.contains(id));
       secret = "sandbox_" + random_hex();
-      entries_.emplace(id, Entry{digest(secret), now, false, {}, {}});
+      entries_.emplace(id, Entry{digest(secret), now, false, {}, {}, request.client_ip});
       creations_.push_back(now);
       clients_[request.client_ip].push_back(now);
     }

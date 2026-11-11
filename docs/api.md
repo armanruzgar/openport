@@ -280,7 +280,8 @@ documents every field, rule and reason code.
 Sandbox demos also offer `POST /api/sandboxes` without a token. It returns
 `{account, token, idle_seconds, simulated: true}` once; it returns 404 when disabled
 and 429 `SANDBOX_CAPACITY` when full, `SANDBOX_CLIENT_RATE` after 3 creations per
-client in a rolling hour, or `SANDBOX_GLOBAL_RATE` after 30 globally. Sandbox
+client in a rolling hour or while the client holds 3 unexpired sandboxes, or
+`SANDBOX_GLOBAL_RATE` after 30 globally. Sandbox
 order submissions, previews, what-if requests, modifications, share trades and
 their previews share 60 requests per account per rolling minute; excess requests
 return 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and its preview, share closes,

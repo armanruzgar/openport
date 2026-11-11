@@ -564,6 +564,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `REPLAY_FAILED` once per name in a shared, sticky `/tmp`, or had openportd reuse a
   directory it did not make. The directory is now made by `mkdtemp`, with a random
   name, exclusively and owner-only, as the demo feed's already was.
+- **One visitor can no longer hold every sandbox.** The per-client limit counted
+  creations in the last hour, and using a sandbox keeps it alive, so one address that
+  created 3 an hour and used each within the idle period held all 20 slots of the
+  public demo after seven hours, and every other visitor got `SANDBOX_CAPACITY`. A
+  client may now also hold at most 3 unexpired sandboxes at once, pending ones
+  included; past that, creation returns `SANDBOX_CLIENT_RATE` without `Retry-After`.
 
 ## 0.5.1 (2026-10-28)
 

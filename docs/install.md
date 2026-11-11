@@ -239,7 +239,8 @@ creation allowance. Configure both `--allowed-origin` and `--allowed-host` for t
 public names. Trust that header only behind a proxy that overwrites it and prevents
 direct access to the backend. By default, the server uses the connection address
 and ignores forwarding headers. Creation allows 3 accounts per client and 30 total
-per hour, with at most 100 at once in this example; each sandbox allows 60 order
+per hour, a client may hold 3 unexpired at once, and at most 100 exist at once in
+this example; each sandbox allows 60 order
 requests and 60 cancels, closes or other exits per minute. Full capacity or rate
 limits return HTTP 429. The normal
 low-disk journal refusal applies. [Runtime details](runtime.md#public-sandboxes).
