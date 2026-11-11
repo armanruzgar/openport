@@ -436,6 +436,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   a 1:10 one that it did not was. It now weighs what the dividend pays on one unit's
   deliverable, after a split going ex the same night, and so does the `EARLY_ASSIGNMENT`
   warning.
+- **Interest on an account made before the first market data.** An account created or
+  reset with a credit rate before the first quotes arrived was credited interest from
+  1970 at its first rollover (about $207,000 on $100,000 at 3.65%), which could pass a
+  custom evaluation outright. Financing now runs from the account's first trading date.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

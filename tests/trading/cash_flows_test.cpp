@@ -58,6 +58,36 @@ TEST(TradingCashFlows, CreditInterestIncludesCalendarDaysAndPreservesTheLossBase
   EXPECT_FALSE(recovered.roll_day(monday).decision.ok());
   EXPECT_EQ(recovered.snapshot()->account.cash, m("100030"));
 }
+TEST(TradingCashFlows, AnAccountMadeOrResetBeforeAnyMarketDataEarnsNothingForTheYearsBefore) {
+  // Made at time zero, a session's trading date is a placeholder, 1970-01-01; its first
+  // rollover is not 20,000 days of interest on its cash (replay drivers 1-8 paid them).
+  auto c = config(); c.rules.cash_credit_rate_bps = 365;
+  const auto friday = at({2026, 9, 25}), monday = at({2026, 9, 28});
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    TradingSession made(c, 0);
+    made.set_revised_corporate_actions(revised);
+    ASSERT_TRUE(made.roll_day(friday).decision.ok());
+    if (!revised) {
+      ASSERT_EQ(made.snapshot()->cash_flows.size(), 1U);
+      EXPECT_GT(made.snapshot()->cash_flows[0].days, 20000);
+      continue;
+    }
+    EXPECT_TRUE(made.snapshot()->cash_flows.empty());
+    EXPECT_EQ(made.snapshot()->account.cash, m("100000"));
+    // From its first trading date on, it earns as any account does.
+    ASSERT_TRUE(made.roll_day(monday).decision.ok());
+    ASSERT_EQ(made.snapshot()->cash_flows.size(), 1U);
+    EXPECT_EQ(made.snapshot()->cash_flows[0].days, 3);
+    EXPECT_EQ(made.snapshot()->account.cash, m("100030"));
+  }
+  // So does one reset to such a rate before any market data.
+  TradingSession reset(config(), 0);
+  ASSERT_TRUE(reset.reset_account(m("100000"), c.rules, "rates", 0).decision.ok());
+  ASSERT_TRUE(reset.roll_day(friday).decision.ok());
+  EXPECT_TRUE(reset.snapshot()->cash_flows.empty());
+  EXPECT_EQ(reset.snapshot()->account.cash, m("100000"));
+}
 TEST(TradingCashFlows, PortfolioDebitAndShortBorrowPostAsOtherProfitAndLoss) {
   const auto time = at({2026, 9, 22}), next = at({2026, 9, 23});
   auto c = config(); c.rules.margin = MarginMode::Portfolio; c.rules.buying_power = true;

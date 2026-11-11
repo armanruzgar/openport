@@ -1932,7 +1932,12 @@ margin on margin accounts. Borrow fees use each short stock's last closing marke
 notional. No rate, borrow availability or price is inferred from a live broker.
 
 `roll_day` posts simple actual/365 accrual for elapsed calendar days (weekends and
-skipped days included), before the new day's assignments and dividends. Each
+skipped days included), before the new day's assignments and dividends. The days
+run from the attempt's first trading date at the earliest: an account created or
+reset before the first market data has a placeholder date (1970-01-01), not a
+trading day, and starts at its first real market time, so its first rollover
+accrues nothing for the years before it existed. Runs recorded with replay driver
+8 or earlier accrued from the placeholder. Each
 posting is rounded to whole cents, ties away from zero. A skipped interval uses
 the last available balance and marks for all its days, without intra-interval
 compounding; repeated rollover cannot post twice. Zero-cent accrual is omitted.

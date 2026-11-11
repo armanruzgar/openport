@@ -7370,8 +7370,14 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     // Assignments arrive overnight, so the new day takes them, and then the
     // ex-date's dividends pay the shares held into it.
     // Financing is new-day P&L. Its opening daily-loss base stays unchanged;
-    // charges can consume loss room and interest changes marked equity.
-    accrue_financing(s, impl_->state, days, events);
+    // charges can consume loss room and interest changes marked equity. It runs over
+    // the nights the attempt has existed: one made or reset before any market data
+    // starts on a placeholder date (1970-01-01), not a trading day, and takes its first
+    // real market time as its start. Replay drivers 1-8 accrued from the placeholder.
+    auto financed = days;
+    if (s.revised_corporate_actions)
+      financed = e.started > 0 ? std::min(days, md::days_since_epoch(day) - md::days_since_epoch(plan_trading_date(rules, e.started))) : 0;
+    accrue_financing(s, impl_->state, financed, events);
     assign_early(s, dividends, actions, closing_time, events);
     // Splits take effect before the day's dividends, which are quoted on the split
     // shares. A rollover that spans several ex-dates takes them date by date, so a
