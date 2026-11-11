@@ -722,6 +722,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   launchd creates readable by every local account, handing them write and admin
   access. The service now passes the flag, so the log shows the `--print-url` command
   the caveats already give, and a fresh install makes `var/openport` owner-only.
+- **A walk's default step and cap follow the ticket.** The walk step and cap were set
+  once, when the ticket opened: flipping a ticket from Buy to Sell kept the ask as the
+  cap, which then pointed away from the market and blocked the order; a ticket opened
+  before its quote kept an empty cap; and a strategy whose legs changed kept the old
+  combo tick as the step, which the server refuses with `INVALID_TICK`. Until you type
+  them, the step and cap now follow the ticket's side, quote and legs.
 
 ## 0.5.1 (2026-10-28)
 

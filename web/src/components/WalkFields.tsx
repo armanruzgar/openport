@@ -1,12 +1,18 @@
 import { useState } from "react"
 import type { Walk } from "../api/trading-types"
 
-/** Server validation remains authoritative for product ticks and price bands. */
+/**
+ * Server validation remains authoritative for product ticks and price bands. Until the
+ * trader types them (or an existing walk sets them), the step and cap are the caller's
+ * current ones: a ticket's side, quote and legs can change after it opens.
+ */
 export function useWalk(allowed: boolean, start: string, up: boolean, step: string, cap: string, initial?: Walk | null) {
   const [enabled, setEnabled] = useState(!!initial)
-  const [increment, setIncrement] = useState(initial?.step ?? step)
+  const [typedStep, setIncrement] = useState<string | null>(initial?.step ?? null)
   const [seconds, setSeconds] = useState(String(initial?.seconds ?? 10))
-  const [limit, setLimit] = useState(initial?.limit ?? cap)
+  const [typedLimit, setLimit] = useState<string | null>(initial?.limit ?? null)
+  const increment = typedStep ?? step
+  const limit = typedLimit ?? cap
   const active = allowed && enabled
   const decimal = (s: string) => /^-?\d+(\.\d{1,6})?$/.test(s) && Number.isFinite(Number(s))
   const distance = (Number(limit) - Number(start)) * (up ? 1 : -1)
@@ -27,5 +33,5 @@ export function useWalk(allowed: boolean, start: string, up: boolean, step: stri
       {!valid && <p role="status" className="text-xs text-warn">Use a positive step, 1–3600 seconds, and a cap toward the market within 1000 steps.</p>}
     </>}
   </div> : null
-  return { walk, fields, valid, active, setLimit }
+  return { walk, fields, valid }
 }
