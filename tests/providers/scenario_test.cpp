@@ -79,12 +79,20 @@ TEST(Scenarios, RejectsInvalidFieldsWithFileAndFieldNames) {
       {"events", {{{"type", "crush"}, {"at", "10:00"}, {"iv", 0.1}}}},
       {"events", {{{"type", "gap"}, {"at", "10:00"}, {"move", 0.01}}}},
       {"events", {{{"type", "spike"}, {"at", "10:00"}, {"move", 0.01}}}}};
+  // An event is refused for its own reason, named with its index and type; any other
+  // failure of the same event (a type that does not parse, say) is not this one.
+  const std::map<std::string, std::string> event_reasons{
+      {"pin", "events[0] (pin).at 25:00: time: hour must be below 24"},
+      {"crush", "events[0] (crush).iv: outside [-0.300000, -0.000100]"},
+      {"gap", "events[0] (gap).at: unknown field"},
+      {"spike", "events[0] (spike).iv: required field is missing"}};
   for (const auto& [field, value] : invalid) {
     auto data = valid(); data[field] = value; write(path, data);
     try { (void)providers::read_scenario(path); FAIL() << field; }
     catch (const std::invalid_argument& error) {
+      const std::string reason = field == "events" ? event_reasons.at(value.at(0).at("type").get<std::string>()) : field;
       EXPECT_NE(std::string(error.what()).find("invalid.json"), std::string::npos);
-      EXPECT_NE(std::string(error.what()).find(field == "events" ? "" : field), std::string::npos);
+      EXPECT_NE(std::string(error.what()).find(reason), std::string::npos) << error.what();
     }
   }
   auto data = valid(); data.erase("drift"); write(path, data);
