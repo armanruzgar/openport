@@ -5,6 +5,7 @@
 #include <fstream>
 #include <future>
 #include <map>
+#include <memory>
 #include <optional>
 
 #include "openport/providers/replay_batches.hpp"
@@ -44,13 +45,15 @@ constexpr const char* kWeekend = R"({"id":"weekend","title":"Weekend","descripti
     {"session":"regular","drift":[[1,0.001]],"events":[{"type":"gap","move":0.002}]}]})";
 
 server::ApiResponse call(server::ReplayHost& host, std::string method, std::string target, const json& body = json::object()) {
-  std::promise<server::ApiResponse> done;
-  auto result = done.get_future();
+  // The completion owns a share of the promise: a request this gives up on is still
+  // completed later, by the host's worker or by ~ReplayHost, after this frame is gone.
+  auto done = std::make_shared<std::promise<server::ApiResponse>>();
+  auto result = done->get_future();
   const auto payload = method == "DELETE" && body.empty() ? "" : body.dump();
   server::ApiRequest request{std::move(method), std::move(target), payload};
   request.content_type = "application/json";
   request.actor = "test-actor";
-  if (!host.handle(request, [&](server::ApiResponse response) { done.set_value(std::move(response)); }))
+  if (!host.handle(request, [done](server::ApiResponse response) { done->set_value(std::move(response)); }))
     throw std::runtime_error("Replay request was not handled");
   if (result.wait_for(std::chrono::minutes(5)) != std::future_status::ready) throw std::runtime_error("Replay request timed out");
   return result.get();

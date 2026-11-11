@@ -6,6 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <future>
+#include <memory>
 #include <sstream>
 #include <gtest/gtest.h>
 
@@ -30,6 +31,16 @@ std::string read_file(const std::filesystem::path& file) {
   std::ostringstream contents;
   contents << input.rdbuf();
   return contents.str();
+}
+/// `path` as one shell word, single-quoted: a space in TMPDIR or the build directory
+/// cannot split it, so a command fails only for what the program it runs reports.
+std::string shell_word(const std::filesystem::path& path) {
+  std::string word = "'";
+  for (const char c : path.string()) {
+    if (c == '\'') word += "'\\''";
+    else word += c;
+  }
+  return word + "'";
 }
 /// A restarted run journals one restart input after its source's retained prefix.
 std::string without_restart(const std::string& journal) {
@@ -2045,7 +2056,9 @@ TEST(ReproducibleRun, ScenarioDayHasIdenticalBytesAcrossSpeedsFastForwardAndVeri
   EXPECT_NE(mismatch.message.find("scenario " + scenario.id), std::string::npos);
   EXPECT_NE(mismatch.message.find("First differing transaction " + std::to_string(changed_at)), std::string::npos) << mismatch.message;
   // The CLI takes the same path without starting a feed, HTTP or user directories.
-  const auto cli = std::string(OPENPORT_APPS_DIR) + "/openportd --verify-run " + journal.string() + " > " + (file.directory / "verify.txt").string() + " 2>&1";
+  // Every path is quoted, so the tampered journal below fails in the verifier, not in the shell.
+  const auto cli = shell_word(std::string(OPENPORT_APPS_DIR) + "/openportd") + " --verify-run " + shell_word(journal) +
+                   " > " + shell_word(file.directory / "verify.txt") + " 2>&1";
   EXPECT_EQ(std::system(cli.c_str()), 0);
   EXPECT_NE(read_file(file.directory / "verify.txt").find("Run run-0 (run-0.jsonl)"), std::string::npos);
   EXPECT_TRUE(read_file(file.directory / "verify.txt").starts_with("Verification estimate:"));
@@ -2161,12 +2174,14 @@ TEST(ScenarioReplay, CircuitBreakersMeasureTheFallFromTheScenariosPreviousClose)
 }
 
 server::ApiResponse replay_call(server::ReplayHost& host, std::string method, std::string target, json body = json::object()) {
-  std::promise<server::ApiResponse> done;
-  auto result = done.get_future();
+  // The completion owns a share of the promise: a request this gives up on is still
+  // completed later, by the host's worker or by ~ReplayHost, after this frame is gone.
+  auto done = std::make_shared<std::promise<server::ApiResponse>>();
+  auto result = done->get_future();
   server::ApiRequest request{std::move(method), std::move(target), body.dump()};
   request.content_type = "application/json";
   request.actor = "test-actor";
-  if (!host.handle(request, [&](server::ApiResponse response) { done.set_value(std::move(response)); }))
+  if (!host.handle(request, [done](server::ApiResponse response) { done->set_value(std::move(response)); }))
     throw std::runtime_error("Replay request was not handled");
   if (result.wait_for(5min) != std::future_status::ready) throw std::runtime_error("Replay request timed out");
   return result.get();
@@ -3175,8 +3190,8 @@ TEST(ReproducibleRun, ConservativeFillsHaveIdenticalBytesAndPassCliVerification)
     if (repeat == 0) { golden = read_file(journal); } else { EXPECT_EQ(read_file(journal), golden); }
     const auto verified = server::verify_run(journal);
     EXPECT_TRUE(verified.matched) << verified.message;
-    const auto cli = std::string(OPENPORT_APPS_DIR) + "/openportd --verify-run " + journal.string() +
-                     " > " + (file.directory / "verify-fills.txt").string() + " 2>&1";
+    const auto cli = shell_word(std::string(OPENPORT_APPS_DIR) + "/openportd") + " --verify-run " + shell_word(journal) +
+                     " > " + shell_word(file.directory / "verify-fills.txt") + " 2>&1";
     EXPECT_EQ(std::system(cli.c_str()), 0) << read_file(file.directory / "verify-fills.txt");
   }
 }
