@@ -1210,21 +1210,15 @@ TEST(WebServer, SeedFlagsAnExistingJournalIgnoresAreNamed) {
   }
   ASSERT_TRUE(std::filesystem::exists(journal));
   {
-    Background restarted(command(" --plan eod-50k --paper-fee 9.99 --paper-fill-model conservative"), directory.directory);
+    // The fee asks for what the journal holds, so it is not named between the two that differ.
+    Background restarted(command(" --plan eod-50k --paper-fee 0.65 --paper-fill-model conservative"), directory.directory);
     ASSERT_TRUE(restarted.line("web terminal: ", 180s).has_value()) << restarted.output;
-    EXPECT_NE(restarted.output.find("openportd: ignored --plan eod-50k, --paper-fee 9.99, --paper-fill-model conservative: " +
+    EXPECT_NE(restarted.output.find("openportd: ignored --plan eod-50k, --paper-fill-model conservative: " +
                                     journal.string() + " already holds a Practice account"),
               std::string::npos) << restarted.output;
+    EXPECT_EQ(restarted.output.find("--paper-fee 0.65,"), std::string::npos) << restarted.output;
     restarted.send(SIGTERM);
     ASSERT_TRUE(restarted.wait_exit(120s).has_value()) << restarted.output;
-  }
-  {
-    // Flags that ask for what the journal holds are not named.
-    Background same(command(" --plan practice --paper-fee 0.65 --paper-fill-model as_displayed"), directory.directory);
-    ASSERT_TRUE(same.line("web terminal: ", 180s).has_value()) << same.output;
-    EXPECT_EQ(same.output.find("openportd: ignored"), std::string::npos) << same.output;
-    same.send(SIGTERM);
-    ASSERT_TRUE(same.wait_exit(120s).has_value()) << same.output;
   }
 }
 
