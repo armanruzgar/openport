@@ -162,6 +162,29 @@ TEST(TradingFunded, FillEquitySamplesKeepTheFloorSizeScalingRaised) {
   for (const auto& sample : samples) EXPECT_EQ(sample.floor, s.snapshot()->evaluation.floor);
 }
 
+TEST(TradingFunded, FillEquitySamplesKeepAStartingBalancePayoutFloor) {
+  ScriptedMarket f;
+  auto rules = funded(); rules.lock_balance = {};
+  rules.payouts.after_payout = PayoutFloor::StartingBalance;
+  TradingSession s(config(rules), f.time);
+  f.seed(s);
+  profit_day(s, f, "600");
+  next_day(s, f, {2026, 9, 23});
+  ASSERT_TRUE(s.request_payout(m("50"), f.time).decision.ok());
+  ASSERT_EQ(s.snapshot()->evaluation.floor, m("10000"));
+  // A new high marked in a transaction with fills: without a lock level, the trailing
+  // floor would follow it below the starting balance.
+  ASSERT_TRUE(s.submit(f.market("held", 2), f.time).decision.ok());
+  ASSERT_TRUE(s.submit(f.limit("part", 1, "4.50", Side::Sell, TimeInForce::Gtc), f.time).decision.ok());
+  const auto before = s.snapshot();
+  quote(s, f, "4.50", "4.70");
+  ASSERT_GT(s.snapshot()->evaluation.peak, before->evaluation.peak);
+  EXPECT_EQ(s.snapshot()->evaluation.floor, m("10000"));
+  const auto samples = server::fill_equity_samples(s, *before);
+  ASSERT_FALSE(samples.empty());
+  for (const auto& sample : samples) EXPECT_EQ(sample.floor, m("10000"));
+}
+
 TEST(TradingFunded, SizeScalingCreditsCapitalWithoutChangingProfitOrPayoutStanding) {
   ScriptedMarket f;
   TradingSession s(config(size_plan()), f.time);

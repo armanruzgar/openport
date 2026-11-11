@@ -122,6 +122,10 @@ std::vector<EquitySample> fill_equity_samples(const trading::TradingSession& ses
   state.floor_locked = ratcheted.floor_locked;
   // Size scaling keeps a raised floor from falling back when the peak next moves.
   state.size_scaling = ratcheted.size_scaling;
+  // So does a payout that fixes the floor (starting_balance, or reset on a static
+  // floor), on the reducer's own driver.
+  state.revised_rules = after->evaluation.revised_rules;
+  state.payouts = ratcheted.payouts;
   state.status = before.evaluation.status;
   // Objectives, or a target on the closed balance, can hold a pass back: only the
   // reducer's own pass stops the ratchet.
