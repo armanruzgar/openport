@@ -37,6 +37,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Misspelt market-data query parameters.** `/api/status` and the underlying's
+  summary, chain, exposure, surface, Heston, volatility and candle views ignored a key
+  they do not take, so `chain?windw=0.01` answered the full unwindowed chain and
+  `exposure?covention=short_all` the default convention, with no sign of the typo.
+  They now answer 400 `INVALID_REQUEST` naming the key, as probability, flow and the
+  volatility scanner already did.
 - **Cancel-all and share orders.** `POST /api/orders/cancel` cancels working and armed
   share orders as well as option orders, but its answer listed only the option orders,
   so a script or agent was told nothing was cancelled when share orders were. The

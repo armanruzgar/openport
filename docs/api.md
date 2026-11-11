@@ -62,6 +62,10 @@ also work on replay and saved-run routes. [Formulas and units](methods.md#dealer
 
 Expiry ids are the date plus settlement, for example `2026-10-16AM`.
 
+Each of these routes takes only the query parameters shown for it (`/api/status` and
+`summary` take none, `volatility` only `account`); any other, a misspelling such as
+`windw=` included, is 400 `INVALID_REQUEST` naming it, rather than ignored.
+
 ## Paper trading
 
 Custom account/reset `rules` optionally accept `time_limit_days`, `inactivity_days`

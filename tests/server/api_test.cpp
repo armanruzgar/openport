@@ -466,6 +466,26 @@ TEST(Api, QueryValuesThatAreNotUtf8AreMalformed) {
   EXPECT_EQ(get(source, "/api/underlyings/SPX/chain?expiry=%c3%a9", 404)["error"]["message"], "no expiry \xc3\xa9");
 }
 
+// Every market view refuses a key it does not take, as probability, flow and the
+// scanner already did, instead of answering its default view without a signal.
+TEST(Api, MarketViewsRefuseQueryParametersTheyDoNotTake) {
+  StubSource source;
+  for (const auto* target : {"/api/status?x=1", "/api/underlyings/SPX?bogus=1", "/api/underlyings/SPX/summary?window=0.1",
+                             "/api/underlyings/SPX/chain?windw=0.01", "/api/underlyings/SPX/chain?expirys=3",
+                             "/api/underlyings/SPX/exposure?covention=short_all", "/api/underlyings/SPX/surface?expiry=x",
+                             "/api/underlyings/SPX/heston?window=0.1", "/api/underlyings/SPX/volatility?acount=main",
+                             "/api/underlyings/SPX/candles?intervl=1m"}) {
+    EXPECT_EQ(get(source, target, 400)["error"]["code"], "INVALID_REQUEST") << target;
+  }
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/chain?windw=0.01", 400)["error"]["message"], "unknown query parameter windw");
+  // The documented keys still work.
+  for (const auto* target : {"/api/status", "/api/underlyings/SPX/chain?expiry=2026-10-22PM&window=0.02",
+                             "/api/underlyings/SPX/exposure?expiries=2&window=0.05&convention=short_all&slice=all",
+                             "/api/underlyings/SPX/surface?expiries=2&window=0.1", "/api/underlyings/SPX/candles?interval=1m&limit=5"}) {
+    EXPECT_FALSE(get(source, target).contains("error")) << target;
+  }
+}
+
 TEST(Api, RejectsMalformedAndOutOfRangeNumbers) {
   StubSource source;
   for (const std::string value : {"", "0", "501", "-1", "1.5", "1e2", "nan", "inf",
@@ -482,7 +502,7 @@ TEST(Api, RejectsMalformedAndOutOfRangeNumbers) {
     EXPECT_FALSE(
         get(source, std::string("/api/underlyings/SPX/chain?window=") + value).contains("error"));
   EXPECT_FALSE(get(source, "/api/underlyings/SPX/surface?expiries=500&window=1").contains("error"));
-  EXPECT_FALSE(get(source, "/api/underlyings/SPX/chain?expiries=1&window=0").contains("error"));
+  EXPECT_FALSE(get(source, "/api/underlyings/SPX/exposure?expiries=1&window=0").contains("error"));
   EXPECT_TRUE(get(source, "/api/underlyings/SPX/chain?window=2&window=0.5", 400).contains("error"));
   EXPECT_TRUE(get(source, "/api/underlyings/SPX/chain?window=1e-999", 400).contains("error"));
 }

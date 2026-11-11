@@ -20,6 +20,7 @@
 #include <string>
 #include <type_traits>
 #include <tuple>
+#include <vector>
 
 #include "openport/analytics/svi.hpp"
 #include "openport/analytics/realized.hpp"
@@ -955,6 +956,20 @@ ApiResponse candles_response(const MetricsSource& source, const std::string& sym
 bool query_decimal(const std::string& text, double& value) { return decimal_number(text, value); }
 
 namespace {
+/// The query keys of a market view that reads its query here, so a misspelt one
+/// (windw=, covention=) is refused as on the views with parsers of their own, which
+/// take nullopt here, rather than silently dropped.
+std::optional<std::vector<std::string_view>> view_keys(std::string_view view) {
+  if (view == "summary") return std::vector<std::string_view>{};
+  if (view == "chain") return std::vector<std::string_view>{"expiry", "window"};
+  if (view == "exposure") return std::vector<std::string_view>{"expiries", "window", "convention", "slice"};
+  if (view == "surface") return std::vector<std::string_view>{"expiries", "window", "sabr_beta"};
+  if (view == "heston") return std::vector<std::string_view>{"expiries"};
+  if (view == "volatility") return std::vector<std::string_view>{"account"};
+  if (view == "candles") return std::vector<std::string_view>{"interval", "limit"};
+  return std::nullopt;
+}
+
 /// The GET routes. With `deferred`, a read whose Heston or SABR fit is not cached
 /// fills it and returns nullopt; without, every read is answered here.
 std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSource& source, DeferredRead* deferred) {
@@ -986,6 +1001,7 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
   }
 
   if (path == "/api/status") {
+    if (!query.empty()) return error(400, "status takes no query parameters");
     auto status = status_json(source);
     if (source.sandboxes()) status["sandboxes"] = {{"enabled", true}, {"idle_seconds", source.sandboxes()->idle().count()}};
     return ApiResponse{200, sandbox_tick(status.dump(), request.access)};
@@ -1003,6 +1019,11 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
   const std::string symbol(rest.substr(0, slash));
   const std::string_view view =
       slash == std::string_view::npos ? "summary" : rest.substr(slash + 1);
+  if (const auto keys = view_keys(view)) {
+    for (const auto& item : query)
+      if (std::find(keys->begin(), keys->end(), item.first) == keys->end())
+        return error(400, "unknown query parameter " + item.first);
+  }
 
   // History can arrive before the first analysis.
   if (view == "candles") return candles_response(source, symbol, query);
