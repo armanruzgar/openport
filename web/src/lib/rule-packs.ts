@@ -13,7 +13,7 @@ function shaped(value: unknown): value is RulePack {
   const pack = value as RulePack
   return !!pack && pack.format === "openport.rule-pack" && pack.version === 1 && typeof pack.id === "string" &&
     typeof pack.name === "string" && Array.isArray(pack.plans) &&
-    pack.plans.every((plan) => plan && typeof plan.id === "string" && typeof plan.name === "string" && typeof plan.rules === "object")
+    pack.plans.every((plan) => plan && typeof plan.id === "string" && typeof plan.name === "string" && plan.rules !== null && typeof plan.rules === "object")
 }
 export function loadRulePacks(): RulePack[] {
   try {

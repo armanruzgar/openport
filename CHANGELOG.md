@@ -1389,6 +1389,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   4 MiB sent with `Content-Length`, as browsers and curl send it, was refused with
   "Body exceeds 64 KiB", the limit of every other route; only a chunked one was told
   4 MiB. Both now are, and the Analysis view says imports take up to 4 MiB, not 64 KiB.
+- **A damaged saved rule pack.** A rule pack kept in this browser whose plan had
+  `null` rules (a hand-edited or damaged entry) was still offered, and listing its
+  plans to start from then failed. Such a pack is now dropped when read, like other
+  malformed entries.
 
 ## 0.5.1 (2026-10-28)
 

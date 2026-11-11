@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { AccountRules, RulePack } from "../api/trading-types"
 import { customPlan, planForm } from "../components/PlanEditor"
 import { account, fundedAccount } from "../test/trading-fixtures"
 import { openLossFact, propForm, propRuleFacts, propRules, reviewFacts, tiltText, wholeNumber } from "./prop-rules"
-import { isPackPlan, loadRulePacks, packFile, packPlans, saveRulePacks, withPack } from "./rule-packs"
+import { isPackPlan, loadRulePacks, MAX_PACKS, packFile, packPlans, saveRulePacks, withPack } from "./rule-packs"
 
 const rules: AccountRules = { ...account.rules, buy_only: false }
 
@@ -84,7 +84,13 @@ describe("rule packs", () => {
   const pack: RulePack = { format: "openport.rule-pack", version: 1, id: "desk", name: "Desk terms", effective_from: "2026-09-01",
     source: "https://example.com/terms", verify: "Checked 2026-09-01",
     plans: [{ id: "eval", name: "Desk Eval", initial_cash: "50000.00", rules: { ...rules, plan: "Desk Eval" }, unlocked_by: null }] }
-  afterEach(() => { try { localStorage.clear() } catch { /* No storage in this environment. */ } })
+  // This file runs without a DOM: a Map stands in for the browser's storage.
+  const stored = new Map<string, string>()
+  beforeEach(() => {
+    stored.clear()
+    vi.stubGlobal("localStorage", { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value) } })
+  })
+  afterEach(() => vi.unstubAllGlobals())
   it("offers pack plans as their own custom starting points", () => {
     const [plan] = packPlans([pack])
     expect(plan).toMatchObject({ id: "pack:desk:eval", name: "Desk Eval", initial_cash: "50000.00", unlocked_by: null })
@@ -97,9 +103,38 @@ describe("rule packs", () => {
     const later = { ...pack, effective_from: "2026-10-01" }
     expect(withPack(withPack([], pack), later)).toEqual([later])
     expect(JSON.parse(packFile(pack))).toEqual(pack)
+  })
+  it("keeps saved packs in browser storage and tells open pages", () => {
+    const page = new EventTarget()
+    const changed = vi.fn()
+    page.addEventListener("openport:rule-packs", changed)
+    vi.stubGlobal("window", page)
     saveRulePacks([pack])
-    const loaded = loadRulePacks()
-    // Without browser storage the list is empty rather than broken.
-    expect(loaded.length === 0 || loaded[0]!.id === "desk").toBe(true)
+    expect(changed).toHaveBeenCalledOnce()
+    expect(JSON.parse(stored.get("openport.rule-packs")!)).toEqual([pack])
+    expect(loadRulePacks()).toEqual([pack])
+    const many = Array.from({ length: MAX_PACKS + 5 }, (_, i) => ({ ...pack, id: `desk-${i}` }))
+    saveRulePacks(many)
+    expect(loadRulePacks()).toEqual(many.slice(0, MAX_PACKS))
+    // A longer list written elsewhere is cut to the same limit when read.
+    stored.set("openport.rule-packs", JSON.stringify(many))
+    expect(loadRulePacks()).toEqual(many.slice(0, MAX_PACKS))
+  })
+  it("drops malformed stored packs instead of offering plans that break", () => {
+    const plan = pack.plans[0]!
+    const malformed = [{ ...pack, format: "other" }, { ...pack, version: 2 }, { ...pack, id: 7 }, { ...pack, plans: "eval" },
+      { ...pack, plans: [{ ...plan, rules: null }] }, { ...pack, plans: [{ ...plan, name: null }] }, { ...pack, plans: [null] }, null, "desk"]
+    stored.set("openport.rule-packs", JSON.stringify([...malformed, pack]))
+    expect(loadRulePacks()).toEqual([pack])
+    expect(packPlans(loadRulePacks()).map((p) => p.id)).toEqual(["pack:desk:eval"])
+    for (const text of ["{", "null", "{}"]) {
+      stored.set("openport.rule-packs", text)
+      expect(loadRulePacks()).toEqual([])
+    }
+  })
+  it("keeps working without storage", () => {
+    vi.stubGlobal("localStorage", { getItem: () => { throw new Error("Blocked") }, setItem: () => { throw new Error("Quota") } })
+    expect(() => saveRulePacks([pack])).not.toThrow()
+    expect(loadRulePacks()).toEqual([])
   })
 })
