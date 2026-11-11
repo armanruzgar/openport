@@ -2682,7 +2682,7 @@ constexpr bool Desk::Options::* kDriverOptions[] = {
     &Desk::Options::revised_evaluation,    // 7: evaluation and payout rules
     &Desk::Options::revised_fills,         // 8: fills, stops, walks and flatten closes
 };
-static_assert(std::size(kDriverOptions) == kReplayDriver - 1, "each driver after the first adds one option");
+static_assert(std::size(kDriverOptions) == static_cast<std::size_t>(kReplayDriver - 1), "each driver after the first adds one option");
 }  // namespace
 
 void set_replay_driver(Desk::Options& options, int driver) {
