@@ -1,8 +1,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <gtest/gtest.h>
-#include "openport/server/equity.hpp"
 #include <nlohmann/json.hpp>
+// The server library, and with it OPENPORT_APPS_DIR, is built only with the providers.
+#ifdef OPENPORT_APPS_DIR
+#include "openport/server/equity.hpp"
+#endif
 
 #include "support/scripted_market.hpp"
 
@@ -143,6 +146,8 @@ TEST(TradingFunded, SizeScalingCountsResetRemovalsAndReviewForfeitsAsWithdrawals
   }
 }
 
+#ifdef OPENPORT_APPS_DIR
+// The equity samples the server records for each fill (src/server/equity.cpp).
 TEST(TradingFunded, FillEquitySamplesKeepTheFloorSizeScalingRaised) {
   ScriptedMarket f;
   TradingSession s(config(size_plan()), f.time);
@@ -186,6 +191,7 @@ TEST(TradingFunded, FillEquitySamplesKeepAStartingBalancePayoutFloor) {
   ASSERT_FALSE(samples.empty());
   for (const auto& sample : samples) EXPECT_EQ(sample.floor, m("10000"));
 }
+#endif
 
 TEST(TradingFunded, SizeScalingCreditsCapitalWithoutChangingProfitOrPayoutStanding) {
   ScriptedMarket f;

@@ -1138,6 +1138,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   away when another tab or client changed the same channel. A channel now keeps its
   message and any edit in progress, and follows the server's changes while it has
   none.
+- **A build without the providers links again.** With `-DOPENPORT_BUILD_PROVIDERS=OFF`
+  the default build failed at the test link: two funded-account tests call the
+  server's per-fill equity samples, and the server is not built without the
+  providers. They now build only where the server does, a CI job builds that
+  configuration on every C++ change, and the test executable names each static
+  library once, so Apple's linker no longer warns about duplicates on every link.
 
 ## 0.5.1 (2026-10-28)
 

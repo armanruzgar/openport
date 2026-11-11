@@ -79,8 +79,10 @@ if(OPENPORT_BUILD_PROVIDERS)
   )
   target_compile_definitions(openport_tests PRIVATE OPENPORT_APPS_DIR="${PROJECT_BINARY_DIR}/apps")
   add_dependencies(openport_tests openportd openport-probe)
-  target_link_libraries(openport_tests PRIVATE openport::providers openport::server
-                        nlohmann_json::nlohmann_json)
+  # The server links the providers, recording and trading libraries publicly: naming
+  # them here as well put each static library on the link line twice, which Apple's
+  # linker warns about on every link.
+  target_link_libraries(openport_tests PRIVATE openport::server nlohmann_json::nlohmann_json)
   if(OPENPORT_WITH_DATABENTO)
     target_sources(openport_tests PRIVATE providers/databento_test.cpp providers/databento_history_test.cpp)
   endif()
@@ -88,7 +90,9 @@ if(OPENPORT_BUILD_PROVIDERS)
     target_sources(openport_tests PRIVATE providers/ibkr_test.cpp)
   endif()
 else()
-  target_link_libraries(openport_tests PRIVATE openport::core)
+  # Without the server, the trading tests link its library directly. Tests in shared
+  # files that need the server's code are compiled only where OPENPORT_APPS_DIR is.
+  target_link_libraries(openport_tests PRIVATE openport::core openport::trading nlohmann_json::nlohmann_json)
 endif()
 
 # Paper trading core and the reusable scripted market fixture.
@@ -137,7 +141,6 @@ target_sources(openport_tests PRIVATE
   trading/stock_orders_test.cpp
   trading/corporate_actions_test.cpp
 )
-target_link_libraries(openport_tests PRIVATE openport::trading nlohmann_json::nlohmann_json)
 
 include(GoogleTest)
 gtest_discover_tests(openport_tests DISCOVERY_TIMEOUT 60)
