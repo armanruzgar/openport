@@ -2575,7 +2575,10 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     if (body.contains("mistakes")) {
       const auto& picks = body.at("mistakes");
       if (!picks.is_array() || picks.size() > 7) throw std::invalid_argument("mistakes must be an array of at most seven fixed picks");
-      command.mistakes = picks.get<std::vector<std::string>>();
+      for (const auto& pick : picks) {
+        if (!pick.is_string()) throw std::invalid_argument("mistakes must be strings");
+        command.mistakes.push_back(pick.get<std::string>());
+      }
     }
     command.kind = TradingCommand::Kind::Annotate;
     auto id = path.substr(std::string_view("/api/trades/").size());

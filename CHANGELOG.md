@@ -32,6 +32,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Trade notes with a non-string mistake.** `PUT /api/trades/{id}/note` with a
+  `mistakes` pick that is not a string answered 400 with the JSON library's internal
+  message; it now says `mistakes must be strings`, as tags do.
 - **`--no-paper` writes and account routes beside a locked main journal.** A trading
   or playbook write to a server started with `--no-paper` answered 503 "Command inbox
   full or trading unavailable" with `Retry-After: 1`, so clients, the Python client

@@ -3518,6 +3518,10 @@ TEST_F(PaperEngine, TradesTakeNotesAndTags) {
   expect_error(write(*engine, "PUT", path, {{"tags", {"a,b"}}}), 422, "INVALID_NOTE");
   expect_error(write(*engine, "PUT", path, {{"note", 5}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "PUT", path, {{"memo", "x"}}), 400, "INVALID_REQUEST");
+  // A pick that is not a string is named as such, not with the JSON library's text.
+  const auto mistaken = write(*engine, "PUT", path, {{"mistakes", {1, 2}}});
+  expect_error(mistaken, 400, "INVALID_REQUEST");
+  EXPECT_EQ(json::parse(mistaken.body)["error"]["message"], "mistakes must be strings");
   expect_error(write(*engine, "PUT", "/api/trades/x/note", {{"note", "x"}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "PUT", "/api/trades/" + id, {{"note", "x"}}), 404, "NOT_FOUND");
   const auto cleared = write(*engine, "PUT", path, json::object());
