@@ -314,6 +314,7 @@ TEST(CorporateActions, PricesFromBeforeTheExDateDoNotRevalueTheSplitShares) {
     const auto last = at(kToday, 16) + 15 * md::kNanosPerMinute;
     s.on_quotes({{call.osi_symbol(), ++f.observation, evening, m("520.00"), m("520.40"), 10, 10, last}}, {}, evening,
                 {{"SPY", evening, m("510")}});
+    ASSERT_NE(stock(s), nullptr);
     if (!revised) {
       // The split shares were valued at the price of the shares before it.
       EXPECT_EQ(stock(s)->mark, m("510"));
@@ -348,10 +349,9 @@ TEST(CorporateActions, OptionOrdersTriggeredByTheStocksPriceTakeTheSplit) {
     ASSERT_TRUE(s.define(call, f.time).decision.ok());
     f.quote(s, call, "14.00", "14.20");
     ASSERT_TRUE(s.submit(f.market("long", call, 1, Side::Buy), f.time).decision.ok());
-    // A stop that sells the call once SPY trades at $480, trailing it by $30, and a
-    // resting entry whose bracket would stop out under $470.
+    // A stop that sells the call once SPY trades at $480, trailing it by $30 (armed until
+    // reached, whatever its IOC), and a resting entry whose bracket would stop out under $470.
     auto stop = f.market("stop", call, 1, Side::Sell);
-    stop.tif = TimeInForce::Gtc;
     stop.trigger = Trigger{TriggerSource::Underlying, TriggerDirection::AtOrBelow, m("480")};
     stop.trigger->trail = Trail{TrailUnit::Amount, m("30")};
     const auto armed = s.submit(stop, f.time);
