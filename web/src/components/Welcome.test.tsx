@@ -108,6 +108,22 @@ describe("the welcome", () => {
 })
 
 describe("the demo prompt", () => {
+  it("waits for a settled reason, and is never offered on the demo feed itself", async () => {
+    client.setQueryData(["replay-listing"], demoListing)
+    const banner = () => host.querySelector('[aria-label="Demo market"]')
+    // A feed that is still connecting has no valid quote yet: it trades in a moment.
+    const connecting = { ...status, underlyings: status.underlyings.map((u) => ({ ...u,
+      paper: { accepting: false, reason: "INVALID_QUOTE", message: null, session: "regular" as const } })) } as Status
+    vi.mocked(useLive).mockReturnValue(liveState(connecting, null, "open"))
+    await act(async () => root.render(wrap(<DemoPrompt onNavigate={() => {}} />)))
+    expect(banner()).toBeNull()
+    vi.mocked(useLive).mockReturnValue(liveState({ ...closedStatus(), provider: { ...status.provider, simulated: true } }, null, "open"))
+    await act(async () => root.render(wrap(<DemoPrompt onNavigate={() => {}} />)))
+    expect(banner()).toBeNull()
+    vi.mocked(useLive).mockReturnValue(liveState(closedStatus(), null, "open"))
+    await act(async () => root.render(wrap(<DemoPrompt onNavigate={() => {}} />)))
+    expect(banner()?.textContent).toContain("Options markets are closed. The demo market plays a simulated day")
+  })
   it("plays the day picked", async () => {
     vi.mocked(useLive).mockReturnValue(liveState(closedStatus(), null, "open"))
     client.setQueryData(["replay-listing"], demoListing)

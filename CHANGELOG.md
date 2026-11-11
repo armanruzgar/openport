@@ -933,6 +933,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   orders." or "No fills yet." beside a tab reading "Working · 1" or "Fills · 1" and a
   Cancel all button. The page now says that no orders or fills match the filters, and
   says there are none only when there are none.
+- **No demo offer while the feed is still connecting.** For the first half minute of
+  `openportd --provider demo`, before any quote was valid, the header banner and the
+  welcome dialog said "Nothing can be traded right now" and offered **Try the demo**,
+  a replay of a simulated day, though the server was itself the demo market and
+  tradable moments later. The demo is now offered only while every market is closed
+  or its feed has stalled, and never on a simulated feed.
 
 ## 0.5.1 (2026-10-28)
 

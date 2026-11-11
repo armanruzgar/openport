@@ -9,11 +9,16 @@ import type { View } from "../lib/route"
 import { useReplayControls } from "../views/ReplayView"
 import { TradingError } from "./TradingControls"
 
-/** The server's demo market, offered while nothing on the live feed can be traded. */
+/**
+ * The server's demo market, offered while nothing on the live feed can be traded for a
+ * settled reason: every market closed or its feed stalled. A feed that is still
+ * connecting (no valid quote yet) trades in a moment, and a simulated feed is the demo.
+ */
 export function useDemoOffer() {
   const live = useLive()
   const sandbox = isSandboxToken(useWriteToken())
-  const idle = !sandbox && live.source === "live" && nothingTrades(live.underlyings)
+  const settled = live.underlyings.every((u) => u.paper ? u.paper.reason === "SESSION_CLOSED" || u.paper.reason === "FEED_STALLED" : u.session?.open === false)
+  const idle = !sandbox && live.source === "live" && !live.status?.provider.simulated && settled && nothingTrades(live.underlyings)
   const listing = useQuery({ queryKey: ["replay-listing"], queryFn: ({ signal }) => api.replay(signal), enabled: idle, staleTime: 30_000 })
   const controls = useReplayControls()
   const demo = listing.data?.demo
