@@ -264,6 +264,26 @@ it.each([false, true])("caps a held ticket's quantity and hides sizing (roll: %s
 }, renderTimeout)
 
 
+it.each([false, true])("ends an accepted close or roll with Done, and offers another try after a refusal (roll: %s)", async (roll) => {
+  const closing = closingPlan(spread).legs.map((leg) => ({ ...leg, quote }))
+  const legs = roll ? [...closing, ...spread.legs.map(({ leg }) => ({ ...leg, symbol: leg.symbol.replace("261016", "261023"), expiry: "2026-10-23PM", quote }))] : closing
+  const onClose = vi.fn()
+  const ticket = () => render(<StrategyTicket legs={legs} onLegs={() => {}} expiries={[selection.expiry]} underlying="SPX" spot={7000} trading={trading}
+    units={2} closing={!roll} roll={roll} onClose={onClose} />)
+  const submit = () => act(async () => host.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
+  const buttons = () => [...host.querySelectorAll('[aria-label="Order result"] button')].map((b) => b.textContent)
+  vi.mocked(api.submitOrder).mockRejectedValueOnce(new ApiError(422, "Price band", "PRICE_BAND"))
+  await ticket()
+  await submit()
+  await waitForRender(() => expect(host.textContent).toContain("PRICE_BAND"))
+  expect(buttons()).toEqual(["Another order"])
+  await click("Another order")
+  await submit()
+  await waitForRender(() => expect(buttons()).toEqual(["Done"]))
+  await click("Done")
+  expect(onClose).toHaveBeenCalledTimes(1)
+}, renderTimeout)
+
 it("renders held gamma and vega in a table that scrolls within narrow layouts", async () => {
   await render(<Strategies groups={[{ ...spread, greeks: { ...spread.greeks, dollar_gamma_1pct: -123.45, vega_dollars: 67.89 } }]} trading={trading} />)
   const region = host.querySelector('[aria-label="Strategies"]')!

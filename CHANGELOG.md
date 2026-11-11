@@ -1281,6 +1281,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   session with no options, as its expiries do not fit the clock, and before 2022,
   where the exchange calendar ends, holidays such as 1970-01-01 played as trading
   days. Dates outside 2022-01-01 to 2200-12-31 are refused.
+- **A filled roll or close ends with Done.** After a strategy roll or close was
+  accepted, its ticket offered **Another order**, which left a dead dialog: quantity 0,
+  every control disabled, still titled with the position that no longer existed. Those
+  tickets now offer **Done** once the order is accepted, and **Another order** only
+  after a refusal or failure, when the position is still there to trade.
 
 ## 0.5.1 (2026-10-28)
 

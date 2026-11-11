@@ -62,7 +62,7 @@ export function StrategyTicket({ legs, onLegs, expiries, underlying, spot, tradi
   template?: Pick<TemplateSetup, "tag" | "widths">
 }) {
   const destination = useActionDestination()
-  const body = <ActionDestination value={destination}><StrategyBody legs={legs} onLegs={onLegs} expiries={expiries} underlying={underlying} spot={spot} trading={trading} initialUnits={units} closing={closing} roll={roll} smiles={smiles} surface={surface} template={template} tags={tags} note={note} /></ActionDestination>
+  const body = <ActionDestination value={destination}><StrategyBody legs={legs} onLegs={onLegs} expiries={expiries} underlying={underlying} spot={spot} trading={trading} initialUnits={units} closing={closing} roll={roll} smiles={smiles} surface={surface} template={template} tags={tags} note={note} onClose={onClose} /></ActionDestination>
   if (variant === "bare") return body
   if (variant === "dialog") return <Dialog sheet title={title} onClose={onClose}>{body}</Dialog>
   return (
@@ -76,9 +76,9 @@ export function StrategyTicket({ legs, onLegs, expiries, underlying, spot, tradi
   )
 }
 
-function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initialUnits, closing, roll, smiles, surface, template, tags, note }: {
+function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initialUnits, closing, roll, smiles, surface, template, tags, note, onClose }: {
   legs: StrategyLeg[]; onLegs: (legs: StrategyLeg[]) => void; expiries: Expiry[]; underlying: string
-  spot: number | null | undefined; trading: TradingStatus; initialUnits?: number; closing: boolean; roll: boolean
+  spot: number | null | undefined; trading: TradingStatus; initialUnits?: number; closing: boolean; roll: boolean; onClose: () => void
   tags?: string[]; note?: string
   smiles?: ReadonlyMap<string, readonly { strike: number; iv: number | null }[]>
   surface?: Surface
@@ -255,7 +255,10 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
 
   return <>
     {(result != null || error != null) && <OrderResult order={result} error={error}>
-      <button type="button" className="trade-button" onClick={newOrder}>Another order</button>
+      {/* An accepted close or roll leaves no held legs for another order on this ticket. */}
+      {(closing || roll) && result && result.status !== "rejected"
+        ? <button type="button" className="trade-button" onClick={onClose}>Done</button>
+        : <button type="button" className="trade-button" onClick={newOrder}>Another order</button>}
     </OrderResult>}
     <div>
       <div className="text-base font-semibold">{underlying} <span className="font-normal text-muted">{closing ? "Close" : roll ? "Roll" : label}</span></div>
