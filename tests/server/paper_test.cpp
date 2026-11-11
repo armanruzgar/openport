@@ -1,14 +1,19 @@
 #include "support/contract_capture.hpp"
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
+#include <cstdlib>
+#include <filesystem>
 #include <future>
 #include <limits>
 #include <map>
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <tuple>
 #include <vector>
@@ -16,6 +21,8 @@
 #include <sys/file.h>
 #include <unistd.h>
 
+#include "openport/analytics/ssvi.hpp"
+#include "openport/pricing/black.hpp"
 #include "openport/server/api.hpp"
 #include "openport/server/plans.hpp"
 #include "openport/server/web_policy.hpp"
@@ -79,11 +86,14 @@ server::Engine::Options paper_options() {
   options.clock = [] { return md::new_york_to_utc({2026, 9, 22}, 10, 0); };
   return options;
 }
-std::filesystem::path paper_path() {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-paper-" + std::to_string(md::now()));
-  std::filesystem::create_directories(directory);
-  return directory / "paper.jsonl";
+/// A new directory under the system temp directory. mkdtemp names it, so test
+/// processes running at once never share one, as a clock reading could.
+std::filesystem::path unique_directory(const std::string& prefix) {
+  auto pattern = (std::filesystem::temp_directory_path() / (prefix + "-XXXXXX")).string();
+  if (::mkdtemp(pattern.data()) == nullptr) throw std::runtime_error("cannot create a " + prefix + " test directory");
+  return pattern;
 }
+std::filesystem::path paper_path() { return unique_directory("openport-paper") / "paper.jsonl"; }
 class PaperEngine : public testing::Test {
  protected:
   void SetUp() override {
@@ -118,6 +128,17 @@ class PaperEngine : public testing::Test {
   PaperProvider provider;
   test::ScriptedMarket market;
   std::unique_ptr<server::Engine> engine;
+};
+/// Removes a test's directory however the test ends, a failed ASSERT included, once
+/// the engine `running` names (when set) has stopped and closed the journals in it.
+struct RemovedAfterStop {
+  std::unique_ptr<server::Engine>& running;
+  std::filesystem::path directory;
+  ~RemovedAfterStop() {
+    if (running) running->stop();
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+  }
 };
 
 TEST_F(PaperEngine, TwoStepProgressionAndProgramCosts) {
@@ -1827,7 +1848,7 @@ TEST_F(PaperEngine, PmUsesFirstExpiryDatePrintAndAmWaitsForImport) {
 }
 
 TEST(PaperAccounts, NamedAccountsTradeApartAndRecoverFromTheirOwnJournals) {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-accounts-" + std::to_string(md::now()));
+  const auto directory = unique_directory("openport-accounts");
   auto options = paper_options();
   options.paper_journal = directory / "paper-journal.jsonl";
   options.paper_accounts = directory / "accounts";
@@ -1916,7 +1937,7 @@ TEST(PaperAccounts, NamedAccountsTradeApartAndRecoverFromTheirOwnJournals) {
 }
 
 TEST(PaperAccounts, AccountNamesCountCharactersNotBytes) {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-names-" + std::to_string(md::now()));
+  const auto directory = unique_directory("openport-names");
   auto options = paper_options();
   options.paper_journal = directory / "paper-journal.jsonl";
   options.paper_accounts = directory / "accounts";
@@ -1953,7 +1974,7 @@ TEST(PaperAccounts, AccountNamesCountCharactersNotBytes) {
 }
 
 TEST(PaperAccounts, JournalsAFullDiskLeftEmptyStartAfreshAndFailedCreatesLeaveNothing) {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-empty-" + std::to_string(md::now()));
+  const auto directory = unique_directory("openport-empty");
   const auto accounts = directory / "accounts";
   auto options = paper_options();
   options.paper_journal = directory / "paper-journal.jsonl";
@@ -3703,6 +3724,7 @@ TEST_F(PaperEngine, OptionalExecutionRulesAreValidatedAndPublished) {
 TEST_F(PaperEngine, MarginSettingsStandBesidePlansAndPortfolioShowsTheBreakdown) {
   engine->stop();
   const auto journal = paper_path();
+  RemovedAfterStop cleanup{engine, journal.parent_path()};
   auto options = paper_options();
   options.paper_accounts = journal.parent_path() / "accounts";
   engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
@@ -4045,6 +4067,78 @@ TEST_F(PaperEngine, PayoutQuoteReportsTheBestRealisedDayAndBuffer) {
   engine->stop();
 }
 
+// An eligible payout over HTTP: the reply is the account with the payout recorded,
+// the cash it took and the next payout's quote; at once the next request has no
+// qualifying day; and the paid account comes back whole from its journal.
+TEST_F(PaperEngine, AnEligiblePayoutIsPaidOverHttpAndRecoveredFromTheJournal) {
+  engine->stop();
+  const auto journal = paper_path();
+  RemovedAfterStop cleanup{engine, journal.parent_path()};
+  auto options = paper_options();
+  options.paper_journal = journal;
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  seed();
+  const json payouts{{"qualifying_profit", "10"}, {"qualifying_days", 1}, {"withdrawal_percent", 50}, {"split_percent", 80},
+      {"minimum", "10"}, {"caps", json::array()}};
+  const json rules{{"plan", "Payout paid"}, {"phase", "funded"}, {"profit_target", nullptr}, {"max_drawdown", nullptr},
+      {"drawdown_mode", "intraday"}, {"buy_only", false}, {"buying_power", true}, {"expiry_cutoff_seconds", 0}, {"payouts", payouts}};
+  const auto reset = write(*engine, "POST", "/api/account/reset", {{"initial_cash", "10000"}, {"rules", rules}, {"reason", "payout"}});
+  ASSERT_EQ(reset.status, 200) << reset.body;
+  // A day with $118.70 of net realised profit qualifies once it rolls over.
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "payout-open", "4.20")).status, 201);
+  market.next();
+  quote("5.40", "5.60");
+  auto close = order(market, "payout-close", "5.40");
+  close["side"] = "sell";
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", close).status, 201);
+  market.time = md::new_york_to_utc({2026, 9, 23}, 10, 0);
+  quote();
+  ASSERT_TRUE(wait_for([&] { return read(*engine, "/api/account")["payout"]["qualifying_days"] == 1; }));
+  const auto quoted = read(*engine, "/api/account")["payout"];
+  ASSERT_EQ(quoted["eligible"], true) << quoted;
+  EXPECT_EQ(quoted["number"], 1);
+  EXPECT_EQ(quoted["maximum"], "59.35");  // half the profit
+  const auto paid = write(*engine, "POST", "/api/account/payout", {{"amount", "50.00"}});
+  ASSERT_EQ(paid.status, 200) << paid.body;
+  const auto account = json::parse(paid.body);
+  const auto& evaluation = account["evaluation"];
+  ASSERT_EQ(evaluation["payouts"].size(), 1U) << paid.body;
+  const auto& payout = evaluation["payouts"][0];
+  EXPECT_EQ(payout["number"], 1);
+  EXPECT_EQ(payout["amount"], "50.00");
+  EXPECT_EQ(payout["trader_share"], "40.00");  // the 80% split
+  EXPECT_EQ(payout["balance"], "10118.70");    // the equity it was paid from
+  EXPECT_EQ(payout["day"], "2026-09-23");
+  EXPECT_EQ(payout["time"], md::format_timestamp(market.time));
+  EXPECT_EQ(evaluation["equity"], "10068.70");
+  EXPECT_EQ(evaluation["qualifying_days"], 0);
+  EXPECT_EQ(account["costs"]["payouts_received"], "40.00");
+  EXPECT_EQ(read(*engine, "/api/portfolio")["cash"], "10068.70");
+  // The next payout's cycle starts with the paid day: no qualifying day yet.
+  EXPECT_EQ(account["payout"]["number"], 2);
+  EXPECT_EQ(account["payout"]["eligible"], false);
+  EXPECT_EQ(account["payout"]["qualifying_days"], 0);
+  EXPECT_EQ(account["payout"]["blocked"]["code"], "PAYOUT_NOT_ELIGIBLE");
+  const auto again = write(*engine, "POST", "/api/account/payout", {{"amount", "10.00"}});
+  expect_error(again, 422, "PAYOUT_NOT_ELIGIBLE");
+  EXPECT_EQ(json::parse(again.body)["error"]["actual"], 0);
+  EXPECT_EQ(json::parse(again.body)["error"]["limit"], 1);
+  engine->stop();
+  const auto before = read(*engine, "/api/account");
+  EXPECT_EQ(before["evaluation"]["payouts"], evaluation["payouts"]);
+  // A new engine on the same journal recovers the paid account exactly.
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  const auto recovered = read(*engine, "/api/account");
+  EXPECT_EQ(recovered["evaluation"]["payouts"], evaluation["payouts"]);
+  EXPECT_EQ(recovered["costs"]["payouts_received"], "40.00");
+  EXPECT_EQ(recovered["payout"], before["payout"]);
+  EXPECT_EQ(recovered, before);
+}
+
 TEST_F(PaperEngine, IdleQuoteBatchesAreNotRecordedButRolloverIs) {
   const auto processed = [&] {
     ASSERT_TRUE(wait_for([&] {
@@ -4276,16 +4370,18 @@ TEST_F(PaperEngine, BracketAndConditionalOrdersOverHttp) {
   stop_limit["bracket"] = {{"stop_loss", {{"trigger", stop}, {"limit_price", "3.40"}}}};
   const auto limited = write(*engine, "POST", "/api/orders", stop_limit);
   ASSERT_EQ(limited.status, 201) << limited.body;
+  // The exit must exist, or the checks on it below would pass without running.
   const auto exit_id = json::parse(limited.body)["order"]["stop_loss_order"];
-  const auto open_orders = read(*engine, "/api/orders?status=open");
-  for (const auto& item : open_orders["orders"]) {
-    if (item["id"] != exit_id) continue;
-    EXPECT_EQ(item["type"], "limit");
-    EXPECT_EQ(item["time_in_force"], "gtc");
-    EXPECT_EQ(item["status"], "armed");
-    EXPECT_EQ(item["limit_price"], "3.40");
-    EXPECT_EQ(item["trigger"], reported);
-  }
+  ASSERT_TRUE(exit_id.is_string()) << limited.body;
+  const auto open_orders = read(*engine, "/api/orders?status=open")["orders"];
+  const auto exit_order = std::find_if(open_orders.begin(), open_orders.end(), [&](const json& item) { return item["id"] == exit_id; });
+  ASSERT_NE(exit_order, open_orders.end()) << open_orders;
+  EXPECT_EQ((*exit_order)["type"], "limit");
+  EXPECT_EQ((*exit_order)["time_in_force"], "gtc");
+  EXPECT_EQ((*exit_order)["status"], "armed");
+  EXPECT_EQ((*exit_order)["limit_price"], "3.40");
+  EXPECT_EQ((*exit_order)["trigger"], reported);
+  EXPECT_EQ(read(*engine, "/api/orders/" + exit_id.get<std::string>())["order"]["id"], exit_id);
   bad["bracket"] = {{"stop_loss", {{"trigger", {{"source", "spot"}, {"direction", "at_or_below"}, {"level", "1"}}}}}};
   expect_error(write(*engine, "POST", "/api/orders", bad), 400, "INVALID_REQUEST");
 
@@ -4798,8 +4894,10 @@ TEST_F(PaperEngine, RiskProfileCurvesTheHeldBookOverDatesAndBetaWeightsIt) {
     EXPECT_EQ(moved["dynamics"], dynamics);
     EXPECT_NE(moved["model"].get<std::string>().find("SSVI"), std::string::npos);
     EXPECT_EQ(moved["curves"][0]["pnl"][2], 0);
-    if (moved["surface_fallback"] == json::array({"SPX"})) EXPECT_EQ(moved["curves"][0]["pnl"], sticky["curves"][0]["pnl"]);
-    else EXPECT_EQ(moved["surface_fallback"], json::array());
+    // One quoted contract fits no SSVI surface, so the curve stays sticky strike and
+    // says why; SmileDynamicsMoveTheHeldBookAlongAFittedSurface fits one.
+    EXPECT_EQ(moved["surface_fallback"], json::array({"SPX"}));
+    EXPECT_EQ(moved["curves"][0]["pnl"], sticky["curves"][0]["pnl"]);
     const auto risk = read(*engine, std::string("/api/risk?dynamics=") + dynamics);
     EXPECT_EQ(risk["scenarios"]["dynamics"], dynamics);
     EXPECT_EQ(risk["scenarios"]["surface_fallback"], moved["surface_fallback"]);
@@ -4953,6 +5051,29 @@ TEST_F(PaperEngine, RiskProfileLegsAndHedges) {
                           "?target=delta&betas=SPX", "?target=delta&betas=SPX:11", "?target=delta&betas=SPX:1,SPX:2"})
     EXPECT_EQ(server::handle_api({"GET", std::string("/api/risk/hedges") + bad}, *engine).status, 400) << bad;
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/hedges?target=delta&scope=QQQ"}, *engine).status, 404);
+}
+
+// Hedges are sized from fresh valuations only, and a grid target needs a level to
+// reach: a grid loss limit, the plan's drawdown floor or a soft floor.
+TEST_F(PaperEngine, HedgesNeedFreshValuationsAndALevelToHedgeTheGridTo) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "entry", "4.20")).status, 201);
+  engine->synchronize().get();
+  // This account has no plan, no soft floor and no grid loss limit.
+  const auto grid = server::handle_api({"GET", "/api/risk/hedges?target=grid"}, *engine);
+  expect_error(grid, 422, "HEDGE_UNAVAILABLE");
+  EXPECT_EQ(json::parse(grid.body)["error"]["message"], "No grid loss limit or floor to hedge the grid to");
+  const auto delta = server::handle_api({"GET", "/api/risk/hedges?target=delta"}, *engine);
+  EXPECT_EQ(delta.status, 200) << delta.body;
+  // An underlying quote five minutes on leaves the held option's quote stale.
+  market.time += 5 * md::kNanosPerMinute;
+  provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+  ASSERT_TRUE(wait_for([&] { return !engine->trading_view()->snapshot->valuation_complete; }));
+  for (const auto* target : {"delta", "vega", "grid"}) {
+    const auto stale = server::handle_api({"GET", std::string("/api/risk/hedges?target=") + target}, *engine);
+    expect_error(stale, 422, "HEDGE_UNAVAILABLE");
+    EXPECT_EQ(json::parse(stale.body)["error"]["message"], "Hedges need fresh valuations of every position and open order") << target;
+  }
 }
 }  // namespace
 
@@ -5301,6 +5422,15 @@ TEST(PaperAvailability, DamagedMainAndNamedAccountsExposeOnlyTheVerifiedPrefix) 
       const auto later = contents().substr(good.size());
       const auto damaged = torn ? good + "torn" : good + "bad hash chain\n" + later;
       { std::ofstream out(journal); out << damaged; }
+      // The account's equity history, with a torn last row a read-write open would
+      // compact away, is read only: it too is left for --repair-journals.
+      const auto history = journal.string() + ".equity.csv";
+      const auto sample_row = [](md::Timestamp time) {
+        return std::to_string(time) + ",1,100000000000,null,100000000000,null,null,0,0\n";
+      };
+      const auto samples = sample_row(market.time - md::kNanosPerMinute) + sample_row(market.time) + "torn";
+      { std::ofstream file(history); file << samples; }
+      const auto history_contents = [&] { std::ifstream input(history); std::ostringstream text; text << input.rdbuf(); return text.str(); };
       auto options = paper_options();
       options.paper_journal = path;
       options.paper_accounts = directory / "accounts";
@@ -5330,6 +5460,7 @@ TEST(PaperAvailability, DamagedMainAndNamedAccountsExposeOnlyTheVerifiedPrefix) 
       EXPECT_EQ(read(engine, "/api/account" + query)["time"], account["time"]);
       engine.stop();
       EXPECT_EQ(contents(), damaged);
+      EXPECT_EQ(history_contents(), samples);
     }
   }
 }
@@ -5955,12 +6086,87 @@ TEST_F(PaperEngine, ScenarioExplorerAddsDatesAndLeavesRuleGridUnchanged) {
     EXPECT_TRUE(moved["complete"]);
     ASSERT_EQ(moved["slices"].size(), 3U);
     const auto profile = read(*engine, std::string("/api/risk/profile?underlying=SPX&days=0&dynamics=") + dynamics);
-    EXPECT_EQ(moved["surface_fallback"], profile["surface_fallback"]);
-    // Without a surface the grid is the sticky-strike grid, and says why.
-    if (moved["surface_fallback"] == json::array({"SPX"})) { EXPECT_EQ(moved["slices"], grid["slices"]); }
+    // One quoted contract fits no SSVI surface: the grid is the sticky-strike grid,
+    // and both reads say why.
+    EXPECT_EQ(moved["surface_fallback"], json::array({"SPX"}));
+    EXPECT_EQ(profile["surface_fallback"], json::array({"SPX"}));
+    EXPECT_EQ(moved["slices"], grid["slices"]);
   }
   EXPECT_EQ(server::handle_api({"GET", "/api/risk/scenarios?dynamics=sticky"}, *engine).status, 400);
   EXPECT_EQ(read(*engine, "/api/risk")["scenarios"], before);
+}
+// With a chain that fits an SSVI surface, smile dynamics move the held book along it:
+// no fallback, and on put skew the held call takes a higher volatility as the index
+// rallies than sticky strike gives it. Five SPXW expiries from three days to two years
+// are priced on a skewed surface and quoted out of the money only, so each expiry's
+// forward is the spot. A server that always fell back would answer the same 200s.
+TEST_F(PaperEngine, SmileDynamicsMoveTheHeldBookAlongAFittedSurface) {
+  const analytics::SsviParameters skew{-0.65, 0.9, 0.3};
+  constexpr double spot = 5000;
+  provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, spot, spot, spot});
+  md::InstrumentId id = 0;
+  std::string held_ask;
+  for (const char* expiry : {"260925", "261022", "261218", "270917", "281215"}) {
+    const double years = md::years_between(market.time, md::parse_osi(std::string("SPXW") + expiry + "C05000000")->expiry_time());
+    for (const double deviations : {-2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5}) {
+      // On the index's five-point strike grid, at 20% ATM volatility.
+      const auto strike = 5 * std::lround(spot * std::exp(deviations * 0.2 * std::sqrt(years)) / 5);
+      const bool call = strike >= 5000;
+      const auto digits = std::to_string(strike * 1000);
+      const auto contract = *md::parse_osi(std::string("SPXW") + expiry + (call ? "C" : "P") + std::string(8 - digits.size(), '0') + digits);
+      const double vol = analytics::ssvi_iv(skew, std::log(static_cast<double>(strike) / spot), 0.04 * years, years);
+      // A dime either side of fair value on the dime, the index options' tick from $3.
+      const auto dimes = std::lround(10 * pricing::black_price(contract.type, spot, static_cast<double>(strike), years, vol));
+      provider.sink->publish(md::ContractDefinition{id, contract});
+      provider.sink->publish(md::OptionQuote{id, market.time, static_cast<double>(dimes - 1) / 10,
+                                             static_cast<double>(dimes + 1) / 10, 10, 10});
+      if (contract.osi_symbol() == market.symbol()) held_ask = Money::from_micros((dimes + 1) * 100'000).str();
+      ++id;
+    }
+  }
+  ASSERT_FALSE(held_ask.empty());
+  ASSERT_TRUE(wait_for([&] {
+    const auto metrics = engine->metrics("SPX");
+    if (!metrics || metrics->as_of != market.time || metrics->slices.size() != 5U) return false;
+    for (const auto& slice : metrics->slices) {
+      if (slice.strikes.size() != 9U) return false;
+      for (const auto& row : slice.strikes)
+        if (!std::isfinite(row.iv)) return false;
+    }
+    return true;
+  }));
+  engine->synchronize().get();
+  // The chain fits, as the server fits it from the same analytics.
+  const auto fit = analytics::fit_ssvi(engine->metrics("SPX")->slices);
+  ASSERT_EQ(fit.status, analytics::SviStatus::Ok) << fit.reason;
+  const auto bought = write(*engine, "POST", "/api/orders", order(market, "entry", held_ask));
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  engine->synchronize().get();
+  // Each read's +10% point at no volatility shift: the profile's last of five, the
+  // grids' last spot row in the 0 column of -5, 0, 5 and 10 points.
+  const std::string profile = "/api/risk/profile?underlying=SPX&days=0&range=10&steps=5";
+  auto sticky = read(*engine, profile);
+  auto sticky_grid = read(*engine, "/api/risk/scenarios?underlying=SPX");
+  auto sticky_risk = read(*engine, "/api/risk")["scenarios"];
+  ASSERT_TRUE(sticky["curves"][0]["pnl"][4].is_number()) << sticky;
+  ASSERT_TRUE(sticky_grid["slices"][0]["pnl"][8][1].is_number()) << sticky_grid;
+  ASSERT_TRUE(sticky_risk["pnl"][8][1].is_number()) << sticky_risk;
+  for (const auto* dynamics : {"sticky_moneyness", "sticky_delta"}) {
+    SCOPED_TRACE(dynamics);
+    const auto chosen = std::string("dynamics=") + dynamics;
+    auto moved = read(*engine, profile + "&" + chosen);
+    EXPECT_EQ(moved["surface_fallback"], json::array());
+    ASSERT_TRUE(moved["curves"][0]["pnl"][4].is_number()) << moved;
+    EXPECT_GT(moved["curves"][0]["pnl"][4].get<double>(), sticky["curves"][0]["pnl"][4].get<double>());
+    auto grid = read(*engine, "/api/risk/scenarios?underlying=SPX&" + chosen);
+    EXPECT_EQ(grid["surface_fallback"], json::array());
+    ASSERT_TRUE(grid["slices"][0]["pnl"][8][1].is_number()) << grid;
+    EXPECT_GT(grid["slices"][0]["pnl"][8][1].get<double>(), sticky_grid["slices"][0]["pnl"][8][1].get<double>());
+    auto risk = read(*engine, "/api/risk?" + chosen)["scenarios"];
+    EXPECT_EQ(risk["surface_fallback"], json::array());
+    ASSERT_TRUE(risk["pnl"][8][1].is_number()) << risk;
+    EXPECT_GT(risk["pnl"][8][1].get<double>(), sticky_risk["pnl"][8][1].get<double>());
+  }
 }
 TEST_F(PaperEngine, HistoricalRiskLabelsItsInputsAndReportsInsufficientHistory) {
   seed();
@@ -6446,8 +6652,7 @@ TEST(AccountGroups, AllocateByRatioOrByEquity) {
 }
 
 TEST(AccountGroups, ValidateAndPersistGroups) {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-groups-" + std::to_string(md::now()));
-  std::filesystem::create_directories(directory);
+  const auto directory = unique_directory("openport-groups");
   const auto file = directory / "account-groups.json";
   const server::AccountGroup desk{"desk", server::Allocation::Ratio, {{"main", Money::parse("1")}, {"other", Money::parse("2")}}};
   {
@@ -6678,6 +6883,49 @@ TEST_F(PaperEngine, RetriedEquityCopyKeepsItsFirstSizes) {
 
 TEST_F(PaperEngine, AccountGroupsAreNotOfferedWithoutAStore) {
   expect_error(write(*engine, "GET", "/api/account-groups"), 404, "NOT_FOUND");
+}
+
+// A command inbox that takes nothing refuses each member's part of a copy as it
+// would the account's own order, and the copy answers with every refusal.
+TEST_F(PaperEngine, ACopyToAFullInboxIsRefusedForEveryMember) {
+  engine.reset();
+  const auto path = paper_path();
+  RemovedAfterStop cleanup{engine, path.parent_path()};
+  auto options = paper_options();
+  options.paper_journal = path.string();
+  options.paper_accounts = path.parent_path() / "accounts";
+  options.account_groups = std::make_shared<server::AccountGroups>(path.parent_path() / "account-groups.json");
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  const auto created = write(*engine, "POST", "/api/accounts", {{"name", "Other"}, {"plan", "practice"}});
+  ASSERT_EQ(created.status, 201) << created.body;
+  const auto other = json::parse(created.body)["account"]["id"].get<std::string>();
+  engine->stop();
+  // The same accounts behind an inbox with no room.
+  options.command_capacity = 0;
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view(other) != nullptr; }));
+  seed();
+  auto response = write(*engine, "PUT", "/api/account-groups/desk", {{"allocation", "ratio"},
+      {"members", {{{"account", "main"}}, {{"account", other}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "desk"}, {"order", order(market, "copy", "4.20")}});
+  ASSERT_EQ(response.status, 207) << response.body;
+  const auto body = json::parse(response.body);
+  ASSERT_EQ(body["results"].size(), 2U) << response.body;
+  EXPECT_EQ(body["results"][0]["account"], "main");
+  EXPECT_EQ(body["results"][1]["account"], other);
+  for (const auto& result : body["results"]) {
+    EXPECT_EQ(result["quantity"], 1) << result;
+    EXPECT_EQ(result["status"], 503) << result;
+    EXPECT_EQ(result["ok"], false) << result;
+    EXPECT_EQ(result["response"]["error"]["code"], "TRADING_UNAVAILABLE") << result;
+    EXPECT_EQ(result["response"]["error"]["message"], "Command inbox full or trading unavailable") << result;
+  }
+  EXPECT_TRUE(read(*engine, "/api/orders")["orders"].empty());
+  EXPECT_TRUE(read(*engine, "/api/orders?account=" + other)["orders"].empty());
 }
 
 TEST(PaperStocks, WorkingShareOrdersRestAndFillOnLaterPrices) {
@@ -7017,11 +7265,17 @@ TEST(PaperStocks, AdjustedSeriesWithoutAListedEquivalentAreModelledAndTheDaysRol
   EXPECT_GT(mark, Money::parse("12.15"));
   EXPECT_LT(mark, Money::parse("21.15"));
   EXPECT_TRUE(engine.trading_view()->snapshot->valuation_complete);
-  // A modelled mark never trades.
+  // A modelled mark never trades: the close is refused for want of a listed quote, not
+  // for a malformed request or an unknown contract, and the position stays.
   const auto refused = write(engine, "POST", "/api/orders",
                              {{"client_order_id", "close"}, {"symbol", call.osi_symbol()}, {"side", "sell"}, {"type", "market"},
                               {"quantity", 1}, {"time_in_force", "ioc"}});
-  EXPECT_TRUE(refused.status != 201 || json::parse(refused.body)["fills"].empty()) << refused.body;
+  EXPECT_EQ(refused.status, 422) << refused.body;
+  EXPECT_EQ(json::parse(refused.body)["error"]["code"], "INVALID_QUOTE") << refused.body;
+  portfolio = read(engine, "/api/portfolio");
+  ASSERT_EQ(portfolio["positions"].size(), 1U);
+  EXPECT_EQ(portfolio["positions"][0]["symbol"], call.osi_symbol());
+  EXPECT_EQ(portfolio["positions"][0]["quantity"], 1);
   // The next day rolls over on the modelled mark.
   day({2026, 9, 24}, 1);
   EXPECT_EQ(engine.trading_view()->snapshot->evaluation.days.size(), days + 1);
