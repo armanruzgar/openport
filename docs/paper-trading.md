@@ -3526,7 +3526,8 @@ token with read scope (or admin), even on a server whose GET routes are public:
 anonymous callers are refused unless the server is an open loopback one, where they
 may already trade. Sandbox tokens are refused. The request is JSON, `{"csv": "...", "format": "auto",
 "max_quote_age_seconds": 60}`, within the 64 KiB request limit (split longer
-exports); at most 5,000 fills are read. Formats:
+exports); at most 5,000 fills are read: `skipped` names the first fill after them,
+once, and no row after it is read. Formats:
 
 | `format` | Reads |
 | --- | --- |
@@ -3534,7 +3535,7 @@ exports); at most 5,000 fills are read. Formats:
 | `tastytrade` | The transaction history export: `Type` Trade rows of option instruments; time from `Date`, side from `Action`, price from `Value / (Quantity × Multiplier)`, which excludes commissions and fees |
 | `schwab` | A thinkorswim account statement's Account Trade History section (`Exec Time`, `Side`, `Qty`, `Symbol`, `Exp`, `Strike`, `Type`, `Price`; a spread's later legs share the first leg's time), or a Schwab transaction export (`Date`, `Action`, `Symbol` like `SPXW 10/22/2026 5000.00 C`, `Quantity`, `Price`), which gives dates only |
 | `ibkr` | A Flex Query trades file (`Symbol`, `DateTime` such as `20261021;101532` or `TradeDate`/`TradeTime`, `Buy/Sell`, `Quantity`, `TradePrice`, options only when `AssetClass` is given), or an activity statement's `Trades` section (`Date/Time`, `Quantity`, `T. Price`, symbols like `SPXW 22OCT26 5000 C`) |
-| `auto` | Detects the format from the header |
+| `auto` | Detects the format from the header; IBKR by its `TradePrice` (or `T. Price`) column or a `Trades` section, so a generic file may name its side column `buy/sell` |
 
 Times without an offset are read as New York time, as these exports usually show
 for US accounts; check the export's time zone setting. The layouts follow the

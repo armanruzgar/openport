@@ -470,6 +470,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   header became a data line, or the mark joined the first symbol, and openportd would
   not start, blaming the symbol or the action kind. The mark is now skipped, as the
   broker-fill import already skipped it.
+- **Broker-fill imports.** With `format` `auto`, the default, a generic file whose side
+  column was named `buy/sell` (which the generic reader takes) was taken for an IBKR
+  Flex query and refused for lacking `TradePrice`; IBKR is now known by its price
+  column. Past the 5,000-fill cap, the "Only the first 5,000 fills are read" notice was
+  added again for every later fill that followed a row skipped for another reason, and
+  those rows were listed one by one; the notice now comes once, at the first fill past
+  the cap, and reading stops there.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

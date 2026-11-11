@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <string>
+#include <utility>
+
 #include "openport/trading/fill_quality.hpp"
 #include "support/scripted_market.hpp"
 
@@ -170,6 +174,46 @@ TEST(BrokerFills, TastytradeThinkorswimSchwabAndIbkrExportsAreDetected) {
   EXPECT_EQ(statement.fills[0].side, Side::Sell) << "The quantity's sign gives the side";
   EXPECT_EQ(statement.fills[0].symbol, "SPXW  261022C05000000");
   EXPECT_EQ(statement.fills[0].time, kTen);
+}
+
+TEST(BrokerFills, AGenericSideColumnNamedBuySellIsNotTakenForIbkr) {
+  // IBKR is known by its TradePrice column; buy/sell alone is a generic side name too.
+  for (const auto* time : {"time", "datetime"}) {
+    const auto import = parse_broker_fills(std::string(time) + ",symbol,buy/sell,quantity,price\n"
+                                           "2026-10-21 10:15:32,SPXW261022C05000000,buy,2,4.10\n");
+    EXPECT_EQ(import.format, "generic") << time;
+    ASSERT_EQ(import.fills.size(), 1U) << time;
+    EXPECT_EQ(import.fills[0].side, Side::Buy);
+    EXPECT_EQ(import.fills[0].quantity, 2);
+    EXPECT_EQ(import.fills[0].time, kTen);
+  }
+}
+
+TEST(BrokerFills, OnlyTheFirst5000FillsAreReadAndThatIsSaidOnce) {
+  const auto csv = [](std::size_t fills, bool shares_between) {
+    std::string text = "time,symbol,side,quantity,price\n";
+    for (std::size_t i = 0; i < fills; ++i) {
+      text += "2026-10-21 10:15:32,SPXW261022C05000000,buy,1,4.10\n";
+      if (shares_between) text += "2026-10-21 10:15:32,SPY,buy,1,580.10\n";
+    }
+    return text;
+  };
+  const std::string notice = "Only the first 5,000 fills are read";
+  const auto whole = parse_broker_fills(csv(5000, false), "generic");
+  EXPECT_EQ(whole.fills.size(), 5000U);
+  EXPECT_TRUE(whole.skipped.empty());
+  const auto over = parse_broker_fills(csv(5010, false), "generic");
+  EXPECT_EQ(over.fills.size(), 5000U);
+  ASSERT_EQ(over.skipped.size(), 1U);
+  EXPECT_EQ(over.skipped[0].first, 5002U) << "the 5,001st fill, after the header";
+  EXPECT_EQ(over.skipped[0].second, notice);
+  // Rows of other kinds between the fills neither repeat the notice nor are listed after it.
+  const auto mixed = parse_broker_fills(csv(5010, true), "generic");
+  EXPECT_EQ(mixed.fills.size(), 5000U);
+  EXPECT_EQ(std::count_if(mixed.skipped.begin(), mixed.skipped.end(), [&](const auto& skip) { return skip.second == notice; }), 1);
+  ASSERT_EQ(mixed.skipped.size(), 5001U);
+  EXPECT_EQ(mixed.skipped.back().first, 10002U);
+  EXPECT_EQ(mixed.skipped.back().second, notice);
 }
 
 TEST(BrokerFills, QuantitiesBeyondAMillionContractsAreSkippedNotRead) {

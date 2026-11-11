@@ -232,18 +232,20 @@ std::optional<std::string> symbol_cell(std::string_view text) {
 /// What a row parser makes of one row: a fill, nothing (a row of another kind,
 /// with why), or an error.
 using RowResult = std::variant<BrokerFill, std::string>;
-void add_row(BrokerImport& out, std::size_t line, RowResult result) {
+/// Adds one row's result; false once a fill comes after the first kMaxBrokerFills,
+/// noted once at its row: the format's parser then stops reading.
+[[nodiscard]] bool add_row(BrokerImport& out, std::size_t line, RowResult result) {
   if (auto* fill = std::get_if<BrokerFill>(&result)) {
     if (out.fills.size() >= kMaxBrokerFills) {
-      if (out.skipped.empty() || out.skipped.back().second.find("5,000") == std::string::npos)
-        out.skipped.emplace_back(line, "Only the first 5,000 fills are read");
-      return;
+      out.skipped.emplace_back(line, "Only the first 5,000 fills are read");
+      return false;
     }
     fill->row = line;
     out.fills.push_back(std::move(*fill));
   } else {
     out.skipped.emplace_back(line, std::get<std::string>(result));
   }
+  return true;
 }
 /// Quantity's sign stands in for a missing side.
 RowResult finish(std::optional<std::string> symbol, std::optional<Side> side, std::optional<std::int64_t> quantity,
@@ -284,7 +286,7 @@ void parse_generic(const std::vector<Row>& rows, BrokerImport& out) {
       fill->bid = money_cell(cell(row, bid));
       fill->ask = money_cell(cell(row, ask));
     }
-    add_row(out, row.line, std::move(result));
+    if (!add_row(out, row.line, std::move(result))) return;
   }
 }
 /// tastytrade's transaction history: trades only, priced from Value per
@@ -317,7 +319,7 @@ void parse_tastytrade(const std::vector<Row>& rows, BrokerImport& out) {
     std::optional<Money> price;
     if (contracts && *contracts != 0 && importable(*contracts) && per && *per > 0 && *per <= kMaxBrokerQuantity && total)
       price = (*total < Money{} ? -*total : *total).prorate(1, (*contracts < 0 ? -*contracts : *contracts) * *per);
-    add_row(out, row.line, finish(symbol_cell(cell(row, symbol)), side_cell(cell(row, action)), contracts, price, *when));
+    if (!add_row(out, row.line, finish(symbol_cell(cell(row, symbol)), side_cell(cell(row, action)), contracts, price, *when))) return;
   }
 }
 /// thinkorswim's account statement, Account Trade History section: a spread's
@@ -348,7 +350,8 @@ void parse_thinkorswim(const std::vector<Row>& rows, std::size_t start, BrokerIm
       if (right && at)
         osi = osi_of(cell(row, symbol), {2000 + std::atoi(parts[2].c_str()), month_number(parts[1]), std::atoi(parts[0].c_str())}, *right, *at);
     }
-    add_row(out, row.line, finish(osi, side_cell(cell(row, side)), integer_cell(cell(row, quantity)), money_cell(cell(row, price)), *last));
+    if (!add_row(out, row.line, finish(osi, side_cell(cell(row, side)), integer_cell(cell(row, quantity)), money_cell(cell(row, price)), *last)))
+      return;
   }
 }
 /// Schwab's transaction export: dates without times, so its rows load but cannot
@@ -367,8 +370,9 @@ void parse_schwab_transactions(const std::vector<Row>& rows, BrokerImport& out) 
     if (row.blank()) continue;
     const auto side = side_cell(cell(row, action));
     if (!side) { out.skipped.emplace_back(row.line, "Not a buy or a sale"); continue; }
-    add_row(out, row.line, finish(symbol_cell(cell(row, symbol)), side, integer_cell(cell(row, quantity)),
-                                  money_cell(cell(row, price)), 0));
+    if (!add_row(out, row.line, finish(symbol_cell(cell(row, symbol)), side, integer_cell(cell(row, quantity)),
+                                       money_cell(cell(row, price)), 0)))
+      return;
   }
 }
 /// IBKR Flex Query trades (Symbol, DateTime or TradeDate and TradeTime, Buy/Sell,
@@ -408,8 +412,9 @@ void parse_ibkr_flex(const std::vector<Row>& rows, BrokerImport& out) {
                      {std::atoi(std::string(date.substr(0, 4)).c_str()), std::atoi(std::string(date.substr(4, 2)).c_str()),
                       std::atoi(std::string(date.substr(6, 2)).c_str())}, *r, *at);
     }
-    add_row(out, row.line, finish(osi, side ? side_cell(cell(row, side)) : std::nullopt, integer_cell(cell(row, quantity)),
-                                  money_cell(cell(row, price)), *time));
+    if (!add_row(out, row.line, finish(osi, side ? side_cell(cell(row, side)) : std::nullopt, integer_cell(cell(row, quantity)),
+                                       money_cell(cell(row, price)), *time)))
+      return;
   }
 }
 /// IBKR's activity statement: "Trades,Header,..." then "Trades,Data,Order,..." rows,
@@ -425,9 +430,10 @@ void parse_ibkr_statement(const std::vector<Row>& rows, BrokerImport& out) {
     if (lower(category).find("option") == std::string::npos) { out.skipped.emplace_back(row.line, "Not an option"); continue; }
     const auto time = time_cell(cell(row, header->find({"date/time"})));
     if (!time) { out.skipped.emplace_back(row.line, "Unreadable time"); continue; }
-    add_row(out, row.line, finish(symbol_cell(cell(row, header->find({"symbol"}))), std::nullopt,
-                                  integer_cell(cell(row, header->find({"quantity"}))),
-                                  money_cell(cell(row, header->find({"t. price", "tradeprice"}))), *time));
+    if (!add_row(out, row.line, finish(symbol_cell(cell(row, header->find({"symbol"}))), std::nullopt,
+                                       integer_cell(cell(row, header->find({"quantity"}))),
+                                       money_cell(cell(row, header->find({"t. price", "tradeprice"}))), *time)))
+      break;
   }
   if (!header) throw std::invalid_argument("An IBKR activity statement needs its Trades section");
 }
@@ -565,7 +571,9 @@ BrokerImport parse_broker_fills(std::string_view csv, std::string_view format) {
   std::string detected(format);
   if (format == "auto") {
     if (history) detected = "schwab";
-    else if (statement || first.has({"tradeprice", "buy/sell"})) detected = "ibkr";
+    // A Flex query is known by the price column parse_ibkr_flex needs: a generic
+    // file may call its side column buy/sell too.
+    else if (statement || first.has({"tradeprice", "t. price"})) detected = "ibkr";
     else if (first.has({"instrument type", "root symbol"})) detected = "tastytrade";
     else if (first.has({"fees & comm"})) detected = "schwab";
     else detected = "generic";
