@@ -1,19 +1,32 @@
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <poll.h>
 #include <sys/wait.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/tcp.hpp>
+
+#include <cerrno>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
 
 #include "support/recording.hpp"
 #include "support/scripted_market.hpp"
+#include "openport/net/http.hpp"
 #include "openport/trading/journal.hpp"
 #include "openport/pricing/black.hpp"
 #include "openport/server/plans.hpp"
@@ -748,3 +761,272 @@ TEST(Cli, ClosedDateRangesExitSuccessfullyWithoutCredentialsOrDaemonStartup) {
   EXPECT_NE(output.find("day 3/3 2026-09-07 closed"), std::string::npos) << output;
   EXPECT_EQ(output.find("OpenPort on http"), std::string::npos);
 }
+
+namespace {
+using namespace std::chrono_literals;
+
+/// A loopback port nothing listens on now, for a daemon to take.
+unsigned short free_port() {
+  boost::asio::io_context io;
+  const boost::asio::ip::tcp::endpoint loopback(boost::asio::ip::make_address("127.0.0.1"), 0);
+  boost::asio::ip::tcp::acceptor acceptor(io, loopback);
+  return acceptor.local_endpoint().port();
+}
+
+/// Arguments that serve a short replay, offline and without paper trading, on `port`.
+std::string replay_server(const std::filesystem::path& recording, unsigned short port) {
+  return "--provider replay --symbols SPX,SPY --option file='" + recording.string() +
+         "' --option speed=max --option loop=off --no-paper --port " + std::to_string(port);
+}
+
+/// A server started through `sh -c`, which execs it, so the daemon keeps the shell's
+/// pid. Its stdout and stderr share one pipe, read with deadlines so no test can hang.
+class Background {
+ public:
+  Background(const std::string& command, const std::filesystem::path& directory) {
+    int ends[2];
+    if (::pipe(ends) != 0) throw std::runtime_error("pipe failed");
+    pid_ = ::fork();
+    if (pid_ < 0) {
+      ::close(ends[0]);
+      ::close(ends[1]);
+      throw std::runtime_error("fork failed");
+    }
+    if (pid_ == 0) {
+      // Started as from a terminal, whatever the test runner inherited: no signal
+      // blocked, and SIGHUP with its default action.
+      sigset_t none;
+      sigemptyset(&none);
+      ::sigprocmask(SIG_SETMASK, &none, nullptr);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"  // glibc and Darwin spell SIG_DFL as a C cast.
+      std::signal(SIGHUP, SIG_DFL);
+#pragma GCC diagnostic pop
+      ::dup2(ends[1], STDOUT_FILENO);
+      ::dup2(ends[1], STDERR_FILENO);
+      ::close(ends[0]);
+      ::close(ends[1]);
+      if (::chdir(directory.c_str()) == 0) ::execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+      ::_exit(127);
+    }
+    ::close(ends[1]);
+    output_ = ends[0];
+  }
+  Background(const Background&) = delete;
+  Background& operator=(const Background&) = delete;
+  ~Background() {
+    if (pid_ > 0) {
+      ::kill(pid_, SIGKILL);
+      ::waitpid(pid_, nullptr, 0);
+    }
+    if (output_ >= 0) ::close(output_);
+  }
+
+  void send(int number) const {
+    if (pid_ > 0) ::kill(pid_, number);
+  }
+
+  /// The rest of the first line starting with `prefix`, once the daemon has written it;
+  /// nothing if its output ends or `limit` passes first.
+  std::optional<std::string> line(std::string_view prefix, std::chrono::seconds limit) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    for (;;) {
+      const auto start = output.find(prefix);
+      const auto end = start == std::string::npos ? start : output.find('\n', start);
+      if (end != std::string::npos) return output.substr(start + prefix.size(), end - start - prefix.size());
+      if (!take(deadline)) return std::nullopt;
+    }
+  }
+
+  /// Its wait status once it has exited, after the rest of its output; nothing while it
+  /// is still running after `limit`.
+  std::optional<int> wait_exit(std::chrono::seconds limit) {
+    if (pid_ <= 0) return std::nullopt;
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (take(deadline)) {}
+    do {
+      int status = 0;
+      if (::waitpid(pid_, &status, WNOHANG) == pid_) {
+        pid_ = -1;
+        return status;
+      }
+      std::this_thread::sleep_for(20ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    return std::nullopt;
+  }
+
+  std::string output;
+
+ private:
+  /// Appends what the daemon has written; false at the end of its output or the deadline.
+  bool take(std::chrono::steady_clock::time_point deadline) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now()).count();
+    if (left <= 0) return false;
+    pollfd ready{};
+    ready.fd = output_;
+    ready.events = POLLIN;
+    const int polled = ::poll(&ready, 1, static_cast<int>(left));
+    if (polled <= 0) return polled < 0 && errno == EINTR;
+    char buffer[4096];
+    const auto count = ::read(output_, buffer, sizeof buffer);
+    if (count <= 0) return count < 0 && errno == EINTR;
+    output.append(buffer, static_cast<std::size_t>(count));
+    return true;
+  }
+
+  pid_t pid_ = -1;
+  int output_ = -1;
+};
+
+// B-71: a shell that finds openportd on PATH passes only its name as argv[0], which
+// the lookup resolved against the working directory.
+TEST(Cli, TheTerminalIsFoundBesideTheRunningBinaryNotTheWorkingDirectory) {
+  using openport::startup::search_path;
+  using openport::startup::web_root_beside;
+  openport::test::RecordingFile file;
+  const auto root = std::filesystem::weakly_canonical(file.directory);
+  const auto page = [](const std::filesystem::path& directory) {
+    std::filesystem::create_directories(directory);
+    std::ofstream out(directory / "index.html");
+    out << "<!doctype html>";
+  };
+  // Homebrew's layout: bin/openportd is a link into the Cellar, where share/ is.
+  const auto keg = root / "Cellar/openport/1.0.0";
+  std::filesystem::create_directories(keg / "bin");
+  { std::ofstream script(keg / "bin/openportd"); script << "#!/bin/sh\n"; }
+  std::filesystem::permissions(keg / "bin/openportd", std::filesystem::perms::owner_all);
+  page(keg / "share/openport/web");
+  std::filesystem::create_directories(root / "bin");
+  std::filesystem::create_symlink("../Cellar/openport/1.0.0/bin/openportd", root / "bin/openportd");
+  // An earlier PATH entry with a file of that name that cannot run is passed over.
+  std::filesystem::create_directories(root / "first");
+  { std::ofstream text(root / "first/openportd"); text << "not a program\n"; }
+  const auto directories = (root / "first").string() + ":" + (root / "bin").string();
+  EXPECT_EQ(search_path("openportd", directories), root / "bin/openportd");
+  EXPECT_EQ(search_path("openportd", (root / "first").string()), std::filesystem::path{});
+  EXPECT_EQ(search_path("bin/openportd", directories), std::filesystem::path("bin/openportd"));
+  EXPECT_EQ(search_path("", directories), std::filesystem::path{});
+  // The working directory's own web/dist is used only when nothing is beside the binary.
+  const auto elsewhere = root / "elsewhere";
+  page(elsewhere / "web/dist");
+  EXPECT_EQ(web_root_beside(root / "bin/openportd", elsewhere), keg / "share/openport/web");
+  EXPECT_EQ(web_root_beside(keg / "bin/openportd", elsewhere), keg / "share/openport/web");
+  page(root / "checkout/web/dist");
+  std::filesystem::create_directories(root / "checkout/build/apps");
+  EXPECT_EQ(web_root_beside(root / "checkout/build/apps/openportd", elsewhere), root / "checkout/web/dist");
+  EXPECT_EQ(web_root_beside(root / "first/openportd", elsewhere), elsewhere / "web/dist");
+  EXPECT_EQ(web_root_beside({}, elsewhere), elsewhere / "web/dist");
+  // The running binary is found whatever argv[0] says.
+  const auto self = openport::startup::executable_path("openport_tests");
+  EXPECT_EQ(self.filename(), "openport_tests") << self;
+  EXPECT_TRUE(std::filesystem::is_regular_file(self)) << self;
+}
+
+// B-71: started by name from another directory, as a shell runs an installed openportd
+// from PATH, it serves the terminal installed beside it.
+TEST(WebServer, DaemonStartedByNameFromPathServesTheTerminalInstalledBesideIt) {
+  openport::test::RecordingFile source;
+  openport::test::record_events(source.path, {});
+  const auto root = std::filesystem::weakly_canonical(source.directory);
+  const auto prefix = root / "prefix";
+  std::filesystem::create_directories(prefix / "bin");
+  std::filesystem::create_directories(prefix / "share/openport/web");
+  { std::ofstream page(prefix / "share/openport/web/index.html"); page << "<!doctype html><title>installed terminal</title>"; }
+  // As cmake --install lays it out, with the built binary linked or copied into bin/.
+  const std::filesystem::path built = std::string(OPENPORT_APPS_DIR) + "/openportd";
+  const auto installed = prefix / "bin/openportd";
+  std::error_code ec;
+  std::filesystem::create_hard_link(built, installed, ec);
+  if (ec) {
+    std::filesystem::copy_file(built, installed);
+    std::filesystem::permissions(installed, std::filesystem::perms::owner_all, std::filesystem::perm_options::add);
+  }
+  // A web/dist in the working directory, which the lookup by argv[0] served instead.
+  const auto elsewhere = root / "elsewhere";
+  std::filesystem::create_directories(elsewhere / "web/dist");
+  { std::ofstream page(elsewhere / "web/dist/index.html"); page << "<!doctype html><title>wrong terminal</title>"; }
+  const auto port = free_port();
+  Background daemon("export " + isolated_home() + "PATH='" + (prefix / "bin").string() +
+                    "':\"$PATH\"; unset OPENPORT_WEB_ROOT; exec openportd " + replay_server(source.path, port), elsewhere);
+  const auto served = daemon.line("web terminal: ", 60s);
+  ASSERT_TRUE(served.has_value()) << daemon.output;
+  EXPECT_EQ(*served, (prefix / "share/openport/web").string()) << daemon.output;
+  openport::net::HttpClient http;
+  const auto shell = http.get("http://127.0.0.1:" + std::to_string(port) + "/");
+  EXPECT_EQ(shell.status, 200) << shell.body;
+  EXPECT_NE(shell.body.find("installed terminal"), std::string::npos) << shell.body;
+  daemon.send(SIGTERM);
+  const auto status = daemon.wait_exit(60s);
+  ASSERT_TRUE(status.has_value()) << daemon.output;
+  EXPECT_TRUE(WIFEXITED(*status)) << daemon.output;
+}
+
+// B-72: closing the terminal or SSH session sends SIGHUP, which stops the server as
+// Ctrl-C does. With a --token-file it reloads the file instead, and under nohup, which
+// ignores it, the server keeps running.
+TEST(WebServer, DaemonStopsOnHangupUnlessItReloadsTokensOrRunsUnderNohup) {
+  openport::test::RecordingFile source;
+  openport::test::record_events(source.path, {});
+  const auto tokens = source.directory / "tokens";
+  { std::ofstream file(tokens); file << "reader read fixture-reader-token\n"; }
+  const auto daemon_path = std::string(OPENPORT_APPS_DIR) + "/openportd";
+  struct Case {
+    std::string name, before, after;
+    bool stops;
+  };
+  const std::vector<Case> cases{{"no token file", "", "", true},
+                                {"token file", "", " --token-file '" + tokens.string() + "'", false},
+                                {"nohup", "trap '' HUP; ", "", false}};
+  for (const auto& item : cases) {
+    SCOPED_TRACE(item.name);
+    const auto port = free_port();
+    Background daemon("export " + isolated_home() + "; " + item.before + "exec '" + daemon_path + "' " +
+                      replay_server(source.path, port) + item.after, source.directory);
+    ASSERT_TRUE(daemon.line("web terminal: ", 60s).has_value()) << daemon.output;
+    daemon.send(SIGHUP);
+    if (item.stops) {
+      const auto stopped = daemon.wait_exit(60s);
+      ASSERT_TRUE(stopped.has_value()) << "still running after SIGHUP\n" << daemon.output;
+      ASSERT_TRUE(WIFEXITED(*stopped)) << daemon.output;
+      EXPECT_EQ(WEXITSTATUS(*stopped), 0) << daemon.output;
+      EXPECT_NE(daemon.output.find("shutting down"), std::string::npos) << daemon.output;
+      continue;
+    }
+    // Still serving after several of its one-second ticks.
+    EXPECT_FALSE(daemon.wait_exit(3s).has_value()) << daemon.output;
+    openport::net::HttpClient http;
+    EXPECT_EQ(http.get("http://127.0.0.1:" + std::to_string(port) + "/api/status").status, 200);
+    daemon.send(SIGTERM);
+    const auto status = daemon.wait_exit(60s);
+    ASSERT_TRUE(status.has_value()) << daemon.output;
+    EXPECT_TRUE(WIFEXITED(*status)) << daemon.output;
+  }
+}
+
+// I-18: paper trading that cannot start is named on the console with its journal, not
+// only in the terminal; startup otherwise goes on.
+TEST(Cli, DaemonSaysWhyPaperTradingIsOffBeforeWebStartupFails) {
+  openport::test::RecordingFile source;
+  openport::test::record_events(source.path, {});
+  const auto folder = source.directory / "folder.jsonl";
+  std::filesystem::create_directories(folder);
+  const auto damaged = source.directory / "damaged.jsonl";
+  { std::ofstream out(damaged); out << "not a journal\n"; }
+  const auto start = [&](const std::string& paper) {
+    return run_daemon("--provider replay --symbols SPX,SPY --option file='" + source.path.string() +
+                      "' --option speed=max " + paper + " --address invalid-address");
+  };
+  const std::vector<std::pair<std::filesystem::path, std::string>> journals{
+      {folder, "JOURNAL_IO: "}, {damaged, "ACCOUNT_DAMAGED: Invalid journal JSON at record 1"}};
+  for (const auto& [journal, reason] : journals) {
+    const auto result = start("--paper-journal '" + journal.string() + "'");
+    EXPECT_EQ(result.status, 2) << result.output;
+    EXPECT_NE(result.output.find("openportd: paper trading is off (" + journal.string() + "): " + reason),
+              std::string::npos) << result.output;
+  }
+  const auto off = start("--no-paper");
+  EXPECT_EQ(off.status, 2) << off.output;
+  EXPECT_EQ(off.output.find("paper trading is off"), std::string::npos) << off.output;
+}
+}  // namespace

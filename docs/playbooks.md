@@ -560,8 +560,9 @@ openportd --verify-run report.json.d/attempts/000001.jsonl
 Attempt journals record each input transition. Older single-input journals still
 load and verify. Recordings and custom scenario definitions must remain available
 and unchanged for verification. The report's `journals` list also includes kept
-prefixes interrupted by cancellation. SIGINT/SIGTERM or API cancellation checks
-between replay batches and jobs; an in-progress scenario generation finishes first.
+prefixes interrupted by cancellation. SIGINT, SIGTERM, SIGHUP (a closing terminal)
+or API cancellation checks between replay batches and jobs; an in-progress scenario
+generation finishes first.
 Completed results remain in a labelled partial report. Unfinished days are null;
 unfinished attempts are excluded from aggregate statistics. Input or storage errors
 produce a failed report rather than zero-return days.

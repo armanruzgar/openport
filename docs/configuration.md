@@ -56,7 +56,8 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--symbols SPX,SPY,QQQ,IWM,DIA`, `--expiries N`, `--window F` | The underlyings (default SPX, SPY, QQQ, IWM and DIA), the nearest N expiries and strikes within ±F of spot |
 | `--rate R` | The rate assumed when no index curve is available |
 | `--american-model lr\|bs2002\|baw` | How American expiries' early exercise premium is removed before IV solves: the default 31-step Leisen-Reimer tree (`lr`), or the faster Bjerksund-Stensland (2002) or Barone-Adesi-Whaley closed forms. Expiries with cash dividends always use the tree. Accuracy and timing are in [American analytics](american-analytics.md#closed-form-alternatives) |
-| `--address`, `--port`, `--web-root`, `--allowed-origin`, `--allowed-host`, `--write-token`, `--write-token-file` | The web server and who may write (see [Security](#security)) |
+| `--address`, `--port`, `--allowed-origin`, `--allowed-host`, `--write-token`, `--write-token-file` | The web server and who may write (see [Security](#security)) |
+| `--web-root DIR` | The built web terminal to serve. By default `OPENPORT_WEB_ROOT`, else the terminal installed beside the running binary (`share/openport/web` in its prefix, or the `web/dist` of the checkout a build directory sits in), whether openportd was started by path or by name from `PATH`; else `web/dist` in the working directory |
 | `--token-file FILE` | Named tokens: one `NAME SCOPES SECRET` per line, with comma-separated scopes and `#` comments |
 | `--open` | Open the terminal after startup; opt-in even on a TTY. Creates a token file beside the journal when no token is configured. The token link is the browser launcher's argument, which `ps` shows other local users while it runs; on a shared machine use `--print-url` and paste the link |
 | `--print-url [--open]` | Read existing token settings, print the local terminal link and exit; optionally open it. Reuse the service's address, port and token-file flags. A host name address such as `localhost` is used as given |
@@ -67,7 +68,7 @@ To add a feed, see [writing a provider adapter](providers.md).
 | `--sandbox-idle-seconds N` | Delete sandboxes after N seconds without authenticated use; default 86400 |
 | `--client-ip-header NAME` | Use this proxy header for sandbox creation limits; unset uses the connection address. Also declares a trusted proxy whose `X-Forwarded-Proto: https` permits [static webhook signals](api.md#static-mode-senders-that-cannot-set-headers) |
 | `--require-token` | Require a token for API reads, WebSocket ticks and writes, including loopback; static terminal files remain public |
-| `--paper-journal PATH`, `--plan ID`, `--paper-cash`, `--paper-fee`, `--no-paper` | The main paper account (demo defaults to `~/.openport/demo/paper-journal.jsonl`); plan, cash and fee seed a new journal only, and `--paper-cash` only a practice one (another preset keeps its own balance); the fee also seeds new named accounts and visitor sandboxes. Rules selects optional fill models and an itemized fee schedule for a new attempt. Equity history is kept beside each journal as `.equity.csv`; playbook definitions and modes are in `playbooks.json` beside the main journal |
+| `--paper-journal PATH`, `--plan ID`, `--paper-cash`, `--paper-fee`, `--no-paper` | The main paper account (demo defaults to `~/.openport/demo/paper-journal.jsonl`); plan, cash and fee seed a new journal only, and `--paper-cash` only a practice one (another preset keeps its own balance); the fee also seeds new named accounts and visitor sandboxes. Rules selects optional fill models and an itemized fee schedule for a new attempt. Equity history is kept beside each journal as `.equity.csv`; playbook definitions and modes are in `playbooks.json` beside the main journal. A main journal that another openportd holds, that cannot be opened or that is damaged leaves paper trading off; startup names the journal and the reason (`JOURNAL_LOCKED`, `JOURNAL_IO`, `JOURNAL_CORRUPT` or `ACCOUNT_DAMAGED`) on stderr and serves analytics without it |
 | `--scenario-dir DIR` | User JSON scenarios, listed after built-ins and overriding matching ids ([format](scenarios.md)) |
 | `--backtest PLAYBOOK[@VERSION][,PLAYBOOK[@VERSION]...]`, `--days FILE`, `--recordings DIR`, `--scenarios N --seed S`, `--out REPORT.json` | Headless batch backtest under `--plan`; a comma-separated list selects 2–8 distinct playbooks sharing one account in lexical ID order; choose one day source. `--workers 1..16` defaults to 4; `--playbooks FILE` overrides the saved catalogue. [Inputs and reports](playbooks.md#batch-backtests) |
 | `--verify-run JOURNAL` | Reproduce a saved replay or scenario from its recorded input and commands; exit 0 on matching transaction hashes and final equity, 1 otherwise |
@@ -129,7 +130,9 @@ prints named tokens. The token file must hold a valid token at startup; after th
 server reloads it whenever its modification time or size changes, on `SIGHUP`, or on an
 admin `POST /api/tokens/reload`, so edits rotate or revoke tokens at once, without a
 restart. A malformed replacement keeps the last good set; an empty one revokes every
-named token ([API](api.md)). Each secret is at least eight printable characters,
+named token ([API](api.md)). Without `--token-file`, `SIGHUP`, which a closing terminal
+or SSH session sends, stops openportd as `SIGINT` and `SIGTERM` do, unless it was
+started under `nohup`. Each secret is at least eight printable characters,
 and a `#` starts a comment only at the start of a field. Protect the file with owner-only permissions. Send Bearer credentials over
 HTTPS behind a reverse proxy for remote access. Static
 files are confined to the web root, and WebSocket upgrades must come from the same

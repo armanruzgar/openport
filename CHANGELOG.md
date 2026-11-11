@@ -116,6 +116,22 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   expected ended as a cancelled job with no message. It now fails after 20 seconds
   with the check's own message (`OPENPORT_RENDER_WAIT_MS` allows longer on a loaded
   machine), and a test that hangs fails after 5 minutes.
+- **An installed openportd finds its terminal from any directory.** Started by name
+  from `PATH`, as `openportd --open` after a Homebrew, package or `cmake --install`
+  install, it looked for the web terminal beside the working directory instead of
+  beside its binary, so `/` answered 404 "web terminal not built", or served a
+  `web/dist` the working directory happened to hold. It now finds the binary it runs
+  from, following Homebrew's link into its Cellar.
+- **Closing the terminal stops openportd.** `SIGHUP`, which a closing terminal window
+  or SSH session sends, only asked for a `--token-file` reload, even without one, so
+  the server kept running unseen, holding its port and journal lock, and a
+  `--backtest` run went on. Without `--token-file` it now stops the server, or cancels
+  the backtest and writes its report, as Ctrl-C does; under `nohup` it stays ignored.
+- **A paper journal that cannot open is named at startup.** Only a journal held by
+  another openportd was reported on the console. One that could not be opened
+  (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
+  (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
+  Startup now prints the journal's path and the reason on stderr.
 - **Covered calls in the strategy optimizer.** A covered call's share cost was charged
   twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
   `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the

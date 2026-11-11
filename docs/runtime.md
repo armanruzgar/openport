@@ -1807,7 +1807,8 @@ never changes recording or journal bytes and is not part of run provenance.
 
 `--token-file FILE` requires a valid, nonempty named-token file at startup. The
 running server checks mtime and size on each authenticated request and in its
-one-second loop. `SIGHUP` schedules a forced reload in that loop; admin
+one-second loop. `SIGHUP` schedules a forced reload in that loop (without
+`--token-file`, `SIGHUP` stops the server as `SIGTERM` does); admin
 `POST /api/tokens/reload` with `{}` forces one immediately and returns loaded
 `names`, `count` and `loaded_at`, never secrets. Python exposes `reload_tokens()`.
 An empty replacement revokes all named tokens; a malformed or unreadable file

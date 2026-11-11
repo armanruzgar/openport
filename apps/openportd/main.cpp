@@ -62,14 +62,6 @@ namespace {
 
 using namespace openport;
 
-std::atomic<bool> g_stop{false};
-std::atomic<bool> g_reload_tokens{false};
-
-void on_signal(int signal) {
-  if (signal == SIGHUP) g_reload_tokens = true;
-  else g_stop = true;
-}
-
 struct Settings {
   md::ProviderConfig provider{"cboe", "", {}};
   md::ProviderConfig fallback{"", "", {}};
@@ -278,19 +270,12 @@ std::string env_key_for(std::string name) {
   return value ? value : "";
 }
 
-/// The built web terminal: $OPENPORT_WEB_ROOT, next to the binary, or ./web/dist.
+/// The built web terminal: $OPENPORT_WEB_ROOT, beside the running binary, or ./web/dist.
 std::filesystem::path find_web_root(const char* argv0) {
   if (const char* env = std::getenv("OPENPORT_WEB_ROOT")) return env;
   std::error_code ec;
-  const auto exe_dir = std::filesystem::weakly_canonical(argv0, ec).parent_path();
-  for (const auto& candidate :
-       {exe_dir / "web", exe_dir / "../../web/dist", exe_dir / "../share/openport/web",
-        std::filesystem::current_path() / "web/dist"}) {
-    if (std::filesystem::exists(candidate / "index.html", ec)) {
-      return std::filesystem::weakly_canonical(candidate, ec);
-    }
-  }
-  return std::filesystem::current_path() / "web/dist";
+  const auto working = std::filesystem::current_path(ec);
+  return startup::web_root_beside(startup::executable_path(argv0), working);
 }
 
 std::string size_text(std::uintmax_t bytes) {
@@ -897,9 +882,12 @@ int run(int argc, char** argv) {
         }, providers::CboeSettlementQuotations::Options{});
     soq->start();
   }
+  // Paper trading that cannot start says why here too, not only in the terminal: its
+  // journal is held by another openportd, cannot be opened, or is damaged.
   const auto trading_status = engine.status().trading;
-  if (trading_status.reason.starts_with("JOURNAL_LOCKED:"))
-    std::fprintf(stderr, "openportd: %s\n", trading_status.reason.c_str());
+  if (settings.paper_enabled && !trading_status.enabled && !trading_status.reason.empty())
+    std::fprintf(stderr, "openportd: paper trading is off (%s): %s\n", settings.paper_journal.c_str(),
+                 trading_status.reason.c_str());
   // Recorded days replay beside the live feed, each with its own paper account.
   server::ReplayHost::Options replay_options;
   replay_options.engine = engine_options;
@@ -956,6 +944,10 @@ int run(int argc, char** argv) {
     web.set_signal_secrets(std::make_shared<server::SignalSecrets>(
         std::filesystem::absolute(settings.paper_journal).parent_path() / "signal-secrets.json"));
   web.start(settings.threads);
+  // Before the banner, so whoever sees it can already stop the server. SIGHUP reloads a
+  // --token-file; without one it is the terminal or SSH session closing, and stops the
+  // server as SIGINT and SIGTERM do, so it never keeps running unseen.
+  startup::handle_stop_signals(token_file != nullptr);
 
   std::string symbols;
   for (const auto& symbol : settings.subscription.underlyings) {
@@ -971,9 +963,6 @@ int run(int argc, char** argv) {
   if (settings.open && !startup::open_browser(startup::terminal_url(settings.address, web.port(), settings.write_token)))
     std::fprintf(stderr, "openportd: cannot open browser; use --print-url to get the terminal link\n");
 
-  std::signal(SIGHUP, on_signal);
-  std::signal(SIGINT, on_signal);
-  std::signal(SIGTERM, on_signal);
   std::string recording_error, recording_warning;
   std::string history_error, proxy_error, series_error;
   std::string holidays_error;
@@ -986,9 +975,9 @@ int run(int argc, char** argv) {
     if (!error.empty() && error != reported) std::fprintf(stderr, "openportd: %s\n", error.c_str());
     reported = error;
   };
-  while (!g_stop) {
+  while (!startup::stop_requested) {
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    if (token_file && g_reload_tokens.exchange(false)) (void)token_file->reload();
+    if (token_file && startup::reload_requested.exchange(false)) (void)token_file->reload();
     if (token_file) (void)token_file->snapshot();
     web.broadcast(server::tick_message(engine, {true, {}}));
     if (auto tick = replays.tick(); !tick.empty()) web.broadcast(tick);
@@ -1096,10 +1085,9 @@ int backtest_cli(int argc, char** argv) {
   const auto request = server::parse_backtest(body, read(catalogue),
       providers::load_scenarios(args.contains("--scenario-dir") ? std::filesystem::path(args.at("--scenario-dir")) : std::filesystem::path{}), base, false);
   const auto output = std::filesystem::absolute(args.at("--out"));
-  std::signal(SIGHUP, on_signal);
-  std::signal(SIGINT, on_signal);
-  std::signal(SIGTERM, on_signal);
-  const auto report = server::run_backtest(request, output.string() + ".d", g_stop);
+  // A hangup cancels the run as SIGINT and SIGTERM do, and still writes its report.
+  startup::handle_stop_signals(false);
+  const auto report = server::run_backtest(request, output.string() + ".d", startup::stop_requested);
   server::write_backtest_report(output, report);
   std::fprintf(stdout, "%s\nReport: %s\n", std::string(server::kBacktestLabel).c_str(), output.c_str());
   return report.at("status") == "completed" ? 0 : report.at("status") == "cancelled" ? 130 : 1;

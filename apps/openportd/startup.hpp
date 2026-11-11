@@ -1,14 +1,19 @@
 #pragma once
 
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include <boost/asio/ip/address.hpp>
 #include "openport/server/web_policy.hpp"
@@ -17,10 +22,104 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 extern char** environ;
 
 namespace openport::startup {
+
+/// Where a shell finds `name` on `directories`, a PATH value: the first executable
+/// regular file. A name with a slash is a path already; an empty entry is the working
+/// directory. Empty when nothing is found.
+inline std::filesystem::path search_path(std::string_view name, std::string_view directories) {
+  if (name.find('/') != std::string_view::npos) return std::filesystem::path(name);
+  if (name.empty()) return {};
+  std::error_code ec;
+  for (std::size_t start = 0;;) {
+    const auto colon = directories.find(':', start);
+    const auto entry = directories.substr(start, colon == std::string_view::npos ? colon : colon - start);
+    const auto candidate = (entry.empty() ? std::filesystem::path(".") : std::filesystem::path(entry)) /
+                           std::filesystem::path(name);
+    if (std::filesystem::is_regular_file(candidate, ec) && ::access(candidate.c_str(), X_OK) == 0) return candidate;
+    if (colon == std::string_view::npos) return {};
+    start = colon + 1;
+  }
+}
+
+/// The running executable, to find what was installed beside it. argv[0] is not
+/// enough: a shell that found openportd on PATH passes only the name, which would
+/// resolve against the working directory.
+inline std::filesystem::path executable_path(const char* argv0) {
+#if defined(__APPLE__)
+  std::uint32_t size = 0;
+  (void)_NSGetExecutablePath(nullptr, &size);
+  std::string buffer(size, '\0');
+  if (size > 0 && _NSGetExecutablePath(buffer.data(), &size) == 0) {
+    buffer.resize(std::strlen(buffer.c_str()));
+    if (!buffer.empty()) return std::filesystem::path(buffer);
+  }
+#elif defined(__linux__)
+  std::error_code ec;
+  if (auto self = std::filesystem::read_symlink("/proc/self/exe", ec); !ec && !self.empty()) return self;
+#endif
+  const char* directories = std::getenv("PATH");
+  return search_path(argv0 ? argv0 : "", directories ? directories : "");
+}
+
+/// The built web terminal for `executable`: web/ beside it, the web/dist of the source
+/// tree a build directory sits in, or share/openport/web of the prefix it is installed
+/// in, through any symlink such as Homebrew's bin/ into its Cellar. Else web/dist in
+/// `working`, the working directory.
+inline std::filesystem::path web_root_beside(const std::filesystem::path& executable,
+                                             const std::filesystem::path& working) {
+  std::error_code ec;
+  std::vector<std::filesystem::path> candidates;
+  if (!executable.empty()) {
+    auto resolved = std::filesystem::weakly_canonical(executable, ec);
+    if (ec || resolved.empty()) resolved = std::filesystem::absolute(executable, ec);
+    const auto directory = resolved.parent_path();
+    candidates = {directory / "web", directory / "../../web/dist", directory / "../share/openport/web"};
+  }
+  candidates.push_back(working / "web/dist");
+  for (const auto& candidate : candidates) {
+    if (std::filesystem::exists(candidate / "index.html", ec)) {
+      auto found = std::filesystem::weakly_canonical(candidate, ec);
+      return (ec || found.empty()) ? candidate : found;
+    }
+  }
+  return working / "web/dist";
+}
+
+/// Set by SIGINT, SIGTERM and a hangup: the server or the backtest stops.
+inline std::atomic<bool> stop_requested{false};
+/// Set by SIGHUP while a --token-file is configured: the server reloads it.
+inline std::atomic<bool> reload_requested{false};
+
+inline void request_stop(int) { stop_requested = true; }
+inline void request_reload(int) { reload_requested = true; }
+
+/// Whether `number` is ignored, as nohup leaves SIGHUP for the program it starts.
+inline bool signal_ignored(int number) {
+  struct sigaction current {};
+  if (sigaction(number, nullptr, &current) != 0) return false;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wold-style-cast"  // glibc and Darwin spell SIG_IGN as a C cast.
+  return current.sa_handler == SIG_IGN;
+#pragma GCC diagnostic pop
+}
+
+/// SIGINT and SIGTERM stop. SIGHUP reloads the token file when `reloads`; otherwise it
+/// is the terminal or SSH session closing, and stops too, unless it was ignored when the
+/// process started, as nohup leaves it.
+inline void handle_stop_signals(bool reloads) {
+  const bool ignored = signal_ignored(SIGHUP);
+  if (reloads) std::signal(SIGHUP, request_reload);
+  else if (!ignored) std::signal(SIGHUP, request_stop);
+  std::signal(SIGINT, request_stop);
+  std::signal(SIGTERM, request_stop);
+}
 
 inline std::string terminal_url(const std::string& address, unsigned short port, std::string_view token) {
   // A host name such as localhost is not an IP literal; the link names it as given.
