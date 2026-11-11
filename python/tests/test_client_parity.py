@@ -15,6 +15,8 @@ EXCLUSIONS = {
     # Documented because the replay mirror answers them; clients compute on the live routes.
     ("POST", "/api/replay/account/rules-compare"): "rules_compare compares a live account's attempt",
     ("POST", "/api/replay/rule-packs/validate"): "Validation reads only the pack; validate_rule_pack uses the live route",
+    # The replay mirror shares the live path item; a replay plays fixed underlyings.
+    ("DELETE", "/api/replay/underlyings/{symbol}"): "A replay's underlyings are fixed (409 SUBSCRIPTION_FIXED); unsubscribe uses the live route",
 }
 
 # Arguments are synthetic. Calls run through the public methods into _request.
