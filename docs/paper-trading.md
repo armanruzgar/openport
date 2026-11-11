@@ -230,8 +230,10 @@ assignments and before the day's dividends:
   before it marks the shares, and an option quote on the underlying's series first
   given before the ex-date's 09:30 open neither marks nor fills them (the desk prices
   an adjusted series from a standard series that, before the ex-date, was another
-  contract). Runs recorded with replay driver 8 or earlier took both as they came,
-  valuing the split shares at the old price until the ex-date's first print.
+  contract). The stock's price that a conditional trigger watches, as an index option
+  in the curb or overnight session can, waits for that open too, its level having
+  taken the split. Runs recorded with replay driver 8 or earlier took all of these as
+  they came, valuing the split shares at the old price until the ex-date's first print.
 - Every share-settled series on the underlying that has not expired keeps its symbol,
   strike, contract count and 100 premium multiplier, as OCC adjusts a series, and takes
   the split deliverable: 100 shares a contract become 200 for 2:1, 150 for 3:2 and 10 for

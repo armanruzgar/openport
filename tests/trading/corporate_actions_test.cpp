@@ -386,6 +386,48 @@ TEST(CorporateActions, OptionOrdersTriggeredByTheStocksPriceTakeTheSplit) {
   }
 }
 
+TEST(CorporateActions, AConditionalOrderWatchingASplitStockWaitsForItsExDate) {
+  // An SPX order in Cboe's curb session waits for SPY at $520. The plan's day ends at
+  // 16:15, so the split rolls over then, while SPY's price is still $510 a pre-split
+  // share; at the split's level, $260, that price must not fire it before the ex-date.
+  const auto spx = *md::parse_osi("SPXW261016C05000000");
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    AccountRules rules;
+    rules.day_end_minutes = 16 * 60 + 15;
+    Spy f;
+    f.time = at(kToday, 16) + 10 * md::kNanosPerMinute;
+    TradingSession s(roomy(rules), f.time);
+    s.set_revised_corporate_actions(revised);
+    ASSERT_TRUE(s.define(spx, f.time).decision.ok());
+    const auto batch = [&](Money spy) {
+      ++f.observation;
+      s.on_quotes({{spx.osi_symbol(), f.observation, f.time, m("4.00"), m("4.20"), 10, 10}},
+                  {{spx.osi_symbol(), f.time, 0.5, 0.001, 2.0, -0.1, 5000, 5010, 0.99,
+                    md::years_between(f.time, spx.expiry_time()), 0.2, true}},
+                  f.time, {}, {{"SPY", "", f.time, spy}});
+    };
+    batch(m("510"));
+    OrderRequest watch{"watch", spx.osi_symbol(), Side::Buy, OrderType::Limit, TimeInForce::GtcExto, 1, m("4.20"), {}, {}, {}};
+    watch.trigger = Trigger{.source = TriggerSource::Underlying, .direction = TriggerDirection::AtOrAbove,
+                            .level = m("520"), .symbol = "SPY"};
+    const auto placed = s.submit(watch, f.time);
+    ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+    const auto id = *placed.order_id;
+    ASSERT_TRUE(s.roll_day(at(kToday, 16) + 16 * md::kNanosPerMinute, {}, {{"SPY", kExDate, 2, 1}}).decision.ok());
+    EXPECT_EQ(s.snapshot()->recent_orders[id - 1].request.trigger->level, m(revised ? "260" : "520"));
+    // In the curb session SPY's price is still a pre-split share's.
+    f.time = at(kToday, 16) + 20 * md::kNanosPerMinute;
+    batch(m("510"));
+    EXPECT_EQ(s.snapshot()->recent_orders[id - 1].status, OrderStatus::Armed);
+    // From the ex-date's open it is a split share's: $265 reaches the split level.
+    f.time = at(kExDate, 9) + 31 * md::kNanosPerMinute;
+    batch(m("265"));
+    if (revised) { EXPECT_NE(s.snapshot()->recent_orders[id - 1].status, OrderStatus::Armed); }
+    else { EXPECT_EQ(s.snapshot()->recent_orders[id - 1].status, OrderStatus::Armed); }
+  }
+}
+
 TEST(CorporateActions, PortfolioMarginTakesFromEquityOnlyWhatItsScanCovers) {
   // Portfolio margin adds strategy margin for an adjusted series, which has a long paid
   // for and holds a short's buy-back: neither is taken out of equity a second time.

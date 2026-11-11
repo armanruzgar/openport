@@ -6818,6 +6818,10 @@ CommandResult TradingSession::on_quotes(const std::vector<QuoteObservation>& quo
       if (indicator.time < 0 || indicator.time > time) throw TradingError(Reason::INVALID_TIME, "Indicator is future-dated or negative");
       const auto key = indicator_key(indicator.symbol, indicator.study);
       if (!seen.insert(key).second) throw TradingError(Reason::INVALID_QUOTE, "One value per indicator per batch is required");
+      // A split stock's price before its ex-date opens is on the old shares, while the
+      // levels watching it have taken the split (driver 9): it waits for the open, as the
+      // stock's series' quotes do. Studies of implied volatility do not split.
+      if (indicator.study.empty() && before_split(s, indicator.symbol, indicator.time)) continue;
       const auto prior = s.indicators.find(key);
       if (prior != s.indicators.end() && indicator.time <= prior->second.time) continue;
       s.indicators[key] = {indicator.value, indicator.time};
