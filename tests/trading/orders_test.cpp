@@ -1,10 +1,9 @@
-#include <filesystem>
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #include "openport/trading/history.hpp"
 #include "support/scripted_market.hpp"
 #include "support/journal.hpp"
+#include "support/temporary_directory.hpp"
 
 namespace openport::trading {
 namespace {
@@ -213,10 +212,8 @@ TEST(TradingOrders, ARestingLimitSwitchesBetweenDayAndGtcInPlace) {
 }
 
 TEST(TradingOrders, ARetryOfAChangedOrderStillGetsTheOrderAsItNowStands) {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-retry-" + std::to_string(::getpid()));
-  std::filesystem::remove_all(directory);
-  std::filesystem::create_directories(directory);
-  const auto path = (directory / "journal.jsonl").string();
+  const test::TemporaryDirectory directory("openport-retry");
+  const auto path = directory.file("journal.jsonl");
   ScriptedMarket f;
   std::string expected;
   {
@@ -245,7 +242,6 @@ TEST(TradingOrders, ARetryOfAChangedOrderStillGetsTheOrderAsItNowStands) {
   auto recovered = TradingSession::recover(FileJournal::read(path));
   EXPECT_EQ(recovered.snapshot_json(), expected);
   EXPECT_TRUE(recovered.submit(f.limit("rest", 2, "3.90"), f.time).replayed);
-  std::filesystem::remove_all(directory);
 }
 
 TEST(TradingOrders, AnIocRemainderSaysWhetherItsLimitWasShortOrTheBookWasUsedUp) {
@@ -265,10 +261,8 @@ TEST(TradingOrders, AnIocRemainderSaysWhetherItsLimitWasShortOrTheBookWasUsedUp)
 }
 
 TEST(TradingOrders, AClientIdNamesOneOrderPerAttempt) {
-  const auto directory = std::filesystem::temp_directory_path() / ("openport-client-ids-" + std::to_string(::getpid()));
-  std::filesystem::remove_all(directory);
-  std::filesystem::create_directories(directory);
-  const auto path = (directory / "journal.jsonl").string();
+  const test::TemporaryDirectory directory("openport-client-ids");
+  const auto path = directory.file("journal.jsonl");
   ScriptedMarket f;
   std::string expected;
   {
@@ -308,7 +302,6 @@ TEST(TradingOrders, AClientIdNamesOneOrderPerAttempt) {
   const auto retry = recovered.submit(f.market("c1"), f.time);
   EXPECT_TRUE(retry.replayed);
   EXPECT_EQ(retry.order_id, 2u);
-  std::filesystem::remove_all(directory);
 }
 
 TEST(TradingOrders, CancelAllTakesEveryOpenOrderOrOneUnderlyings) {
@@ -695,10 +688,8 @@ TEST(TradingOrders, ALimitFlattenGivesASingleLongNobodyBidsForAwayAsAMarketFlatt
 }
 
 TEST(TradingOrders, AWorkingFlattenCloseRecoversFromTheJournal) {
-  std::string pattern = (std::filesystem::temp_directory_path() / "openport-orders-XXXXXX").string();
-  ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
-  const std::filesystem::path directory = pattern;
-  const auto path = (directory / "session.jsonl").string();
+  const test::TemporaryDirectory directory("openport-orders");
+  const auto path = directory.file("session.jsonl");
   ScriptedMarket f;
   std::string expected, head;
   {
@@ -725,7 +716,6 @@ TEST(TradingOrders, AWorkingFlattenCloseRecoversFromTheJournal) {
   recovered.on_quotes({f.quote("4.00", "4.20", 1)}, {f.valuation()}, f.time);
   EXPECT_EQ(order(recovered, close.id).status, OrderStatus::Filled);
   EXPECT_TRUE(recovered.snapshot()->positions.empty());
-  std::filesystem::remove_all(directory);
 }
 
 TEST(TradingOrders, AFlattenNeverTakesAClientIdTheTraderAlreadyUsed) {
@@ -746,10 +736,8 @@ TEST(TradingOrders, AFlattenNeverTakesAClientIdTheTraderAlreadyUsed) {
 }
 
 TEST(TradingOrders, ChangesAndFlattensRecoverFromTheJournal) {
-  std::string pattern = (std::filesystem::temp_directory_path() / "openport-orders-XXXXXX").string();
-  ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
-  const std::filesystem::path directory = pattern;
-  const auto path = (directory / "session.jsonl").string();
+  const test::TemporaryDirectory directory("openport-orders");
+  const auto path = directory.file("session.jsonl");
   ScriptedMarket f;
   std::string expected, head;
   {
@@ -766,15 +754,12 @@ TEST(TradingOrders, ChangesAndFlattensRecoverFromTheJournal) {
   const auto recovered = TradingSession::recover(FileJournal::read(path, head));
   EXPECT_EQ(recovered.snapshot_json(), expected);
   EXPECT_TRUE(recovered.snapshot()->positions.empty());
-  std::filesystem::remove_all(directory);
 }
 
 
 TEST(TradingOrders, EachOrderKeepsWhenItEndedAndEveryChangeAskedOfIt) {
-  std::string pattern = (std::filesystem::temp_directory_path() / "openport-orders-XXXXXX").string();
-  ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
-  const std::filesystem::path directory = pattern;
-  const auto path = (directory / "lifecycle.jsonl").string();
+  const test::TemporaryDirectory directory("openport-orders");
+  const auto path = directory.file("lifecycle.jsonl");
   ScriptedMarket f;
   std::string expected;
   {
@@ -819,7 +804,6 @@ TEST(TradingOrders, EachOrderKeepsWhenItEndedAndEveryChangeAskedOfIt) {
   EXPECT_EQ(first.type, "submit");
   EXPECT_EQ(first.payload.find("\"changes\""), std::string::npos);
   EXPECT_EQ(first.payload.find("\"ended_at\""), std::string::npos);
-  std::filesystem::remove_all(directory);
 }
 
 TEST(TradingOrders, AWorkingOrderSaysWhatItWaitsFor) {
@@ -976,10 +960,8 @@ TEST(TradingOrders, AnExpiredLongAwaitingSettlementCanBeAbandonedSoTradingResume
 }
 
 TEST(TradingOrders, AbandonmentRecoversFromTheJournal) {
-  std::string pattern = (std::filesystem::temp_directory_path() / "openport-orders-XXXXXX").string();
-  ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
-  const std::filesystem::path directory = pattern;
-  const auto path = (directory / "session.jsonl").string();
+  const test::TemporaryDirectory directory("openport-orders");
+  const auto path = directory.file("session.jsonl");
   ScriptedMarket f;
   std::string expected, head;
   {
@@ -996,7 +978,6 @@ TEST(TradingOrders, AbandonmentRecoversFromTheJournal) {
   const auto recovered = TradingSession::recover(FileJournal::read(path, head));
   EXPECT_EQ(recovered.snapshot_json(), expected);
   EXPECT_EQ(recovered.snapshot()->closures.back().kind, ClosureKind::Abandon);
-  std::filesystem::remove_all(directory);
 }
 
 
