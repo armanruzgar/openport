@@ -717,6 +717,16 @@ TEST(TradingConditional, TrailsAndReferencesMustFitTheirTrigger) {
   EXPECT_TRUE(rejects("whole", option({TrailUnit::Percent, m("100")})));
   EXPECT_TRUE(rejects("zero", option({TrailUnit::Amount, m("0")})));
   EXPECT_TRUE(rejects("half-tick", option({TrailUnit::Ticks, m("1.5")})));
+  // A trigger on a study, the clock or another underlying reads neither a reference nor a trail.
+  const auto study = [](TriggerReference reference, std::optional<Trail> trail) {
+    return Trigger{.source = TriggerSource::Study, .direction = TriggerDirection::AtOrBelow, .level = m("20"), .study = "iv30",
+                   .reference = reference, .trail = trail};
+  };
+  EXPECT_TRUE(rejects("study-trail", study(TriggerReference::BidAsk, Trail{TrailUnit::Amount, m("1")})));
+  EXPECT_TRUE(rejects("study-mid", study(TriggerReference::Mid, {})));
+  auto elsewhere = spot(TriggerReference::BidAsk, Trail{TrailUnit::Amount, m("5")});
+  elsewhere.symbol = "SPY";
+  EXPECT_TRUE(rejects("elsewhere-trail", elsewhere));
   // An underlying trail in dollars is accepted and follows spot.
   auto request = f.market("spot-trail", 1, Side::Sell);
   request.trigger = spot(TriggerReference::BidAsk, Trail{TrailUnit::Amount, m("5")});
@@ -725,6 +735,69 @@ TEST(TradingConditional, TrailsAndReferencesMustFitTheirTrigger) {
   EXPECT_EQ(order(s, *placed.order_id).request.trigger->level, m("4995.00"));
   quote(s, f, "4.00", "4.20", 10, 5012.345);
   EXPECT_EQ(order(s, *placed.order_id).request.trigger->level, m("5007.34"));
+}
+
+TEST(TradingConditional, AnUnderlyingTrailMovesAStopLimitsLevelAndLeavesItsOptionLimit) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_fills(revised);
+    f.seed(s);
+    ASSERT_TRUE(s.submit(f.limit("entry", 1, "4.20"), f.time).decision.ok());
+    auto stop = f.limit("trail", 1, "3.50", Side::Sell);
+    stop.trigger = Trigger{.source = TriggerSource::Underlying, .direction = TriggerDirection::AtOrBelow, .level = m("4990"),
+                           .trail = Trail{TrailUnit::Amount, m("5")}};
+    const auto placed = s.submit(stop, f.time);
+    ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+    const auto id = *placed.order_id;
+    // Spot 5000 lifts the level to 4995, then 5030 to 5025. The limit is an option
+    // price; replay drivers 1-7 moved it by spot's dollars as well.
+    EXPECT_EQ(order(s, id).request.trigger->level, m("4995.00"));
+    EXPECT_EQ(order(s, id).request.limit_price, m(revised ? "3.50" : "8.50"));
+    quote(s, f, "4.40", "4.60", 10, 5030);
+    EXPECT_EQ(order(s, id).request.trigger->level, m("5025.00"));
+    EXPECT_EQ(order(s, id).request.limit_price, m(revised ? "3.50" : "38.50"));
+    // Spot falls back through the trailed level.
+    quote(s, f, "4.40", "4.60", 10, 5020);
+    if (revised) {
+      EXPECT_EQ(order(s, id).status, OrderStatus::Filled);
+      EXPECT_EQ(s.snapshot()->recent_fills.back().price, m("4.40"));
+      EXPECT_TRUE(s.snapshot()->positions.empty());
+    } else {
+      EXPECT_EQ(order(s, id).status, OrderStatus::Working) << "a limit of 38.50 rests far above the bid";
+      EXPECT_FALSE(s.snapshot()->positions.empty());
+    }
+  }
+}
+
+TEST(TradingConditional, AnUnderlyingTrailMovesABuyStopLimitsLevelDownWithSpot) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_fills(revised);
+    f.seed(s);
+    ASSERT_TRUE(s.submit(f.limit("short", 1, "4.00", Side::Sell), f.time).decision.ok());
+    auto stop = f.limit("trail", 1, "4.20");
+    stop.trigger = Trigger{.source = TriggerSource::Underlying, .direction = TriggerDirection::AtOrAbove, .level = m("5010"),
+                           .trail = Trail{TrailUnit::Amount, m("5")}};
+    const auto placed = s.submit(stop, f.time);
+    ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+    const auto id = *placed.order_id;
+    quote(s, f, "4.00", "4.20", 10, 4990);
+    quote(s, f, "4.00", "4.20", 10, 4950);
+    // Replay drivers 1-7 would have moved the limit below zero, so the level never trailed.
+    EXPECT_EQ(order(s, id).request.trigger->level, m(revised ? "4955.00" : "5010.00"));
+    EXPECT_EQ(order(s, id).request.limit_price, m("4.20"));
+    EXPECT_EQ(order(s, id).status, OrderStatus::Armed);
+    // Spot turns up through the trailed level, and the stop buys the short back.
+    quote(s, f, "3.90", "4.10", 10, 4960);
+    if (revised) {
+      EXPECT_EQ(order(s, id).status, OrderStatus::Filled);
+      EXPECT_EQ(s.snapshot()->recent_fills.back().price, m("4.10"));
+    } else {
+      EXPECT_EQ(order(s, id).status, OrderStatus::Armed);
+    }
+  }
 }
 
 TEST(TradingConditional, ATrailedLevelSurvivesRecovery) {

@@ -1005,14 +1005,17 @@ cents, and it never moves back. The trail is a dollar `amount`, a `percent` of t
 value read (above 0 and below 100), or 1 to 1,000 `ticks`: the tier tick at that value,
 or the combo tick; underlying triggers trail by amount or percent only. The submitted
 level is where it starts; the first fresh reading moves it if that is tighter, so a
-sell stop trailing 0.50 behind a 4.00 bid starts at 3.50 at the latest. A stop-limit's
-limit moves with its level: the move is shortened to keep the limit on its tick, so
-the two keep their distance, and the level only waits for the next whole tick. Moves
+sell stop trailing 0.50 behind a 4.00 bid starts at 3.50 at the latest. An option or
+combo stop-limit's limit moves with its level: the move is shortened to keep the limit
+on its tick, so the two keep their distance, and the level only waits for the next
+whole tick. An underlying trigger's level is spot, not a price of the order, so it
+trails alone and a stop-limit's limit stays where it was set (runs recorded with
+replay driver 7 or earlier moved the limit by spot's move too). Moves
 are journaled with event `order_trailed`, orders report the level where it is now, and
 `PUT /api/orders/{id}` can still set it; it trails on from there. Bracket stops and
 held exits take a trail and a reference too. `reference` and `trail` apply only to
 option, combo and own-underlying triggers; a trigger on another underlying, a study
-or the clock refuses either with 400. EXTO/GTC_EXTO stops keep activating in extended
+or the clock refuses either with 400, and the simulator with `INVALID_ORDER`. EXTO/GTC_EXTO stops keep activating in extended
 sessions, but trail only in the regular session.
 
 A trigger can also watch something other than the order's own market, so a rule such as

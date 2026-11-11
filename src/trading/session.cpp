@@ -2305,6 +2305,14 @@ bool trail_terms_ok(const OrderRequest& r) {
   const auto exit_ok = [](const std::optional<ExitSpec>& e) { return !e || trail_terms_ok(e->trigger); };
   return trail_terms_ok(r.trigger) && (!r.bracket || (exit_ok(r.bracket->stop_loss) && exit_ok(r.bracket->take_profit)));
 }
+/// A reference and a trail read the order's own market, so a trigger on another
+/// underlying, a study or the clock takes neither, as the API refuses them (exits
+/// never watch those). Driver 8; replay drivers 1-7 did not ask.
+Decision conditional_terms_check(const State& s, const OrderRequest& r) {
+  const auto& t = r.trigger;
+  if (!s.revised_fills || !t || !conditional(*t) || (t->reference == TriggerReference::BidAsk && !t->trail)) return {};
+  return failure(Reason::INVALID_ORDER, "A trigger on another underlying, a study or the clock takes no reference or trail");
+}
 /// Checks a multi-leg order like a single-leg one, per leg where it applies:
 /// contracts, sessions, size and quotes on every leg; the net price on the
 /// smallest leg tick and inside the band around the net mid (as wide as the
@@ -2365,6 +2373,7 @@ Decision combo_check(const State& s, const Order& o, Stage stage) {
   if (!trail_terms_ok(r))
     return failure(Reason::INVALID_ORDER, "A trigger reads the bid/ask, mid or mark (spot for the underlying) and trails by a positive "
                    "amount, a percentage under 100 or 1 to 1,000 ticks (not ticks of the underlying)");
+  if (const auto d = conditional_terms_check(s, r); !d.ok()) return d;
   const auto on_tick = [&](const std::optional<ExitSpec>& e) {
     return !e || !e->limit_price || e->limit_price->micros() % tick.micros() == 0;
   };
@@ -2635,6 +2644,7 @@ Decision order_check(const State& s, const Order& o, Stage stage = Stage::Accept
   if (!trail_terms_ok(request))
     return failure(Reason::INVALID_ORDER, "A trigger reads the bid/ask, mid or mark (spot for the underlying) and trails by a positive "
                    "amount, a percentage under 100 or 1 to 1,000 ticks (not ticks of the underlying)");
+  if (const auto d = conditional_terms_check(s, request); !d.ok()) return d;
   const auto on_tick = [&](const std::optional<ExitSpec>& e) {
     return !e || !e->limit_price || e->limit_price->micros() % tick_size(c->second.root, *e->limit_price).micros() == 0;
   };
@@ -3488,8 +3498,8 @@ Money floor_to(Money value, std::int64_t step) {
 Money ceil_to(Money value, std::int64_t step) { return -floor_to(-value, step); }
 /// A trailing trigger follows its reference while armed: when the value it reads
 /// less the trail (plus it, for at_or_above) passes the level, the level moves
-/// there in whole cents, and it never moves back. A stop-limit's limit moves
-/// with it, kept on the tick by moving both a little less, never more.
+/// there in whole cents, and it never moves back. An option or combo stop-limit's
+/// limit moves with it, kept on the tick by moving both a little less, never more.
 void trail_level(State& s, OrderId id, Events& events) {
   const auto& o = s.orders[id - 1];
   const auto& t = *o.request.trigger;
@@ -3520,7 +3530,10 @@ void trail_level(State& s, OrderId id, Events& events) {
   auto move = candidate - t.level;
   if (below ? move <= Money{} : move >= Money{}) return;
   std::optional<Money> limit = o.request.limit_price;
-  if (limit) {
+  // A limit moves with a level in its own units: an option's or a combo's price. An
+  // underlying level is spot, so it trails alone and the limit stays where it was
+  // set (driver 8; replay drivers 1-7 moved the limit by spot's move as well).
+  if (limit && (t.source != TriggerSource::Underlying || !s.revised_fills)) {
     const auto raw = *limit + move;
     const auto tick = multi_leg(o.request) ? combo_tick() : tick_size(root, raw);
     const auto snapped = move > Money{} ? floor_to(raw, tick.micros()) : ceil_to(raw, tick.micros());

@@ -307,6 +307,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   fast market, sold what a thin bid showed and re-armed kept that stress, so an
   ordinary quote reaching it later sold the rest `stop_stress_ticks` ticks under the
   bid. Each trigger now measures its own quote.
+- **Trailing stop-limits on the underlying.** A stop-limit whose trigger trails spot
+  moved its option limit by spot's dollar move: a sell limit of 3.50 became 38.50
+  after a 30-point rally, so the stop never sold, and a buy stop's limit would have gone
+  below zero, so its level never trailed. The limit now stays where it was set while
+  the level trails spot. The simulator also refuses a reference or a trail on a
+  trigger on a study, the clock or another underlying, as the API already did.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
