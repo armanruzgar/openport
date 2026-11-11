@@ -307,10 +307,11 @@ changes; it has no orders or journal writes.
 
 ## Tests
 
-1,640 GoogleTest cases cover pricing against reference values, the parity fit and SVI,
-provider parsing, the queue, recording and replay, the simulator's rules, journal
-recovery and tampering, the calendar and the HTTP API; 964 Vitest cases cover the
-terminal, and 132 pytest cases the Python client and MCP server. CI builds with GCC 13
+Counts as of CI on 11 November 2026: 2,163 GoogleTest cases cover pricing against
+reference values, the parity fit and SVI, provider parsing, the queue, recording and
+replay, the simulator's rules, journal recovery and tampering, the calendar and the
+HTTP API; 1,316 Vitest cases cover the terminal, and 238 pytest cases the Python client
+and MCP server (7 of them run against the C++ build). CI builds with GCC 13
 on Ubuntu and Apple Clang on macOS, both with warnings as errors, smoke-tests the
 Docker image and validates its responses against the OpenAPI contract.
 

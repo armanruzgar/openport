@@ -38,8 +38,8 @@ command with the [quick start](#quick-start).
 - **A prop-firm-style simulator**: orders fill against the quotes the feed displays,
   under evaluation rules, with optional latency and simulated size impact, and a
   hash-chained journal that survives restarts.
-- **1,640 C++, 964 web and 132 Python tests**, built in CI with GCC 13 on Ubuntu and
-  Apple Clang on macOS, warnings as errors.
+- **2,163 C++, 1,316 web and 238 Python tests** (CI, 11 November 2026), built with
+  GCC 13 on Ubuntu and Apple Clang on macOS, warnings as errors.
 
 Timings are medians on an Apple M2 Max: the IV solve from `openport_bench`, and the SPX
 pass (over 23 passes) and the Cboe comparison on live data during the session, all on
