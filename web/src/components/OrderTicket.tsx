@@ -355,12 +355,16 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
         <p className="text-xs text-muted">Retries keep the same client order ID. Check Positions before starting another ticket if the response was interrupted.</p>
       </>}
       {!order && submitted && error != null && !rejected(error) && !retryable(error) && <p className="text-xs text-muted">Check Positions and Orders to confirm the order’s state before starting another ticket.</p>}
-      {result && result.status !== "rejected" && variant === "panel" && <button type="button" className="trade-button" onClick={newOrder}>Another order</button>}
+      {result && ["working", "partially_filled", "armed"].includes(result.status) && <p className="text-xs text-muted">It keeps working after this ticket closes; cancel or change it on the Orders page.</p>}
+      {result && result.status !== "rejected" && <div className="flex flex-wrap gap-2">
+        <button type="button" className="trade-button" onClick={newOrder}>Another order</button>
+        {variant === "dialog" && <button type="button" className="trade-button" onClick={onClose}>Done</button>}
+      </div>}
     </OrderResult>}
     <div>
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-base font-semibold">{selection.underlying} <span className="font-normal text-muted">{name}</span></div>
-        {variant === "dialog" && <button type="button" className="text-xs text-muted hover:text-foreground" onClick={onClose}>Cancel</button>}
+        {variant === "dialog" && !submitted && <button type="button" className="text-xs text-muted hover:text-foreground" onClick={onClose}>Cancel</button>}
       </div>
       <div className="mt-1 text-sm">{selection.strike} {selection.optionType} · {expiryLabel} <span className="text-xs text-muted">({days(selection.expiry.days)})</span></div>
       <div className="mt-0.5 break-all text-[11px] tabular text-faint">{selection.symbol}</div>
@@ -370,11 +374,11 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
       {held !== 0 && <p className="mt-1 text-xs"><span className="text-muted">You hold</span> <span className="tabular">{held > 0 ? `${held} long` : `${-held} short`}</span></p>}
     </div>
     <div className="grid grid-cols-3 gap-2 rounded-md border border-border bg-background/40 p-3 text-xs tabular">
-      <button type="button" className="text-left hover:text-accent" disabled={type === "market"} onClick={() => setPrice(quote?.bid)} title="Use the bid as the limit">
+      <button type="button" className="text-left hover:text-accent" disabled={type === "market" || submitted || pending} onClick={() => setPrice(quote?.bid)} title="Use the bid as the limit">
         <span className="text-muted">Bid</span><div className="text-bearish">{price(quote?.bid)} × {count(quote?.bid_size)}{leftNote("bid")}</div></button>
-      <button type="button" className="text-left hover:text-accent" disabled={type === "market"} onClick={() => setPrice(quote?.mid)} title="Use the mid as the limit">
+      <button type="button" className="text-left hover:text-accent" disabled={type === "market" || submitted || pending} onClick={() => setPrice(quote?.mid)} title="Use the mid as the limit">
         <span className="text-muted">Mid</span><div>{price(quote?.mid)}</div></button>
-      <button type="button" className="text-left hover:text-accent" disabled={type === "market"} onClick={() => setPrice(quote?.ask)} title="Use the ask as the limit">
+      <button type="button" className="text-left hover:text-accent" disabled={type === "market" || submitted || pending} onClick={() => setPrice(quote?.ask)} title="Use the ask as the limit">
         <span className="text-muted">Ask</span><div className="text-bullish">{price(quote?.ask)} × {count(quote?.ask_size)}{leftNote("ask")}</div></button>
     </div>
     <WriteAccess trading={trading} />
@@ -393,7 +397,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
           <Segmented label="Side" value={side} onChange={selection.closing ? () => {} : setSide} options={selection.closing ? [{ value: side, label: side === "buy" ? "Buy" : "Sell" }] : [{ value: "buy", label: "Buy" }, { value: "sell", label: "Sell" }]} />
         </div>
         <div className="trade-label">Order type
-          <Segmented label="Order type" value={type} onChange={(next) => { setType(next); if (next === "market" && !allSessions && tif !== "gtd") setTif("ioc") }}
+          <Segmented label="Order type" value={type} onChange={setType}
             options={!marketAllowed ? [{ value: "limit", label: "Limit" }] : [{ value: "limit", label: "Limit" }, { value: "market", label: "Market" }]} />
         </div>
         <div className="trade-label col-span-2">
@@ -497,7 +501,9 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
           <dd className="text-right tabular">{odds.pop == null ? "—" : `≈ ${(odds.pop * 100).toFixed(0)}%`}{distribution && <span className="block text-[11px] text-muted">{probabilitySource(distribution, [odds.breakeven])}</span>}</dd>
         </>}
       </dl>
-      {stopRequired && <p role="status" className={missingStop ? "text-sm text-warn" : "text-xs text-muted"}>Stop-loss required by this plan.{missingStop ? " Add a protective stop before submitting." : ""}</p>}
+      {stopRequired && <p role="status" className={missingStop ? "text-sm text-warn" : "text-xs text-muted"}>Stop-loss required by this plan.{!missingStop ? ""
+        : conditional ? " Add a protective stop before submitting."
+        : " In this session a stop needs time in force GTC, GTD, EXTO or GTC + EXTO: choose one to add it."}</p>}
       <div data-ticket-review tabIndex={-1} role="region" aria-label="Order review"><OrderPreviewPanel sizing={!selection.closing && !(closes && q <= Math.abs(held))} preview={preview} onSize={(size) => setQuantity(String(size))} disabled={submitted || pending}
         onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} /></div>
       {!!(rules?.fill_latency_ms || rules?.impact_ticks) && <p className="text-xs text-muted">The preview uses current quotes. It cannot predict the later quote or the full cost of sweeping additional size blocks.</p>}

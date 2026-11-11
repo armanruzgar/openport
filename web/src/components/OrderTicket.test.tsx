@@ -619,6 +619,51 @@ it("explains that a marketable GTC limit waits overnight and markets offer IOC o
   expect(vi.mocked(api.submitOrder).mock.calls[0]![0]).toMatchObject({ type: "market", time_in_force: "ioc" })
 })
 
+it("keeps a limit's time in force through a switch to Market and back", async () => {
+  await render()
+  await choose("Time in force", "GTC")
+  await choose("Order type", "Market")
+  expect(checked("Time in force", "IOC")).toBe(true)
+  await choose("Order type", "Limit")
+  expect(checked("Time in force", "GTC")).toBe(true)
+  await click("Submit order")
+  expect(vi.mocked(api.submitOrder).mock.calls[0]![0]).toMatchObject({ type: "limit", time_in_force: "gtc" })
+})
+
+it("offers another order or Done once a dialog ticket sends, without a Cancel that reads as cancelling the order", async () => {
+  const onClose = vi.fn()
+  await act(async () => root.render(<QueryClientProvider client={client}>
+    <OrderTicket selection={selection} quote={quote} trading={trading} onClose={onClose} />
+  </QueryClientProvider>))
+  const bid = () => host.querySelector<HTMLButtonElement>('button[title="Use the bid as the limit"]')!
+  expect(button("Cancel").disabled).toBe(false)
+  expect(bid().disabled).toBe(false)
+  await click("Submit order")
+  await waitForRender(() => expect(host.querySelector('[aria-label="Order result"]')!.textContent).toContain("cancel or change it on the Orders page"))
+  expect([...host.querySelectorAll("button")].some((b) => b.textContent === "Cancel")).toBe(false)
+  expect(bid().disabled).toBe(true)
+  await click("Done")
+  expect(onClose).toHaveBeenCalledTimes(1)
+  await click("Another order")
+  expect(host.querySelector('[aria-label="Order result"]')).toBeNull()
+  expect(button("Cancel").disabled).toBe(false)
+  expect(button("Submit order").disabled).toBe(false)
+})
+
+it("says which time in force carries a plan's required stop in the overnight session", async () => {
+  const rules = { ...account.rules, buy_only: false, require_stop_loss: true }
+  vi.mocked(api.account).mockResolvedValue({ ...account, rules })
+  client.setQueryData(tradingQueries(0, "17", true).account.queryKey, { ...account, rules })
+  vi.mocked(useLive).mockReturnValue(liveState({ ...status, underlyings: [{ ...status.underlyings[0]!, session: { name: "global", open: true, note: "Overnight" } }] }, null, "open"))
+  await render()
+  expect(host.querySelector('[aria-label="Bracket"]')).toBeNull()
+  expect(host.textContent).toContain("Stop-loss required by this plan. In this session a stop needs time in force GTC, GTD, EXTO or GTC + EXTO: choose one to add it.")
+  expect(button("Submit order").disabled).toBe(true)
+  await choose("Time in force", "GTC")
+  expect(host.querySelector('[aria-label="Bracket"]')).not.toBeNull()
+  expect(host.textContent).toContain("Stop-loss required by this plan. Add a protective stop before submitting.")
+})
+
 it("warns on thin liquidity without blocking and shows the executable market size on each side", async () => {
   const thin = { ...quote, bid: 10, ask: 20, mid: 15, volume: 12, oi: 34, bid_size: 3, ask_size: 7 }
   await act(async () => root.render(<QueryClientProvider client={client}>

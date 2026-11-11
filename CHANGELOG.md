@@ -629,6 +629,21 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the like) read text as JavaScript numbers, so `1e2` saved 100, `0x10` 16, `0b11` 3
   and `5.` 5 while the field kept showing what was typed. Anything but digits is now
   refused with the field's message.
+- **A limit keeps its time in force after a look at Market.** Choosing Market on the
+  order ticket stored IOC as the ticket's time in force, so switching back to Limit
+  sent a Day or GTC limit as IOC, which is cancelled at once unless marketable. Market
+  orders still go as IOC; the limit's own choice now survives the switch.
+- **The order ticket dialog after an order is sent.** Below 1280 px the ticket is a
+  dialog, and once an order was sent its only actions were Close and a **Cancel** link
+  that read as cancelling the order but only closed the dialog, leaving the order
+  working; Bid, Mid and Ask still changed the sent order's limit field. The dialog now
+  offers **Another order** and **Done** as the docked ticket does, drops **Cancel**
+  once the order is sent, disables the quote buttons, and says that a working order
+  is cancelled or changed on the Orders page.
+- **A required stop in the overnight and curb sessions.** Under a plan that requires
+  a stop-loss, an opening ticket with the default Day time in force said to add a
+  protective stop, but in those sessions the stop control appears only for GTC, GTD,
+  EXTO or GTC + EXTO. The notice now names those choices.
 
 ## 0.5.1 (2026-10-28)
 
