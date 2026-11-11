@@ -103,9 +103,12 @@ TEST(Cli, DaemonRejectsMalformedRangesUnknownFlagsAndStartupFailures) {
   rejects("openportd", "--poll-seconds 1x", "poll_seconds");
   rejects("openportd", "--option unknown=1", "unknown provider option");
   rejects("openportd", "--unknown value", "unknown option");
-  // Both are refused before any provider is built, with their own reasons.
-  rejects("openportd", "--address invalid-address", "--address invalid-address is not an IP address");
+  // The web server's start refuses an address, after the provider has started: the
+  // offline demo feed, without a journal, so this never reaches Cboe over the network.
+  rejects("openportd", "--provider demo --no-paper --address invalid-address",
+          "--address invalid-address is not an IP address");
   rejects("openportd", "--provider missing", "unknown provider");
+  // Refused while the options are read, before any provider is built.
   rejects("openportd", "--allowed-origin https://host/path", "invalid allowed origin https://host/path");
   rejects("openportd", "--provider databento --window 0.1", "whole chain upstream");
 }
