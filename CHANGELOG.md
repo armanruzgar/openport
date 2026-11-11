@@ -504,6 +504,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   pair as a short sale, and a margin account reserved buying power for a short that
   could not happen. The pair now counts once: the larger of its two sales, and the
   reservation of whichever order would take more.
+- **Correcting a rejected share order in the terminal.** After a working order from
+  Trade shares was rejected, the dialog sent every corrected order under the same
+  client ID, which the server refused with `DUPLICATE_CLIENT_ID` until the dialog was
+  closed. Changed terms now go out under a new ID; the same terms keep it, so a retry
+  is still answered once.
 - **Share stops and after-hours prints.** A regular-hours share stop was reached by an
   after-hours or premarket print, and then sold at the next open at whatever price it
   printed. A stop is now reached only by a print from the regular session, its close

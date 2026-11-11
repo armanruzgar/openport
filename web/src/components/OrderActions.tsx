@@ -53,7 +53,7 @@ export function useWrite(trading: TradingStatus) {
 export function useClientOrderId() {
   const last = useRef<{ terms: string; id: string } | null>(null)
   return {
-    stamp(request: NewOrder): NewOrder {
+    stamp<T extends { client_order_id: string }>(request: T): T {
       const terms = JSON.stringify({ ...request, client_order_id: "" })
       if (last.current?.terms !== terms) last.current = { terms, id: randomId() }
       return { ...request, client_order_id: last.current.id }

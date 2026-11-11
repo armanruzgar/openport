@@ -1,5 +1,5 @@
 import { useActionApi } from "../api/action-client"
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useWriteToken } from "../lib/write-token"
 import { flatRuleNotice, planEntryNotice, planMarketTime } from "../lib/plan-rules"
@@ -12,10 +12,9 @@ import { fixed, isNum } from "../lib/format"
 import { contractLabel } from "../lib/journal"
 import { deliversShares, formatMoney, signedMoney } from "../lib/trading"
 import { Dialog } from "./Dialog"
-import { useWrite } from "./OrderActions"
+import { useClientOrderId, useWrite } from "./OrderActions"
 import { TradingError, WriteAccess } from "./TradingControls"
 import { Badge, Segmented, toneOf, toneText } from "./ui"
-import { randomId } from "../lib/id"
 
 const dollars = (value: number) => formatMoney(value.toFixed(2))
 
@@ -117,7 +116,7 @@ export function TradeSharesDialog({ initial, initialSide = "buy", initialShares 
   const extendedPrints = feedStatus?.provider.extended_hours_prints === true
   const [stopLoss, setStopLoss] = useState("")
   const [takeProfit, setTakeProfit] = useState("")
-  const clientId = useRef<string | undefined>(undefined)
+  const clientIds = useClientOrderId()
   const n = Number(shares)
   const working = kind !== "now"
   const cents = (value: string) => /^\d+(\.\d{1,2})?$/.test(value.trim()) && Number(value) > 0
@@ -141,7 +140,7 @@ export function TradeSharesDialog({ initial, initialSide = "buy", initialShares 
     : rules?.defined_risk && shortSale ? "This plan allows defined risk only, and short shares can lose without limit."
     : null)
   const order: StockOrderRequest | null = working && valid ? {
-    client_order_id: clientId.current ?? "", symbol, side, type: kind, shares: n, time_in_force: tif,
+    client_order_id: "", symbol, side, type: kind, shares: n, time_in_force: tif,
     ...(needsLimit ? { limit_price: limit.trim() } : {}), ...(needsStop ? { stop_price: stop.trim() } : {}),
     ...(kind === "limit" && extended && extendedPrints ? { extended_hours: true } : {}),
     ...(stopLoss.trim() || takeProfit.trim() ? { bracket: { ...(stopLoss.trim() ? { stop_loss: stopLoss.trim() } : {}), ...(takeProfit.trim() ? { take_profit: takeProfit.trim() } : {}) } } : {}),
@@ -154,9 +153,11 @@ export function TradeSharesDialog({ initial, initialSide = "buy", initialShares 
   })
   const submit = () => {
     if (!order) return void write.run(() => api.tradeStock(symbol, side, n, trading.write), onClose)
-    // A retry after an interrupted response keeps the same client order ID.
-    clientId.current ??= randomId()
-    void write.run(() => api.placeStockOrder({ ...order, client_order_id: clientId.current! }, trading.write), onClose)
+    // The same terms keep their client order ID, so a retry after an interrupted
+    // response is answered once; changed terms, as after a rejection, take a new one,
+    // since the server keeps a rejected order under its ID and refuses other terms there.
+    const request = clientIds.stamp(order)
+    void write.run(() => api.placeStockOrder(request, trading.write), onClose)
   }
   const kindLabel = { now: "Now", market: "Market", limit: "Limit", stop: "Stop", stop_limit: "Stop-limit" } as const
   return <Dialog title="Trade shares" onClose={onClose}>

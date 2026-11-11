@@ -264,6 +264,33 @@ describe("trading shares", () => {
     await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Cancel 4")!.click())
     expect(cancel).toHaveBeenCalledWith("4", status.trading!.write)
   })
+  it("keeps a working order's client ID for a retry and takes a new one once its terms change", async () => {
+    vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), underlyings: [
+      { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },
+    ] } as ReturnType<typeof useLive>)
+    vi.spyOn(api, "portfolio").mockResolvedValue({ ...portfolio, stocks: [] })
+    vi.spyOn(api, "account").mockResolvedValue(account)
+    vi.spyOn(api, "previewStockOrder").mockRejectedValue(new Error("fixture preview"))
+    vi.spyOn(api, "previewStock").mockRejectedValue(new Error("fixture preview"))
+    // The server keeps an order rejected as it works under its client ID.
+    const place = vi.spyOn(api, "placeStockOrder").mockRejectedValue(new ApiError(422, "Past the dollar delta limit", "DELTA_LIMIT"))
+    let minted = 0
+    vi.stubGlobal("crypto", { randomUUID: () => `share-order-${++minted}` })
+    const closed = vi.fn()
+    await act(async () => root.render(<QueryClientProvider client={new QueryClient()}>
+      <TradeSharesDialog trading={status.trading!} onClose={closed} /></QueryClientProvider>))
+    const kind = host.querySelector<HTMLSelectElement>('select[aria-label="Share order type"]')!
+    await act(async () => { kind.value = "market"; kind.dispatchEvent(new Event("change", { bubbles: true })) })
+    const send = () => act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Buy "))!.click())
+    await send()
+    await waitForRender(() => expect(host.textContent).toContain("DELTA_LIMIT"))
+    await send()  // the same terms: a retry of that order
+    await type(host.querySelector<HTMLInputElement>('input[type="number"]')!, "10")
+    await send()  // fewer shares: a new order
+    expect(place.mock.calls.map(([sent]) => [sent.shares, sent.client_order_id])).toEqual([
+      [100, "share-order-1"], [100, "share-order-1"], [10, "share-order-2"]])
+    expect(closed).not.toHaveBeenCalled()
+  })
   it("blocks invalid share counts and shows server refusals", async () => {
     vi.mocked(useLive).mockReturnValue({ ...liveState(status, null, "open"), underlyings: [
       { ...status.underlyings[0]!, symbol: "SPY", spot: 510 },
