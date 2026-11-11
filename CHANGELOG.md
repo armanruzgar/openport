@@ -237,6 +237,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   consistency or microscalping is enabled, so the winning trade cannot escape those
   checks by remaining open until automatic target liquidation. Replay drivers 1–6
   retain their original decisions; new runs use driver 7.
+- **Rule comparisons count microscalping by round trip.** `POST /api/account/rules-compare`
+  judged a whole trade as short only when its longest leg was, counted its net P&L, and
+  left share round trips out. A 10-second leg that made $500, rolled into a one-hour leg
+  that lost $100, counted nothing, so the account's own rules could replay to a pass its
+  `MICROSCALPING` objective held back. Each option and share round trip now counts on
+  its own, as it does on the account.
 - **Covered calls in the strategy optimizer.** A covered call's share cost was charged
   twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
   `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the

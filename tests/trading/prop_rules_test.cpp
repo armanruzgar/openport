@@ -763,7 +763,9 @@ TEST(PropRules, ARulesReplayShowsWhereEachRuleSetPassesFailsOrLocks) {
   EXPECT_EQ(replay.decided_equity, m("50800"));
   // A minimum-trades objective counts trades from the day they closed.
   target.min_trades = 1;
-  replay = replay_rules(e, now, {{"7", md::new_york_to_utc(e.day, 11, 30), m("50"), md::kNanosPerMinute}}, m("10000"), target);
+  ReplayActivity one_trade;
+  one_trade.trades = {{"7", md::new_york_to_utc(e.day, 11, 30), m("50"), md::kNanosPerMinute}};
+  replay = replay_rules(e, now, one_trade, m("10000"), target);
   EXPECT_EQ(replay.status, EvaluationStatus::Passed);
   EXPECT_EQ(replay.decided_day, e.day);
 }
@@ -791,6 +793,46 @@ TEST(PropRules, ARulesReplayAddsBackEverythingAPayoutTookOut) {
   ASSERT_EQ(replay.days.size(), 3U);
   EXPECT_EQ(replay.days.back().close, m("10720"));
   EXPECT_EQ(replay.status, EvaluationStatus::Active);
+}
+
+TEST(PropRules, ARulesReplayCountsMicroscalpingByRoundTripAsTheReducerDoes) {
+  const auto e = recorded_attempt();
+  const PlanInputs now{m("10720"), m("10720"), m("700"), true, md::new_york_to_utc(e.day, 12, 0)};
+  AccountRules rules;
+  rules.profit_target = m("600");
+  rules.microscalp_seconds = 60;
+  rules.microscalp_percent = 30;
+  const auto at = [](int hour, int minute) { return md::new_york_to_utc({2026, 9, 22}, hour, minute); };
+  // One trade, a roll: a leg closed at 10:30 made $500 and one closed at 11:30 lost $100.
+  // Held an hour each, neither is short: the target passes at 22 September's close.
+  ReplayActivity activity;
+  activity.trades = {{"1", at(11, 30), m("400"), 0}};
+  activity.round_trips = {{"1", at(10, 30), m("500"), 3600 * md::kNanosPerSecond},
+                          {"2", at(11, 30), m("-100"), 3600 * md::kNanosPerSecond}};
+  auto replay = replay_rules(e, now, activity, m("10000"), rules);
+  EXPECT_EQ(replay.status, EvaluationStatus::Passed);
+  EXPECT_EQ(replay.decided_day, (md::Date{2026, 9, 22}));
+  // Held 10 seconds, the first leg is short. Its $500 is over 30% of the $700 profit,
+  // so, as for the live account, the attempt does not pass, though the whole trade's
+  // net and longest leg would not have counted.
+  activity.round_trips[0].held = 10 * md::kNanosPerSecond;
+  replay = replay_rules(e, now, activity, m("10000"), rules);
+  EXPECT_EQ(replay.status, EvaluationStatus::Active);
+  EXPECT_EQ(replay.code, Reason::NONE);
+  // A short loss does not offset a short profit.
+  activity.trades = {{"1", at(11, 30), Money{}, 0}};
+  activity.round_trips = {{"1", at(10, 30), m("300"), 10 * md::kNanosPerSecond},
+                          {"2", at(11, 30), m("-300"), 10 * md::kNanosPerSecond}};
+  EXPECT_EQ(replay_rules(e, now, activity, m("10000"), rules).status, EvaluationStatus::Active);
+  // A share round trip counts, and so does a round trip whose trade has not closed.
+  activity.trades.clear();
+  activity.round_trips = {{"s1", at(10, 45), m("500"), 5 * md::kNanosPerSecond}};
+  EXPECT_EQ(replay_rules(e, now, activity, m("10000"), rules).status, EvaluationStatus::Active);
+  // From when it closed: one closed the next day leaves 22 September's pass alone.
+  activity.round_trips = {{"s1", md::new_york_to_utc(e.day, 11, 30), m("500"), 5 * md::kNanosPerSecond}};
+  replay = replay_rules(e, now, activity, m("10000"), rules);
+  EXPECT_EQ(replay.status, EvaluationStatus::Passed);
+  EXPECT_EQ(replay.decided_day, (md::Date{2026, 9, 22}));
 }
 
 TEST(PropRules, ChallengeEconomicsWeighsPassOddsCostsAndThePayout) {

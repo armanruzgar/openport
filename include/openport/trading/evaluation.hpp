@@ -297,12 +297,23 @@ struct PassOdds {
 [[nodiscard]] PassOdds pass_odds(const Evaluation& current, const AccountRules& rules,
     Money equity, const std::vector<EvaluationDay>& history, int days, int samples, std::uint64_t seed);
 
-/// A closed whole trade as a rules replay reads it: when it closed, its net P&L and how long it was held.
+/// A closed whole trade, or one round trip, as a rules replay reads it: when it
+/// closed, its net P&L and, for a round trip, how long it was held.
 struct ReplayTrade {
   std::string id;
   Timestamp closed = 0;
   Money pnl;
   Timestamp held = 0;
+};
+/// The attempt's closed trades a rules replay reads beside its recorded days, as the
+/// reducer's trade objectives read them.
+struct ReplayActivity {
+  /// Closed whole trades, for min_trades, trade consistency and the best-position cap.
+  std::vector<ReplayTrade> trades;
+  /// Closed round trips, each one contract's or one underlying's shares from flat to
+  /// flat, for microscalping: options net of fees, shares with their dividends. A
+  /// round trip counts on its own, whether or not the rest of its trade has closed.
+  std::vector<ReplayTrade> round_trips;
 };
 /// One recorded day in a rules replay, for one rule set: `outcome` is active,
 /// locked (its daily loss limit locked it), passed or failed (decided that day),
@@ -330,11 +341,13 @@ struct RuleReplay {
 /// at its own `starting_balance` and moves by the recorded dollar P&L; the
 /// closed balance moves by each day's realised P&L, at its close. Days count as
 /// trading days with recorded executions or, where the account did not count
-/// them, with realised P&L. Trades in `trades` count toward trade objectives from
-/// the day they closed. Nothing is re-executed, so a rule that would have closed
-/// positions (a lock, the open-loss cap) only ends that day at its level.
+/// them, with realised P&L. From when they closed, the activity's whole trades
+/// count toward the trade objectives and each round trip held under the
+/// microscalping threshold adds its positive net P&L to the short-round-trip
+/// profit. Nothing is re-executed, so a rule that would have closed positions (a
+/// lock, the open-loss cap) only ends that day at its level.
 [[nodiscard]] RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now,
-    const std::vector<ReplayTrade>& trades, Money starting_balance, const AccountRules& rules);
+    const ReplayActivity& activity, Money starting_balance, const AccountRules& rules);
 
 /// One step of a program for challenge economics: its pass odds, what its first
 /// attempt costs (the purchase or activation fee) and each reset, and how many

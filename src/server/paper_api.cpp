@@ -3790,7 +3790,11 @@ ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source
   if (current) sets.insert(sets.begin(), {view->config.rules.plan.empty() ? "Current rules" : view->config.rules.plan,
       preset_id(e.starting_balance, view->config.rules), e.starting_balance, view->config.rules});
   if (sets.empty() || sets.size() > 8) return api_error(400, "INVALID_REQUEST", "Compare one to eight rule sets");
-  // The attempt's closed whole trades, for the trade objectives from the day each closed.
+  // The attempt's closed whole trades, for the trade objectives from when each
+  // closed, and its closed round trips, which microscalping reads one by one as the
+  // reducer does (refresh_trade_objectives): options net of fees, shares with their
+  // dividends, each whether or not the rest of its trade has closed.
+  ReplayActivity activity;
   std::map<std::string, ReplayTrade> whole;
   std::set<std::string> open;
   for (const auto& life : lifecycles(s.recent_fills, s.closures, view->contracts)) {
@@ -3799,19 +3803,27 @@ ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source
     auto& trade = whole[id];
     trade.id = id;
     trade.pnl = trade.pnl + life.gross - life.fees;
-    if (!life.closed) open.insert(id);
-    else trade.closed = std::max(trade.closed, *life.closed);
-    trade.held = std::max(trade.held, (life.closed ? *life.closed : s.time) - life.opened);
+    if (!life.closed) {
+      open.insert(id);
+      continue;
+    }
+    trade.closed = std::max(trade.closed, *life.closed);
+    activity.round_trips.push_back({std::to_string(life.first_fill), *life.closed, life.gross - life.fees, *life.closed - life.opened});
   }
-  std::vector<ReplayTrade> trades;
-  for (const auto& [id, trade] : whole) if (!open.contains(id)) trades.push_back(trade);
+  for (const auto& [id, trade] : whole) if (!open.contains(id)) activity.trades.push_back(trade);
+  // The attempt's share round trips: its own stock fills (first_stock_fill marks the
+  // boundary only where its rules have microscalping), opened from its start.
+  for (const auto& life : share_lifecycles(s.stock_fills, s.dividends))
+    if (life.closed && life.fills.front() >= e.first_stock_fill && life.opened >= e.started)
+      activity.round_trips.push_back({"s" + std::to_string(life.fills.front()), *life.closed, life.gross + life.dividends,
+                                      *life.closed - life.opened});
   const auto inputs = plan_inputs(s);
   json days = json::array();
   for (const auto& day : e.days) days.push_back(md::format_date(day.day));
   if (e.started > 0) days.push_back(md::format_date(e.day));
   json rows = json::array();
   for (const auto& set : sets) {
-    const auto replay = replay_rules(e, inputs, trades, set.initial_cash, set.rules);
+    const auto replay = replay_rules(e, inputs, activity, set.initial_cash, set.rules);
     json path = json::array();
     for (const auto& day : replay.days)
       path.push_back({{"day", md::format_date(day.day)}, {"outcome", day.outcome}, {"close", day.close.str()},

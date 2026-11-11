@@ -540,7 +540,7 @@ PassOdds pass_odds(const Evaluation& current, const AccountRules& rules, Money e
   }
   return result;
 }
-RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const std::vector<ReplayTrade>& trades,
+RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const ReplayActivity& activity,
     Money starting_balance, const AccountRules& rules) {
   RuleReplay result;
   Evaluation e;
@@ -556,21 +556,26 @@ RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const
   // own starting balance; a lock flattens it, so later days move from the lock's level.
   Money shift = starting_balance - recorded.starting_balance;
   Money realised_total;
-  std::size_t next_trade = 0;
-  std::vector<ReplayTrade> sorted = trades;
-  std::stable_sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a.closed < b.closed; });
+  std::size_t next_trade = 0, next_trip = 0;
+  const auto by_close = [](const ReplayTrade& a, const ReplayTrade& b) { return a.closed < b.closed; };
+  std::vector<ReplayTrade> sorted = activity.trades, trips = activity.round_trips;
+  std::stable_sort(sorted.begin(), sorted.end(), by_close);
+  std::stable_sort(trips.begin(), trips.end(), by_close);
   const auto take_trades = [&](Timestamp until) {
     for (; next_trade < sorted.size() && sorted[next_trade].closed <= until; ++next_trade) {
       const auto& trade = sorted[next_trade];
       ++e.closed_trades;
       if (trade.pnl > Money{} && (!e.best_trade || trade.pnl > e.best_trade->pnl)) e.best_trade = BestTrade{trade.id, trade.pnl};
-      if (rules.microscalp_percent > 0 && trade.held < rules.microscalp_seconds * md::kNanosPerSecond)
-        e.short_profit = e.short_profit + std::max(Money{}, trade.pnl);
       if (rules.best_position_percent > 0 && trade.pnl > Money{}) {
         if (!e.best_position || trade.pnl > e.best_position->pnl) e.best_position = BestTrade{trade.id, trade.pnl};
         e.position_excess = e.position_excess + std::max(Money{}, trade.pnl - best_position_cap(rules));
       }
     }
+    // Microscalping reads each round trip on its own, as the reducer does: a short
+    // one's profit counts in full, whatever the rest of its trade held or lost.
+    for (; next_trip < trips.size() && trips[next_trip].closed <= until; ++next_trip)
+      if (rules.microscalp_percent > 0 && trips[next_trip].held < rules.microscalp_seconds * md::kNanosPerSecond)
+        e.short_profit = e.short_profit + std::max(Money{}, trips[next_trip].pnl);
   };
   struct Day { md::Date day; Money open, close, realised; std::optional<Money> low, high; Timestamp low_at = 0, high_at = 0;
                std::uint64_t executions = 0; bool today = false; Timestamp close_at = 0; };
