@@ -21,7 +21,7 @@ export function Header({
   onMenu?: () => void
 }) {
   const live = useLive()
-  const { status, tick, connection, version, market, underlyings } = live
+  const { status, tick, connection, version, market, underlyings, offline } = live
   const { theme, toggleTheme } = useTheme()
   const current = underlyings.find((u) => u.symbol === symbol)
   const feed = tick?.feed ?? status?.feed
@@ -68,7 +68,7 @@ export function Header({
               </Flash>
             </span>
             <span className="min-w-0 text-[11px] text-muted">as of <AsOf asOf={current.as_of} delaySeconds={provider?.delay_seconds} market={market} session={current.session}
-              now={live.source === "replay" || provider?.simulated ? marketNow(live) : undefined} /></span>
+              now={live.source === "replay" || provider?.simulated ? marketNow(live) : undefined} frozenSince={offline?.since} /></span>
           </div>
         )}
 
@@ -78,7 +78,11 @@ export function Header({
               <span className="text-foreground">{provider.name}</span> {dataLabel}
             </span>
           )}
-          {feed && <FeedBadge state={feed.state} message={feed.message} />}
+          {/* The cached feed state says nothing once the server is out of reach. */}
+          {connection === "closed" ? <FeedBadge state="error" label="disconnected"
+              message={`No connection to openportd${offline ? ` since ${new Date(offline.since).toLocaleTimeString()}` : ""}: prices are frozen.`} />
+            : connection === "connecting" ? <FeedBadge state="connecting" message="Connecting to openportd" />
+            : feed && <FeedBadge state={feed.state} message={feed.message} />}
           {fallback && provider && (
             <span className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-warn" title={fallbackTitle(provider)}>{fallback}</span>
           )}
@@ -87,7 +91,7 @@ export function Header({
               {count(engine.contracts)} contracts · {fixed(engine.analytics_ms, 1)} ms
             </span>
           )}
-          {connection !== "open" && <span className="text-warn">reconnecting…</span>}
+          {connection === "closed" && <span className="text-warn">reconnecting…</span>}
           <AlertsButton />
           <button
             type="button"

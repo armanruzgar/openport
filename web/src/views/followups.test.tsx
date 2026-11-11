@@ -70,6 +70,28 @@ describe("web follow-up rendering", () => {
     expect(html).not.toContain(">stale<")
   })
 
+  it("shows a lost connection instead of the cached live feed, and ages frozen simulated prices on the wall clock", () => {
+    const since = Date.parse("2026-11-10T15:00:00Z")
+    const clock = vi.spyOn(Date, "now").mockReturnValue(since + 10 * 60_000)
+    try {
+      const simulated = { ...status, provider: { ...status.provider, simulated: true }, feed: { ...status.feed, state: "live" as const } }
+      vi.mocked(useLive).mockReturnValue(liveState(simulated, null, "closed", 0, "main", () => {}, "live", null, () => {}, undefined, { since, reachable: false }))
+      const lost = render(<Header symbol="SPY" onSymbol={() => {}} />)
+      expect(lost).toContain("disconnected")
+      expect(lost).toContain("No connection to openportd since")
+      expect(lost).not.toContain("animate-pulse")
+      // The simulated market clock froze with the feed; ten minutes passed on the wall.
+      expect(lost).toContain("10 min old")
+      expect(lost).toContain("reconnecting…")
+      vi.mocked(useLive).mockReturnValue(liveState(simulated, null, "open"))
+      const connected = render(<Header symbol="SPY" onSymbol={() => {}} />)
+      expect(connected).toContain("animate-pulse")
+      expect(connected).toContain("&lt;1 min old")
+      expect(connected).not.toContain("disconnected")
+      expect(connected).not.toContain("reconnecting…")
+    } finally { clock.mockRestore() }
+  })
+
   it("does not attach another snapshot's source to the header spot and handles pending underlyings", () => {
     vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
     const header = <Header symbol="SPY" onSymbol={() => {}} />

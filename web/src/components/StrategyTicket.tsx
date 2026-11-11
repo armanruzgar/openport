@@ -85,7 +85,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
   template?: Pick<TemplateSetup, "tag" | "widths">
 }) {
   const api = useActionApi()
-  const { underlyings, source, replay, status: feedStatus } = useLive()
+  const { underlyings, source, replay, status: feedStatus, offline } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()
@@ -179,7 +179,9 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
   const stopRequired = rules?.require_stop_loss && !reduces
   const missingStop = stopRequired && !(exitable && exits.bracket?.stop_loss?.trigger)
   const planNotice = planEntryNotice(rules, underlying, planMarketTime(account?.time, status?.as_of, source !== "live" ? replay?.time : null), reduces, account)
-  const blocked = !!planNotice || writeBlocked(trading, token) || ((trading.kill_latched || dayLocked || closed) && !reduces) || !!untradable || !!notice || (!!rules?.buy_only && !reduces) || !!missingStop
+  // A server that answers nothing cannot take the order.
+  const cutOff = offline != null && !offline.reachable
+  const blocked = cutOff || !!planNotice || writeBlocked(trading, token) || ((trading.kill_latched || dayLocked || closed) && !reduces) || !!untradable || !!notice || (!!rules?.buy_only && !reduces) || !!missingStop
   const walk = useWalk(type === "limit" && ["day", "gtc"].includes(tif), limitText, true, (tick / 100).toFixed(2), quote.ask?.toFixed(2) ?? "")
   const valid = walk.valid && (type === "market" || tif !== "gtd" || good_till != null) && legs.length >= 2 && validUnits && (type === "market" || validAmount) && (!exitable || exits.valid)
 
@@ -377,7 +379,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
         </figure>}
         <button className="w-full rounded-md bg-accent px-3 py-2.5 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
           type="submit" aria-label="Submit strategy order" disabled={!valid || blocked || pending || order != null}>
-          {pending ? "Submitting…" : `${label} · ${validUnits ? q : ""} × ${type === "market" ? "at market" : netText(net)}`}
+          {pending ? "Submitting…" : cutOff ? "No connection to openportd" : `${label} · ${validUnits ? q : ""} × ${type === "market" ? "at market" : netText(net)}`}
         </button>
       </form>
     </>}

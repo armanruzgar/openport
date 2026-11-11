@@ -413,6 +413,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   fall behind a few dozen messages a second. The set is now rebuilt only when the
   subscribed contracts change, and strikes are selected again only when spot moves
   the window past one.
+- **The terminal says when it loses the server.** With `openportd` stopped or out of
+  reach, the header kept a green pulsing **live** badge, a demo or replay feed stayed
+  “<1 min old”, and the ticket said an order would fill now at the ask with Buy
+  enabled, ending in the browser's “Failed to fetch”. The badge now reads
+  **disconnected**, the age counts on the wall clock, a banner says when the
+  connection dropped, tickets refuse to send while the server cannot be reached, and
+  a request that got no answer says the server could not be reached.
 
 ## 0.5.1 (2026-10-28)
 

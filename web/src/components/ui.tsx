@@ -79,11 +79,12 @@ const feedTone: Record<FeedState, string> = {
   stopped: "bg-faint",
 }
 
-export function FeedBadge({ state, message }: { state: FeedState; message?: string | null }) {
+/** A feed's state; `label` names a state of the terminal's own connection instead. */
+export function FeedBadge({ state, message, label }: { state: FeedState; message?: string | null; label?: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-[11px]" title={message ?? undefined}>
       <span className={`h-1.5 w-1.5 rounded-full ${feedTone[state]} ${state === "live" ? "animate-pulse" : ""}`} />
-      {state}
+      {label ?? state}
     </span>
   )
 }

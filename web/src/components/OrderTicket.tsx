@@ -127,7 +127,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   surface?: Surface
 }) {
   const api = useActionApi()
-  const { underlyings, source, replay, status: feedStatus, accounts: liveAccounts } = useLive()
+  const { underlyings, source, replay, status: feedStatus, accounts: liveAccounts, offline } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()
@@ -247,7 +247,9 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   const missingStop = stopRequired && !bracket?.stop_loss?.trigger
   const buyOnlyBlock = rules?.buy_only && side === "sell" && opening > 0
   const planNotice = planEntryNotice(account?.rules, selection.underlying, planMarketTime(account?.time, underlying?.as_of, source !== "live" ? replay?.time : null), opening === 0, account)
-  const blocked = !!planNotice || writeBlocked(trading, token) || ((trading.kill_latched || dayLocked || closed) && opening > 0) || untradable || !!notice || !!buyOnlyBlock || !!missingStop
+  // A server that answers nothing cannot take the order: say so instead of offering it.
+  const cutOff = offline != null && !offline.reachable
+  const blocked = cutOff || !!planNotice || writeBlocked(trading, token) || ((trading.kill_latched || dayLocked || closed) && opening > 0) || untradable || !!notice || !!buyOnlyBlock || !!missingStop
   const reason = quote?.untradable_reason ?? "Contract unavailable for paper trading"
   const root = selection.symbol.slice(0, 6).trim()
   const name = strategyName(side, selection.optionType, held, Number.isSafeInteger(q) && q > 0 ? q : 1)
@@ -479,7 +481,9 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
       </fieldset>
       <LiquidityWarning modeled={!!(rules?.fill_latency_ms || rules?.impact_ticks)} impact={!!rules?.impact_ticks} market={type === "market"}
         preview={preview.data?.liquidity} ioc={type === "market" || tif === "ioc"} legs={[{ label: `${selection.strike} ${selection.optionType}`, quote, side, quantity: q }]} />
-      <p role="status" className={`rounded-md border px-3 py-2 text-xs ${fill.marketable ? "border-accent/40 text-foreground" : "border-border text-muted"}`}>{rules?.inside_fill_percent && type === "limit" && condition === "now"
+      <p role="status" className={`rounded-md border px-3 py-2 text-xs ${offline ? "border-warn/40 text-warn" : fill.marketable ? "border-accent/40 text-foreground" : "border-border text-muted"}`}>{offline
+        ? `No connection to openportd since ${new Date(offline.since).toLocaleTimeString()}: these quotes are from then, so whether the order would fill now is unknown.${cutOff ? " Orders cannot be sent until it is back." : ""}`
+        : rules?.inside_fill_percent && type === "limit" && condition === "now"
         ? `Inside fills enabled at ${rules.inside_fill_percent}% across the spread, bounded by displayed size. See preview for execution now.`
         : rules?.fill_latency_ms || rules?.impact_ticks
         ? "Simulated fills use the account’s latency and size impact. Displayed prices and quantities are estimates; the order may wait or fill at worse prices within its limit."
@@ -509,7 +513,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
       {copied && <><CopyResults result={copied} /><button type="button" className="trade-button" onClick={newOrder}>New order</button></>}
       {(!submitted || pending) && <button className={`w-full rounded-md px-3 py-2.5 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50 ${side === "buy" ? "bg-bullish" : "bg-bearish"}`}
         type="submit" aria-label="Submit order" disabled={!valid || blocked || pending}>
-        {pending ? "Submitting…" : `${copying ? `Copy to ${copyGroup} · ` : ""}${trigger ? "Arm · " : ""}${side === "buy" ? "Buy" : "Sell"} ${valid ? q : ""} ${name}${type === "limit" && validMoney(limitPrice) ? ` @ ${formatMoney(limitPrice)}` : type === "market" ? " at market" : ""}${bracket?.stop_loss || bracket?.take_profit ? " · bracket" : ""}`}
+        {pending ? "Submitting…" : cutOff ? "No connection to openportd" : `${copying ? `Copy to ${copyGroup} · ` : ""}${trigger ? "Arm · " : ""}${side === "buy" ? "Buy" : "Sell"} ${valid ? q : ""} ${name}${type === "limit" && validMoney(limitPrice) ? ` @ ${formatMoney(limitPrice)}` : type === "market" ? " at market" : ""}${bracket?.stop_loss || bracket?.take_profit ? " · bracket" : ""}`}
       </button>}
     </form>
   </>

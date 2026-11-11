@@ -13,6 +13,9 @@ import type { AccountBrief, ReplayState, Status, Tick, UnderlyingSnapshot, Under
 
 export type { Connection } from "./connection"
 
+/** The socket to openportd is down: since when (wall clock), and whether REST still answers. */
+export interface Offline { since: number; reachable: boolean }
+
 interface Live {
   /** The active account's trading status. */
   trading: Status["trading"]
@@ -33,6 +36,8 @@ interface Live {
   status: Status | undefined
   tick: Tick | null
   connection: Connection
+  /** Null while connected; prices, positions and orders on screen stop updating while set. */
+  offline: Offline | null
   market: Status["market"]
   circuitBreaker: Status["circuit_breaker"]
   underlyings: (UnderlyingSnapshot & Partial<Pick<UnderlyingStatus, "expiries" | "options">>)[]
@@ -45,7 +50,7 @@ const LiveContext = createContext<Live | null>(null)
 export function liveState(status: Status | undefined, tick: Tick | null, connection: Connection, accountScope = 0,
   account = MAIN_ACCOUNT, switchAccount: (id: string, reason: DestinationChangeReason) => void = () => {},
   source: DataSource = "live", replay: ReplayState | null = null, switchSource: (source: DataSource, reason: DestinationChangeReason) => void = () => {},
-  stopReplay: (stop: () => Promise<unknown>) => Promise<void> = async (stop) => { await stop() }): Live {
+  stopReplay: (stop: () => Promise<unknown>) => Promise<void> = async (stop) => { await stop() }, offline: Offline | null = null): Live {
   const connectedTick = connection === "open" ? tick : null
   const accounts = connectedTick?.accounts ?? status?.accounts ?? []
   const main = connectedTick?.trading === undefined ? status?.trading : connectedTick.trading
@@ -68,6 +73,7 @@ export function liveState(status: Status | undefined, tick: Tick | null, connect
     status,
     tick: connectedTick,
     connection,
+    offline: connection === "open" ? null : offline,
     market: connectedTick?.market === undefined ? status?.market : connectedTick.market,
     circuitBreaker: connectedTick?.circuit_breaker === undefined ? status?.circuit_breaker : connectedTick.circuit_breaker,
     underlyings: connectedTick
@@ -94,6 +100,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   // The trader's own Stop is being answered: the run is ending here, not in another window.
   const stopping = useRef(false)
   const [connection, setConnection] = useState<Connection>("connecting")
+  // When the socket last went down; the first attempt failing counts too.
+  const [lostAt, setLostAt] = useState<number | null>(null)
+  useEffect(() => {
+    if (connection === "open") setLostAt(null)
+    else if (connection === "closed") setLostAt((since) => since ?? Date.now())
+  }, [connection])
   const [accountScope, setAccountScope] = useState(0)
   const account = useActiveAccount()
   const source = useDataSource()
@@ -122,6 +134,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     refetchInterval: connection === "open" ? 10_000 : 2_000,
   })
 
+  // REST answering while the socket is down still takes orders; a status poll failing
+  // since the socket went down means the server cannot be reached at all.
+  const reachable = !(status.isError && status.errorUpdatedAt >= Math.max(status.dataUpdatedAt, lostAt ?? 0))
+  const offline = useMemo(() => lostAt == null ? null : { since: lostAt, reachable }, [lostAt, reachable])
   // A new account is a new scope: account-bound views remount and refetch.
   const switchAccount = useCallback((id: string, reason: DestinationChangeReason) => {
     activeAccount.set(id, reason)
@@ -228,10 +244,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [])
   const value = useMemo<Live>(
     () => liveState(status.data, source === "replay" ? replayTick : source === "live" ? tick : null, connection, accountScope,
-      source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource, stopReplay),
-    [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived, stopReplay],
+      source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource, stopReplay, offline),
+    [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived, stopReplay, offline],
   )
   return <LiveContext value={value}>
+    {value.offline && <ConnectionLost offline={value.offline} />}
     {reconnecting && source === "replay" && <div role="status" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">Reconnecting to the replay…</div>}
     {notice && <div role="alert" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">
       {notice}
@@ -240,6 +257,17 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     </div>}
     {children}<DestinationConfirmation />
   </LiveContext>
+}
+
+const lostClock = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+/** Says, above every page, that what is on screen stopped updating, and whether orders can still be sent. */
+function ConnectionLost({ offline }: { offline: Offline }) {
+  const at = lostClock.format(offline.since)
+  return <div role="alert" className="border-b border-danger/40 bg-danger/10 px-4 py-2 text-xs">
+    {offline.reachable
+      ? `The live connection to openportd dropped at ${at}. Prices and positions update only every few seconds; reconnecting…`
+      : `Lost the connection to openportd at ${at}. Prices, positions and orders on screen are frozen as of then, and orders cannot be sent; reconnecting…`}
+  </div>
 }
 
 /**

@@ -5280,6 +5280,14 @@ returns to live if it was trading it and says “The replay stopped.” The serv
 no tick when a run ends, so a run stopped in another window leaves the Replay page
 once `GET /api/replay` no longer lists it.
 
+When the terminal loses its WebSocket to `openportd`, the header's feed badge reads
+**disconnected** rather than the last feed state it heard, the snapshot's age keeps
+counting on the wall clock (a demo or replay market clock stops with the feed), and a
+banner above every page says when the connection dropped. While `GET /api/status`
+still answers, tickets still send orders; once it fails too, tickets say that
+`openportd` cannot be reached and send nothing until it is back. A request that gets
+no answer at all reports “Could not reach openportd”, not the browser's own wording.
+
 An open ticket or write dialog keeps its original destination. A source, account,
 or replay-run change blocks submission until the user explicitly confirms the
 named new destination, or closes and reopens the action. Cancellation sends no

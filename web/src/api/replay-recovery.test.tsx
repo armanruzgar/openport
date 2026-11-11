@@ -175,6 +175,21 @@ it("drops a run another window stopped from the Replay page of a terminal on liv
   expect(host.textContent).not.toContain("Trade this replay")
   expect(dataSource.get()).toBe("live")
 })
+it("says above every page when openportd drops the socket or cannot be reached, until it is back", async () => {
+  dataSource.set("live")
+  await render(); await advance(1)
+  expect(host.textContent).not.toContain("connection to openportd")
+  vi.mocked(api.status).mockRejectedValue(new TypeError("Failed to fetch"))
+  await act(async () => onConnection("closed"))
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("The live connection to openportd dropped")
+  // Status polls every two seconds while the socket is down; failing too, nothing answers.
+  await advance(3_000)
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Lost the connection to openportd")
+  expect(host.textContent).toContain("orders cannot be sent")
+  vi.mocked(api.status).mockResolvedValue(status)
+  await act(async () => onConnection("open"))
+  expect(host.textContent).not.toContain("connection to openportd")
+})
 it("announces the two-minute unreachable fallback", async () => {
   vi.mocked(api.replay).mockRejectedValue(new Error("Offline"))
   await render(); await advance(126_000)

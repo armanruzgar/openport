@@ -7,13 +7,19 @@ import { fixed } from "../lib/format"
 import { useWriteToken, writeToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
 
+/** fetch's own failure, worded by each browser: no answer came from the server at all. */
+export function unreachable(error: unknown): boolean {
+  return error instanceof TypeError && /^(failed to fetch|networkerror when attempting to fetch resource\.?|load failed|fetch failed)$/i.test(error.message)
+}
+
 export function TradingError({ error }: { error: unknown }) {
   if (!error) return null
   return <div role="alert" className="rounded-md border border-danger/50 p-3 text-sm text-danger [overflow-wrap:anywhere]">
     {error instanceof ApiError ? <>
       <strong>{error.code}</strong>: {error.message}
       {(error.actual != null || error.limit != null) && <div className="mt-1 tabular">Actual {typeof error.actual === "string" ? error.actual : fixed(error.actual, 2)} · Limit {typeof error.limit === "string" ? error.limit : fixed(error.limit, 2)}{error.scope ? ` · ${error.scope}` : ""}</div>}
-    </> : error instanceof Error || error instanceof DOMException ? error.message : "Request failed. Please retry."}
+    </> : unreachable(error) ? `Could not reach openportd (${(error as TypeError).message}). Check that it is running and that this browser can reach it.`
+      : error instanceof Error || error instanceof DOMException ? error.message : "Request failed. Please retry."}
   </div>
 }
 

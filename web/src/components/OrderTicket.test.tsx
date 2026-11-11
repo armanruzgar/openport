@@ -275,6 +275,29 @@ describe("order ticket interaction", () => {
     expect(host.textContent).toContain("Partial fill")
     expect(host.textContent).not.toContain("Retry same order")
   })
+  it("says the quotes are frozen and sends nothing while openportd cannot be reached", async () => {
+    const since = Date.now() - 30_000
+    vi.mocked(useLive).mockReturnValue(liveState(status, null, "closed", 0, "main", () => {}, "live", null, () => {}, undefined, { since, reachable: false }))
+    await render()
+    const submit = host.querySelector<HTMLButtonElement>('button[aria-label="Submit order"]')!
+    expect(submit.disabled).toBe(true)
+    expect(submit.textContent).toBe("No connection to openportd")
+    expect(host.textContent).toContain("these quotes are from then, so whether the order would fill now is unknown")
+    expect(host.textContent).not.toContain("fills now")
+    await act(async () => { host.querySelector("form")!.requestSubmit() })
+    expect(api.submitOrder).not.toHaveBeenCalled()
+    // A server that still answers REST takes orders while the socket reconnects.
+    vi.mocked(useLive).mockReturnValue(liveState(status, null, "closed", 0, "main", () => {}, "live", null, () => {}, undefined, { since, reachable: true }))
+    await render()
+    expect(host.querySelector<HTMLButtonElement>('button[aria-label="Submit order"]')!.disabled).toBe(false)
+  })
+  it("names an unreachable server instead of the browser's fetch error", async () => {
+    vi.mocked(api.submitOrder).mockRejectedValueOnce(new TypeError("Failed to fetch"))
+    await render()
+    await click("Submit order")
+    expect(host.textContent).toContain("Could not reach openportd (Failed to fetch)")
+    expect(button("Retry same order")).toBeDefined()
+  })
   it("focuses the result once and keeps focus where the trader put it as the working order refreshes", async () => {
     // Each quote move on a working order's contract bumps the account version and refreshes the order.
     const refreshed = vi.spyOn(api, "order").mockImplementation(async (id) => ({ account_version: "18", order: { ...order, id, filled_quantity: 3, remaining_quantity: 2 } }))
