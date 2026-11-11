@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from http.client import HTTPException
+from json import JSONDecodeError
 import re
 from typing import Literal
+from urllib.error import URLError
 import uuid
 
 from mcp.server.mcpserver import MCPServer
@@ -80,6 +82,12 @@ def _body(value):
     return value
 
 
+def _reason(error: Exception) -> str:
+    # urllib wraps a refused or failed connection; name the failure itself.
+    reason = error.reason if isinstance(error, URLError) else error
+    return str(reason) or type(reason).__name__
+
+
 def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     if not re.fullmatch(r"[a-z0-9_-]{1,26}", agent_name):
         raise ValueError("agent name must be 1–26 lowercase letters, digits, underscores or hyphens")
@@ -87,18 +95,26 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         "Trades a paper simulator only, on data openportd has, often delayed. "
         "Check as_of, feed and simulated on every result. Money is decimal text. "
         "Writes require OPENPORT_WRITE_TOKEN and an account, except sandbox tokens default to their own account. Preview before placing an order; preview_change before modifying one. Review staged orders before sending. "
+        "Error code UNREACHABLE means nothing was sent; NO_RESPONSE is an uncertain response, after which a command may have been applied. "
         "Reuse client_order_id if repeating an order after an uncertain response."))
 
     def selected(account: str | None = None, replay: bool = False):
         return Client(client.base_url, client.token, account, client.timeout,
                       retries=client.retries, backoff=client.backoff, replay=replay)
 
-    def result(target, action):
+    def result(target, action, command=False):
+        # Every failure is returned as an error the agent can read: MCP reports an
+        # escaped exception only as "Error executing tool NAME".
         # Capture the source even if a stop command removes the replay.
         try:
             status = target.status()
         except ApiError:
             status = {}
+        except (OSError, HTTPException, ValueError) as error:
+            # openportd did not answer this read, so the tool sends nothing.
+            return {"as_of": None, "feed": {"provider": None, "delayed": None, "delay_seconds": None}, "simulated": None,
+                    "error": {"code": "UNREACHABLE", "status": None, "message": f"No answer from openportd ({_reason(error)}); "
+                              f"the {'command' if command else 'request'} was not sent"}}
         provider = status.get("provider", {})
         times = [item["as_of"] for item in status.get("underlyings", []) if item.get("as_of")]
         envelope = {"as_of": max(times) if times else None,
@@ -108,30 +124,43 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
                     "simulated": provider.get("simulated")}
         try:
             data = action()
-            envelope["data"] = data
-            if isinstance(data, dict):
-                if "as_of" in data:
-                    envelope["as_of"] = data["as_of"]
-                elif "time" in data:
-                    envelope["as_of"] = data["time"]
-                if isinstance(data.get("replay"), dict):
-                    state = data["replay"]
-                    # Replay time/settled_through are receipt clocks. Market
-                    # time comes only from the replay's published quote timestamps.
-                    try:
-                        replay_status = client.for_replay().status()
-                        market_times = [item["as_of"] for item in replay_status["underlyings"] if item.get("as_of")]
-                        envelope["as_of"] = max(market_times) if market_times else None
-                    except ApiError:
-                        envelope["as_of"] = None
-                    envelope["feed"] = {"provider": state["provider"], "delay_seconds": state["delay_seconds"],
-                                        "delayed": state["delay_seconds"] > 0}
-                    envelope["simulated"] = state.get("demo", provider.get("simulated"))
         except ApiError as error:
             envelope["error"] = {"code": error.code, "message": str(error), "status": error.status}
+            return envelope
+        except (OSError, HTTPException, JSONDecodeError, UnicodeDecodeError) as error:
+            # A timeout, a dropped connection or an unreadable answer, perhaps after openportd acted.
+            message = f"No usable answer from openportd ({_reason(error)})"
+            if command:
+                message += "; the command may have been applied, so check before repeating it"
+            envelope["error"] = {"code": "NO_RESPONSE", "message": message, "status": None}
+            return envelope
+        except (KeyError, TypeError, ValueError) as error:
+            # The client refused the arguments before sending, as a playbook definition without its id.
+            detail = f"{error} is required" if isinstance(error, KeyError) else str(error)
+            envelope["error"] = {"code": "INVALID_REQUEST", "message": "INVALID_REQUEST: " + detail, "status": 400}
+            return envelope
+        envelope["data"] = data
+        if isinstance(data, dict):
+            if "as_of" in data:
+                envelope["as_of"] = data["as_of"]
+            elif "time" in data:
+                envelope["as_of"] = data["time"]
+            if isinstance(data.get("replay"), dict):
+                state = data["replay"]
+                # Replay time/settled_through are receipt clocks. Market
+                # time comes only from the replay's published quote timestamps.
+                try:
+                    replay_status = client.for_replay().status()
+                    market_times = [item["as_of"] for item in replay_status["underlyings"] if item.get("as_of")]
+                    envelope["as_of"] = max(market_times) if market_times else None
+                except (ApiError, OSError, HTTPException, ValueError):
+                    envelope["as_of"] = None
+                envelope["feed"] = {"provider": state["provider"], "delay_seconds": state["delay_seconds"],
+                                    "delayed": state["delay_seconds"] > 0}
+                envelope["simulated"] = state.get("demo", provider.get("simulated"))
         return envelope
 
-    def write(account, replay, action):
+    def write(account, replay, action, command=True):
         target = selected(account, replay)
         def authorized():
             if not client.token:
@@ -142,7 +171,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
             if not sandbox_default and (not account or len(account) > 40 or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", account)):
                 raise ApiError(400, {"error": {"code": "INVALID_ACCOUNT", "message": "Name the paper account"}})
             return action(target)
-        response = result(target, authorized)
+        response = result(target, authorized, command)
         response["account"] = account
         response["paper"] = True
         return response
@@ -155,7 +184,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     @server.tool()
     def preview_stock(symbol: str, side: Literal["buy", "sell"], shares: int, account: str | None = None, replay: bool = False) -> dict:
         """Preview shares, including cost, buying power and dollar delta; does not trade."""
-        return write(account, replay, lambda target: target.preview_stock(symbol, side, shares))
+        return write(account, replay, lambda target: target.preview_stock(symbol, side, shares), command=False)
 
     @server.tool()
     def status(replay: bool = False) -> dict:
@@ -356,7 +385,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     @server.tool()
     def preview_order(order: Order, account: str | None = None, replay: bool = False) -> dict:
         """Preview a paper order without changing the account."""
-        return write(account, replay, lambda target: target.preview_order(order_body(order)))
+        return write(account, replay, lambda target: target.preview_order(order_body(order)), command=False)
 
     @server.tool()
     def place_order(order: Order, account: str | None = None, replay: bool = False) -> dict:
@@ -366,12 +395,7 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         # Name the ID here rather than in the client, so a failed or lost response still returns it.
         if not body.get("client_order_id"):
             body["client_order_id"] = str(uuid.uuid4())
-        try:
-            response = write(account, replay, lambda target: target.place_order(body))
-        except (OSError, HTTPException) as error:
-            # A timeout or dropped connection: the order may have reached the server.
-            response = {"error": {"code": "NO_RESPONSE", "message": f"No response from openportd ({error}); the order may have been placed",
-                                  "status": None}, "account": account, "paper": True}
+        response = write(account, replay, lambda target: target.place_order(body))
         response["client_order_id"] = body["client_order_id"]
         return response
 
@@ -543,12 +567,12 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
     @server.tool()
     def what_if(candidates: list[dict], account: str | None = None, replay: bool = False) -> dict:
         """Compare up to six candidate adjustments on private copies; never trades."""
-        return write(account, replay, lambda target: target.what_if(candidates))
+        return write(account, replay, lambda target: target.what_if(candidates), command=False)
 
     @server.tool()
     def preview_change(order_id: str, change: dict, account: str | None = None, replay: bool = False) -> dict:
         """Preview changed order terms before calling modify_order."""
-        return write(account, replay, lambda target: target.preview_change(order_id, **change))
+        return write(account, replay, lambda target: target.preview_change(order_id, **change), command=False)
 
     @server.tool()
     def modify_order(order_id: str, change: dict, account: str | None = None, replay: bool = False) -> dict:

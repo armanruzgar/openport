@@ -130,6 +130,14 @@ an account and return `paper: true`; replay writes must name `main`, the isolate
 replay account. Placed and previewed orders carry `agent:NAME`. The authenticated
 token's name is the journal actor; an agent tag is descriptive, not authentication.
 
+Every tool returns its failures as an `error` with a code, never as a bare tool
+error. `UNREACHABLE` means openportd did not answer before the tool sent anything.
+`NO_RESPONSE` means a request was sent and its answer was lost (a timeout, a
+dropped connection) or could not be read: a command may have been applied, so
+check before repeating it, or repeat a placed order with its `client_order_id`.
+`INVALID_REQUEST` with status 400 names arguments the client refused before
+sending, such as a playbook definition without its `id`.
+
 The MCP server defaults to stdio. It delegates scope enforcement to openportd and
 does not have any broker or live-trading connection.
 

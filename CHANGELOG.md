@@ -20,6 +20,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **MCP tools say what failed.** A timeout, a dropped connection or an `openportd`
+  that is down, and arguments the client refuses before sending (`version_playbook`
+  with a definition missing its `id`), reached the agent from every tool but
+  `place_order` only as `Error executing tool NAME`, so after a trade, cancel or
+  flatten it could not tell a lost answer from a bad argument. Every tool now returns
+  an error: `UNREACHABLE` when nothing was sent, `NO_RESPONSE` when an answer was lost
+  and a command may have been applied, `INVALID_REQUEST` for refused arguments.
 - **MCP equity pages.** The `equity` tool answered with an account's oldest 500
   samples and had no way to ask for the next page, so an account's recent equity was
   out of reach unless the agent guessed a start time. It now takes `cursor`, the

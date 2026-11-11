@@ -298,3 +298,73 @@ def test_place_order_returns_the_client_order_id_to_retry_after_an_uncertain_res
     lost = call(server, "place_order", account="practice", order=order)
     assert lost["error"]["code"] == "NO_RESPONSE"
     assert lost["client_order_id"] and lost["client_order_id"] != sent
+
+
+def test_an_unreachable_openportd_is_named_and_nothing_is_sent():
+    import socket
+    closed = socket.socket()
+    try:
+        closed.bind(("127.0.0.1", 0))
+    except PermissionError:
+        pytest.skip("the sandbox denies bind()")
+    with closed:
+        # Bound but not listening: every connection is refused.
+        server = create_server(Client(f"http://127.0.0.1:{closed.getsockname()[1]}", "secret", timeout=5, retries=0))
+        read = call(server, "status")
+        command = call(server, "trade_stock", symbol="SPY", side="buy", shares=100, account="practice")
+    for response, noun in [(read, "request"), (command, "command")]:
+        assert response["error"]["code"] == "UNREACHABLE" and response["error"]["status"] is None
+        assert f"the {noun} was not sent" in response["error"]["message"]
+        assert response["as_of"] is None and response["simulated"] is None
+    assert command["paper"] is True and command["account"] == "practice"
+
+
+def test_a_command_whose_answer_is_lost_may_have_been_applied(stub):
+    original = stub.respond
+    def respond(method, target, headers, body):
+        status, value = original(method, target, headers, body)
+        if method == "DELETE":
+            # The cancellation arrived, then the connection closes without an answer.
+            raise ConnectionAbortedError("synthetic drop after the command arrived")
+        return status, value
+    stub.respond = respond
+    response = call(create_server(Client(stub.url, "secret")), "cancel_order", order_id="1", account="practice")
+    assert stub.requests[-1][:2] == ("DELETE", "/api/orders/1?account=practice")
+    assert response["error"]["code"] == "NO_RESPONSE" and response["error"]["status"] is None
+    assert "may have been applied" in response["error"]["message"]
+    assert response["as_of"] == TIME and response["paper"] is True
+
+
+ORDER = {"quantity": 1, "type": "limit", "time_in_force": "day", "symbol": "SPXW  261022P05000000", "side": "buy", "limit_price": "0.05"}
+
+
+@pytest.mark.parametrize("name,method,arguments,command", [
+    ("trade_stock", "trade_stock", {"symbol": "SPY", "side": "buy", "shares": 100}, True),
+    ("modify_order", "modify_order", {"order_id": "1", "change": {"quantity": 2}}, True),
+    ("flatten", "flatten", {}, True),
+    ("preview_order", "preview_order", {"order": ORDER}, False),
+    ("positions", "portfolio", {}, False),
+])
+def test_a_timeout_is_an_uncertain_answer_not_a_bare_tool_error(stub, monkeypatch, name, method, arguments, command):
+    def timed_out(self, *args, **kwargs):
+        raise TimeoutError("timed out")
+    monkeypatch.setattr(Client, method, timed_out)
+    response = call(create_server(Client(stub.url, "secret")), name, account="practice", **arguments)
+    assert response["error"]["code"] == "NO_RESPONSE" and response["error"]["status"] is None
+    assert "timed out" in response["error"]["message"]
+    # Only a command can have changed the account; reads and previews never do.
+    assert ("may have been applied" in response["error"]["message"]) == command
+    assert response["as_of"] == TIME
+
+
+@pytest.mark.parametrize("name,arguments,detail", [
+    ("version_playbook", {"definition": {}}, "'id' is required"),
+    ("flatten", {"limit_ticks": 2}, "limit_ticks requires type limit"),
+    ("create_alert", {"scope": "account", "metric": "equity", "direction": "at_or_below", "level": "1",
+                      "terms": {"scope": "contract"}}, "multiple values"),
+])
+def test_arguments_the_client_refuses_are_named_and_not_sent(stub, name, arguments, detail):
+    response = call(create_server(Client(stub.url, "secret")), name, account="practice", **arguments)
+    assert response["error"]["code"] == "INVALID_REQUEST" and response["error"]["status"] == 400
+    assert detail in response["error"]["message"]
+    assert all(request[0] == "GET" for request in stub.requests)
