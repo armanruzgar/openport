@@ -63,3 +63,23 @@ it("edits optional caps without confusing zero with off and preserves both scope
     tag_overrides: { hedge: { ...caps, worst_grid_loss: 300 } }, playbook_overrides: { weekly: caps },
   }), trading.write)
 })
+it("checks only the caps it will send, says why Save is off and keeps a new row's caps through its symbol", async () => {
+  const initial = { ...risk, limits: { ...risk.limits, underlying_overrides: { SPX: { dollar_delta: 10, vega: 20 } } } }
+  await act(async () => root.render(<QueryClientProvider client={client}><LimitsEditor initial={initial} trading={trading} onClose={() => {}} /></QueryClientProvider>))
+  const save = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Save limits")!
+  await change("SPX Absolute theta / day", "-1")
+  expect(save().disabled).toBe(true)
+  expect(host.querySelector('[aria-label="SPX Absolute theta / day"]')!.getAttribute("aria-invalid")).toBe("true")
+  expect(host.querySelector('[role="alert"]')!.textContent).toBe("Each additional cap must be blank (off), zero or a positive number.")
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Remove override 1"]')!.click())
+  expect(save().disabled).toBe(false)
+  expect(host.querySelector('[role="alert"]')).toBeNull()
+  await click("Add underlying override")
+  await change("Override 1 Absolute theta / day", "7")
+  await change("Override 1 symbol", "QQQ")
+  expect(host.querySelector<HTMLInputElement>('[aria-label="QQQ Absolute theta / day"]')!.value).toBe("7")
+  await click("Save limits")
+  expect(api.updateLimits).toHaveBeenCalledWith(risk.limits_revision, expect.objectContaining({
+    underlying_overrides: { QQQ: { dollar_delta: risk.limits.per_underlying.dollar_delta, vega: risk.limits.per_underlying.vega, theta: 7 } },
+  }), trading.write)
+})

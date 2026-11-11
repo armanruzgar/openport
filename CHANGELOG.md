@@ -602,6 +602,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   by movable major tags (`docker/build-push-action@v7`). Each is now pinned to the
   commit of its current release, with the version in a comment, and Dependabot keeps
   the pins current.
+- **The risk limits editor keeps each override's caps with its row.** An additional
+  cap typed for an underlying override was stored by symbol, apart from the row, so a
+  negative cap left on a row that was then removed kept **Save limits** disabled with
+  no message, and caps typed into a new row vanished once its symbol was entered. Each
+  row now carries its own caps, only the caps that will be saved are checked, and an
+  invalid cap is marked and explained.
 
 ## 0.5.1 (2026-10-28)
 
