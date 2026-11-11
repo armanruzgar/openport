@@ -756,6 +756,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   REST does not reconcile. History runners also called `on_tick` with the equity
   sample a fill produced before `on_fill` for that fill; each fill now comes just
   before the sample that names it, as a live runner sees them.
+- **What-if results match the candidates on screen.** The comparison table stayed up
+  when a ticket or the hedge panel's **Add to what-if** changed the candidate list,
+  showing a changed candidate's name with numbers from before the change, and a
+  **Compare** answer that arrived after a candidate was removed brought the removed
+  one back. Results now show only while the list is the one they were computed for.
+- **What-if candidates say what a conditional order does.** A stop or other triggered
+  order was listed and named "at market", like an order that trades at once, and its
+  bracket and walk were left out. The order text now adds the trigger ("when bid ≤
+  $4.20"), the walk's cap and the bracket's exits, and a default name is cut to the
+  64 bytes the server takes.
 
 ## 0.5.1 (2026-10-28)
 

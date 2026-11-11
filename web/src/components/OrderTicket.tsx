@@ -18,7 +18,7 @@ import { count, days, fixed, isNum, price } from "../lib/format"
 import { dayLockNotice, flatRuleNotice, planEntryNotice, planMarketTime } from "../lib/plan-rules"
 import { OrderPreviewPanel, useOrderPreview } from "./OrderPreview"
 import { addWhatIfOrder, useWhatIfScope } from "../lib/what-if"
-import { whatIfOrderText } from "./WhatIfPanel"
+import { whatIfName } from "./WhatIfPanel"
 import { probabilityOfProfit, probabilitySource, singleLeg, smileDistribution } from "../lib/probability"
 import { crossDirection, describeTrigger, marketability, opposite, split, stopDirection, strategyName } from "../lib/ticket"
 import { deliversShares, extendedSession, formatMoney, limitOnlyNotice, limitPriceText, limitPriceTick, paperNotice, roundToTick, sideFromCell, stepLimitPrice, ticketEstimate, validMoney } from "../lib/trading"
@@ -505,7 +505,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
         : conditional ? " Add a protective stop before submitting."
         : " In this session a stop needs time in force GTC, GTD, EXTO or GTC + EXTO: choose one to add it."}</p>}
       <div data-ticket-review tabIndex={-1} role="region" aria-label="Order review"><OrderPreviewPanel sizing={!selection.closing && !(closes && q <= Math.abs(held))} preview={preview} onSize={(size) => setQuantity(String(size))} disabled={submitted || pending}
-        onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} /></div>
+        onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfName(draft))} /></div>
       {!!(rules?.fill_latency_ms || rules?.impact_ticks) && <p className="text-xs text-muted">The preview uses current quotes. It cannot predict the later quote or the full cost of sweeping additional size blocks.</p>}
       {!!rules?.slippage_ticks && <p className="text-xs text-muted">Quoted price estimates exclude slippage; the server preview includes it.</p>}
       <details className="text-xs">

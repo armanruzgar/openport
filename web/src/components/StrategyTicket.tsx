@@ -17,7 +17,7 @@ import { expectedMove } from "../lib/candles"
 import { isNum, money, price } from "../lib/format"
 import { OrderPreviewPanel, useOrderPreview } from "./OrderPreview"
 import { addWhatIfOrder, useWhatIfScope } from "../lib/what-if"
-import { whatIfOrderText } from "./WhatIfPanel"
+import { whatIfName } from "./WhatIfPanel"
 import { dayLockNotice, flatRuleNotice, planEntryNotice, planMarketTime } from "../lib/plan-rules"
 import { probabilityOfProfit, probabilitySource, smileDistribution, valueToday } from "../lib/probability"
 import { estimatedProfile, MAX_LEGS, MAX_RATIO, netQuote, riskProfile, roundNet, strategyLabel, strategyPayoff, type StrategyLeg, type TemplateSetup } from "../lib/strategy"
@@ -362,7 +362,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
         </dl>
         {stopRequired && <p role="status" className={missingStop ? "text-sm text-warn" : "text-xs text-muted"}>Stop-loss required by this plan.{missingStop ? " Add a protective stop before submitting." : ""}</p>}
         <div data-ticket-review tabIndex={-1} role="region" aria-label="Order review"><OrderPreviewPanel sizing={!closing && !roll && !reduces} preview={preview} onSize={(size) => setUnits(String(size))} disabled={pending || order != null}
-          onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfOrderText(draft))} /></div>
+          onWhatIf={() => draft != null && addWhatIfOrder(whatIfScope, draft, whatIfName(draft))} /></div>
         {!!(rules?.fill_latency_ms || rules?.impact_ticks) && <p className="text-xs text-muted">The preview uses current quotes. It cannot predict the later quote or the full cost of sweeping additional size blocks.</p>}
         {!!rules?.slippage_ticks && <p className="text-xs text-muted">Quoted price estimates exclude slippage; the server preview includes it.</p>}
         {chart && <figure aria-label="Profit and loss at expiry">

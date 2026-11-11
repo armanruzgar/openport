@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { api } from "../api/client"
 import { liveState, useLive } from "../api/live"
 import type { NewOrder, WhatIfAccount, WhatIfResponse } from "../api/trading-types"
-import { addWhatIfOrder, updateWhatIf } from "../lib/what-if"
+import { addWhatIfOrder, updateWhatIf, whatIfNameError } from "../lib/what-if"
 import { portfolio, status, trading } from "../test/trading-fixtures"
-import { WhatIfPanel } from "./WhatIfPanel"
+import { WhatIfPanel, whatIfName, whatIfOrderText } from "./WhatIfPanel"
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 
 const scope = "live:main"
@@ -138,5 +138,47 @@ describe("what-if", () => {
     await act(async () => button("Compare").click())
     expect(request).toHaveBeenCalledOnce()
     expect(request.mock.calls[0]![0][0]!.name).toBe(character.repeat(fits))
+  })
+  it("shows results only while the candidates are the ones they were computed for", async () => {
+    await render()
+    await act(async () => button("Add closing every position").click())
+    const request = vi.spyOn(api, "whatIf").mockResolvedValue(response)
+    await act(async () => button("Compare 1 candidate").click())
+    expect(host.querySelector("table")).not.toBeNull()
+    // A ticket or the hedge panel adds an order from outside the panel.
+    await act(async () => { addWhatIfOrder(scope, more, "Buy 22") })
+    expect(host.querySelectorAll("ol > li")).toHaveLength(2)
+    expect(host.querySelector("table")).toBeNull()
+    // An answer for a list the trader has changed since does not come back.
+    let answer: (value: WhatIfResponse) => void = () => {}
+    request.mockReturnValueOnce(new Promise<WhatIfResponse>((resolve) => { answer = resolve }))
+    await act(async () => button("Compare 2 candidates").click())
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Remove Buy 22"]')!.click())
+    await act(async () => answer(response))
+    expect(host.querySelectorAll("ol > li")).toHaveLength(1)
+    expect(host.querySelector("table")).toBeNull()
+    expect(host.textContent).not.toContain("BUYING_POWER")
+  })
+})
+
+describe("what-if order text", () => {
+  const sell: NewOrder = { client_order_id: "", symbol: position.symbol, side: "sell", type: "market", time_in_force: "ioc", quantity: 1 }
+  it("says when a triggered order activates and what exits and walk it carries", () => {
+    expect(whatIfOrderText(sell)).toMatch(/^Sell 1 SPX\S* Oct 16 7000C at market$/)
+    expect(whatIfOrderText({ ...sell, trigger: { source: "option", direction: "at_or_below", level: "4.20" } })).toMatch(/ at market when bid ≤ \$4\.20$/)
+    const entry: NewOrder = { client_order_id: "", symbol: position.symbol, side: "buy", type: "limit", time_in_force: "day", limit_price: "5.00", quantity: 1,
+      walk: { step: "0.05", seconds: 10, limit: "5.50" },
+      bracket: { stop_loss: { trigger: { source: "option", direction: "at_or_below", level: "3.50" } }, take_profit: { limit_price: "6.90" } } }
+    expect(whatIfOrderText(entry)).toMatch(/ at \$5\.00, walking to \$5\.50 with stop and target$/)
+  })
+  it("names a candidate within the 64 UTF-8 bytes the server takes", () => {
+    const long: NewOrder = { ...sell, trigger: { source: "underlying", direction: "at_or_above", level: "7010", symbol: "SPX" },
+      bracket: { stop_loss: { trigger: { source: "option", direction: "at_or_above", level: "6.00" } }, take_profit: { limit_price: "2.00" } } }
+    expect(new TextEncoder().encode(whatIfOrderText(long)).length).toBeGreaterThan(64)
+    const name = whatIfName(long)
+    expect(whatIfNameError(name)).toBeNull()
+    expect(name.endsWith("…")).toBe(true)
+    expect(whatIfOrderText(long).startsWith(name.slice(0, -1))).toBe(true)
+    expect(whatIfName(sell)).toBe(whatIfOrderText(sell))
   })
 })

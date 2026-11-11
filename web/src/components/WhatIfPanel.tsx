@@ -2,17 +2,34 @@ import { useActionApi } from "../api/action-client"
 import { useState } from "react"
 
 import type { NewOrder, Position, TradingStatus, WhatIfAccount, WhatIfResponse } from "../api/trading-types"
-import { legsLabel, osiLabel } from "../lib/journal"
+import { legsLabel, osiLabel, parseOsi } from "../lib/journal"
+import { describeTrigger } from "../lib/ticket"
 import { formatMoney } from "../lib/trading"
 import { addWhatIfCandidate, closingOrders, maxCandidates, updateWhatIf, useWhatIf, useWhatIfScope, whatIfNameError, type WhatIfDraft } from "../lib/what-if"
 import { useWrite } from "./OrderActions"
 import { TradingError, WriteAccess } from "./TradingControls"
 
-/** "Buy 2 SPX Oct 22 5000C at market", or a multi-leg order's units and legs. */
+/**
+ * "Buy 2 SPX Oct 22 5000C at market", or a multi-leg order's units and legs, with what
+ * changes when and how it trades: a walk, a trigger ("when bid ≤ $4.20") and bracket exits.
+ */
 export function whatIfOrderText(order: NewOrder) {
-  const price = order.type === "limit" ? ` at ${formatMoney(order.limit_price)}` : " at market"
-  return order.legs ? `${order.quantity} × ${legsLabel(order.legs, "")}${price}`
-    : `${order.side === "buy" ? "Buy" : "Sell"} ${order.quantity} ${osiLabel(order.symbol, "")}${price}`
+  const root = parseOsi(order.legs ? order.legs[0]?.symbol ?? "" : order.symbol)?.root ?? ""
+  const price = order.type === "limit" ? ` at ${formatMoney(order.limit_price)}${order.walk ? `, walking to ${formatMoney(order.walk.limit)}` : ""}` : " at market"
+  const when = order.trigger ? ` when ${describeTrigger(order.trigger, order.legs ? "buy" : order.side, root)}` : ""
+  const exits = [order.bracket?.stop_loss ? "stop" : null, order.bracket?.take_profit ? "target" : null].filter((exit) => exit != null)
+  const bracket = exits.length ? ` with ${exits.join(" and ")}` : ""
+  return order.legs ? `${order.quantity} × ${legsLabel(order.legs, "")}${price}${when}${bracket}`
+    : `${order.side === "buy" ? "Buy" : "Sell"} ${order.quantity} ${osiLabel(order.symbol, "")}${price}${when}${bracket}`
+}
+/** A ticket's order as a new candidate's name: its text, cut to the 64 UTF-8 bytes a name may have. */
+export function whatIfName(order: NewOrder) {
+  const text = whatIfOrderText(order)
+  const bytes = (value: string) => new TextEncoder().encode(value).length
+  if (bytes(text) <= 64) return text
+  const characters = [...text]
+  while (characters.length && bytes(`${characters.join("").trimEnd()}…`) > 64) characters.pop()
+  return `${characters.join("").trimEnd()}…`
 }
 function signed(value: number | null | undefined) {
   return value == null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(0)}`
@@ -93,18 +110,20 @@ export function WhatIfPanel({ positions, picked = [], trading }: { positions: re
   const scope = useWhatIfScope()
   const state = useWhatIf(scope)
   const write = useWrite(trading)
-  const [result, setResult] = useState<WhatIfResponse | null>(null)
+  const [result, setResult] = useState<{ terms: string; response: WhatIfResponse } | null>(null)
   const candidates = state.candidates
   const nameErrors = candidates.map((c) => whatIfNameError(c.name))
-  const update = (change: (candidates: WhatIfDraft[]) => WhatIfDraft[]) => {
-    updateWhatIf(scope, (s) => ({ ...s, candidates: change(s.candidates) }))
-    setResult(null)
-  }
+  const request = candidates.map((c) => ({ name: c.name.trim(), orders: c.orders }))
+  const terms = JSON.stringify(request)
+  // Results stand for the list they were computed for. An edit here, an order added from
+  // a ticket or the hedge panel, or an answer to a list since changed leaves them unshown.
+  const shown = result?.terms === terms ? result.response : null
+  const update = (change: (candidates: WhatIfDraft[]) => WhatIfDraft[]) => updateWhatIf(scope, (s) => ({ ...s, candidates: change(s.candidates) }))
   const closing = picked.length ? picked : positions
   return <section aria-label="What-if" className="space-y-3 text-sm">
     <div className="flex flex-wrap items-center gap-2">
       <button type="button" className="trade-button" disabled={!closing.length || closing.length > 4 || candidates.length >= maxCandidates}
-        onClick={() => { addWhatIfCandidate(scope, picked.length ? "Close picked" : "Close all", closingOrders(closing)); setResult(null) }}>
+        onClick={() => addWhatIfCandidate(scope, picked.length ? "Close picked" : "Close all", closingOrders(closing))}>
         {picked.length ? `Add closing the ${picked.length} picked` : "Add closing every position"}</button>
       {candidates.length > 1 && <label className="flex items-center gap-2 text-xs">
         <span className="text-muted">Add orders from tickets to</span>
@@ -137,8 +156,8 @@ export function WhatIfPanel({ positions, picked = [], trading }: { positions: re
     <WriteAccess trading={trading} />
     <TradingError error={write.error} />
     <button type="button" className="trade-button" disabled={!candidates.length || nameErrors.some(Boolean) || write.pending || write.blocked}
-      onClick={() => void write.run(() => api.whatIf(candidates.map((c) => ({ name: c.name.trim(), orders: c.orders })), trading.write), setResult)}>
+      onClick={() => void write.run(() => api.whatIf(request, trading.write), (response) => setResult({ terms, response }))}>
       {write.pending ? "Comparing…" : `Compare ${candidates.length || ""} ${candidates.length === 1 ? "candidate" : "candidates"}`.replace("  ", " ")}</button>
-    {result && <Results result={result} />}
+    {shown && <Results result={shown} />}
   </section>
 }
