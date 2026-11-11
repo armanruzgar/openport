@@ -657,6 +657,13 @@ int run(int argc, char** argv) {
       settings.paper_journal = std::filesystem::path(home) /
           (demo ? ".openport/demo/paper-journal.jsonl" : ".openport/paper-journal.jsonl");
   }
+  // Everything kept beside the journal (market halts, playbooks, sandboxes, replays,
+  // backtests) is named from its directory, which a bare file name leaves empty.
+  if (!settings.paper_journal.empty()) {
+    std::error_code absolute_error;
+    if (auto full_journal = std::filesystem::absolute(settings.paper_journal, absolute_error); !absolute_error)
+      settings.paper_journal = std::move(full_journal);
+  }
   if (demo && settings.massive_dividends) return usage("demo: --dividends massive needs network access; use a file");
   if (offline && settings.cboe_soq) return usage("--am-settlement cboe is for live providers; demo and replay settle AM on the opening print");
   if (settings.open || settings.print_url) {

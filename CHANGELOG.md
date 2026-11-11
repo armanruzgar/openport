@@ -1079,6 +1079,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   and ntfy text of an early assignment printed the closed position's sign, `closed -5
   contracts`. It now reads `assigned on 5 short contracts` (an exercise, `exercised 5
   long contracts`), and one contract is singular.
+- **A bare `--paper-journal` file name.** With `--paper-journal journal.jsonl` the
+  journal's directory was empty, so the market-halts file beside it failed its
+  directory sync after every write: `circuit_breaker.error` stayed set in
+  `GET /api/status`, and the file was rewritten and synced on every batch. The
+  shared writer no longer reports that; openportd now also makes the journal path
+  absolute at startup, so every file kept beside it (halts, playbooks, sandboxes,
+  replays, backtests) names its real directory.
 
 ## 0.5.1 (2026-10-28)
 

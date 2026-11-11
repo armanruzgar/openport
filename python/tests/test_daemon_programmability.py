@@ -21,8 +21,9 @@ def test_demo_daemon_signals_stream_and_strategy(tmp_path, binary):
     env = {key: value for key, value in os.environ.items() if not key.startswith("OPENPORT_NOTIFY_")}
     token = "synthetic-integration-secret"
     with (tmp_path / "daemon.log").open("w+") as log:
+        # A bare journal name, beside which every other file is kept in the working directory.
         process = subprocess.Popen([str(binary), "--provider", "demo", "--symbols", "SPX", "--port", str(port),
-                                    "--write-token", token, "--paper-journal", str(tmp_path / "paper.jsonl"),
+                                    "--write-token", token, "--paper-journal", "paper.jsonl",
                                     "--candle-dir", str(tmp_path / "candles"), "--record-dir", str(tmp_path / "recordings"),
                                     "--no-history", "--no-series", "--no-cboe-holidays"],
                                    cwd=tmp_path, env=env, stdout=log, stderr=log)
@@ -110,6 +111,9 @@ def test_demo_daemon_signals_stream_and_strategy(tmp_path, binary):
                 await Runner(client, Observe(), use_events=False).run(max_ticks=1)
                 assert calls == ["start", "tick", "stop"]
             asyncio.run(exercise())
+            # Files beside a bare journal name are written in its directory, not refused.
+            assert client.status()["circuit_breaker"]["error"] is None
+            assert (tmp_path / "paper.jsonl").exists()
         finally:
             process.terminate()
             try:
