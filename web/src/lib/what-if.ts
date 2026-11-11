@@ -63,6 +63,17 @@ function subscribe(listener: () => void) {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
 }
+/**
+ * Each tab caches the lists it read and saves its whole copy, so the last tab to save
+ * used to drop what another tab had added. When another tab saves a list (or clears
+ * storage), this tab forgets its copy and reads that tab's before it shows or changes it.
+ */
+function forget(event: StorageEvent) {
+  if (event.key !== null && !event.key.startsWith("openport.what-if.")) return
+  for (const scope of [...states.keys()]) if (event.key === null || storageKey(scope) === event.key) states.delete(scope)
+  listeners.forEach((listener) => listener())
+}
+if (typeof window !== "undefined") window.addEventListener("storage", forget)
 /** The order as a what-if keeps it: a client ID means nothing there, so none is sent. */
 function stripped(order: NewOrder): NewOrder {
   return { ...order, client_order_id: "" }

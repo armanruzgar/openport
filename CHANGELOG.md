@@ -591,6 +591,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   without a length whose connection dropped inside a row (through a proxy, say) read
   as a whole, shorter snapshot, and every contract after the cut was published at bid
   and ask 0. Such a response is now an error, and the last complete chain stays.
+- **What-if candidates added in two tabs are both kept.** Each tab kept its own copy
+  of an account's what-if list and saved the whole copy, so with Positions open in
+  two tabs, whichever added a candidate last dropped the other's after a reload. A
+  tab now drops its copy when another tab saves the list (or clears storage), and
+  reads the other's before it shows or changes it.
 
 ## 0.5.1 (2026-10-28)
 
