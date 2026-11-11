@@ -979,6 +979,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **The Backtest page says why Start is disabled.** With writes disabled, a write token
   still to enter, or the account disabled, Start, Keep and Delete were disabled with an
   empty line where the reason belonged. The reason is now shown beside Start.
+- **The halt drill's Minutes field can be retyped.** Clearing the field wrote 1 back
+  into it, so typing 30 after a Backspace gave 130, and **Halt underlying** sent that.
+  The field now keeps what is typed, and the button waits for whole minutes from 1 to
+  390.
 
 ## 0.5.1 (2026-10-28)
 
