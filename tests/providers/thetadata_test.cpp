@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -24,6 +25,10 @@ constexpr std::string_view kImpliedVols =
 constexpr std::string_view kOpenInterest =
     R"({"symbol":"SPXW","expiration":"2036-10-06","strike":7405.0,"right":"put","timestamp":"2026-09-22T06:30:00.000","open_interest":1520}
 )";
+
+/// Two minutes after the fixtures' data (2026-09-22 15:33:42 ET), in the regular
+/// session: the data is current, so the plan reads as real-time.
+md::Timestamp just_after_the_data() { return md::new_york_to_utc({2026, 9, 22}, 15, 35, 30); }
 
 class Collector final : public md::EventSink {
  public:
@@ -105,7 +110,7 @@ TEST(ThetaData, AStrikeWindowWaitsForASpotAndKeepsTheLastOne) {
 }
 
 TEST(ThetaData, UsesTheDocumentedIvRoute) {
-  providers::ThetaDataProvider provider;
+  providers::ThetaDataProvider provider({.clock = just_after_the_data});
   test::HttpStub http;
   http.respond = [](std::string_view url) -> net::HttpResponse {
     if (url.find("/snapshot/quote?") != std::string_view::npos) return {200, std::string(kQuotes)};
@@ -124,7 +129,7 @@ TEST(ThetaData, UsesTheDocumentedIvRoute) {
 }
 
 TEST(ThetaData, AuxiliaryFailuresPreserveQuotesAndReportDegradation) {
-  providers::ThetaDataProvider provider;
+  providers::ThetaDataProvider provider({.clock = just_after_the_data});
   test::HttpStub http;
   http.respond = [](std::string_view url) -> net::HttpResponse {
     if (url.find("/snapshot/quote?") != std::string_view::npos) return {200, std::string(kQuotes)};
@@ -157,6 +162,102 @@ TEST(ThetaData, RefreshesOpenInterestIndependentlyForEachUnderlying) {
     }
     EXPECT_EQ(count, 2u) << symbol;
   }
+}
+
+TEST(ThetaData, AFailedPollOrOpenInterestRequestAsksForOpenInterestAgainNextPoll) {
+  // The refresh counter moved on before any request, so a failed first poll (Theta
+  // Terminal still starting) or one failed open_interest request left the chain
+  // without open interest for the next 29 polls.
+  providers::ThetaDataProvider provider;
+  test::HttpStub http;
+  bool quotes_up = false, interest_up = false;
+  http.respond = [&](std::string_view url) -> net::HttpResponse {
+    if (url.find("/snapshot/quote?") != std::string_view::npos)
+      return quotes_up ? net::HttpResponse{200, {}} : net::HttpResponse{503, "starting"};
+    if (url.find("/snapshot/open_interest?") != std::string_view::npos)
+      return interest_up ? net::HttpResponse{200, std::string(kOpenInterest)} : net::HttpResponse{503, "busy"};
+    return {200, {}};
+  };
+  const auto requests = [&] {
+    return std::count_if(http.urls.begin(), http.urls.end(),
+                         [](const std::string& url) { return url.find("/open_interest?symbol=SPY") != std::string::npos; });
+  };
+  Collector sink;
+  provider.poll_once(http, "SPY", {}, sink);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().back().state, md::FeedState::Error);
+  EXPECT_EQ(requests(), 0);
+  quotes_up = true;
+  provider.poll_once(http, "SPY", {}, sink);
+  EXPECT_EQ(requests(), 1);
+  EXPECT_NE(sink.all<md::ProviderStatus>().back().message.find("degraded SPY open_interest"), std::string::npos);
+  interest_up = true;
+  provider.poll_once(http, "SPY", {}, sink);
+  EXPECT_EQ(requests(), 2);
+  // Answered: the next refresh waits its cycle again.
+  provider.poll_once(http, "SPY", {}, sink);
+  EXPECT_EQ(requests(), 2);
+}
+
+TEST(ThetaData, RefusesImpossibleExpirationsAndReadsNegativeQuotesAsNone) {
+  for (const std::string expiration : {"2036-13-45", "2036--1-05", "2036-02-30", "2036-00-10", "20361345", "20360230"}) {
+    EXPECT_THROW((void)providers::parse_theta_rows(R"({"symbol":"SPXW","expiration":")" + expiration +
+                                                   R"(","strike":7405,"right":"put","bid":4.4,"ask":4.6})"),
+                 std::runtime_error)
+        << expiration;
+  }
+  const auto rows = providers::parse_theta_rows(
+      R"({"symbol":"SPXW","expiration":"2036-10-06","strike":7405,"right":"put","bid":-1,"ask":-2,"bid_size":-5,"ask_size":-3})");
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0].bid, 0);
+  EXPECT_EQ(rows[0].ask, 0);
+  EXPECT_EQ(rows[0].bid_size, 0);
+  EXPECT_EQ(rows[0].ask_size, 0);
+  providers::ThetaDataProvider provider;
+  Collector sink;
+  provider.publish_chain("SPX", rows, {}, {}, {}, sink);
+  ASSERT_EQ(sink.all<md::OptionQuote>().size(), 1u);
+  const auto quote = sink.all<md::OptionQuote>()[0];
+  EXPECT_EQ(quote.bid, 0);
+  EXPECT_EQ(quote.ask, 0);
+  EXPECT_EQ(quote.bid_size, 0);
+  EXPECT_EQ(quote.ask_size, 0);
+}
+
+TEST(ThetaData, ReportsADelayedPlanByItsDataLagInTheRegularSession) {
+  // The fixtures' newest quote is 15:33:42.125 on 2026-09-22. ThetaData reported Live
+  // and real-time whatever the plan, while a delayed plan's data runs 15 minutes behind.
+  md::Timestamp clock = just_after_the_data();
+  providers::ThetaDataProvider provider({.clock = [&] { return clock; }});
+  EXPECT_FALSE(provider.capabilities().realtime);
+  EXPECT_TRUE(provider.capabilities().realtime_plan_dependent);
+  EXPECT_EQ(provider.capabilities().delay.count(), 0);
+  test::HttpStub http;
+  http.respond = [](std::string_view url) -> net::HttpResponse {
+    if (url.find("/snapshot/quote?") != std::string_view::npos) return {200, std::string(kQuotes)};
+    if (url.find("/snapshot/greeks/first_order?") != std::string_view::npos) return {200, std::string(kImpliedVols)};
+    return {200, {}};
+  };
+  const auto status = [&](providers::ThetaDataProvider& feed) {
+    Collector sink;
+    feed.poll_once(http, "SPX", {}, sink);
+    const auto statuses = sink.all<md::ProviderStatus>();
+    return statuses.empty() ? md::ProviderStatus{} : statuses.back();
+  };
+  EXPECT_EQ(status(provider).state, md::FeedState::Live);  // two minutes behind: real time
+  clock = md::new_york_to_utc({2026, 9, 22}, 15, 50);
+  const auto delayed = status(provider);
+  EXPECT_EQ(delayed.state, md::FeedState::Delayed);  // sixteen minutes behind in the session
+  EXPECT_NE(delayed.message.find("delayed"), std::string::npos) << delayed.message;
+  clock = md::new_york_to_utc({2026, 9, 22}, 18, 0);
+  EXPECT_EQ(status(provider).state, md::FeedState::Delayed);  // closed: the last finding stands
+  // Nothing is judged before a minute of the session has passed, or on a weekend.
+  clock = md::new_york_to_utc({2026, 9, 23}, 9, 30, 30);
+  providers::ThetaDataProvider opening({.clock = [&] { return clock; }});
+  EXPECT_EQ(status(opening).state, md::FeedState::Live);
+  clock = md::new_york_to_utc({2026, 9, 23}, 9, 31, 30);
+  EXPECT_EQ(status(opening).state, md::FeedState::Delayed);  // still yesterday's data
+  providers::ThetaDataProvider weekend({.clock = [] { return md::new_york_to_utc({2026, 9, 26}, 12, 0); }});
+  EXPECT_EQ(status(weekend).state, md::FeedState::Live);
 }
 
 TEST(ThetaData, SelectsSpotByUnderlyingTimestampAndIgnoresMissingClocks) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <string>
@@ -44,13 +45,23 @@ struct ThetaRow {
 /// your ThetaData credentials (THETADATA_API_KEY), so OpenPort itself needs no key;
 /// it polls the terminal's local REST API for NBBO quotes, vendor Greeks and
 /// open interest.
+///
+/// The terminal does not say whether the plan is real-time or delayed, so the data
+/// does: from a minute into the regular session, an underlying whose newest quote or
+/// spot is more than kDelayedLag behind the clock is reported Delayed, otherwise Live.
+/// Outside the session the last finding stands (Live until there is one).
 class ThetaDataProvider final : public PollingProvider {
  public:
+  /// A delayed OPRA plan runs at least 15 minutes behind; a halt rarely stops quotes
+  /// for this long.
+  static constexpr md::Timestamp kDelayedLag = 10 * md::kNanosPerMinute;
+
   struct Options {
     std::string base_url = "http://127.0.0.1:25503";
     std::chrono::seconds poll_interval{2};
     std::chrono::seconds timeout{30};
     int open_interest_every = 30;  ///< polls between open-interest refreshes (it changes daily)
+    std::function<md::Timestamp()> clock = md::now;  ///< the wall clock the data's lag is measured on
   };
 
   ThetaDataProvider() : ThetaDataProvider(Options{}) {}
@@ -70,13 +81,13 @@ class ThetaDataProvider final : public PollingProvider {
  protected:
   std::string poll(net::HttpClient& http, const std::string& underlying,
                    const md::Subscription& subscription, md::EventSink& sink) override;
-  [[nodiscard]] md::FeedState healthy_state() const noexcept override {
-    return md::FeedState::Live;
-  }
+  [[nodiscard]] md::FeedState healthy_state() const noexcept override { return state_; }
 
  private:
   std::vector<ThetaRow> fetch(net::HttpClient& http, std::string_view endpoint,
                               const std::string& root);
+  /// Judges the underlying's plan from its data's lag while the session trades.
+  md::FeedState timing(const std::string& underlying);
 
   Options options_;
   SnapshotPublisher publisher_;
@@ -84,6 +95,8 @@ class ThetaDataProvider final : public PollingProvider {
   /// Each underlying's last snapshot time, for an empty one that retires its quotes.
   std::unordered_map<std::string, md::Timestamp> snapshot_times_;
   std::unordered_map<std::string, double> window_spots_;  ///< Last spot per underlying, for the strike window.
+  std::unordered_map<std::string, md::FeedState> timing_;  ///< Each underlying's last finding.
+  md::FeedState state_ = md::FeedState::Live;              ///< The polled underlying's, for healthy_state().
 };
 
 }  // namespace openport::providers

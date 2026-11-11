@@ -4,6 +4,7 @@
 #include <ranges>
 #include <simdjson.h>
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -33,17 +34,20 @@ std::string_view as_view(value v) {
   return out;
 }
 
-/// "2026-10-05" or "20261005".
+/// "2026-10-05" or "20261005", and a date that exists: "2036-13-45" or "2036--1-05"
+/// would define a contract that never expires.
 bool parse_date(std::string_view text, md::Date& out) {
   auto number = [&](std::size_t pos, std::size_t len, int& n) {
     const auto [ptr, ec] = std::from_chars(text.data() + pos, text.data() + pos + len, n);
     return ec == std::errc() && ptr == text.data() + pos + len;
   };
+  bool parsed = false;
   if (text.size() == 10 && text[4] == '-' && text[7] == '-') {
-    return number(0, 4, out.year) && number(5, 2, out.month) && number(8, 2, out.day);
+    parsed = number(0, 4, out.year) && number(5, 2, out.month) && number(8, 2, out.day);
+  } else if (text.size() == 8) {
+    parsed = number(0, 4, out.year) && number(4, 2, out.month) && number(6, 2, out.day);
   }
-  if (text.size() == 8) return number(0, 4, out.year) && number(4, 2, out.month) && number(6, 2, out.day);
-  return false;
+  return parsed && md::valid_date(out);
 }
 
 /// Identity of a contract within one underlying's snapshot.
@@ -87,13 +91,14 @@ std::vector<ThetaRow> parse_theta_rows(std::string_view ndjson) {
       } else if (key == "timestamp") {
         row.ts = md::parse_datetime(as_view(v), md::Zone::NewYork).value_or(0);
       } else if (key == "bid") {
-        row.bid = as_double(v);
+        // A negative price or size is no market, as the broker adapters read one.
+        row.bid = std::max(0.0, as_double(v));
       } else if (key == "ask") {
-        row.ask = as_double(v);
+        row.ask = std::max(0.0, as_double(v));
       } else if (key == "bid_size") {
-        row.bid_size = as_double(v);
+        row.bid_size = std::max(0.0, as_double(v));
       } else if (key == "ask_size") {
-        row.ask_size = as_double(v);
+        row.ask_size = std::max(0.0, as_double(v));
       } else if (key == "volume") {
         double volume = 0.0;
         if (v.get_double().get(volume) == simdjson::SUCCESS &&
@@ -125,7 +130,8 @@ std::vector<ThetaRow> parse_theta_rows(std::string_view ndjson) {
 
 md::Capabilities ThetaDataProvider::capabilities() const noexcept {
   md::Capabilities caps;
-  caps.realtime = true;
+  // Plans are real-time or delayed; each poll's status says which the data shows.
+  caps.realtime_plan_dependent = true;
   caps.poll_interval = options_.poll_interval;
   caps.quotes = true;
   caps.trades = false;
@@ -159,7 +165,6 @@ std::string ThetaDataProvider::poll(net::HttpClient& http, const std::string& un
   const auto started = std::chrono::steady_clock::now();
   int& polls = polls_[underlying];
   const bool refresh_open_interest = polls == 0;
-  polls = (polls + 1) % std::max(1, options_.open_interest_every);
 
   std::vector<ThetaRow> quotes;
   std::vector<ThetaRow> implied_vols;
@@ -176,23 +181,43 @@ std::string ThetaDataProvider::poll(net::HttpClient& http, const std::string& un
       return false;
     }
   };
+  bool open_interest_answered = true;
   for (const std::string& root : md::option_roots(underlying)) {
     for (ThetaRow& row : fetch(http, "quote", root)) quotes.push_back(std::move(row));
     if (!auxiliary("greeks/first_order", root, implied_vols))
       auxiliary("greeks/implied_volatility", root, implied_vols);
     if (refresh_open_interest) {
-      auxiliary("open_interest", root, open_interest);
+      open_interest_answered = auxiliary("open_interest", root, open_interest) && open_interest_answered;
     }
   }
   check_cancelled();
   publish_chain(underlying, quotes, implied_vols, open_interest, subscription, sink);
+  // A refresh counts once every root's open interest has answered. A poll that failed
+  // before it, or a failed request, asks again on the next poll, not a cycle later.
+  if (!refresh_open_interest || open_interest_answered)
+    polls = (polls + 1) % std::max(1, options_.open_interest_every);
+  state_ = timing(underlying);
 
   char summary[160];
   std::snprintf(summary, sizeof summary, "thetadata %s: %zu quotes, %zu IVs in %.0f ms",
                 underlying.c_str(), quotes.size(), implied_vols.size(),
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
                     .count());
-  return std::string(summary) + degraded;
+  const std::string plan = state_ == md::FeedState::Delayed
+      ? "; delayed: its newest data ran over 10 minutes behind the clock in the session" : "";
+  return std::string(summary) + plan + degraded;
+}
+
+md::FeedState ThetaDataProvider::timing(const std::string& underlying) {
+  auto& state = timing_.try_emplace(underlying, md::FeedState::Live).first->second;
+  const auto now = options_.clock();
+  const auto data = snapshot_times_[underlying];
+  // From a minute into the regular session: before then a real-time chain can still
+  // show the last close, and outside it no option quote moves. A delayed plan's data
+  // runs at least 15 minutes behind; a real-time chain's newest quote, seconds.
+  if (data > 0 && md::market_session(now).open && md::market_session(now - md::kNanosPerMinute).open)
+    state = now - data > kDelayedLag ? md::FeedState::Delayed : md::FeedState::Live;
+  return state;
 }
 
 void ThetaDataProvider::publish_chain(const std::string& underlying,
@@ -218,7 +243,7 @@ void ThetaDataProvider::publish_chain(const std::string& underlying,
 
   std::set<md::Date> expiries;
   for (const ThetaRow& row : quotes) expiries.insert(row.expiry);
-  const ChainFilter filter(subscription, md::date_from_days(md::now() / md::kNanosPerDay), window_spot,
+  const ChainFilter filter(subscription, md::date_from_days(options_.clock() / md::kNanosPerDay), window_spot,
                            expiries);
 
   auto contract_of = [](const ThetaRow& row) {

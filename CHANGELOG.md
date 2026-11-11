@@ -682,6 +682,21 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   without a length whose connection dropped inside a row (through a proxy, say) read
   as a whole, shorter snapshot, and every contract after the cut was published at bid
   and ask 0. Such a response is now an error, and the last complete chain stays.
+- **ThetaData on a delayed plan.** The feed always reported `live` and real-time, so on a
+  delayed entitlement the header said real-time, the freshness check called
+  15-minute-old data stale, and the delayed-feed fill model was never suggested. The
+  feed is now plan-dependent, like Massive: from a minute into the regular session an
+  underlying whose newest data runs more than 10 minutes behind the clock is reported
+  `delayed`, otherwise `live`, and outside the session the last finding stands.
+- **ThetaData rows that cannot be.** An expiration such as `2036-13-45` or `2036--1-05`
+  defined a contract with an expiry that does not exist, and a negative bid, ask or
+  size was published as it came. Such an expiration is now refused, and a negative
+  price or size reads as none.
+- **ThetaData open interest after a failed poll.** Open interest is fetched every 30th
+  poll, but the count moved on before any request, so a first poll that failed (Theta
+  Terminal still starting) or one failed open-interest request left the chain without
+  open interest, and exposure without it, for the next 29 polls. It is now asked for
+  again on the next poll.
 - **What-if candidates added in two tabs are both kept.** Each tab kept its own copy
   of an account's what-if list and saved the whole copy, so with Positions open in
   two tabs, whichever added a candidate last dropped the other's after a reload. A

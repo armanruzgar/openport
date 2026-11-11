@@ -215,6 +215,15 @@ A snapshot without any known current or preceding data time also stays zero;
 there is no `md::now()` fallback. An empty later snapshot can retire quotes at the
 last known snapshot time. Operational status messages still use the wall clock.
 
+Theta Terminal does not say whether a plan is real-time or delayed, so the feed is
+plan-dependent and each poll's status reads it from the data: from a minute into the
+regular session, an underlying whose newest quote or spot is more than 10 minutes
+behind the clock is `Delayed` (a delayed OPRA plan runs at least 15 minutes behind),
+otherwise `Live`. Outside the session no option quote moves, so the last finding
+stands, `Live` until there is one. Open interest is requested every 30th poll of an
+underlying; a poll that fails before it, or a failed open-interest request, asks
+again on the next poll.
+
 ## Broker market data
 
 The broker adapters are data only. None reads balances or positions, and none
