@@ -180,9 +180,12 @@ struct Alert {
   std::optional<Money> value;  ///< The value it last fired at.
 };
 inline constexpr std::size_t kMaxAlerts = 100;
+/// Whether the scope offers the metric; the table in types.cpp is the source.
 /// Contract: bid, ask, mark, iv (vol points), delta, gamma, theta, vega (per
 /// unit). Spread: mark. Underlying: price, iv30, iv7, term_ratio. Account:
-/// equity, day_pnl, unrealised, floor_room, buying_power, dollar_delta, vega, theta.
+/// equity, day_pnl, unrealised, floor_room, buying_power, dollar_delta, vega, theta,
+/// dollar_gamma_1pct, delta_utilisation, vega_utilisation, grid_loss and
+/// floor_touch_probability.
 [[nodiscard]] bool alert_metric(AlertScope scope, std::string_view metric);
 /// Throws INVALID_ALERT unless the terms fit their scope: a metric it offers, a
 /// canonical OSI for a contract, an underlying symbol, two to four distinct legs
