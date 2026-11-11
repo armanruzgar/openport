@@ -1132,6 +1132,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `--address` must be an IP address, and a port in use is reported as `cannot
   listen on 127.0.0.1:8080: Address already in use (is another openportd running?
   choose another --port)`.
+- **Notification filters keep their confirmation.** Each channel's settings were
+  rebuilt whenever the server's copy changed, so "Filters saved for this server
+  session." vanished as soon as the status refreshed, and an unsaved edit was thrown
+  away when another tab or client changed the same channel. A channel now keeps its
+  message and any edit in progress, and follows the server's changes while it has
+  none.
 
 ## 0.5.1 (2026-10-28)
 

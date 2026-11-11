@@ -15,6 +15,9 @@ const events: { id: NotificationEvent; label: string }[] = [
   { id: "alert", label: "Account alerts" },
 ]
 
+const settings = (c: { enabled: boolean; events: readonly string[]; floor_distance: string }) =>
+  `${c.enabled}:${[...c.events].sort().join()}:${c.floor_distance}`
+
 function Channel({ channel, mode }: { channel: NotificationChannel; mode: WriteMode }) {
   const api = useActionApi()
   const client = useQueryClient()
@@ -24,9 +27,17 @@ function Channel({ channel, mode }: { channel: NotificationChannel; mode: WriteM
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState("")
   const [error, setError] = useState(false)
+  // The server's settings the draft started from. When they change (a save here, another
+  // tab or client), a draft without edits of its own follows them; edits in progress stay.
+  const server = settings(channel)
+  const draft = settings({ enabled, events: selected, floor_distance: distance })
+  const [basis, setBasis] = useState(server)
+  if (server !== basis) {
+    setBasis(server)
+    if (draft === basis) { setEnabled(channel.enabled); setSelected(channel.events); setDistance(channel.floor_distance) }
+  }
   const valid = /^\d+(\.\d{1,6})?$/.test(distance) && Number.isFinite(Number(distance))
-  const changed = enabled !== channel.enabled || distance !== channel.floor_distance ||
-    [...selected].sort().join() !== [...channel.events].sort().join()
+  const changed = draft !== server
   async function action(test: boolean) {
     setPending(true); setMessage(""); setError(false)
     try {
@@ -89,7 +100,7 @@ export function NotificationSettings() {
     {source !== "live" && <p className="text-sm text-muted">Switch to live to manage notifications.</p>}
     {!notifications?.channels.length ? <p className="text-sm text-muted">No channels configured. Add them with the server's --notify-config file or OPENPORT_NOTIFY_JSON environment variable.</p>
       : <>
-        {notifications.channels.map((channel) => <Channel key={`${channel.id}:${channel.enabled}:${channel.events.join()}:${channel.floor_distance}`} channel={channel} mode={mode} />)}
+        {notifications.channels.map((channel) => <Channel key={channel.id} channel={channel} mode={mode} />)}
         <p className="text-xs text-muted">Queue: {notifications.queue_depth}/{notifications.queue_capacity} · {notifications.dropped} dropped.
           Filters apply until restart. Save lasting changes in the server config. Destinations and credentials are managed there and never shown here.</p>
       </>}

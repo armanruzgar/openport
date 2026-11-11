@@ -63,6 +63,29 @@ describe("notification settings", () => {
     expect(api.configureNotification).toHaveBeenCalledWith("phone", { enabled: true, events: ["fill", "floor", "assignment"], floor_distance: "500.00" }, "open")
     expect(host.textContent).toContain("Filters saved for this server session")
   })
+  it("keeps a save's confirmation and an edit in progress when the server's settings refresh", async () => {
+    await render()
+    const box = (label: string) => [...host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')].find((input) => input.parentElement?.textContent?.includes(label))!
+    await act(async () => box("Rule trips").click())
+    await act(async () => button("Save filters").click())
+    expect(host.textContent).toContain("Filters saved for this server session")
+    // The status refetch brings back the filters just saved.
+    const saved: NotificationStatus = { ...notifications, channels: [{ ...notifications.channels[0]!, events: ["fill", "floor", "rule_trip"] }] }
+    live("live", saved); await render()
+    expect(host.textContent).toContain("Filters saved for this server session")
+    expect(box("Rule trips").checked).toBe(true)
+    expect(button("Save filters").disabled).toBe(true)
+    // Another tab changes them: a draft without edits follows.
+    live("live", { ...saved, channels: [{ ...saved.channels[0]!, events: ["fill"] }] }); await render()
+    expect(box("Rule trips").checked).toBe(false)
+    expect(box("Near the floor").checked).toBe(false)
+    // An edit in progress stays through the next change elsewhere.
+    await act(async () => box("Assignments").click())
+    live("live", { ...saved, channels: [{ ...saved.channels[0]!, events: ["fill", "floor"] }] }); await render()
+    expect(box("Assignments").checked).toBe(true)
+    expect(box("Near the floor").checked).toBe(false)
+    expect(button("Save filters").disabled).toBe(false)
+  })
   it("does not display provider exceptions or claim a failed test delivered", async () => {
     vi.mocked(api.testNotification).mockRejectedValue(new Error("https://secret-token"))
     await render(); await act(async () => button("Test phone").click())
