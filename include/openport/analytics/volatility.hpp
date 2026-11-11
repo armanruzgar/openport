@@ -85,6 +85,8 @@ struct VolatilityMetrics {
   std::vector<ConstantVol> atm;
   DeltaSkew skew25;
   DeltaSkew skew10;
+  /// Why the 30-day 25-delta RR or BF is missing: a reason of its ATM, call or put
+  /// point only. The 10-delta points keep theirs on skew10.
   std::string skew_reason;
   bool skew_proxy = false;
   double ratio9_30 = kNaN;

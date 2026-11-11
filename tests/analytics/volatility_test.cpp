@@ -201,6 +201,35 @@ TEST(VolSmile, ConstantDeltaPointsInterpolateVarianceBeforeRiskReversal) {
   EXPECT_TRUE(v.skew_proxy);
 }
 
+// skew_reason explains a missing 30-day 25-delta RR or BF. A 10-delta point the smile
+// does not reach keeps its reason on that point, not beside a valid 25-delta skew.
+TEST(VolSmile, SkewReasonComesFromTheTwentyFiveDeltaInputsOnly) {
+  UnderlyingMetrics m;
+  m.as_of = md::new_york_to_utc({2026, 9, 1}, 16, 0);
+  for (const int days : {20, 40}) {
+    auto slice = flat_chain();
+    // Strikes reach both expiries' 25-delta points but not their 10-delta ones.
+    std::erase_if(slice.strikes, [](const StrikeMetrics& row) { return row.strike < 95.5 || row.strike > 105.5; });
+    slice.expiry_time = m.as_of + days * md::kNanosPerDay;
+    slice.expiry = md::new_york_time(slice.expiry_time).date;
+    m.slices.push_back(slice);
+  }
+  auto v = volatility_metrics(m);
+  ASSERT_TRUE(std::isfinite(v.skew25.rr));
+  ASSERT_TRUE(std::isfinite(v.skew25.bf));
+  EXPECT_TRUE(std::isnan(v.skew10.rr));
+  EXPECT_FALSE(v.skew10.call.reason.empty());
+  EXPECT_FALSE(v.skew10.put.reason.empty());
+  EXPECT_EQ(v.skew_reason, "");
+  // Without the 25-delta puts, the reason is theirs.
+  for (auto& slice : m.slices)
+    std::erase_if(slice.strikes, [](const StrikeMetrics& row) { return row.strike < 99.5; });
+  v = volatility_metrics(m);
+  EXPECT_TRUE(std::isnan(v.skew25.rr));
+  EXPECT_FALSE(v.skew_reason.empty());
+  EXPECT_EQ(v.skew_reason, v.skew25.put.reason);
+}
+
 void add_expiry(UnderlyingMetrics& m, VolatilityMetrics& v, md::Date date, double total, int hour = 16) {
   SliceMetrics s;
   s.expiry = date; s.expiry_time = md::new_york_to_utc(date, hour, hour == 9 ? 30 : 0);

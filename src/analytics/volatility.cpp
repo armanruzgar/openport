@@ -283,7 +283,9 @@ VolatilityMetrics volatility_metrics(const UnderlyingMetrics& metrics, std::span
   out.skew10.call.reason = c10.reason; out.skew10.put.reason = p10.reason;
   set_skew(out.skew25, atm30.vol); set_skew(out.skew10, atm30.vol);
   out.skew_proxy = atm30.proxy || c25.proxy || p25.proxy || c10.proxy || p10.proxy;
-  for (const auto& value : {atm30, c25, p25, c10, p10})
+  // The reason the 30-day 25-delta RR or BF is missing: only their own inputs. Each
+  // 25- and 10-delta point keeps its own reason.
+  for (const auto& value : {atm30, c25, p25})
     if (!value.reason.empty()) out.skew_reason = value.reason;
   if (positive(out.mfiv[1].vol)) out.ratio9_30 = out.mfiv[0].vol / out.mfiv[1].vol;
   if (positive(out.mfiv[2].vol)) out.ratio30_93 = out.mfiv[1].vol / out.mfiv[2].vol;

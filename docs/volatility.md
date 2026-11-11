@@ -98,6 +98,9 @@ not the chain's spot delta. Scan the observed range to bracket each root, then
 bisect. Unsupported delta points are null. At 30 days interpolate the call,
 put and ATM points' total variances separately before computing RR and BF.
 The 30-day delta-point strikes are null: no synthetic forward/strike is invented.
+Each 30-day point that is null gives its own `reason`. `skew.reason` is the reason
+of a missing input of the 25Δ RR or BF (its ATM, call or put point), so a 10Δ
+point the smile does not reach never shows beside a valid 25Δ skew.
 
 SVI ATM slope and curvature are analytic. With w = σ²T, they are
 `100 σ w′/(2w)` and `100 σ [w″/(2w) − w′²/(4w²)]`. Interpolated smiles have no

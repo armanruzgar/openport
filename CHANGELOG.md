@@ -24,6 +24,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **The volatility page's skew reason.** `skew.reason` in
+  `GET /api/underlyings/{symbol}/volatility` took the last reason of any 30-day skew
+  input, 10-delta points included, so a chain whose 10-delta points did not
+  interpolate (the demo's SPX) reported `unusable_bracketing_expiry` beside a valid
+  25-delta RR and BF, and the terminal's 25Δ tile and the Python example showed it as
+  theirs. It now comes only from the 25-delta RR and BF inputs (the ATM, call and put
+  points); each 10-delta point keeps its own reason.
 - **Surface-history comparisons with a range.** `GET /api/underlyings/{symbol}/surface-history`
   looked up the prior close, week and month comparisons only among the snapshots in
   the request's `from`/`to`, so a range that left out their sessions returned them as
