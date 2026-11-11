@@ -47,8 +47,11 @@ export function PracticePanel({ listing, refresh }: { listing?: ReplayListing; r
       <p className="text-xs text-muted">Import scenario JSON, objectives, seed and plan together. A challenge fixes those inputs; the verification receipt includes its definition.</p>
       <label className="trade-label mt-2">Pack JSON<textarea className="trade-input min-h-24" value={text} onChange={e => setText(e.target.value)} maxLength={65_536} /></label>
       <label className="block text-xs">Load JSON file<input type="file" accept="application/json,.json" onChange={e => {
-        const file = e.target.files?.[0]; if (!file) return
+        const file = e.currentTarget.files?.[0]; if (!file) return
+        // Emptied, so choosing the same file again (after editing the text, say) loads it again.
+        e.currentTarget.value = ""
         if (file.size > 65_536) { setError(new Error("Scenario packs are at most 64 KiB")); return }
+        setError(undefined)
         void file.text().then(setText).catch(setError)
       }} /></label>
       <button className="trade-button my-2" disabled={!text || pending || controls.blocked} onClick={() => void importPack()}>Import pack</button>

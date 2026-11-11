@@ -84,6 +84,8 @@ export function useReplayControls() {
   }
   return {
     error, pending, blocked, interruptPending, stepping,
+    /** Forgets the last failure, as a dialog opening or closing does: it belongs to an earlier request. */
+    clearError: () => setError(undefined),
     speed: (speed: number) => run(() => api.controlReplay({ speed }, mode)),
     pause: (paused: boolean) => (paused ? interrupt : run)(() => api.controlReplay({ paused }, mode)),
     skip: (skip = true) => run(() => api.controlReplay({ skip }, mode)),
@@ -213,7 +215,8 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
         A scenario of several sessions starts at the time’s first occurrence in them; step to a later day once it runs.</p>
       {badSeed && <p className="mt-2 text-xs text-warn">Enter a whole seed from 0 to 18446744073709551615.</p>}
       {controls.pending && <p role="status" className="mt-2 text-xs text-muted">Preparing replay…</p>}
-      <TradingError error={controls.error} />
+      {/* The page's one place for a request's failure; an open dialog shows its own instead. */}
+      {!restarting && !deleting && <TradingError error={controls.error} />}
     </Panel>
     {replay ? (
       <Panel title="Now replaying" actions={live.source === "replay"
@@ -229,7 +232,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
         {replay.fast_forwarding && <div role="status" className="mb-3 text-sm">Preparing start state… {Math.round((replay.progress ?? 0) * 100)}%<progress className="ml-2" max={1} value={replay.progress ?? 0} aria-label="Fast-forward progress" /></div>}
         <Controls replay={replay} />
         {replay.id && replay.durable !== false && <button type="button" className="trade-button mt-2" disabled={controls.pending || controls.blocked || replay.fast_forwarding || replay.stepping}
-          onClick={() => { setRestarting(replay.id); setRestartAt(newYorkInput(replay.settled_through ?? replay.time)) }}>Restart from…</button>}
+          onClick={() => { controls.clearError(); setRestarting(replay.id); setRestartAt(newYorkInput(replay.settled_through ?? replay.time)) }}>Restart from…</button>}
         {replay.restarted_from && <p className="mt-2 text-xs text-muted">Restarted from {replay.restarted_from.id} through {replayClock(replay.restarted_from.at)}.</p>}
         {replay.demo && replay.scenario && replay.seed && <button type="button" className="trade-button mt-2" disabled={controls.pending || controls.blocked}
           onClick={() => void controls.start({ demo: replay.scenario! }, replay.speed, started, { plan: replay.plan, seed: replay.seed!, start_at: replay.start_at || undefined, date: replay.date })}>Replay this seed</button>}
@@ -257,7 +260,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
       </div>
     </Panel>}
     <Panel title="Recordings">
-      <TradingError error={listing.error ?? controls.error} />
+      <TradingError error={listing.error} />
       {!listing.data ? <Empty>Loading recordings…</Empty> : recordings.length === 0 ? (
         <div className="space-y-2 text-sm text-muted">
           <p>No recordings in <code className="text-foreground">{listing.data.directory || "the recordings directory"}</code> yet.</p>
@@ -318,7 +321,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
           </div>}
           <span className="ml-auto flex flex-wrap gap-2">
             <button type="button" className="trade-button" disabled={controls.blocked || controls.pending || !!run.error || run.verification?.status === "running"}
-              onClick={() => { setRestarting(run.id); setRestartAt("") }}>Restart from…</button>
+              onClick={() => { controls.clearError(); setRestarting(run.id); setRestartAt("") }}>Restart from…</button>
             <button type="button" className="trade-button" disabled={!run.finished || controls.blocked || controls.pending || verifying}
               onClick={() => void controls.verify(run.id, () => { void listing.refetch() })}>Verify</button>
             {(run.verification?.status === "passed" || run.verification?.status === "failed") &&
@@ -326,23 +329,23 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
             {run.interrupted && <button type="button" className="trade-button" disabled={controls.blocked || controls.pending || run.verification?.status === "running"}
             title="Replay its recorded orders and continue, paused where it stopped" onClick={() => void controls.resume(run.id, speed, started)}>Resume</button>}{(["journal", "dashboard"] as const).map((view) => <button key={view} type="button" className="trade-button" disabled={!!run.error}
             onClick={() => { live.switchSource(`history:${run.id}`, "user"); onNavigate?.(view) }}>Open {view}</button>)}
-            <button type="button" className="trade-button" disabled={controls.blocked || controls.pending || run.verification?.status === "running"} onClick={() => setDeleting(run.id)}>Delete</button></span>
+            <button type="button" className="trade-button" disabled={controls.blocked || controls.pending || run.verification?.status === "running"} onClick={() => { controls.clearError(); setDeleting(run.id) }}>Delete</button></span>
         </div>)}
       </div>}
     </Panel>
-    {restarting && <Dialog title="Restart with the same commands" onClose={() => setRestarting(undefined)}>
+    {restarting && <Dialog title="Restart with the same commands" onClose={() => { controls.clearError(); setRestarting(undefined) }}>
       <p className="text-sm">Start a new run with this run’s settings and commands through the chosen market time, including commands at that time. The source journal is kept.</p>
       <label className="mt-3 block text-xs">Restart at (New York)<input aria-label="Restart at" type="datetime-local" step="1" className="trade-input" value={restartAt} onChange={(event) => setRestartAt(event.target.value.replace(/\.000$/, ""))} /></label>
       <p className="my-2 text-xs text-muted">Leave blank for the source run’s start. The new run starts paused.</p>
       <TradingError error={controls.error} />
       <button type="button" className="trade-button" disabled={controls.pending || controls.blocked} onClick={() => void controls.restart(restarting, restartAt || undefined, () => { setRestarting(undefined); started() })}>Restart run</button>
-      <button type="button" className="trade-button" onClick={() => setRestarting(undefined)}>Cancel</button>
+      <button type="button" className="trade-button" onClick={() => { controls.clearError(); setRestarting(undefined) }}>Cancel</button>
     </Dialog>}
-    {deleting && <Dialog title="Delete replay run?" onClose={() => setDeleting(undefined)}>
+    {deleting && <Dialog title="Delete replay run?" onClose={() => { controls.clearError(); setDeleting(undefined) }}>
       <p className="text-sm">This permanently deletes the run’s journal and trades. This cannot be undone.</p>
       <TradingError error={controls.error} />
       <button type="button" className="trade-button" disabled={controls.pending || controls.blocked} onClick={() => void controls.remove(deleting, () => { if (live.source === `history:${deleting}`) live.switchSource("live", "user"); setDeleting(undefined); void listing.refetch() })}>Delete run</button>
-      <button type="button" className="trade-button" onClick={() => setDeleting(undefined)}>Cancel</button>
+      <button type="button" className="trade-button" onClick={() => { controls.clearError(); setDeleting(undefined) }}>Cancel</button>
     </Dialog>}
     <p className="text-[11px] text-muted">
       A replay runs on the recording's own clock, so sessions, the feed delay and paper-trading rules behave as they did that day.

@@ -318,6 +318,42 @@ it("shows verification conflicts without changing the selected account", async (
   expect(switchSource).not.toHaveBeenCalled()
 })
 
+it("shows a failed request once, and opens Restart and Delete without it", async () => {
+  vi.spyOn(api, "verifyReplay").mockRejectedValue(new Error("Already verifying another run"))
+  vi.mocked(api.deleteReplay).mockRejectedValue(new Error("The run is being verified"))
+  await render()
+  await click("Verify")
+  const alerts = (text: string) => [...host.querySelectorAll('[role="alert"]')].filter((alert) => alert.textContent?.includes(text))
+  expect(alerts("Already verifying another run")).toHaveLength(1)
+  await click("Restart from…")
+  expect(host.querySelector("dialog[open]")?.textContent).not.toContain("Already verifying another run")
+  expect(alerts("Already verifying another run")).toHaveLength(0)
+  await click("Cancel")
+  await click("Delete"); await click("Delete run")
+  expect(host.querySelector("dialog[open]")?.textContent).toContain("The run is being verified")
+  expect(alerts("The run is being verified")).toHaveLength(1)
+  // Cancelled, the failed delete is not left behind on the page.
+  await click("Cancel")
+  expect(alerts("The run is being verified")).toHaveLength(0)
+})
+
+it("clears a scenario pack's size error once a file that fits loads", async () => {
+  await render()
+  const input = host.querySelector<HTMLInputElement>('input[type="file"]')!
+  const choose = (file: File) => act(async () => {
+    Object.defineProperty(input, "files", { configurable: true, value: [file] })
+    input.dispatchEvent(new Event("change", { bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  })
+  await choose(new File(["x".repeat(70_000)], "big.json", { type: "application/json" }))
+  expect(host.textContent).toContain("Scenario packs are at most 64 KiB")
+  const pack = new File(['{"scenario":{"id":"mine"}}'], "pack.json", { type: "application/json" })
+  await choose(pack)
+  expect(host.textContent).not.toContain("Scenario packs are at most 64 KiB")
+  const text = [...host.querySelectorAll("textarea")].find((area) => area.closest("label")?.textContent?.startsWith("Pack JSON"))!
+  expect(text.value).toBe('{"scenario":{"id":"mine"}}')
+})
+
 it("shows journal size and the long verification warning before Verify", async () => {
   const next = { ...listing, history: listing.history!.map((run) => ({ ...run,
     journal_size: { bytes: 300 * 1024 * 1024, records: 123456, warning: "Compaction breaks exact run verification" },

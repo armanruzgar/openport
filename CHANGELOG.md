@@ -991,6 +991,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   › Save version failed with `INVALID_PLAYBOOK` until the ID was changed by hand in the
   JSON. The template now takes the first unused ID (`put-spread-2`, ...), and the
   editor says that IDs are permanent.
+- **The Replay page shows a failed request once, where it belongs.** A failed start,
+  resume, verify, restart or delete was printed twice, above and in the recordings,
+  and opening Restart or Delete afterwards showed that earlier failure above the
+  confirm button, as if the restart or delete had failed already; a cancelled failed
+  delete stayed on the page. It is now shown once, a dialog opens without an old
+  failure, and closing the dialog clears its own.
+- **A scenario pack that fits clears the size error.** After choosing a pack over
+  64 KiB, choosing a valid one filled the text box but kept "Scenario packs are at most
+  64 KiB" under it, and the same file could not be chosen again after editing the
+  text. A file that fits now clears the error, and any file can be chosen again.
 
 ## 0.5.1 (2026-10-28)
 
