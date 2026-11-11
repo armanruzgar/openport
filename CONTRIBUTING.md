@@ -64,7 +64,7 @@ Changes only to `site/`, `docs/` (other than `docs/openapi.yaml`, which the test
 read) or top-level Markdown files skip CI. Otherwise each job runs only when the
 push changes what it builds or checks: the C++ jobs for sources, tests, CMake,
 scenarios and data; the web job for `web/`; the Python job for `python/` and
-`tools/`; the Docker job for anything in the image. A change to the workflow or
+`tools/`; the Docker job for the image and `deploy/`. A change to the workflow or
 to `docs/openapi.yaml` runs every job. On `main` runs are batched: one runs at a
 time, a newer push replaces a run still waiting, and each run decides its jobs
 from everything changed since the last commit CI passed, so a push whose own run
@@ -193,9 +193,10 @@ The example in `deploy/demo/` is configuration only, with simulated prices,
 bounded sandboxes and an authenticating HTTPS proxy. Test real DNS, certificates
 and sign-in on the target host before setting the site's hidden `data-demo-url`.
 No hosting or publishing is implied by a local build.
-Run `python3 tools/demo_proxy_test.py` to check its Caddy configuration against
-synthetic local auth/backend containers. It requires Docker and the Caddy/Python
-images named in the test; no real credentials or public listener are used.
+`python3 tools/demo_proxy_test.py` checks its Caddy configuration against
+synthetic local auth/backend containers; CI's Docker job runs it. It requires Docker
+and the Caddy/Python images named in the test; no real credentials or public
+listener are used.
 
 ## Licence
 

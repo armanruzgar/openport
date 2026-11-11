@@ -1401,6 +1401,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   skipped a route whose ID it could not fill, so on a server without playbooks, as in
   CI, the playbook, signal-secret and replay playbook reads went unchecked. A missing
   ID now checks their documented answers, and a route the test cannot fill fails it.
+- **CI checks the public demo's proxy.** `tools/demo_proxy_test.py`, the only check
+  that the demo's Caddyfile refuses anonymous and spoofed requests and fails closed
+  when its auth gateway stalls, ran only by hand. CI's Docker job now runs it, and a
+  change under `deploy/` runs that job.
 
 ## 0.5.1 (2026-10-28)
 

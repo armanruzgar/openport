@@ -83,7 +83,8 @@ jobs:
           # image and third-party notices, the dependencies the notices list, and the
           # oldest macOS the archive supports, which CMakeLists.txt sets.
           area python '^(python|tools|Formula|packaging)/|^(CMakeLists\.txt|Dockerfile|THIRD_PARTY_NOTICES\.txt|web/public/THIRD_PARTY_NOTICES\.txt|web/package-lock\.json|cmake/Dependencies\.cmake|\.github/workflows/release-assets\.yml)$'
-          area docker '^(src|include|apps|cmake|scenarios|data|packaging|web|tools)/|^CMakeLists\.txt$|^Dockerfile$|^\.dockerignore$|^docker-compose\.yml$'
+          # The Docker job also checks the public demo's proxy (deploy/demo).
+          area docker '^(src|include|apps|cmake|scenarios|data|packaging|web|tools|deploy)/|^CMakeLists\.txt$|^Dockerfile$|^\.dockerignore$|^docker-compose\.yml$'
           cat "$GITHUB_OUTPUT"
 
   # The Release build is cached with ccache, one cache per operating system, so a
@@ -485,3 +486,9 @@ jobs:
       - name: Stop smoke server
         if: always()
         run: docker stop openport
+      # The demo's Caddyfile in front of stub auth and backend containers: anonymous
+      # requests refused, a Bearer header alone refused, X-Real-IP overwritten, and a
+      # stalled auth gateway failing closed. It needs no image of ours.
+      - name: Demo proxy
+        if: ${{ !cancelled() }}
+        run: python3 tools/demo_proxy_test.py -v
