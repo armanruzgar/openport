@@ -477,7 +477,8 @@ RunVerification verify_run(const std::filesystem::path& journal,
     Desk::Options options;
     options.replay = true;
     set_replay_driver(options, driver);
-    auto batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, options.instant_batches);
+    const bool instants = options.instant_batches;  // also for a recording the run switches to
+    auto batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, instants);
     // Every build that writes a driver version also attributes every record, so only a
     // driver 1 run whose first record has no actor predates actors.
     const bool attributed = driver != 1 || json::parse(expected.records.front().payload).contains("actor");
