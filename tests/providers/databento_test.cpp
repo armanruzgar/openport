@@ -225,7 +225,7 @@ TEST(Databento, CbboUsesReceiveTimeAndRejectsUndefinedTimestamps) {
   EXPECT_EQ(sink.all<md::OptionQuote>()[0].ts, 123);
 }
 
-TEST(Databento, ReconnectsBeforeResubscribingAndResetsBudgetOnlyOnRecords) {
+TEST(Databento, ReconnectsBeforeResubscribingAndResetsTheWaitOnlyOnRecords) {
   providers::DatabentoRecovery recovery;
   std::vector<std::string> calls;
   std::vector<int> delays;
@@ -236,17 +236,38 @@ TEST(Databento, ReconnectsBeforeResubscribingAndResetsBudgetOnlyOnRecords) {
     return true;
   };
   auto report = [&](const std::string& error) { calls.push_back(error); };
-  for (int i = 0; i < 8; ++i) EXPECT_TRUE(recovery.recover(reconnect, subscribe, wait, report));
-  EXPECT_EQ(delays, (std::vector<int>{1, 2, 4, 8, 16, 30, 30, 30}));
-  for (std::size_t i = 0; i < 16; i += 2) {
+  // Each connection drops again before a record arrives; the feed never gives up.
+  for (int i = 0; i < 100; ++i) EXPECT_TRUE(recovery.recover(reconnect, subscribe, wait, report));
+  ASSERT_EQ(delays.size(), 100u);
+  EXPECT_EQ(std::vector<int>(delays.begin(), delays.begin() + 8), (std::vector<int>{1, 2, 4, 8, 16, 30, 30, 30}));
+  EXPECT_EQ(delays.back(), 30);
+  ASSERT_EQ(calls.size(), 200u);
+  for (std::size_t i = 0; i < calls.size(); i += 2) {
     EXPECT_EQ(calls[i], "reconnect");
     EXPECT_EQ(calls[i + 1], "subscribe");
   }
-  EXPECT_FALSE(recovery.recover(reconnect, subscribe, wait, report));
-  EXPECT_EQ(calls.back(), "reconnect failure budget exhausted");
   recovery.on_record();
   EXPECT_TRUE(recovery.recover(reconnect, subscribe, wait, report));
   EXPECT_EQ(delays.back(), 1);
+}
+
+TEST(Databento, RecoveryOutlastsAnOutageOfAnyLength) {
+  providers::DatabentoRecovery recovery;
+  int attempts = 0;
+  std::vector<int> delays;
+  std::vector<std::string> errors;
+  auto reconnect = [&] {
+    if (++attempts <= 40) throw std::runtime_error("offline");
+  };
+  auto wait = [&](std::chrono::seconds delay) {
+    delays.push_back(static_cast<int>(delay.count()));
+    return true;
+  };
+  EXPECT_TRUE(recovery.recover(reconnect, [] {}, wait, [&](const std::string& error) { errors.push_back(error); }));
+  EXPECT_EQ(attempts, 41);
+  EXPECT_EQ(errors.size(), 40u);
+  EXPECT_EQ(errors.back(), "reconnect failed: offline");
+  EXPECT_EQ(delays.back(), 30);
 }
 
 TEST(Databento, RecoveryHandlesReconnectFailuresAndCanBeInterrupted) {

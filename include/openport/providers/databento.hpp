@@ -33,8 +33,10 @@ Builder& bound_databento_waits(Builder& builder) {
   return builder.SetTimeoutConf({std::chrono::seconds(5), std::chrono::seconds(5)});
 }
 
-/// Recovery is run on the SDK's exception-callback thread. A successful socket
-/// connection does not reset the budget: only receiving records proves recovery.
+/// Recovery is run on the SDK's exception-callback thread. It retries until a
+/// reconnect works or `wait` reports a stop, waiting 1, 2, 4, 8 and 16 seconds and
+/// then 30. A successful socket connection does not shorten the wait again: only
+/// receiving records proves recovery.
 class DatabentoRecovery {
  public:
   bool recover(const std::function<void()>& reconnect, const std::function<void()>& resubscribe,

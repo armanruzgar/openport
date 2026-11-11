@@ -159,49 +159,105 @@ void TastytradeMapper::chain(std::string underlying, std::string streamer,
   for (const auto& option : contracts)
     if (option.contract.expiry >= today) present.insert(option.streamer_symbol);
   for (auto it = instruments_.begin(); it != instruments_.end();) {
-    if (it->second.second == underlying && !present.contains(it->first)) {
+    if (it->second.underlying == underlying && !present.contains(it->first)) {
       // This instrument disappeared from a complete chain refresh. Invalidate its
       // quote without inventing a market observation time or a stream snapshot.
-      sink_.publish(md::OptionQuote{it->second.first, 0, 0, 0, 0, 0});
+      sink_.publish(md::OptionQuote{it->second.id, 0, 0, 0, 0, 0});
       it = instruments_.erase(it);
+      changed_ = true;
     } else ++it;
   }
-  std::erase_if(underlyings_, [&](const auto& entry) { return entry.second == underlying; });
-  underlyings_[std::move(streamer)] = underlying;
-  auto& chain = chains_[underlying];
-  chain.contracts = std::move(contracts);
-  chain.today = today;
+  if (std::erase_if(underlyings_, [&](const auto& entry) { return entry.second == underlying && entry.first != streamer; }) > 0)
+    changed_ = true;
+  if (auto& mapped = underlyings_[streamer]; mapped != underlying) {
+    mapped = underlying;
+    changed_ = true;
+  }
+  // What only a new chain changes is worked out here once, not on every tick: OSI
+  // symbols, expiries, and the strikes the expiry filters admit.
+  auto& held = chains_[underlying];
+  held.contracts = std::move(contracts);
+  held.today = today;
+  held.osi.clear();
+  held.expiries.clear();
+  for (const auto& option : held.contracts) {
+    held.osi.push_back(option.contract.osi_symbol());
+    held.expiries.insert(option.contract.expiry);
+  }
+  const ChainFilter dated(subscription_, today, 0.0, held.expiries);
+  held.strikes.clear();
+  for (const auto& option : held.contracts)
+    if (dated.admits(option.contract)) held.strikes.push_back(option.contract.strike);
+  std::sort(held.strikes.begin(), held.strikes.end());
+  held.strikes.erase(std::unique(held.strikes.begin(), held.strikes.end()), held.strikes.end());
+  held.admitted.reset();
   select(underlying);
 }
 
+std::pair<std::size_t, std::size_t> TastytradeMapper::admitted_strikes(const Chain& held) const {
+  const auto& strikes = held.strikes;
+  const double window = subscription_.strike_window;
+  const double spot = held.spot;
+  if (!(window > 0) || !(spot > 0)) return {0, strikes.size()};
+  // ChainFilter's own test. It only loosens toward spot from either side, so the
+  // strikes it admits are one run of the sorted list.
+  const auto inside = [&](double strike) { return std::abs(strike / spot - 1.0) <= window + 1e-12; };
+  const auto first = std::partition_point(strikes.begin(), strikes.end(),
+                                          [&](double strike) { return strike < spot && !inside(strike); });
+  const auto last = std::partition_point(first, strikes.end(),
+                                         [&](double strike) { return strike < spot || inside(strike); });
+  return {static_cast<std::size_t>(first - strikes.begin()), static_cast<std::size_t>(last - strikes.begin())};
+}
+
 void TastytradeMapper::select(const std::string& underlying) {
-  const auto& chain = chains_.at(underlying);
-  if (subscription_.strike_window > 0 && chain.spot <= 0) return;
-  std::set<md::Date> expiries;
-  for (const auto& option : chain.contracts) expiries.insert(option.contract.expiry);
-  const ChainFilter filter(subscription_, chain.today, chain.spot, expiries);
-  for (const auto& option : chain.contracts) {
-    if (option.contract.expiry < chain.today) continue;
-    const auto osi = option.contract.osi_symbol();
-    if (!definitions_.known(osi) && !filter.admits(option.contract)) continue;
-    const auto id = definitions_.define(osi, option.contract, sink_);
-    instruments_[option.streamer_symbol] = {id, underlying};
+  auto& held = chains_.at(underlying);
+  if (subscription_.strike_window > 0 && held.spot <= 0) return;
+  // A tick that leaves the window on the same strikes admits nothing new.
+  const auto range = admitted_strikes(held);
+  if (held.admitted == range) return;
+  held.admitted = range;
+  const ChainFilter filter(subscription_, held.today, held.spot, held.expiries);
+  for (std::size_t i = 0; i < held.contracts.size(); ++i) {
+    const auto& option = held.contracts[i];
+    if (!filter.admits(option.contract)) continue;
+    const auto id = definitions_.define(held.osi[i], option.contract, sink_);
+    auto& instrument = instruments_[option.streamer_symbol];
+    if (instrument.underlying.empty() || instrument.id != id || instrument.underlying != underlying) {
+      instrument = Instrument{id, underlying, option.contract};
+      changed_ = true;
+    }
+  }
+  fit();
+}
+
+void TastytradeMapper::fit() {
+  if (subscription_count() <= kMaxSubscriptions) return;
+  std::map<std::string, ChainFilter> filters;
+  for (const auto& [name, held] : chains_) filters.emplace(name, ChainFilter(subscription_, held.today, held.spot, held.expiries));
+  std::vector<std::pair<double, std::string>> drifted;  // distance from spot, streamer symbol
+  for (const auto& [symbol, instrument] : instruments_) {
+    if (filters.at(instrument.underlying).admits(instrument.contract)) continue;
+    const double spot = chains_.at(instrument.underlying).spot;
+    drifted.emplace_back(spot > 0 ? std::abs(instrument.contract.strike / spot - 1.0) : 0.0, symbol);
+  }
+  std::sort(drifted.begin(), drifted.end(), std::greater<>());
+  for (const auto& entry : drifted) {
+    if (subscription_count() <= kMaxSubscriptions) break;
+    // Its last quote stays, aging, as it would if the stream fell silent.
+    instruments_.erase(entry.second);
+    changed_ = true;
   }
 }
 
 std::set<DxlinkSubscription> TastytradeMapper::subscriptions() const {
   std::set<DxlinkSubscription> result;
-  for (const auto& [symbol, underlying] : underlyings_) {
-    (void)underlying;
-    for (const auto* type : {"Quote", "Trade"}) result.insert({type, symbol});
-  }
+  for (const auto& entry : underlyings_)
+    for (const auto* type : {"Quote", "Trade"}) result.insert({type, entry.first});
   // Only the events event() reads: each subscription counts toward the 25000 cap.
   // An option's Trade carries its session dayVolume.
-  for (const auto& [symbol, instrument] : instruments_) {
-    (void)instrument;
-    for (const auto* type : {"Quote", "Greeks", "Summary", "Trade"}) result.insert({type, symbol});
-  }
-  if (result.size() > 25000) throw std::runtime_error("tastytrade: exceeds 25000 event subscriptions; use expiry/strike filters");
+  for (const auto& entry : instruments_)
+    for (const auto* type : {"Quote", "Greeks", "Summary", "Trade"}) result.insert({type, entry.first});
+  if (result.size() > kMaxSubscriptions) throw std::runtime_error("tastytrade: exceeds 25000 event subscriptions; use expiry/strike filters");
   return result;
 }
 
@@ -214,24 +270,31 @@ void TastytradeMapper::event(const Json& event) {
     if (type != "Quote" && type != "Trade") return;
     const auto name = underlying->second;
     md::UnderlyingQuote quote{name, 0, 0, 0, 0};
+    double spot = 0;
     if (type == "Quote") {
-      quote.ts = std::max(timestamp("bidTime"), timestamp("askTime"));
-      quote.bid = std::max(0.0, number(field(event, "bidPrice"), 0));
-      quote.ask = std::max(0.0, number(field(event, "askPrice"), 0));
-      if ((quote.bid > 0 && timestamp("bidTime") == 0) || (quote.ask > 0 && timestamp("askTime") == 0)) quote.ts = 0;
-      if (quote.bid > 0 && quote.ask > 0) chains_.at(name).spot = (quote.bid + quote.ask) / 2;
+      quote.bid = number(field(event, "bidPrice"), 0);
+      quote.ask = number(field(event, "askPrice"), 0);
+      // Only a two-sided market places the underlying. A one-sided or empty quote
+      // would set the book's spot to zero, so it is not passed on.
+      if (!(quote.bid > 0) || !(quote.ask >= quote.bid)) return;
+      quote.ts = timestamp("bidTime") > 0 && timestamp("askTime") > 0
+                     ? std::max(timestamp("bidTime"), timestamp("askTime")) : 0;
+      spot = (quote.bid + quote.ask) / 2;
     } else {
+      quote.last = number(field(event, "price"), 0);
+      if (!(quote.last > 0)) return;  // a trade without a price says nothing
       quote.ts = timestamp("time");
-      quote.last = std::max(0.0, number(field(event, "price"), 0));
-      if (quote.last > 0) chains_.at(name).spot = quote.last;
+      spot = quote.last;
     }
     sink_.publish(quote);
+    chains_.at(name).spot = spot;
     select(name);
     return;
   }
   const auto it = instruments_.find(symbol);
   if (it == instruments_.end()) return;
-  const auto [id, name] = it->second;
+  const auto id = it->second.id;
+  const auto name = it->second.underlying;
   if (type == "Quote") {
     auto ts = std::max(timestamp("bidTime"), timestamp("askTime"));
     const double bid = std::max(0.0, number(field(event, "bidPrice"), 0));
@@ -307,7 +370,8 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
   };
   try {
     TastytradeApi api(options_.credentials);
-    net::HttpClient http;
+    const auto client = options_.http ? options_.http() : std::make_unique<net::HttpClient>();
+    auto& http = *client;
     auto transport = net::make_websocket();
     DxlinkProtocol protocol(*transport);
     TastytradeMapper mapper(subscription, *sink, options_.timestamps_in_milliseconds);
@@ -328,6 +392,7 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
         if (!token || md::now() >= token->refresh_at)
           token = parse_tastytrade_quote_token(api.get(http, "/api-quote-tokens", md::now(), &stopping_), md::now());
         transport->connect(token->url, &stopping_);
+        (void)mapper.take_subscription_change();
         auto subscriptions = mapper.subscriptions();
         protocol.begin(token->token, subscriptions, md::now());
         const auto chain_refresh = md::now() + 3600 * md::kNanosPerSecond;
@@ -335,10 +400,13 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
         while (!stopping_ && md::now() < std::min(token->refresh_at, chain_refresh)) {
           if (const auto message = transport->receive(std::chrono::milliseconds(100))) {
             for (const auto& event : protocol.on_message(*message, md::now())) mapper.event(event);
-            const auto updated = mapper.subscriptions();
-            if (updated != subscriptions) {
-              protocol.replace(updated, md::now());
-              subscriptions = updated;
+            // Rebuilt only when an event changed what is mapped, not after every message.
+            if (mapper.take_subscription_change()) {
+              auto updated = mapper.subscriptions();
+              if (updated != subscriptions) {
+                protocol.replace(updated, md::now());
+                subscriptions = std::move(updated);
+              }
             }
           }
           protocol.tick(md::now());
@@ -355,13 +423,17 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
         if (message == "DXLink: quote token rejected; refresh required") token.reset();
         const bool safe = message.starts_with("tastytrade:") || message.starts_with("DXLink:");
         status(md::FeedState::Error, safe ? message : "tastytrade: transport or response failure");
-        if (++attempts >= 8) break;
+        // Retried for as long as the feed runs, as the polling adapters are: an outage
+        // of any length ends when the service comes back. Waits grow to a minute.
+        attempts = std::min(attempts + 1, 64u);
+        const auto delay = options_.retry_wait ? options_.retry_wait(attempts)
+                                               : std::chrono::milliseconds(DxlinkProtocol::backoff(attempts));
         std::unique_lock lock(mutex_);
-        if (wake_.wait_for(lock, DxlinkProtocol::backoff(attempts), [this] { return stopping_.load(); })) break;
+        if (wake_.wait_for(lock, delay, [this] { return stopping_.load(); })) break;
       }
     }
     transport->close();
-    status(md::FeedState::Stopped, attempts >= 8 ? "tastytrade: retry limit reached; restart to reconnect" : "tastytrade: stopped");
+    status(md::FeedState::Stopped, "tastytrade: stopped");
   } catch (const std::exception&) {
     status(md::FeedState::Error, "tastytrade: worker initialization failed");
     status(md::FeedState::Stopped, "tastytrade: stopped");

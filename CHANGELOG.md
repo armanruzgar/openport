@@ -382,6 +382,26 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   its quotes move. A ticket left open kept the preview from when its terms were last
   edited. It is now checked again as quotes move, at most every three seconds, and
   keeps the last answer up while the next loads.
+- **Streaming feeds outlast long outages.** A tastytrade feed stopped for good after
+  eight failed reconnects, about three minutes of outage (a router reboot, a laptop
+  asleep, broker maintenance), and a Databento stream after eight in about two; only
+  a restart brought either back. Both now retry for as long as they run and report
+  each failure as `error`, waiting at most a minute (tastytrade) or 30 seconds
+  (Databento) between attempts.
+- **tastytrade sessions whose spot drifts.** With `--window`, every contract the window
+  had once admitted stayed subscribed, so a session whose spot drifted far enough
+  passed DXLink's 25,000 subscriptions and the feed stopped. Contracts that drifted
+  out of the window now give up their subscriptions, farthest from spot first, when
+  the cap needs the room.
+- **tastytrade spot.** An underlying quote without a two-sided market (one-sided
+  before the open, or empty) or a trade without a price set the underlying's spot to
+  zero until the next priced event. Such events are now ignored.
+- **tastytrade under a busy stream.** The adapter rebuilt and compared its whole
+  subscription set, up to 25,000 entries, after every DXLink message, and walked the
+  full chain on every underlying tick: 15 to 40 ms each on a large chain, enough to
+  fall behind a few dozen messages a second. The set is now rebuilt only when the
+  subscribed contracts change, and strikes are selected again only when spot moves
+  the window past one.
 
 ## 0.5.1 (2026-10-28)
 

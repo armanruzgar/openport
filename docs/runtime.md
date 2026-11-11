@@ -165,6 +165,11 @@ cannot reduce upstream traffic. Interactive Brokers is the opposite: both are
 required, because each contract streamed holds one of the account's market-data
 lines. Alpaca rejects index underlyings such as SPX; it lists no index options.
 
+A dropped Databento stream reconnects and resubscribes for as long as the provider
+runs, reporting each failure as `error` and waiting 1, 2, 4, 8 and 16 seconds and then
+30 seconds between attempts; records arriving again shorten the wait. tastytrade's
+DXLink stream also retries without a limit (see below).
+
 ## Provider certification
 
 `openport-probe --certify PROVIDER SYMBOL...` writes redacted JSON and Markdown
@@ -266,16 +271,23 @@ Quote tokens are cached across reconnects and re-fetched if rejected.
 Chains refresh on an hourly reconnect; all subscriptions are restored after a
 connection failure. Missing or expired instruments are unsubscribed after a
 complete chain refresh, and their old quotes are cleared with an unknown timestamp.
-Eight consecutive failed connection attempts stop the feed;
-a minute of connected service resets that count. Retry waits grow to 60 seconds.
-Shutdown interrupts waits and I/O; system DNS remains the exception described above.
+A failed connection is retried for as long as the feed runs, each failure reported
+as `error`; the waits between attempts grow to 60 seconds, and a minute of connected
+service shortens them again. Shutdown interrupts waits and I/O; system DNS remains the
+exception described above.
 
 DXLink requests Quote, Greeks, Summary and Trade. It no longer requests the unused Profile event. Underlying/index streamer
 symbols come from instrument responses, and option streamer symbols come from
 nested chains. Strike filtering waits for an actual underlying price; it does not
-invent spot. A subscription is an event type plus symbol: four per option, two
-per underlying. The adapter refuses more than 25,000, sends at most 10,000 changes
-per minute and opens at most five sessions in one process. Other programs using the
+invent spot. An underlying quote without a two-sided market, or a trade without a
+price, is ignored rather than passed on as a zero spot. As spot moves, the window
+admits new strikes; contracts that drift out of it stay subscribed, since a position
+may hold them, until the subscription cap needs their room, when the farthest from
+spot are dropped first and their last quotes age. A subscription is an event type
+plus symbol: four per option, two per underlying. When the contracts the filters
+admit need more than 25,000, the adapter reports an error asking for narrower
+filters. It sends at most 10,000 changes per minute and opens at most five sessions
+in one process. Other programs using the
 same credentials also count toward the broker's five-session limit. Large initial
 subscriptions therefore take multiple minutes to establish.
 

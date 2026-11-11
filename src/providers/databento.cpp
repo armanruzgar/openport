@@ -41,8 +41,11 @@ bool DatabentoRecovery::recover(const std::function<void()>& reconnect,
                                 const std::function<void()>& resubscribe,
                                 const std::function<bool(std::chrono::seconds)>& wait,
                                 const std::function<void(const std::string&)>& report) {
-  while (failures_ < 8) {
-    const auto delay = std::chrono::seconds(std::min(1u << failures_++, 30u));
+  // Retried until it works or the provider stops, as the polling adapters are: an
+  // outage of any length ends when the service comes back.
+  while (true) {
+    const auto delay = std::chrono::seconds(std::min(1u << std::min(failures_, 5u), 30u));
+    failures_ = std::min(failures_ + 1, 64u);
     if (!wait(delay)) return false;
     try {
       reconnect();
@@ -52,8 +55,6 @@ bool DatabentoRecovery::recover(const std::function<void()>& reconnect,
       report(std::string("reconnect failed: ") + error.what());
     }
   }
-  report("reconnect failure budget exhausted");
-  return false;
 }
 
 std::vector<std::string> databento_parent_symbols(std::string_view underlying) {

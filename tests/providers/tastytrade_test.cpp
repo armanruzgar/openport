@@ -2,9 +2,13 @@
 #include "../../apps/probe/certification.hpp"
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
+#include "openport/analytics/chain_book.hpp"
 #include "openport/providers/factory.hpp"
 #include "openport/providers/tradier.hpp"
 #include "support/broker_sink.hpp"
@@ -173,6 +177,129 @@ TEST(Tastytrade, FiltersWaitForActualSpotAndRetainPreviouslyDefinedOptions) {
   EXPECT_EQ(mapper.subscriptions().size(), 22u);
   mapper.event(quote(".SPX261016C7400"));
   EXPECT_EQ(sink.all<md::OptionQuote>().size(), 1u);
+}
+
+TEST(Tastytrade, UnderlyingEventsWithoutAUsablePriceLeaveSpotAlone) {
+  test::BrokerSink sink;
+  providers::TastytradeMapper mapper({{"SPX"}}, sink, true);
+  mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  sink.events.clear();
+  mapper.event({{"eventType", "Trade"}, {"eventSymbol", "$SPX"}, {"price", 7400}, {"time", 1790263800000LL}});
+  // A one-sided quote (premarket, say), an empty one, a crossed one, a trade without a price.
+  mapper.event({{"eventType", "Quote"}, {"eventSymbol", "$SPX"}, {"bidPrice", 7399.5}, {"askPrice", "NaN"},
+                {"bidTime", 1790263801000LL}, {"askTime", 0}});
+  mapper.event({{"eventType", "Quote"}, {"eventSymbol", "$SPX"}, {"bidPrice", "NaN"}, {"askPrice", "NaN"},
+                {"bidTime", 0}, {"askTime", 0}});
+  mapper.event({{"eventType", "Quote"}, {"eventSymbol", "$SPX"}, {"bidPrice", 7401}, {"askPrice", 7399},
+                {"bidTime", 1790263802000LL}, {"askTime", 1790263802000LL}});
+  mapper.event({{"eventType", "Trade"}, {"eventSymbol", "$SPX"}, {"price", "NaN"}, {"time", 1790263803000LL}});
+  EXPECT_EQ(sink.all<md::UnderlyingQuote>().size(), 1u);
+  analytics::ChainBook book;
+  for (const auto& event : sink.events) book.apply(event);
+  EXPECT_EQ(book.underlyings().at("SPX").spot, 7400);
+  EXPECT_EQ(book.underlyings().at("SPX").spot_ts, kNow);
+  // A two-sided quote does move it.
+  mapper.event({{"eventType", "Quote"}, {"eventSymbol", "$SPX"}, {"bidPrice", 7401}, {"askPrice", 7403},
+                {"bidTime", 1790263804000LL}, {"askTime", 1790263804000LL}});
+  ASSERT_EQ(sink.all<md::UnderlyingQuote>().size(), 2u);
+  book.apply(sink.events.back());
+  EXPECT_EQ(book.underlyings().at("SPX").spot, 7402);
+  EXPECT_EQ(book.underlyings().at("SPX").spot_ts, kNow + 4 * md::kNanosPerSecond);
+}
+
+TEST(Tastytrade, SubscriptionsChangeOnlyWhenTheMappedInstrumentsDo) {
+  test::BrokerSink sink;
+  providers::TastytradeMapper mapper({{"SPX"}, 1, .01}, sink);
+  mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  EXPECT_TRUE(mapper.take_subscription_change());  // the underlying
+  EXPECT_FALSE(mapper.take_subscription_change());
+  auto spot = quote("$SPX");
+  spot["bidPrice"] = 7399;
+  spot["askPrice"] = 7401;
+  mapper.event(spot);
+  EXPECT_TRUE(mapper.take_subscription_change());  // the 7400 strikes
+  // Ticks that leave the window on the same strikes, and option events, change nothing.
+  for (const double bid : {7398.0, 7390.0, 7420.0}) {
+    spot["bidPrice"] = bid;
+    spot["askPrice"] = bid + 2;
+    mapper.event(spot);
+  }
+  mapper.event(quote(".SPX261016C7400"));
+  EXPECT_FALSE(mapper.take_subscription_change());
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 4u);
+  spot["bidPrice"] = 8999;
+  spot["askPrice"] = 9001;
+  mapper.event(spot);
+  EXPECT_TRUE(mapper.take_subscription_change());
+  // The same chain an hour on: nothing to resubscribe.
+  mapper.chain("SPX", "$SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  EXPECT_FALSE(mapper.take_subscription_change());
+}
+
+TEST(Tastytrade, DriftedContractsMakeRoomAtTheSubscriptionCapFarthestFirst) {
+  // One expiry with a strike every point from 5000 to 12000: 14,002 contracts.
+  std::vector<providers::TastytradeContract> chain;
+  for (int strike = 5000; strike <= 12000; ++strike) {
+    for (const char side : {'C', 'P'}) {
+      char osi[32];
+      std::snprintf(osi, sizeof osi, "SPXW  261016%c%08d", side, strike * 1000);
+      chain.push_back({*md::parse_osi(osi), ".SPXW261016" + std::string(1, side) + std::to_string(strike)});
+    }
+  }
+  test::BrokerSink sink;
+  providers::TastytradeMapper mapper({{"SPX"}, 0, .01}, sink);
+  mapper.chain("SPX", "$SPX", chain, {2026, 9, 24});
+  // Spot drifts from 6000 to 9500 through a 1% window, which admits 7,312 contracts
+  // along the way: more than DXLink's 25,000 subscriptions hold.
+  for (int spot = 6000; spot <= 9500; spot += 25)
+    mapper.event({{"eventType", "Trade"}, {"eventSymbol", "$SPX"}, {"price", spot}});
+  std::set<providers::DxlinkSubscription> subscriptions;
+  ASSERT_NO_THROW(subscriptions = mapper.subscriptions());
+  EXPECT_LE(subscriptions.size(), providers::TastytradeMapper::kMaxSubscriptions);
+  EXPECT_GT(subscriptions.size(), providers::TastytradeMapper::kMaxSubscriptions - 8);
+  // Everything the window admits now, and the drifted strikes nearest spot, stay.
+  for (const auto* symbol : {".SPXW261016P9405", ".SPXW261016C9500", ".SPXW261016C9595", ".SPXW261016P9000",
+                             ".SPXW261016C7000"})
+    EXPECT_TRUE(subscriptions.contains({"Quote", symbol})) << symbol;
+  // The farthest drifted ones made the room, and their events are no longer mapped.
+  for (const auto* symbol : {".SPXW261016C5940", ".SPXW261016P6000", ".SPXW261016C6300"})
+    EXPECT_FALSE(subscriptions.contains({"Quote", symbol})) << symbol;
+  sink.events.clear();
+  mapper.event(quote(".SPXW261016C5940"));
+  EXPECT_TRUE(sink.all<md::OptionQuote>().empty());
+}
+
+TEST(Tastytrade, AFailingFeedKeepsReconnectingUntilStopped) {
+  std::atomic<int> requests{0};
+  test::EventCollector sink;
+  providers::TastytradeProvider::Options options;
+  options.credentials = {"secret", "refresh", ""};
+  options.http = [&requests] {
+    auto http = std::make_unique<test::HttpStub>();
+    // The OAuth service is down for as long as the test runs.
+    http->respond = [&requests](std::string_view) {
+      ++requests;
+      return net::HttpResponse{503, "{}"};
+    };
+    return http;
+  };
+  options.retry_wait = [](unsigned) { return std::chrono::milliseconds(1); };
+  providers::TastytradeProvider provider(options);
+  provider.start({{"SPX"}}, sink);
+  // Eight failures used to stop the feed for good.
+  ASSERT_TRUE(test::recording_eventually([&] { return requests.load() >= 20; }));
+  provider.stop();
+  std::vector<md::ProviderStatus> statuses;
+  for (const auto& event : sink.snapshot())
+    if (const auto* status = std::get_if<md::ProviderStatus>(&event)) statuses.push_back(*status);
+  const auto count = [&](md::FeedState state) {
+    return std::count_if(statuses.begin(), statuses.end(), [state](const auto& status) { return status.state == state; });
+  };
+  EXPECT_GE(count(md::FeedState::Error), 19);
+  EXPECT_EQ(count(md::FeedState::Stopped), 1);
+  ASSERT_FALSE(statuses.empty());
+  EXPECT_EQ(statuses.back().state, md::FeedState::Stopped);
+  EXPECT_EQ(statuses.back().message, "tastytrade: stopped");
 }
 
 TEST(Tastytrade, MapsDocumentedGreeksWithoutInventingClocksOrSnapshots) {
