@@ -1,0 +1,83 @@
+name: ThreadSanitizer
+
+# The multi-threaded server under ThreadSanitizer: the engine and its providers, the
+# web server's I/O pool, replay, recording, notification and backtest workers. It
+# runs every Sunday, and on demand from the Actions tab or with
+# `gh workflow run tsan.yml` (optionally `-f tests=REGEX` for a narrower set). It is
+# kept out of CI's batched runs: ThreadSanitizer slows the suites about tenfold.
+on:
+  schedule:
+    - cron: '17 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: CTest regular expression of the tests to run (default the threaded suites)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tsan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tsan:
+    name: C++ (GCC 13, ThreadSanitizer, shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: 1.5G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+      TESTS: ${{ inputs.tests || '^(WebServer|Engine|Paper[A-Za-z]*|ReplayHost|MultiDayReplay|Recording[A-Za-z]*|Notifications|Sandboxes|Failover|DemoFeed|Backtest[A-Za-z]*|PollingProvider|Tastytrade|Api)\.' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build ccache libboost-dev libssl-dev zlib1g-dev libzstd-dev
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-tsan-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-tsan-${{ runner.os }}-
+      - name: Configure
+        # As the ASan job: -O1 for compile time, -g1 for names and lines in reports.
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g1 -DNDEBUG"
+          -DOPENPORT_SANITIZE_THREAD=ON -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build -j 4
+      - name: Compiler cache statistics
+        if: always()
+        run: ccache -s
+      - name: Save compiler cache
+        # Every shard builds the same code; only one saves the shared key.
+        if: always() && matrix.shard == 1
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-tsan-${{ runner.os }}-${{ github.sha }}
+      - name: Test
+        env:
+          TMPDIR: ${{ runner.temp }}
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:history_size=4:suppressions=${{ github.workspace }}/tests/tsan.supp
+        # ThreadSanitizer needs the address space layout its shadow memory assumes, which
+        # the kernel's full mmap randomisation can break. It uses several times the
+        # memory of a plain build, hence two tests at a time.
+        run: |
+          sudo sysctl -w vm.mmap_rnd_bits=28
+          ctest --test-dir build -j 2 --output-on-failure --timeout 3600 --no-tests=error \
+            -R "$TESTS" -I ${{ matrix.shard }},,${{ strategy.job-total }}

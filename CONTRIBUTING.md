@@ -58,6 +58,12 @@ backtraces. To reproduce a shard after configuring with the workflow's flags, ru
 All four sanitizer runners restore a shared, zstd-compressed ccache capped at 1.5 GB;
 only shard 1 saves it for later runs, avoiding competing uploads. Warm runs are
 expected well under 20 minutes, with a 35-minute timeout for cold-cache headroom.
+`-DOPENPORT_SANITIZE_THREAD=ON` builds with ThreadSanitizer instead (the two cannot
+be combined) and, like `OPENPORT_SANITIZE`, defines `OPENPORT_SANITIZER_BUILD` for the
+tests, so their sanitizer scaling applies. The ThreadSanitizer workflow
+(`.github/workflows/tsan.yml`) runs the multi-threaded suites with it every Sunday and
+on demand (`gh workflow run tsan.yml`, optionally with `-f tests=REGEX`), outside CI's
+batched runs; `tests/tsan.supp` says what it suppresses and why.
 The macOS build is the release archive's: `-DOPENPORT_STATIC_DEPS=ON`
 links OpenSSL and zstd statically, and CI checks it needs only macOS's own libraries.
 Changes only to `docs/` (other than `docs/openapi.yaml`, which the tests read) or

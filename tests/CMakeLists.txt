@@ -25,7 +25,7 @@ target_include_directories(openport_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${
 target_compile_definitions(openport_tests PRIVATE
   OPENPORT_VERSION="${PROJECT_VERSION}"
   OPENPORT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
-if(OPENPORT_SANITIZE)
+if(OPENPORT_SANITIZE OR OPENPORT_SANITIZE_THREAD)
   target_compile_definitions(openport_tests PRIVATE OPENPORT_SANITIZER_BUILD)
 endif()
 

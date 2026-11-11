@@ -29,6 +29,7 @@ option(OPENPORT_BUILD_PROVIDERS "Build the provider adapters and apps (needs Boo
 option(OPENPORT_WITH_DATABENTO "Build the Databento adapter (fetches databento-cpp)" ON)
 option(OPENPORT_WITH_IBKR "Build the Interactive Brokers Client Portal adapter" ON)
 option(OPENPORT_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(OPENPORT_SANITIZE_THREAD "Build with ThreadSanitizer (not together with OPENPORT_SANITIZE)" OFF)
 option(OPENPORT_NATIVE "Tune code generation for the build machine's CPU" OFF)
 option(OPENPORT_WERROR "Treat compiler warnings as errors" OFF)
 option(OPENPORT_STATIC_DEPS "Link OpenSSL and zstd statically, so a release archive runs without them installed" OFF)

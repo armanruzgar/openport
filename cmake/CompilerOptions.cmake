@@ -29,6 +29,20 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_link_options(openport_options INTERFACE -fsanitize=address,undefined)
   endif()
 
+  if(OPENPORT_SANITIZE_THREAD)
+    if(OPENPORT_SANITIZE)
+      message(FATAL_ERROR "OPENPORT_SANITIZE_THREAD cannot be combined with OPENPORT_SANITIZE: "
+                          "ThreadSanitizer does not run with AddressSanitizer")
+    endif()
+    target_compile_options(openport_options INTERFACE
+      -fsanitize=thread -fno-omit-frame-pointer
+      # ThreadSanitizer does not model std::atomic_thread_fence, which GCC reports for
+      # the trading containers' ownership check (include/openport/trading/shared.hpp);
+      # tests/tsan.supp covers the races it then reports there.
+      $<$<CXX_COMPILER_ID:GNU>:-Wno-tsan>)
+    target_link_options(openport_options INTERFACE -fsanitize=thread)
+  endif()
+
   if(OPENPORT_NATIVE)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
       target_compile_options(openport_options INTERFACE -mcpu=native)

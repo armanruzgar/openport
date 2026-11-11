@@ -138,7 +138,7 @@ if(OPENPORT_BUILD_PROVIDERS)
     providers/failover.cpp
   )
   add_library(openport::providers ALIAS openport_providers)
-  if(OPENPORT_BUILD_TESTS AND OPENPORT_SANITIZE)
+  if(OPENPORT_BUILD_TESTS AND (OPENPORT_SANITIZE OR OPENPORT_SANITIZE_THREAD))
     # Only scoped test fixtures enable sampling; apps keep the full generator.
     target_compile_definitions(openport_providers PRIVATE OPENPORT_SANITIZER_TEST_SUPPORT)
   endif()

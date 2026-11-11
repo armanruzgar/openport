@@ -1,0 +1,11 @@
+# ThreadSanitizer suppressions, which .github/workflows/tsan.yml passes in
+# TSAN_OPTIONS (suppressions=tests/tsan.supp). Each says why it is not a race.
+#
+# trading::SharedVector and SharedMap hand a node to a writer once it holds the
+# only reference: use_count() == 1, then an acquire fence that pairs with the
+# release in the last other owner's decrement (shared_detail::unique in
+# include/openport/trading/shared.hpp). ThreadSanitizer does not model standalone
+# fences, so it reports that writer's first write against the other owner's
+# earlier reads. Reports with either container in a stack are suppressed.
+race:openport::trading::SharedVector
+race:openport::trading::SharedMap
