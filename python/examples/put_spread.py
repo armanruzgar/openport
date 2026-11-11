@@ -42,7 +42,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", required=True)
     args = parser.parse_args()
-    token = os.environ["OPENPORT_WRITE_TOKEN"]
+    # A loopback server with open writes takes no token; any token it is sent must be valid.
+    token = os.environ.get("OPENPORT_WRITE_TOKEN") or None
     place_spread(Client(os.environ.get("OPENPORT_URL", "http://127.0.0.1:8080"), token, args.account))
 
 

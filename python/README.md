@@ -147,7 +147,10 @@ does not have any broker or live-trading connection.
 `examples/put_spread.py --account practice` discovers quoted puts, previews a
 vertical and places a paper limit with a bracket. `examples/last_hour.py SCENARIO`
 starts a paused simulated day, steps to 15:00 New York time, places that spread,
-steps to 15:59 and flattens. They use `OPENPORT_URL` and `OPENPORT_WRITE_TOKEN`.
+steps to 15:59 and flattens. They use `OPENPORT_URL` (default
+`http://127.0.0.1:8080`) and `OPENPORT_WRITE_TOKEN`. Set the token only when the
+server requires one; leave it unset for a loopback server with open writes, which
+refuses any token it does not know, a placeholder included.
 The last-hour example requires an SPX scenario that spans those times. Quotes,
 liquidity, the plan and session can reject these examples; no result is promised.
 
@@ -254,7 +257,8 @@ v1 `Event` instances, separately from coalescing `ticks()`. It closes on context
 exit and does not reconnect automatically. The stream is bounded, not a durable
 log; reconcile fills/orders after disconnect. See [event semantics](../docs/api.md#paper-event-stream-v1).
 `examples/bot_monitor.py` observes live/history; `examples/bot_replay.py SCENARIO`
-uses the previewed spread example on a synthetic replay, leaving it paused.
+uses the previewed spread example on a synthetic replay once it has fast-forwarded
+to its start, leaving a finished run paused and stopping one that failed.
 
 Install `openport[pandas]` for `fills_frame`, `trades_frame`, `equity_frame`,
 `backtest_frame`, `chain_frame` and `smile_frame`. Install `openport[arrow]` for

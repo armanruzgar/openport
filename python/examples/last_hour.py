@@ -19,7 +19,9 @@ def main():
     parser.add_argument("scenario", help="A scenario id from client.list_replays()['demos']")
     parser.add_argument("--seed", default="42")
     args = parser.parse_args()
-    client = Client(os.environ.get("OPENPORT_URL", "http://127.0.0.1:8080"), os.environ["OPENPORT_WRITE_TOKEN"], timeout=180)
+    # A loopback server with open writes takes no token; any token it is sent must be valid.
+    client = Client(os.environ.get("OPENPORT_URL", "http://127.0.0.1:8080"),
+                    os.environ.get("OPENPORT_WRITE_TOKEN") or None, timeout=180)
     if client.list_replays()["replay"] is not None:
         raise ValueError("Stop the existing replay before running this example")
     client.start_replay(scenario=args.scenario, seed=args.seed, paused=True, plan="practice")

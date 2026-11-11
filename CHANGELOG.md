@@ -740,6 +740,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   a chain with no leg priced yet, or a refused `PUT /api/replay` speed ended the
   script in a traceback, which Python reports as status 1 too. Each now stops the soak
   with a one-line reason and exit status 2, as its documentation says.
+- **The Python replay examples run against a default local server.** `put_spread.py`,
+  `last_hour.py` and `bot_replay.py` read `OPENPORT_WRITE_TOKEN` unconditionally and
+  stopped with `KeyError` when it was unset, as it is for a loopback server with open
+  writes, where a placeholder token fails too (`WRITE_TOKEN_REQUIRED`). They now send a
+  token only when one is set. `bot_replay.py` also stepped the replay while it was
+  still fast-forwarding to its start, so it always failed with `REPLAY_FAST_FORWARD`
+  and left the replay running, which made the next run refuse to start; it now waits,
+  as `last_hour.py` does, and stops a replay whose run failed.
 
 ## 0.5.1 (2026-10-28)
 

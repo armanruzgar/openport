@@ -297,6 +297,41 @@ def test_last_hour_example_waits_for_replay_preparation(stub, monkeypatch):
         wait(client, timeout=0)
 
 
+def test_bot_replay_example_waits_for_preparation_and_stops_a_failed_run(stub, monkeypatch):
+    import runpy
+    import sys
+    from conftest import ROOT
+    monkeypatch.syspath_prepend(str(ROOT / "python/examples"))
+    # A loopback server with open writes: no token at all, not a placeholder.
+    monkeypatch.setenv("OPENPORT_URL", stub.url)
+    monkeypatch.delenv("OPENPORT_WRITE_TOKEN", raising=False)
+    monkeypatch.setattr(sys, "argv", ["bot_replay.py", "fixture"])
+    main = runpy.run_path(str(ROOT / "python/examples/bot_replay.py"))["main"]
+    original = stub.respond
+    polls = 0
+    def respond(method, target, headers, body):
+        nonlocal polls
+        status, value = original(method, target, headers, body)
+        if method == "GET" and target == "/api/replay" and value.get("replay"):
+            polls += 1
+            value["replay"]["fast_forwarding"] = polls == 1
+        if method == "PUT" and target == "/api/replay" and polls < 2:
+            # openportd refuses playback until the replay has fast-forwarded to its start.
+            return 409, {"error": {"code": "REPLAY_FAST_FORWARD", "message": "Wait until start_at",
+                                   "actual": None, "limit": None, "scope": None}}
+        return status, value
+    stub.respond = respond
+    # The stub's chain has one put, so the spread fails after the step: the run is stopped.
+    with pytest.raises(ValueError, match="No quoted put vertical"):
+        main()
+    assert polls == 2
+    calls = [(method, urlsplit(target).path) for method, target, _headers, _body in stub.requests]
+    assert calls.index(("PUT", "/api/replay")) > calls.index(("POST", "/api/replay"))
+    assert calls[-1] == ("DELETE", "/api/replay")
+    assert stub.replay is None
+    assert all("Authorization" not in headers for _method, _target, headers, _body in stub.requests)
+
+
 def test_backtest_calls_use_global_routes_even_from_replay_and_history(stub):
     for client in (Client(stub.url), Client(stub.url).for_replay(), Client(stub.url, history="old-run")):
         client.list_backtests()
