@@ -159,14 +159,16 @@ From the repository root, using the prepared environment:
 ```
 
 Tests use a threaded `http.server` with synthetic JSON. When a sandbox denies TCP
-binding, the same HTTP handler runs over a local socket pair. If the C++ test
-binary is built, Python also validates real handler responses captured without a
-listener. The contract command checks every API GET and a preview, resting limit
-and cancellation in a new simulated replay. It refuses to replace an active run,
-requires durable replay history and leaves the completed test run in history.
-Static files and WebSocket transport are described in OpenAPI; the HTTP contract
-command checks the JSON API and CSV routes. The first mismatch prints its route
-and field and exits nonzero. CI runs it after the Docker smoke test.
+binding, the same HTTP handler runs over a local socket pair. The tests marked `cpp`
+use the C++ build in `build/`: they validate real handler responses captured without
+a listener and drive `openportd` in demo mode. Without the build they skip; with
+`OPENPORT_REQUIRE_BUILD=1`, as in CI, they fail. The contract command checks every
+API GET and a preview, resting limit and cancellation in a new simulated replay. It
+refuses to replace an active run, requires durable replay history and leaves the
+completed test run in history. Static files and WebSocket transport are described in
+OpenAPI; the HTTP contract command checks the JSON API and CSV routes. The first
+mismatch prints its route and field and exits nonzero. CI runs it after the Docker
+smoke test.
 
 Batch backtests use the global routes even on a replay client. Results are simulated
 trading on recorded or generated days, not predictions or investment advice:

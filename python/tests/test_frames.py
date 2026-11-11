@@ -17,7 +17,7 @@ from openport.frames import arrow_table, backtest_frame, fills_frame, write_arro
                "strikes": [{"strike": 5000, "call": {"bid": 1.25, "ask": None}, "put": None}]}),
 ])
 def test_columnar_roundtrip_preserves_money_nulls_and_late_columns(tmp_path, kind, data):
-    # pyarrow is the optional openport[arrow] extra, so CI without it still runs the pandas tests.
+    # pyarrow is the optional openport[arrow] extra; without it the pandas tests still run.
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
     table = arrow_table(data, kind)
