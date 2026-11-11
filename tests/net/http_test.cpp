@@ -557,10 +557,13 @@ struct LoopbackCertificate {
     X509_gmtime_adj(X509_getm_notBefore(certificate), -3600);
     X509_gmtime_adj(X509_getm_notAfter(certificate), 3600);
     X509_set_pubkey(certificate, key);
-    X509_NAME* name = X509_get_subject_name(certificate);
+    // OpenSSL 3.6 returns the subject name const, so the name is built apart and copied in.
+    X509_NAME* name = X509_NAME_new();
     const unsigned char common_name[] = "127.0.0.1";
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, common_name, -1, -1, 0);
-    X509_set_issuer_name(certificate, name);
+    const bool named = name && X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, common_name, -1, -1, 0) == 1 &&
+                       X509_set_subject_name(certificate, name) == 1 && X509_set_issuer_name(certificate, name) == 1;
+    X509_NAME_free(name);
+    if (!named) throw std::runtime_error("cannot name a test certificate");
     X509V3_CTX context{};
     X509V3_set_ctx(&context, certificate, certificate, nullptr, nullptr, 0);
     X509_EXTENSION* addresses = X509V3_EXT_conf_nid(nullptr, &context, NID_subject_alt_name, "IP:127.0.0.1");
@@ -641,7 +644,9 @@ TEST(WebServer, WebSocketCloseReturnsPromptlyAfterAReceive) {
     try {
       client->connect(url, nullptr);
       EXPECT_EQ(client->receive(std::chrono::seconds(10)).value_or("(nothing)"), "hello");
-      if (pending) EXPECT_FALSE(client->receive(std::chrono::milliseconds(50)));
+      if (pending) {
+        EXPECT_FALSE(client->receive(std::chrono::milliseconds(50)));
+      }
     } catch (const std::exception& error) {
       ADD_FAILURE() << error.what();
     }
