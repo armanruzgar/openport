@@ -1312,6 +1312,15 @@ TEST(ReplayHost, FreshAndExplicitSeedsAndScenarioDrillsUseABoundedCache) {
 }
 
 
+/// A history listing in run id order. Listings put the run written last first, so one
+/// whose journal a test touches moves; what is listed is what these tests compare.
+nlohmann::json by_id(nlohmann::json history) {
+  std::sort(history.begin(), history.end(), [](const nlohmann::json& a, const nlohmann::json& b) {
+    return a.at("id").get<std::string>() < b.at("id").get<std::string>();
+  });
+  return history;
+}
+
 TEST(ReplayHost, SavedRunSummariesOutliveTheFullAccountCache) {
   using nlohmann::json;
   test::RecordingFile file;
@@ -1354,9 +1363,9 @@ TEST(ReplayHost, SavedRunSummariesOutliveTheFullAccountCache) {
   const auto changed = replays / "run-0.jsonl";
   const auto modified = std::filesystem::last_write_time(changed) + 1s;
   std::filesystem::last_write_time(changed, modified);
-  EXPECT_EQ(list(), first);
+  EXPECT_EQ(by_id(list()), by_id(first));
   EXPECT_EQ(host.history_recoveries(), 41U);
-  EXPECT_EQ(list(), first);
+  EXPECT_EQ(by_id(list()), by_id(first));
   EXPECT_EQ(host.history_recoveries(), 41U);
 
   std::string pnl;
@@ -1434,7 +1443,7 @@ TEST(ReplayHost, ListingsReadEachUnchangedJournalOnceAcrossRestarts) {
   std::filesystem::last_write_time(changed, std::filesystem::last_write_time(changed) + 1s);
   {
     server::ReplayHost host({{}, options, false});
-    EXPECT_EQ(list(host), first);
+    EXPECT_EQ(by_id(list(host)), by_id(first));
     EXPECT_EQ(host.history_recoveries(), 1U);
     EXPECT_EQ(host.history_scans(), 1U);
   }
@@ -1442,7 +1451,7 @@ TEST(ReplayHost, ListingsReadEachUnchangedJournalOnceAcrossRestarts) {
   { std::ofstream out(replays / "run-2.jsonl.summary", std::ios::trunc); out << "{\"build\":"; }
   {
     server::ReplayHost host({{}, options, false});
-    EXPECT_EQ(list(host), first);
+    EXPECT_EQ(by_id(list(host)), by_id(first));
     EXPECT_EQ(host.history_recoveries(), 1U);
     EXPECT_EQ(host.history_scans(), 1U);
     EXPECT_EQ(call(host, "DELETE", "/api/replay/history/run-2").status, 200);
