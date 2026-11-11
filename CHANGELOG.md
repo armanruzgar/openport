@@ -168,6 +168,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Minute-volume cap after a gap in the feed.** The cap took all volume since the
+  last report a minute or more old as the last minute's, so for a minute after a feed
+  outage, a reconnect or a slow poll it accepted orders sized on the whole gap's
+  volume. It now refuses them with `MINUTE_VOLUME` until a minute of reports spans the
+  gap; on a feed seen every minute, an unchanged older report still counts.
 - **Quote width alone no longer decides a plan.** A single two-sided quote far wider
   than the price band, such as 4.00 × 16.00 on a call bought at 4.20, marked the
   position at its midpoint: it could pass a losing attempt, raise a trailing floor the

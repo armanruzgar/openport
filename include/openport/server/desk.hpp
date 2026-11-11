@@ -236,6 +236,16 @@ class Desk {
   analytics::ChainBook book_;
   /// Recent cumulative volume reports by instrument, oldest first, for minute_volume.
   std::map<md::InstrumentId, std::deque<std::pair<md::Timestamp, double>>> volume_reports_;
+  /// When each underlying's options were last seen (a quote, trade or volume report
+  /// for one of them, or a complete snapshot), and the gaps of more than a minute
+  /// between sightings in the last few minutes. Volume is published when it changes,
+  /// so minute_volume reads a report a minute or more old as the volume at the
+  /// minute's start only when the feed was seen just before that start.
+  struct Sightings {
+    md::Timestamp last = 0;
+    std::deque<std::pair<md::Timestamp, md::Timestamp>> gaps;
+  };
+  std::map<std::string, Sightings, std::less<>> sightings_;
   bool stopping_ = false;
   TradingStatus trading_status_;
   std::vector<AccountStatus> account_statuses_;

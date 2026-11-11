@@ -6006,6 +6006,43 @@ TEST_F(PaperEngine, AMinuteVolumeCapRefusesWithoutAMinuteOfVolume) {
   response = write(*engine, "POST", "/api/orders", two);
   EXPECT_EQ(response.status, 201) << response.body;
 }
+
+TEST_F(PaperEngine, AMinuteVolumeCapDoesNotReadAGapInTheFeedAsAMinute) {
+  seed("4.00", "4.20", 100);
+  auto rules = read(*engine, "/api/account")["rules"];
+  rules.update({{"plan", "Minute volume"}, {"profit_target", "1000"}, {"minute_volume_percent", 1}});
+  ASSERT_EQ(write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", rules}, {"reason", "volume"}}).status, 200);
+  const auto code = [](const server::ApiResponse& r) { return json::parse(r.body)["error"]["code"]; };
+  const auto two = [&](const std::string& client) {
+    auto request = order(market, client, "4.20");
+    request["quantity"] = 2;
+    return request;
+  };
+  // 1,000 contracts by 10:00, twenty minutes in which the feed shows nothing, then 1,600.
+  provider.sink->publish(md::OptionVolume{0, market.time, 1000});
+  quote("4.00", "4.20", 100);
+  market.time += 20 * 60 * md::kNanosPerSecond;
+  provider.sink->publish(md::OptionVolume{0, market.time, 1600});
+  quote("4.00", "4.20", 100);
+  market.time += 10 * md::kNanosPerSecond;
+  quote("4.00", "4.20", 100);
+  // The 600 traded somewhere in those twenty minutes, not in the last one.
+  auto response = write(*engine, "POST", "/api/orders", two("after-gap"));
+  EXPECT_EQ(response.status, 422) << response.body;
+  EXPECT_EQ(code(response), "MINUTE_VOLUME");
+  EXPECT_EQ(json::parse(response.body)["error"]["evidence"]["volume"], nullptr);
+  // Seen every 30 seconds, an unchanged volume still stands for the minute's start.
+  for (int i = 0; i < 5; ++i) {
+    market.time += 30 * md::kNanosPerSecond;
+    quote("4.00", "4.20", 100);
+  }
+  market.time += 30 * md::kNanosPerSecond;
+  provider.sink->publish(md::OptionVolume{0, market.time, 1800});
+  quote("4.00", "4.20", 100);
+  // One percent of the minute's 200 contracts is two.
+  response = write(*engine, "POST", "/api/orders", two("after-quiet"));
+  EXPECT_EQ(response.status, 201) << response.body;
+}
 }
 
 TEST(PaperRecovery, LiveAMPositionsSettleOnThePublishedOpeningQuotation) {

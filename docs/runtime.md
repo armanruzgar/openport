@@ -1126,8 +1126,8 @@ an interrupted run requires the current driver, as before.
 
 Driver 7 applies this build's evaluation, payout and order-rule fixes: equity
 targets wait for a flat account under trade consistency or microscalping, payout
-floors stay fixed, minimum hold covers triggered and OCO closes, and a wide quote keeps
-a fresh mark
+floors stay fixed, minimum hold covers triggered and OCO closes, a wide quote keeps a
+fresh mark, and the minute-volume cap is not read across a gap in the feed
 ([paper trading](paper-trading.md)). Runs recorded with drivers 1–6 verify with
 their original decisions; they can no longer be resumed or restarted.
 

@@ -1790,6 +1790,17 @@ std::optional<std::int64_t> Desk::minute_volume(const std::string& symbol, md::T
   if (!before || !latest || !whole(before->second) || !whole(latest->second) || latest->second < before->second ||
       md::trading_date(before->first) != md::trading_date(time))
     return std::nullopt;
+  // Volume is published when it changes, so the older report stands for the volume at
+  // the minute's start only if the feed was seen covering the underlying in the minute
+  // before that. Across a longer gap (an outage, a reconnect, a poll cycle over a
+  // minute) the volume since is not this minute's. Replay drivers 1-6 did not ask.
+  if (options_.revised_evaluation) {
+    const auto* option = book_.option(id->second);
+    const auto seen = option ? sightings_.find(option->contract.underlying) : sightings_.end();
+    if (seen == sightings_.end()) return std::nullopt;
+    for (const auto& [from, to] : seen->second.gaps)
+      if (from <= start - 60 * md::kNanosPerSecond && to > start) return std::nullopt;
+  }
   return static_cast<std::int64_t>(latest->second - before->second);
 }
 
@@ -2405,6 +2416,20 @@ void Desk::observe(const md::Event& event) {
     if (reports.empty() || volume->ts >= reports.back().first) reports.emplace_back(volume->ts, volume->contracts);
     while (reports.size() > 1 && reports[1].first <= volume->ts - 60 * md::kNanosPerSecond) reports.pop_front();
   }
+  // When the feed covered each underlying's options, and its gaps, for minute_volume.
+  const auto sighted = [this](const std::string& underlying, md::Timestamp ts) {
+    auto& seen = sightings_[underlying];
+    if (seen.last > 0 && ts - seen.last > 60 * md::kNanosPerSecond) seen.gaps.emplace_back(seen.last, ts);
+    seen.last = std::max(seen.last, ts);
+    while (!seen.gaps.empty() && seen.gaps.front().second < ts - 180 * md::kNanosPerSecond) seen.gaps.pop_front();
+  };
+  const auto option_sighted = [&](md::InstrumentId id, md::Timestamp ts) {
+    if (const auto* option = book_.option(id)) sighted(option->contract.underlying, ts);
+  };
+  if (const auto* option_quote = std::get_if<md::OptionQuote>(&event)) option_sighted(option_quote->id, option_quote->ts);
+  else if (const auto* option_trade = std::get_if<md::OptionTrade>(&event)) option_sighted(option_trade->id, option_trade->ts);
+  else if (const auto* volume_report = std::get_if<md::OptionVolume>(&event)) option_sighted(volume_report->id, volume_report->ts);
+  else if (const auto* snapshot_done = std::get_if<md::SnapshotComplete>(&event)) sighted(snapshot_done->underlying, snapshot_done->ts);
   if (const auto* quote = std::get_if<md::UnderlyingQuote>(&event); quote && options_.candles) {
     const auto& underlying = book_.underlyings().at(quote->symbol);
     options_.candles->sample(quote->symbol, underlying.spot_ts, underlying.spot);
@@ -2417,6 +2442,7 @@ void Desk::replay_source(const std::string& input, const md::RecordingHeader& he
   // but never let an old chain row refer to a new recording's reused ID.
   book_ = analytics::ChainBook{};
   volume_reports_.clear();
+  sightings_.clear();
   metrics_.clear();
   snapshots_.clear();
   vouched_at_.clear();

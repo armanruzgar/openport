@@ -2711,10 +2711,13 @@ reports `evaluation.best_position: {cap, excess, counted_profit, trade}`.
 **Minute-volume cap** (`minute_volume_percent`, 1–1000). An opening order's contracts per
 leg may be at most this percentage of that contract's volume in the minute before
 acceptance: the server's cumulative volume report within that minute less the last one a
-minute or more old, on the same market date. Without both reports (a feed that reports no
-option volume, a contract that has not traded, or a snapshot feed reporting less often
-than each minute) the order is refused with `MINUTE_VOLUME`, since the cap cannot be
-checked; the refusal's evidence carries the contract, its opening contracts, the volume
+minute or more old, on the same market date. Feeds report volume when it changes, so that
+older report stands for the volume at the minute's start only if the feed was seen
+covering the contract's underlying (a quote, trade or volume report for one of its
+options, or a complete snapshot) in the minute before that start. Without both reports,
+or across a longer gap in the feed (a feed that reports no option volume, a contract that
+has not traded, an outage or reconnect, or a snapshot feed reporting less often than each
+minute) the order is refused with `MINUTE_VOLUME`, since the cap cannot be checked; the refusal's evidence carries the contract, its opening contracts, the volume
 (null when unknown) and the percentage. It is an acceptance check in the server, like the
 direction rules: fills are not rechecked and reductions are exempt. In a replay or
 backtest it reads the volume the recording carries, so it needs a recording with option
