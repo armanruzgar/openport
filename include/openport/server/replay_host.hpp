@@ -67,6 +67,9 @@ class ReplayHost {
   void set_dividends(std::vector<trading::Dividend> dividends);
   /// Journal recovery attempts for saved-run summaries and full archives.
   [[nodiscard]] std::uint64_t history_recoveries() const;
+  /// Saved runs' journals read through for their verification estimates. A listing
+  /// reads one only when it changed: what it read is kept beside it, for restarts too.
+  [[nodiscard]] std::uint64_t history_scans() const;
 
  private:
   struct Session;

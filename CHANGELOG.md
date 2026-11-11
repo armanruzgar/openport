@@ -339,6 +339,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   scores the current attempt and the forward tests in one pass; the engine's playbook
   checks and per-playbook pass odds no longer repeat that work either. Reports are
   unchanged.
+- **Replay history listings.** `GET /api/replay` read every saved run's whole journal
+  on each call to estimate its verification time, and after a restart recovered every
+  saved run while holding the history lock: with a hundred saved runs, the first
+  listing stalled every other request for tens of seconds. What a listing reads of a
+  journal is now kept until the journal's size or modified time changes, in memory and
+  in `ID.jsonl.summary` beside it, so polling and restarts read only journals that
+  changed. The first listing after an upgrade still reads each journal once.
 
 ## 0.5.1 (2026-10-28)
 

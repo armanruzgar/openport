@@ -19,7 +19,8 @@ Back up the entire root, including hidden files and subdirectories:
 
 - `paper-journal.jsonl`, `accounts/` and `replays/`: main and named accounts,
   archived attempts and replay runs. Keep journal siblings, equity CSVs, saved
-  commands/inputs and metadata together for review and verification.
+  commands/inputs and metadata together for review and verification. A replay
+  run's `ID.jsonl.summary` is a cache the server rebuilds from its journal.
 - `playbooks.json`, `backtests/` and other saved settings/results beside the main
   journal. Deleted or archived account files may still exist.
 - `candles/` and `series/`: cached prices and derived volatility history. Docker

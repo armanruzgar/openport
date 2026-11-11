@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <nlohmann/json.hpp>
 
@@ -40,6 +42,26 @@ struct VerificationInput {
 /// Reads run metadata without generating input or verifying the journal.
 /// Missing/unusable input metadata falls back to journal throughput alone.
 [[nodiscard]] nlohmann::json verification_cost(const std::filesystem::path& journal);
+/// What verification_cost reads of a journal, which a caller can keep while the file
+/// stays as it was: reading it streams the whole file to count its records.
+struct JournalScan {
+  std::uint64_t bytes = 0;
+  std::uint64_t records = 0;
+  /// What the estimate reads of the run's start input in the first two records (its
+  /// "input" and "calendar"); null when they hold none.
+  nlohmann::json start;
+  md::Timestamp first = 0;  ///< The time of the record holding the start input.
+  std::optional<md::Timestamp> last;  ///< The last record's time, when it can be read.
+  /// One of the first two records could not be read: the estimate goes by size alone.
+  bool malformed = false;
+  /// The file was read to its end, so scanning it again unchanged finds the same. False
+  /// when it could not be opened or a read failed.
+  bool complete = false;
+};
+[[nodiscard]] JournalScan scan_journal(const std::filesystem::path& journal);
+/// verification_cost(journal) from a scan of the journal and its run's metadata (the
+/// parsed sidecar, or null without one): of the files, only a scenario it names is read.
+[[nodiscard]] nlohmann::json verification_cost(const JournalScan& scan, const nlohmann::json& metadata);
 
 struct RunVerification {
   nlohmann::json run;  ///< Shareable identity and inputs; contains no absolute paths.

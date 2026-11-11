@@ -743,9 +743,11 @@ TEST(ReplayHost, HistoryDeletesDamagedRunsWithTheirSidecarsAndAnswersUnknownIds)
             std::string::npos) << integrity_message;
   EXPECT_EQ(call(host, "GET", "/api/replay/history/" + ids[1]).status, 422);
   for (const auto& id : ids) {
+    // The listing kept what it read of each journal beside it.
+    EXPECT_TRUE(std::filesystem::exists(replays / (id + ".jsonl.summary"))) << id;
     const auto deleted = call(host, "DELETE", "/api/replay/history/" + id);
     ASSERT_EQ(deleted.status, 200) << deleted.body;
-    for (const auto* suffix : {".jsonl", ".json", ".jsonl.equity.csv", ".playbooks.json"})
+    for (const auto* suffix : {".jsonl", ".json", ".jsonl.equity.csv", ".playbooks.json", ".jsonl.summary"})
       EXPECT_FALSE(std::filesystem::exists(replays / (id + suffix))) << id << suffix;
   }
   EXPECT_TRUE(json::parse(call(host, "GET", "/api/replay").body)["history"].empty());
@@ -1248,6 +1250,71 @@ TEST(ReplayHost, SavedRunSummariesOutliveTheFullAccountCache) {
   EXPECT_EQ(call(host, "DELETE", "/api/replay/history/run-0").status, 200);
   EXPECT_EQ(list().size(), 19U);
   EXPECT_EQ(host.history_recoveries(), 42U);
+}
+
+// I-6: a terminal polls the listing, and a server restarts. Neither reads a saved run's
+// journal again while it stays as it was: what was read is kept beside it, ignored once
+// the journal changes or the copy is damaged.
+TEST(ReplayHost, ListingsReadEachUnchangedJournalOnceAcrossRestarts) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  const auto replays = file.directory / "replays";
+  std::filesystem::create_directory(replays);
+  test::ScriptedMarket market;
+  trading::SessionConfig config;
+  config.rules.plan = "Practice";
+  for (int i = 0; i < 3; ++i) {
+    const auto path = replays / ("run-" + std::to_string(i) + ".jsonl");
+    const trading::TradingSession session(config, market.time, trading::FileJournal::create(path.string()));
+  }
+  server::Engine::Options options;
+  options.paper_journal = file.directory / "main.jsonl";
+  const auto list = [](server::ReplayHost& host) { return json::parse(call(host, "GET", "/api/replay").body)["history"]; };
+  json first;
+  {
+    server::ReplayHost host({{}, options, false});
+    first = list(host);
+    ASSERT_EQ(first.size(), 3U);
+    EXPECT_EQ(host.history_recoveries(), 3U);
+    EXPECT_EQ(host.history_scans(), 3U);
+    for (const auto& item : first) {
+      const auto id = item.at("id").get<std::string>();
+      EXPECT_FALSE(item.contains("error")) << item;
+      EXPECT_EQ(item.at("verification").at("cost"), server::verification_cost(replays / (id + ".jsonl")));
+      EXPECT_EQ(item.at("verification_cost"), item.at("verification").at("cost"));
+      EXPECT_TRUE(std::filesystem::exists(replays / (id + ".jsonl.summary"))) << id;
+    }
+    // Polling again reads no journal.
+    EXPECT_EQ(list(host), first);
+    EXPECT_EQ(host.history_recoveries(), 3U);
+    EXPECT_EQ(host.history_scans(), 3U);
+  }
+  // A restarted server lists the same runs without reading their journals.
+  {
+    server::ReplayHost host({{}, options, false});
+    EXPECT_EQ(list(host), first);
+    EXPECT_EQ(host.history_recoveries(), 0U);
+    EXPECT_EQ(host.history_scans(), 0U);
+  }
+  // A journal changed since is read again, and only that one.
+  const auto changed = replays / "run-1.jsonl";
+  std::filesystem::last_write_time(changed, std::filesystem::last_write_time(changed) + 1s);
+  {
+    server::ReplayHost host({{}, options, false});
+    EXPECT_EQ(list(host), first);
+    EXPECT_EQ(host.history_recoveries(), 1U);
+    EXPECT_EQ(host.history_scans(), 1U);
+  }
+  // A damaged copy is never trusted: its journal is read again.
+  { std::ofstream out(replays / "run-2.jsonl.summary", std::ios::trunc); out << "{\"build\":"; }
+  {
+    server::ReplayHost host({{}, options, false});
+    EXPECT_EQ(list(host), first);
+    EXPECT_EQ(host.history_recoveries(), 1U);
+    EXPECT_EQ(host.history_scans(), 1U);
+    EXPECT_EQ(call(host, "DELETE", "/api/replay/history/run-2").status, 200);
+  }
+  EXPECT_FALSE(std::filesystem::exists(replays / "run-2.jsonl.summary"));
 }
 
 TEST(ReplayHost, OlderJournalRecordsNeedNoReplayFieldsAndStillCompactAndRepair) {

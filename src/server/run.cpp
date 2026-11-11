@@ -270,43 +270,71 @@ nlohmann::json verification_cost(std::uint64_t bytes, std::uint64_t records,
       "Long verification: roughly " + std::to_string(seconds) + " seconds or more; recording generation and hardware can take longer") : nlohmann::json(nullptr)}};
 }
 nlohmann::json verification_cost(const std::filesystem::path& journal) {
+  json saved;
+  try {
+    std::ifstream metadata(std::filesystem::path(journal).replace_extension(".json"));
+    if (metadata) saved = json::parse(metadata, nullptr, false);
+  } catch (const std::exception&) {
+    // As an unreadable sidecar: the estimate goes by the journal alone.
+  }
+  return verification_cost(scan_journal(journal), saved);
+}
+JournalScan scan_journal(const std::filesystem::path& journal) {
+  JournalScan scan;
   std::error_code error;
   const auto size = std::filesystem::file_size(journal, error);
-  const auto bytes = error ? 0 : size;
-  std::uint64_t records = 0;
-  std::optional<VerificationInput> replay;
+  scan.bytes = error ? 0 : size;
   try {
     // Stream lines for the count, but only decode the start and final record.
     // This deliberately avoids journal recovery, hashing and market generation.
     std::ifstream file(journal);
-    std::string line, last;
-    json start;
-    md::Timestamp first = 0;
+    std::string line, final_line;
     while (std::getline(file, line)) {
       if (line.empty()) continue;
-      ++records;
-      if (records <= 2) {
+      ++scan.records;
+      if (scan.records <= 2) {
         const auto record = json::parse(line, nullptr, false);
         if (record.is_object() && record.value("type", "") == "run_input") {
           for (const auto& event : record.at("payload").at("events")) {
             if (event.at("type") == "run_input" && event.at("payload").at("kind") == "start") {
-              start = event.at("payload");
-              first = record.at("time").get<md::Timestamp>();
+              // Only what the estimate reads: a start also holds the playbook catalogue.
+              const auto& payload = event.at("payload");
+              scan.start = json::object();
+              for (const auto* key : {"input", "calendar"})
+                if (payload.contains(key)) scan.start[key] = payload.at(key);
+              scan.first = record.at("time").get<md::Timestamp>();
             }
           }
         }
       }
-      last = std::move(line);
+      final_line = std::move(line);
     }
-    if (!start.is_object()) return verification_cost(bytes, records);
+    scan.complete = file.eof() && !file.bad();
+    if (scan.start.is_object()) {
+      try { scan.last = json::parse(final_line).at("time").get<md::Timestamp>(); }
+      catch (const std::exception&) { /* No time to estimate from: the estimate goes by size. */ }
+    }
+  } catch (const std::exception&) {
+    // An unreadable early record: the same file always reads so.
+    scan.malformed = true;
+    scan.complete = true;
+  }
+  return scan;
+}
+nlohmann::json verification_cost(const JournalScan& scan, const nlohmann::json& metadata) {
+  const auto bytes = scan.bytes;
+  const auto records = scan.records;
+  std::optional<VerificationInput> replay;
+  try {
+    if (scan.malformed || !scan.start.is_object() || !scan.last) return verification_cost(bytes, records);
+    const auto& start = scan.start;
     const auto& identity = start.at("input");
+    auto first = scan.first;
     // Older starts can have no account market time yet.
     if (first <= 0) first = identity.at("started").get<md::Timestamp>();
-    VerificationInput input{first, json::parse(last).at("time").get<md::Timestamp>(), {}, 3};
-    std::ifstream metadata(std::filesystem::path(journal).replace_extension(".json"));
-    const auto saved = metadata ? json::parse(metadata, nullptr, false) : json();
-    if (saved.is_object() && saved.contains("settled_through") && saved.at("settled_through").is_string()) {
-      if (const auto settled = md::parse_datetime(saved.at("settled_through").get<std::string>(), md::Zone::Utc))
+    VerificationInput input{first, *scan.last, {}, 3};
+    if (metadata.is_object() && metadata.contains("settled_through") && metadata.at("settled_through").is_string()) {
+      if (const auto settled = md::parse_datetime(metadata.at("settled_through").get<std::string>(), md::Zone::Utc))
         input.last = std::max(input.last, *settled);
     }
     if (identity.at("kind") == "scenario") {

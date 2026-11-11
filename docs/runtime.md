@@ -904,9 +904,16 @@ delete removes a finished journal. The existing repair and compaction commands
 include replay journals. `--no-paper` creates no replay journals; disabled write
 access allows history reads but refuses starts, controls and deletes.
 
-History listings cache each journal's result, P&L, plan, time and valuation
-completeness until its modified time or size changes. These summaries have no
-entry limit; opening full archives uses a separate cache of sixteen accounts.
+History listings cache each journal's result, P&L, plan, time, valuation
+completeness and integrity findings, and the record count its verification estimate
+reads, until its modified time or size changes. When writes are allowed the cache is
+also kept beside the journal, as `ID.jsonl.summary`, so after a restart a listing
+reads no unchanged journal again. A copy written by another build, for another size
+or modified time, or damaged is ignored and rebuilt from the journal, and recovery
+errors are never kept on disk. Deleting a run removes its summary. These summaries
+have no entry limit; opening full archives uses a separate cache of sixteen
+accounts. A listed run's `verification_cost` is the current estimate, the same as
+its `verification.cost`.
 
 Recording names must be plain file names inside the configured directory. Without
 an active replay, `/api/replay/X` returns `NO_REPLAY`; a file that cannot be read

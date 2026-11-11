@@ -10,6 +10,7 @@
 #include <map>
 #include <limits>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <system_error>
 #include <unistd.h>
 #include <utility>
@@ -606,7 +607,7 @@ class ReplayHost::History {
   void discard(const std::string& id) const {
     if (!writable_) return;
     std::error_code ignored;
-    for (const auto* suffix : {".jsonl", ".json", ".playbooks.json", ".jsonl.equity.csv"})
+    for (const auto* suffix : {".jsonl", ".json", ".playbooks.json", ".jsonl.equity.csv", ".jsonl.summary"})
       std::filesystem::remove(directory_ / (id + suffix), ignored);
   }
   std::shared_ptr<ArchivedReplay> open(const std::string& id) const {
@@ -620,7 +621,9 @@ class ReplayHost::History {
     const auto found = cache_.find(id);
     if (found != cache_.end() && found->second.modified == modified && found->second.bytes == bytes) return found->second.account;
     auto account = recover(path);
-    summaries_[id] = {modified, bytes, summarize_archive(*account)};
+    auto& known = remembered(id, modified, bytes);
+    known.value = summarize_archive(*account);
+    keep(id, known);
     if (cache_.size() >= 16) cache_.erase(cache_.begin());
     cache_[id] = {modified, bytes, account};
     return account;
@@ -642,14 +645,21 @@ class ReplayHost::History {
       bool resumable = current;  // a resume starts from the run's metadata
       try {
         if (current) finish(*active);
+        // The sidecar is read once; integrity and verification read none for an id
+        // that names no saved run.
+        json saved;
         {
           std::ifstream metadata(std::filesystem::path(file).replace_extension(".json"));
-          if (metadata) { item.update(json::parse(metadata)); resumable = true; }
+          if (metadata) { saved = json::parse(metadata); item.update(saved); resumable = true; }
           finalized = item.value("finished", false);
         }
+        if (!plain_name(id)) saved = nullptr;
         item.update(summary(id, file));
-        item.update(integrity(id, item));
-        item["verification"] = verification(id);
+        item.update(integrity(id, item, saved));
+        // The estimate as the journal and sidecar give it now, not as when it was summarised.
+        const auto estimate = cost(id, saved);
+        if (item.contains("verification_cost")) item["verification_cost"] = estimate;
+        item["verification"] = verification(id, saved, estimate);
       } catch (const std::filesystem::filesystem_error& error) {
         item["error"] = error.code().message();
       } catch (const std::exception& error) {
@@ -701,26 +711,46 @@ class ReplayHost::History {
   json stamp(const std::string& id) const {
     const auto file = journal(id);
     if (file.empty()) throw UnknownRun(id);
-    return {{"bytes", std::filesystem::file_size(file)},
-            {"modified", std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::filesystem::last_write_time(file).time_since_epoch()).count())}};
+    const auto bytes = std::filesystem::file_size(file);
+    return stamp_json(std::filesystem::last_write_time(file), bytes);
   }
   const std::string& verifying() const { return verifying_; }
   json verification(const std::string& id) const {
-    auto saved = metadata(id);
+    const auto saved = metadata(id);
+    return verification(id, saved, cost(id, saved));
+  }
+  /// `saved`: the run's sidecar as read; `estimate`: its verification cost.
+  json verification(const std::string& id, const json& saved, const json& estimate) const {
     auto value = verifying_ == id ? verification_ : saved.is_object() ? saved.value("verification", json::object()) : json::object();
     if (value.empty()) value = {{"status", "idle"}, {"message", "This run has not been verified"}};
-    if (value.at("status") == "idle") { value["cost"] = cost(id); return value; }
+    if (value.at("status") == "idle") { value["cost"] = estimate; return value; }
     if (!value.contains("stamp") || value.at("stamp") != stamp(id))
-      return {{"status", "idle"}, {"message", "Journal changed since verification; verify it again"}, {"cost", cost(id)}};
+      return {{"status", "idle"}, {"message", "Journal changed since verification; verify it again"}, {"cost", estimate}};
     if (value.value("status", "") == "running" && verifying_ != id)
-      return {{"status", "idle"}, {"message", "Verification was interrupted; verify it again"}, {"cost", cost(id)}};
+      return {{"status", "idle"}, {"message", "Verification was interrupted; verify it again"}, {"cost", estimate}};
     value.erase("stamp");
-    value["cost"] = cost(id);
+    value["cost"] = estimate;
     return value;
   }
-  json cost(const std::string& id) const {
-    return verification_cost(journal(id));
+  /// The run's verification estimate, from its sidecar as read and a scan of its journal
+  /// that is kept while the journal stays as it was.
+  json cost(const std::string& id, const json& saved) const {
+    const auto path = journal(id);
+    std::error_code ec;
+    const auto modified = path.empty() ? std::filesystem::file_time_type{} : std::filesystem::last_write_time(path, ec);
+    const auto bytes = path.empty() || ec ? 0 : std::filesystem::file_size(path, ec);
+    if (path.empty() || ec) return verification_cost(scan_journal(path), saved);
+    const std::lock_guard lock(cache_mutex_);
+    auto& known = remembered(id, modified, bytes);
+    if (!known.scan) {
+      auto scanned = scan_journal(path);
+      ++scans_;
+      // A file it could not read through is read again next time.
+      if (!scanned.complete) return verification_cost(scanned, saved);
+      known.scan = std::move(scanned);
+      keep(id, known);
+    }
+    return verification_cost(*known.scan, saved);
   }
   void begin_verification(const std::string& id, const json& fingerprint) {
     auto value = metadata(id);
@@ -749,11 +779,11 @@ class ReplayHost::History {
     verification_ = json::object();
     save(id, value);
   }
-  json integrity(const std::string& id, const json& found) const {
+  /// `saved`: the run's sidecar as read.
+  json integrity(const std::string& id, const json& found, const json& saved) const {
     json out = json::object();
     for (const auto* key : {"journal_found", "torn", "bytes_cut", "integrity_message"})
       if (found.contains(key)) out[key] = found.at(key);
-    const auto saved = metadata(id);
     if (saved.is_object() && saved.contains("journal")) {
       const auto& expected = saved.at("journal");
       out["journal"] = expected;
@@ -785,10 +815,12 @@ class ReplayHost::History {
   }
   json details(const std::string& id) const {
     const auto value = summary(id, journal(id));
-    auto out = integrity(id, value);
+    const auto saved = metadata(id);
+    auto out = integrity(id, value, saved);
     if (value.contains("journal_size")) out["journal_size"] = value.at("journal_size");
-    if (value.contains("verification_cost")) out["verification_cost"] = value.at("verification_cost");
-    out["verification"] = verification(id);
+    const auto estimate = cost(id, saved);
+    if (value.contains("verification_cost")) out["verification_cost"] = estimate;
+    out["verification"] = verification(id, saved, estimate);
     if (value.contains("error")) out["error"] = value.at("error");
     return out;
   }
@@ -800,7 +832,7 @@ class ReplayHost::History {
     // so an edited or torn journal is deleted too.
     trading::FileJournal::remove(file.string());
     std::error_code ec;
-    for (const char* sidecar : {".json", ".playbooks.json", ".jsonl.equity.csv"})
+    for (const char* sidecar : {".json", ".playbooks.json", ".jsonl.equity.csv", ".jsonl.summary"})
       std::filesystem::remove(directory_ / (id + sidecar), ec);
     const std::lock_guard lock(cache_mutex_);
     cache_.erase(id);
@@ -809,6 +841,10 @@ class ReplayHost::History {
   std::uint64_t recoveries() const {
     const std::lock_guard lock(cache_mutex_);
     return recoveries_;
+  }
+  std::uint64_t scans() const {
+    const std::lock_guard lock(cache_mutex_);
+    return scans_;
   }
  private:
   static json summarize(const std::shared_ptr<const TradingView>& view) {
@@ -838,8 +874,8 @@ class ReplayHost::History {
     const auto bytes = ec ? 0 : std::filesystem::file_size(path, ec);
     if (ec) throw UnknownRun(id);
     const std::lock_guard lock(cache_mutex_);
-    const auto found = summaries_.find(id);
-    if (found != summaries_.end() && found->second.modified == modified && found->second.bytes == bytes) return found->second.value;
+    auto& known = remembered(id, modified, bytes);
+    if (!known.value.is_null()) return known.value;
     json value;
     try {
       const auto cached = cache_.find(id);
@@ -848,7 +884,8 @@ class ReplayHost::History {
       value = summarize_archive(*account);
     } catch (const std::filesystem::filesystem_error& error) { value["error"] = error.code().message(); }
     catch (const std::exception& error) { value["error"] = error.what(); }
-    summaries_[id] = {modified, bytes, value};
+    known.value = value;
+    keep(id, known);
     return value;
   }
   struct Cached {
@@ -856,15 +893,95 @@ class ReplayHost::History {
     std::uintmax_t bytes;
     std::shared_ptr<ArchivedReplay> account;
   };
+  /// What a listing reads of one version of a saved run's journal (its modification
+  /// time and size), kept in memory and in <id>.jsonl.summary beside it, so that an
+  /// unchanged journal is neither recovered nor read through again, after a restart too.
   struct Summary {
     std::filesystem::file_time_type modified;
     std::uintmax_t bytes;
-    json value;
+    json value;  ///< What recovering it gave; null until it was recovered.
+    std::optional<JournalScan> scan;  ///< What its verification estimate reads; empty until read.
   };
+  static json stamp_json(std::filesystem::file_time_type modified, std::uintmax_t bytes) {
+    return {{"bytes", bytes}, {"modified", std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                modified.time_since_epoch()).count())}};
+  }
+  static json scan_json(const JournalScan& scanned) {
+    return {{"bytes", scanned.bytes}, {"records", scanned.records}, {"start", scanned.start}, {"first", scanned.first},
+            {"last", scanned.last ? json(*scanned.last) : json(nullptr)}, {"malformed", scanned.malformed}};
+  }
+  static JournalScan scan_from_json(const json& value) {
+    JournalScan scanned;
+    scanned.bytes = value.at("bytes").get<std::uint64_t>();
+    scanned.records = value.at("records").get<std::uint64_t>();
+    scanned.start = value.at("start");
+    scanned.first = value.at("first").get<md::Timestamp>();
+    if (!value.at("last").is_null()) scanned.last = value.at("last").get<md::Timestamp>();
+    scanned.malformed = value.at("malformed").get<bool>();
+    scanned.complete = true;
+    return scanned;
+  }
+  /// The kept entry for this version of a run's journal: from memory, else from its
+  /// <id>.jsonl.summary when this build kept it for this same version, else a new one.
+  /// Caller holds cache_mutex_.
+  Summary& remembered(const std::string& id, std::filesystem::file_time_type modified, std::uintmax_t bytes) const {
+    const auto found = summaries_.find(id);
+    if (found != summaries_.end() && found->second.modified == modified && found->second.bytes == bytes) return found->second;
+    Summary loaded{modified, bytes, nullptr, std::nullopt};
+    try {
+      std::ifstream file(directory_ / (id + ".jsonl.summary"));
+      const auto kept = file ? json::parse(file, nullptr, false) : json();
+      // Another build may summarise differently; another version of the journal is another run.
+      if (kept.is_object() && kept.value("build", "") == OPENPORT_VERSION && kept.contains("journal") &&
+          kept.at("journal") == stamp_json(modified, bytes)) {
+        if (kept.contains("summary") && kept.at("summary").is_object() && !kept.at("summary").contains("error"))
+          loaded.value = kept.at("summary");
+        if (kept.contains("scan") && kept.at("scan").is_object()) loaded.scan = scan_from_json(kept.at("scan"));
+      }
+    } catch (const std::exception&) {
+      // A damaged copy is read again from the journal.
+      loaded.value = nullptr;
+      loaded.scan.reset();
+    }
+    auto& slot = summaries_[id];
+    slot = std::move(loaded);
+    return slot;
+  }
+  /// Keeps what is known of this version of a run's journal beside it for a restart: a
+  /// summary that recovered it and a scan. Errors, which can pass, are found again.
+  void keep(const std::string& id, const Summary& known) const {
+    if (!writable_) return;
+    json value{{"build", OPENPORT_VERSION}, {"journal", stamp_json(known.modified, known.bytes)}};
+    if (known.value.is_object() && !known.value.contains("error")) value["summary"] = known.value;
+    if (known.scan) value["scan"] = scan_json(*known.scan);
+    if (!value.contains("summary") && !value.contains("scan")) return;
+    const auto file = directory_ / (id + ".jsonl.summary");
+    const auto staged = directory_ / (id + ".jsonl.summary.tmp");
+    std::error_code ignored;
+    try {
+      const auto data = value.dump();
+      trading::check_storage_space(file, data.size() + 1);
+      {
+        std::ofstream out(staged);
+        out << data << '\n';
+        out.close();
+        if (!out) {
+          std::filesystem::remove(staged, ignored);
+          return;
+        }
+      }
+      std::filesystem::rename(staged, file, ignored);
+      if (ignored) std::filesystem::remove(staged, ignored);
+    } catch (const std::exception&) {
+      // Only a restart's first listing reads the journal again.
+      std::filesystem::remove(staged, ignored);
+    }
+  }
   mutable std::mutex cache_mutex_;
   mutable std::map<std::string, Cached> cache_;
   mutable std::map<std::string, Summary> summaries_;
   mutable std::uint64_t recoveries_ = 0;
+  mutable std::uint64_t scans_ = 0;
   std::filesystem::path directory_;
   bool writable_;
   std::string verifying_;  // handoff_mutex_ protects verification and sidecar writes
@@ -977,6 +1094,7 @@ void ReplayHost::work() {
 }
 
 std::uint64_t ReplayHost::history_recoveries() const { return history_->recoveries(); }
+std::uint64_t ReplayHost::history_scans() const { return history_->scans(); }
 
 std::shared_ptr<ReplayHost::Session> ReplayHost::current() const {
   const std::lock_guard lock(mutex_);
