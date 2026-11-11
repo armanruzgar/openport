@@ -2,6 +2,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
+#include <string>
+#include <utility>
+#include <vector>
+
 namespace {
 using namespace openport;
 using server::HedgeBook;
@@ -88,31 +93,76 @@ TEST(Hedges, GridHedgesLiftTheWorstCellAboveTheFloorAfterSpreadCost) {
   EXPECT_EQ(server::smallest_hedge({{-1, 1, -1}}, 10), 1);
 }
 
+/// SPY calls at 490 to 510, each quoted 4.00 / 4.10, in an expiry `years` out whose
+/// parity forward is `forward`. The expiries are counted from 2026-09-22.
+analytics::SliceMetrics call_slice(const char* expiry, double years, double forward) {
+  analytics::SliceMetrics s;
+  s.years = years;
+  s.forward.forward = forward;
+  s.forward.ok = true;
+  for (int k = 490; k <= 510; k += 5) {
+    analytics::StrikeMetrics row;
+    row.strike = k;
+    char symbol[32];
+    std::snprintf(symbol, sizeof symbol, "SPY%sC%08d", expiry, k * 1000);
+    row.call.contract = *md::parse_osi(symbol);
+    row.call.id = static_cast<md::InstrumentId>(k);
+    row.call.bid = 4;
+    row.call.ask = 4.1;
+    s.strikes.push_back(row);
+  }
+  return s;
+}
+
+/// The call atm_option picks among `slices`, or "none".
+std::string atm_call(std::vector<analytics::SliceMetrics> slices, double spot = analytics::kNaN) {
+  analytics::UnderlyingMetrics metrics;
+  metrics.symbol = "SPY";
+  metrics.spot = spot;
+  metrics.slices = std::move(slices);
+  const auto* option = server::atm_option(metrics, pricing::OptionType::Call);
+  return option ? option->contract.osi_symbol() : "none";
+}
+
 TEST(Hedges, AtTheMoneyMeansNearestThirtyDaysAndTheForward) {
   analytics::UnderlyingMetrics metrics;
   metrics.symbol = "SPY";
-  const auto slice = [](const char* expiry, double years, double forward) {
-    analytics::SliceMetrics s;
-    s.years = years;
-    s.forward.forward = forward;
-    s.forward.ok = true;
-    for (int k = 490; k <= 510; k += 5) {
-      analytics::StrikeMetrics row;
-      row.strike = k;
-      char symbol[32];
-      std::snprintf(symbol, sizeof symbol, "SPY%sC%08d", expiry, k * 1000);
-      row.call.contract = *md::parse_osi(symbol);
-      row.call.id = static_cast<md::InstrumentId>(k);
-      row.call.bid = 4;
-      row.call.ask = 4.1;
-      s.strikes.push_back(row);
-    }
-    return s;
-  };
-  metrics.slices = {slice("261002", 10 / 365.0, 500), slice("261023", 31 / 365.0, 502), slice("261120", 59 / 365.0, 504)};
+  metrics.slices = {call_slice("261002", 10 / 365.0, 500), call_slice("261023", 31 / 365.0, 502),
+                    call_slice("261120", 59 / 365.0, 504)};
   const auto* option = server::atm_option(metrics, pricing::OptionType::Call);
   ASSERT_NE(option, nullptr);
   EXPECT_EQ(option->contract.osi_symbol(), "SPY   261023C00500000");
   EXPECT_EQ(server::atm_option(metrics, pricing::OptionType::Put), nullptr);
+}
+
+// A hedge never trades an expiry a day or less away, even the one nearest 30 days, nor
+// a strike without a tradable two-sided quote: the next nearest stands in for it.
+TEST(Hedges, AtTheMoneySkipsExpiriesADayOrLessAwayAndStrikesWithoutATradableQuote) {
+  const auto half_day = call_slice("260922", 0.5 / 365, 500);
+  EXPECT_EQ(atm_call({half_day}), "none");
+  // 29.5 days from 30 against 57: only the skip makes the later expiry the hedge.
+  EXPECT_EQ(atm_call({half_day, call_slice("261218", 87 / 365.0, 500)}), "SPY   261218C00500000");
+  // The 502 forward is nearest 500, then 505.
+  auto unquoted = call_slice("261023", 31 / 365.0, 502);
+  unquoted.strikes[2].call.bid = 0;
+  EXPECT_EQ(atm_call({unquoted}), "SPY   261023C00505000");
+  auto crossed = call_slice("261023", 31 / 365.0, 502);
+  crossed.strikes[2].call.bid = 4.2;  // above its 4.10 ask
+  EXPECT_EQ(atm_call({crossed}), "SPY   261023C00505000");
+}
+
+// Without a parity forward the spot is the money, and without either there is none.
+// Of two expiries equally far from 30 days, the one with a strike nearer its money wins,
+// and on a full tie the first listed: the nearer expiry, as analytics lists them.
+TEST(Hedges, AtTheMoneyFallsBackToTheSpotAndBreaksTiesOnTheNearerStrike) {
+  auto no_forward = call_slice("261023", 31 / 365.0, 500);  // a stale forward it must not use
+  no_forward.forward.ok = false;
+  EXPECT_EQ(atm_call({no_forward}), "none");
+  EXPECT_EQ(atm_call({no_forward}, 506), "SPY   261023C00505000");
+  // 10 and 50 days: years * 365 rounds back to each exactly, so both are 20 from 30.
+  EXPECT_EQ(atm_call({call_slice("261002", 10 / 365.0, 502), call_slice("261111", 50 / 365.0, 500)}),
+            "SPY   261111C00500000");
+  EXPECT_EQ(atm_call({call_slice("261002", 10 / 365.0, 500), call_slice("261111", 50 / 365.0, 500)}),
+            "SPY   261002C00500000");
 }
 }  // namespace
