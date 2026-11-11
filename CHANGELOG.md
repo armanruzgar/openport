@@ -558,6 +558,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   only unreadable ones are skipped. Before its first rewrite, a file that was not read
   in full is kept as it was beside it, as `earnings.json.unread-TIME`, and the error
   then names that copy; a successful save otherwise clears the error.
+- **Demo replays no longer use a guessable temporary directory.** The Replay page's
+  demo days went to `$TMPDIR/openport-demo-PID-N`, N counting up from 1. Another local
+  user who created those names first made `GET /api/replay` and demo starts fail with
+  `REPLAY_FAILED` once per name in a shared, sticky `/tmp`, or had openportd reuse a
+  directory it did not make. The directory is now made by `mkdtemp`, with a random
+  name, exclusively and owner-only, as the demo feed's already was.
 
 ## 0.5.1 (2026-10-28)
 

@@ -13,6 +13,7 @@
 #include <set>
 #include <tuple>
 #include <nlohmann/json.hpp>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "openport/providers/replay.hpp"
@@ -309,6 +310,39 @@ TEST(ReplayHost, PreparesTheDemoWhenListedAndRemovesItsDaysWithTheHost) {
     }));
   }
   EXPECT_TRUE(demo_directories().empty());
+}
+
+// The demo's days went to openport-demo-PID-N, N a process-wide counter: a name another
+// local user could create first, which openportd then deleted (or, in a sticky /tmp,
+// failed to, refusing the replay) or reused. mkdtemp makes an unguessable one instead.
+TEST(ReplayHost, DemoDaysGoToAFreshPrivateDirectoryNeverAGuessableOne) {
+  test::RecordingFile file;
+  struct Planted {
+    std::vector<std::filesystem::path> paths;
+    ~Planted() { for (const auto& path : paths) { std::error_code ignored; std::filesystem::remove_all(path, ignored); } }
+  } planted;
+  for (int n = 1; n <= 20; ++n) {
+    const auto path = std::filesystem::temp_directory_path() / ("openport-demo-" + std::to_string(::getpid()) + "-" + std::to_string(n));
+    std::filesystem::create_directories(path);
+    std::ofstream(path / "planted") << "another user's";
+    planted.paths.push_back(path);
+  }
+  {
+    server::ReplayHost host({file.directory, {}});
+    ASSERT_EQ(call(host, "GET", "/api/replay").status, 200);
+    std::filesystem::path generated;
+    ASSERT_TRUE(test::recording_eventually([&] {
+      std::error_code ec;
+      for (const auto& directory : demo_directories())
+        if (std::find(planted.paths.begin(), planted.paths.end(), directory) == planted.paths.end() &&
+            std::filesystem::exists(directory / "1.oprec", ec)) generated = directory;
+      return !generated.empty();
+    }));
+    struct stat info {};
+    ASSERT_EQ(::stat(generated.c_str(), &info), 0);
+    EXPECT_EQ(static_cast<unsigned>(info.st_mode) & 0777u, 0700u);
+  }
+  for (const auto& path : planted.paths) EXPECT_TRUE(std::filesystem::exists(path / "planted")) << path;
 }
 
 TEST(ReplayHost, PlaysTheSimulatedDemoMarketWithItsOwnAccount) {

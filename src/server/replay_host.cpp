@@ -5,8 +5,11 @@
 #include <atomic>
 #include <future>
 #include <fstream>
+#include <cerrno>
 #include <charconv>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <random>
 #include <map>
 #include <limits>
@@ -302,13 +305,14 @@ class ReplayHost::DemoRecordings {
     const std::lock_guard lock(mutex_);
     if (const auto it = days_.find(key); it != days_.end()) return it->second;
     if (directory_.empty()) {
-      static std::atomic<unsigned> count{0};
-      auto directory = std::filesystem::temp_directory_path() /
-                       ("openport-demo-" + std::to_string(::getpid()) + "-" + std::to_string(++count));
-      std::filesystem::remove_all(directory);
-      std::filesystem::create_directory(directory);
-      std::filesystem::permissions(directory, std::filesystem::perms::owner_all);
-      directory_ = std::move(directory);
+      // A fresh name, created exclusively and owner-only: another local user can neither
+      // guess it in advance nor plant it. The process id lets a later start remove it
+      // after a SIGKILL.
+      auto pattern = (std::filesystem::temp_directory_path() /
+                      ("openport-demo-" + std::to_string(::getpid()) + "-XXXXXX")).string();
+      const auto* created = ::mkdtemp(pattern.data());
+      if (!created) throw std::runtime_error("demo: cannot create private recording directory: " + std::string(std::strerror(errno)));
+      directory_ = created;
     }
     // Each attempt writes its own file, so a retry never meets a failed one's.
     const unsigned number = ++attempts_;
