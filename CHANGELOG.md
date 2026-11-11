@@ -687,6 +687,19 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `sudo openportd`, or mode 000) was taken for an empty one and replaced with a new
   random token, breaking every saved link, script and MCP configuration; openportd
   now refuses to start and says why.
+- **One far-future minute no longer wipes an underlying's chart history.** The chart
+  store pruned minutes against the newest it had, so one quote or vendor bar stamped
+  days ahead (a millisecond time read as seconds) erased every real minute before it,
+  in memory and on disk at the next start, and later minutes were no longer saved. On
+  a live feed a minute starting more than five minutes past the system clock is now
+  ignored, read back from disk included, so a file left with one heals at the next
+  start. Demo and replay time can run ahead of the clock and is not bounded.
+- **A container no longer keeps a killed run's demo days.** The startup sweep of
+  orphaned demo feed directories kept any named for the starting process's own PID.
+  In the image openportd is PID 1 at every start, so each hard kill (an OOM, a stop
+  past the grace period) of a container restarted by its restart policy left another
+  160-190 MB directory in its writable layer. At startup, before the feed makes its
+  own, directories named for that PID are now removed too.
 
 ## 0.5.1 (2026-10-28)
 

@@ -758,7 +758,9 @@ int run(int argc, char** argv) {
     settings.fallback.api_key = env_key_for(settings.fallback.name);
   }
   // A SIGKILLed run leaves its generated days behind; nothing else would remove them.
-  providers::remove_orphaned_demo_directories();
+  // The provider has not made this run's yet, so those named for this PID (a container's
+  // openportd is always PID 1) are an earlier run's too.
+  providers::remove_orphaned_demo_directories(providers::OwnDirectories::Orphaned);
   auto provider = settings.fallback.name.empty()
       ? providers::make_provider(settings.provider)
       : providers::make_failover_provider(settings.provider, settings.fallback,
@@ -772,6 +774,8 @@ int run(int argc, char** argv) {
   }
 
   server::CandleStore::Options candle_options;
+  // A live feed's minutes are bounded by the wall clock; demo and replay time runs ahead.
+  if (!offline) candle_options.clock = md::now;
   if (settings.candle_dir)
     candle_options.directory = *settings.candle_dir;
   else if (const auto* home = std::getenv("HOME"); home && !offline)
