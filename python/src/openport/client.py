@@ -271,15 +271,19 @@ class Client:
     def portfolio(self) -> Portfolio:
         return self._request("GET", "/portfolio", scoped=True)
 
-    def orders(self, status: str = "all", client_order_id: str | None = None) -> Orders:
-        """Orders, newest first; client_order_id finds the order(s) that used that ID, one per attempt."""
-        return self._request("GET", "/orders", scoped=True, params={"status": status, "client_order_id": client_order_id})
+    def orders(self, status: str = "all", client_order_id: str | None = None, *,
+               start: str | None = None, end: str | None = None) -> Orders:
+        """Orders, newest first; client_order_id finds the order(s) that used that ID, one per attempt.
+        start and end (a New York date or a UTC instant, inclusive) keep the orders accepted within them."""
+        return self._request("GET", "/orders", scoped=True,
+                             params={"status": status, "client_order_id": client_order_id, "from": start, "to": end})
 
     def get_order(self, order_id: str) -> OrderResult:
         return self._request("GET", "/orders/" + quote(str(order_id), safe=""), scoped=True)
 
-    def fills(self) -> Fills:
-        return self._request("GET", "/fills", scoped=True)
+    def fills(self, start: str | None = None, end: str | None = None) -> Fills:
+        """Fills, newest first; start and end (a New York date or a UTC instant, inclusive) bound their time."""
+        return self._request("GET", "/fills", scoped=True, params={"from": start, "to": end})
 
     def fill_quality(self, attempt: str = "current") -> FillQuality:
         """Paper fills by place on their book (mid, mid plus a tick, natural) by time of day, spread and DTE."""
@@ -296,8 +300,13 @@ class Client:
         """Settlement references and provenance, newest first across attempts."""
         return self._request("GET", "/settlements", scoped=True)
 
-    def trades(self, status: str = "all", attempt: str = "current") -> Trades:
-        return self._request("GET", "/trades", scoped=True, params={"status": status, "attempt": attempt})
+    def trades(self, status: str = "all", attempt: str = "current", *,
+               start: str | None = None, end: str | None = None) -> Trades:
+        """Round trips, newest first; start and end (a New York date or a UTC instant, inclusive) keep
+        those closed within them or opened within them while open, with the share fills, dividends and
+        day notes within them."""
+        return self._request("GET", "/trades", scoped=True,
+                             params={"status": status, "attempt": attempt, "from": start, "to": end})
 
     def risk(self, dynamics: str | None = None) -> Risk:
         """Limits, Greeks and the spot x vol grid; dynamics ("sticky_moneyness" or "sticky_delta")

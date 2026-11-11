@@ -2441,6 +2441,28 @@ TEST_F(PaperEngine, PaperReadsNameTheFaultyParameterAndShareTheirTimeBounds) {
   EXPECT_EQ(rows("/api/fills.csv?to=" + today), 1U);
   EXPECT_EQ(rows("/api/fills.csv?from=" + tomorrow), 0U);
   EXPECT_EQ(rows("/api/trades.csv?from=" + today + "&to=" + instant), 1U);
+  // Orders by when they were accepted; round trips as the trades CSV keeps them (an
+  // open one by its open), with the share fills, dividends and day notes in the bounds.
+  const auto orders = read(*engine, "/api/orders")["orders"];
+  ASSERT_FALSE(orders.empty());
+  EXPECT_EQ(read(*engine, "/api/orders?from=" + today + "&to=" + today)["orders"].size(), orders.size());
+  EXPECT_TRUE(read(*engine, "/api/orders?from=" + tomorrow)["orders"].empty());
+  EXPECT_TRUE(read(*engine, "/api/orders?status=all&to=" + md::format_timestamp(market.time - 1))["orders"].empty());
+  ASSERT_EQ(write(*engine, "PUT", "/api/days/" + today + "/note", {{"plan", "Sell premium"}, {"review", ""}}).status, 200);
+  const auto trades = read(*engine, "/api/trades");
+  ASSERT_EQ(trades["trades"].size(), 1U);
+  ASSERT_TRUE(trades["day_notes"].contains(today));
+  const auto bounded_trades = read(*engine, "/api/trades?from=" + instant + "&to=" + today);
+  EXPECT_EQ(bounded_trades["trades"].size(), 1U);
+  EXPECT_TRUE(bounded_trades["day_notes"].contains(today));
+  const auto later = read(*engine, "/api/trades?from=" + tomorrow);
+  EXPECT_TRUE(later["trades"].empty());
+  EXPECT_TRUE(later["groups"].empty());
+  EXPECT_TRUE(later["share_trades"].empty());
+  EXPECT_TRUE(later["day_notes"].empty());
+  EXPECT_TRUE(read(*engine, "/api/trades?to=" + md::format_timestamp(market.time - 1))["trades"].empty());
+  EXPECT_EQ(message("/api/trades?from=2026-02-30"), "from must be a New York date (YYYY-MM-DD) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ)");
+  EXPECT_EQ(message("/api/orders?from=" + tomorrow + "&to=" + today), "from must not be after to");
 }
 
 TEST(PaperAvailability, DisabledFailedJournalFullInboxAndStoppingFailClosed) {

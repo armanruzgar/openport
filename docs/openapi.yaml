@@ -903,7 +903,7 @@
       ],
       "get": {
         "summary": "GET /api/orders",
-        "description": "Read the current publication: every order, newest first. status=open keeps the open ones; client_order_id=ID keeps the orders that used that client ID (one per attempt that used it, since a reuse with other terms records nothing).",
+        "description": "Read the current publication: every order, newest first. status=open keeps the open ones; client_order_id=ID keeps the orders that used that client ID (one per attempt that used it, since a reuse with other terms records nothing). from and to keep the orders accepted within them.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -940,6 +940,24 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 128
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive lower bound on when an order was accepted: a New York date (YYYY-MM-DD, from its first instant) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive upper bound on when an order was accepted: a New York date (YYYY-MM-DD, through its last instant) or a UTC instant.",
+            "schema": {
+              "type": "string"
             }
           }
         ]
@@ -1076,11 +1094,29 @@
               "all"
             ]
           }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive lower bound on a round trip's or whole trade's close, or its open while it is open; share fills and dividends by their time, day notes by their New York day: a New York date (YYYY-MM-DD, from its first instant) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive upper bound, read as from is: a New York date (YYYY-MM-DD, through its last instant) or a UTC instant.",
+          "schema": {
+            "type": "string"
+          }
         }
       ],
       "get": {
         "summary": "GET /api/trades",
-        "description": "Read the current publication.",
+        "description": "Read the current publication. from and to keep the round trips and whole trades closed within them, or opened within them while still open, the share fills and dividends recorded within them, and the notes of the New York days they cover.",
         "x-scope": "read",
         "responses": {
           "200": {
@@ -3190,6 +3226,24 @@
         },
         {
           "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive lower bound on when an order was accepted: a New York date (YYYY-MM-DD, from its first instant) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive upper bound on when an order was accepted: a New York date (YYYY-MM-DD, through its last instant) or a UTC instant.",
+          "schema": {
+            "type": "string"
+          }
         }
       ],
       "get": {
@@ -3277,6 +3331,24 @@
         },
         {
           "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive lower bound on the fill time: a New York date (YYYY-MM-DD, from its first instant) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive upper bound on the fill time: a New York date (YYYY-MM-DD, through its last instant) or a UTC instant.",
+          "schema": {
+            "type": "string"
+          }
         }
       ],
       "get": {
@@ -3337,6 +3409,24 @@
               "current",
               "all"
             ]
+          }
+        },
+        {
+          "name": "from",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive lower bound on a round trip's or whole trade's close, or its open while it is open; share fills and dividends by their time, day notes by their New York day: a New York date (YYYY-MM-DD, from its first instant) or a UTC instant (YYYY-MM-DDTHH:MM:SSZ).",
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "to",
+          "in": "query",
+          "required": false,
+          "description": "Inclusive upper bound, read as from is: a New York date (YYYY-MM-DD, through its last instant) or a UTC instant.",
+          "schema": {
+            "type": "string"
           }
         }
       ],

@@ -1198,9 +1198,13 @@ json run_json(const std::optional<RunIdentity>& run) {
   return {{"id", nullable(run->id)}, {"scenario", nullable(run->scenario)}, {"seed", nullable(run->seed)},
           {"recording", nullable(run->recording)}, {"date", nullable(run->date)}};
 }
-json trades_json(const TradingView& view, std::string_view status, bool current_only) {
+json trades_json(const TradingView& view, std::string_view status, bool current_only,
+                 std::optional<Timestamp> since = {}, std::optional<Timestamp> until = {}) {
   const auto& s = *view.snapshot;
   const auto& e = s.evaluation;
+  // from and to: a round trip or whole trade by its close, or its open while it is
+  // open, as the trades CSV keeps its rows; share fills and dividends by their time.
+  const auto within = [&](Timestamp time) { return (!since || time >= *since) && (!until || time <= *until); };
   std::map<std::pair<std::string, Timestamp>, const SettlementRecord*> settlements;
   for (const auto& record : s.settlements) settlements[{record.contract.osi_symbol(), record.time}] = &record;
   const auto all = lifecycles(s.recent_fills, s.closures, view.contracts);
@@ -1228,6 +1232,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
     const auto& t = *it;
     const bool open = !t.closed;
     if ((status == "open" && !open) || (status == "closed" && open)) continue;
+    if (!within(t.closed.value_or(t.opened))) continue;
     const auto attempt = fill_attempt(s, t.first_fill);
     if (current_only && attempt != e.attempt) continue;
     const auto& c = t.contract;
@@ -1338,6 +1343,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
         if (p.position.contract.osi_symbol() == t->symbol) part = p.unrealised;
       unrealised = part ? std::optional(*unrealised + *part) : std::nullopt;
     }
+    if (!within(open ? first.opened : closed)) continue;
     const Money net = gross - fees;
     const auto review = s.group_reviews.find(id);
     const auto peak = peak_buying_power(whole->members);
@@ -1370,6 +1376,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
     const auto& t = *it;
     const bool open = !t.closed;
     if ((status == "open" && !open) || (status == "closed" && open)) continue;
+    if (!within(t.closed.value_or(t.opened))) continue;
     const auto attempt = attempt_at(t.opened);
     if (current_only && attempt != e.attempt) continue;
     json mark = nullptr, unrealised = nullptr;
@@ -1408,13 +1415,22 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
   }
   // Every change in shares and every dividend, oldest first, for the terminal's alerts.
   json stock_fills = json::array();
-  for (const auto& fill : s.stock_fills) stock_fills.push_back(stock_fill_json(fill));
+  for (const auto& fill : s.stock_fills)
+    if (within(fill.time)) stock_fills.push_back(stock_fill_json(fill));
   json dividends = json::array();
   for (const auto& d : s.dividends)
-    dividends.push_back({{"symbol", d.symbol}, {"ex_date", md::format_date(d.ex_date)}, {"per_share", d.per_share.str()},
+    if (within(d.time)) dividends.push_back({{"symbol", d.symbol}, {"ex_date", md::format_date(d.ex_date)}, {"per_share", d.per_share.str()},
         {"shares", d.shares}, {"amount", d.amount.str()}, {"time", md::format_timestamp(d.time)}});
+  // Day notes by their New York day, as a date bound reads.
+  auto day_notes = day_notes_json(s);
+  const auto first_day = since ? md::format_date(md::new_york_time(*since).date) : std::string{};
+  const auto last_day = until ? md::format_date(md::new_york_time(*until).date) : std::string{};
+  for (auto note = day_notes.begin(); note != day_notes.end();) {
+    if ((since && note.key() < first_day) || (until && note.key() > last_day)) note = day_notes.erase(note);
+    else ++note;
+  }
   return {{"account_version", std::to_string(s.account_version)}, {"attempt", e.attempt}, {"trades", trades},
-          {"groups", groups}, {"share_trades", share_trades}, {"stock_fills", stock_fills}, {"dividends", dividends}, {"day_notes", day_notes_json(s)},
+          {"groups", groups}, {"share_trades", share_trades}, {"stock_fills", stock_fills}, {"dividends", dividends}, {"day_notes", day_notes},
           {"run", run_json(view.run)}};
 }
 json unlocks_json(const PlanPreset& plan) {
@@ -4180,8 +4196,9 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   // trades take status=open|closed|all and attempt=current|all. Each key at most once.
   const auto pairs = query_parameters(query);
   const bool csv = path == "/api/trades.csv" || path == "/api/fills.csv";
-  // Fills, the equity history and the CSV exports take from and to (query_bound).
-  const bool bounded = csv || path == "/api/account/equity" || path == "/api/fills";
+  // Fills, orders, trades, the equity history and the CSV exports take from and to
+  // (query_bound): long-lived accounts need not read their whole history at once.
+  const bool bounded = csv || path == "/api/account/equity" || path == "/api/fills" || path == "/api/orders" || path == "/api/trades";
   std::string account = request.access.sandbox, status = "all", attempt = csv ? "all" : "current";
   std::optional<std::string> client_order_id;
   std::optional<Timestamp> since, until;
@@ -4317,7 +4334,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
     return ApiResponse{200, risk_json(*view, &grid, dynamics).dump()};
   }
   if (path == "/api/account") return ApiResponse{200, account_json(*view).dump()};
-  if (path == "/api/trades") return ApiResponse{200, trades_json(*view, status, attempt == "current").dump()};
+  if (path == "/api/trades") return ApiResponse{200, trades_json(*view, status, attempt == "current", since, until).dump()};
   if (path == "/api/fills/quality") return ApiResponse{200, fill_quality_json(*view, attempt == "current").dump()};
   if (path == "/api/alerts") {
     json alerts = json::array();
@@ -4364,8 +4381,10 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
   json body{{"account_version", std::to_string(s.account_version)}};
   if (path == "/api/orders") {
     body["orders"] = json::array();
+    // from and to bound when each order was accepted.
     for (auto it = s.recent_orders.rbegin(); it != s.recent_orders.rend(); ++it)
-      if ((status != "open" || it->open()) && (!client_order_id || it->request.client_order_id == *client_order_id))
+      if ((status != "open" || it->open()) && (!client_order_id || it->request.client_order_id == *client_order_id) &&
+          (!since || it->accepted_at >= *since) && (!until || it->accepted_at <= *until))
         body["orders"].push_back(order_json(*it, *view));
   } else {
     body["fills"] = json::array();

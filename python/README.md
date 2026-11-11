@@ -224,7 +224,11 @@ restarting; the response contains names, count and load time, never secrets.
 
 `client.equity(start, end, limit=2000, cursor=page["next"])` optionally pages
 history; omit limit for the full range. Continue with the same filters until
-`next` is null. Live, replay and history clients use the same method. Responses
+`next` is null. Live, replay and history clients use the same method.
+`client.orders(start=..., end=...)`, `client.fills(start, end)` and
+`client.trades(start=..., end=...)` take the same inclusive bounds (a New York date
+or a UTC instant): orders by when they were accepted, fills by their time, round
+trips by their close (or their open while open). Responses
 keep `error` as string/null and add failure wall/market timestamps and
 `error_recovered`. `account()` and account listings expose a nullable `damaged`
 object with the last verified sequence/time and recovery instructions; a damaged

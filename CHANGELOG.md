@@ -146,7 +146,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   or invalid query parameter"; the message now names the parameter and what it takes.
   `from` and `to` were read differently per route: the equity history took only a UTC
   instant and the CSV exports only a New York date. Both now take either (a date is the
-  whole New York day, inclusive), and `GET /api/fills` takes them too.
+  whole New York day, inclusive), and `GET /api/fills`, `/api/orders` and `/api/trades`
+  take them too, so a long-lived account need not read its whole history at once:
+  orders by when they were accepted, round trips as the trades CSV keeps them.
 - **Blank and duplicate account names.** `POST /api/accounts` and
   `PATCH /api/accounts/{id}` accepted a name of only spaces or invisible characters (a
   zero-width space), and one equal to another account's, `Main` included, so the

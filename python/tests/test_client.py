@@ -509,6 +509,18 @@ def test_sandbox_token_omits_account_by_default(stub):
     assert stub.requests[-1][1] == "/api/orders/cancel"
 
 
+def test_history_reads_pass_their_time_bounds(stub):
+    client = Client(stub.url, "secret")
+    for read, path in [(client.orders, "/api/orders"), (client.fills, "/api/fills"), (client.trades, "/api/trades")]:
+        read(start="2026-09-22", end="2026-09-23T14:30:00Z")
+        url = urlsplit(stub.requests[-1][1])
+        assert url.path == path
+        query = parse_qs(url.query)
+        assert query["from"] == ["2026-09-22"] and query["to"] == ["2026-09-23T14:30:00Z"]
+        read()
+        assert "from" not in parse_qs(urlsplit(stub.requests[-1][1]).query)
+
+
 def test_cancel_all_names_its_share_orders_and_flatten_does_not():
     schemas = SPEC["components"]["schemas"]
     assert set(get_type_hints(CancelAllResult)) == set(schemas["CancelAllResponse"]["properties"])
