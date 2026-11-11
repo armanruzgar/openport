@@ -831,6 +831,26 @@ TEST(TradingJournal, LockedJournalIsRejectedBeforeReadingOrRepairingItsContents)
   }
   EXPECT_EQ(file.read(), "invalid journal contents\n");
 }
+TEST(TradingJournal, CreateRefusesAJournalThatExistsWhenNobodyHoldsIt) {
+  TemporaryJournal file;
+  {
+    const auto journal = FileJournal::create(file.path);
+    journal->append(1, "first", "{}");
+  }
+  const auto before = file.read();
+  // No writer holds its lock now, so only the exclusive create stops a new chain,
+  // sequence 1 after the genesis hash, from being appended after the old one.
+  try {
+    const auto again = FileJournal::create(file.path);
+    ADD_FAILURE() << "create opened an existing journal";
+  } catch (const TradingError& error) {
+    EXPECT_EQ(error.code(), Reason::JOURNAL_IO);
+    EXPECT_STREQ(error.what(), "Cannot create journal: file already exists");
+  }
+  EXPECT_EQ(file.read(), before);
+  EXPECT_EQ(FileJournal::read(file.path).records.size(), 1U);
+  EXPECT_EQ(FileJournal::resume(file.path)->sequence(), 1U);
+}
 TEST(TradingJournal, LowDiskNamesFilesystemFreeBytesAndReserveWithoutAPath) {
   TemporaryJournal file;
   FileJournal::Options options;
