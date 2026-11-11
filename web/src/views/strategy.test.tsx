@@ -76,22 +76,28 @@ describe("strategy ticket", () => {
     expect(render(ticket(1), decided, [], [])).toMatch(/aria-label="Submit strategy order"[^>]*disabled=""/)
   })
   it("leaves buying power to the server for portfolio margin or slippage", () => {
-    for (const optional of [{ margin: "portfolio" as const }, { slippage_ticks: 2 }]) {
+    for (const optional of [{}, { margin: "portfolio" as const }, { slippage_ticks: 2 }]) {
+      // No buying power left: only the server's preview and checks may hold the order back.
       const custom = { ...any, rules: { ...any.rules, ...optional }, buying_power: { ...any.buying_power, available: "0" } }
       const html = render(<StrategyTicket legs={spread} onLegs={() => {}} expiries={[expiry]} underlying="SPX" spot={7000} trading={trading} onClose={() => {}} />, custom)
       expect(html).toContain("Simulated order preview")
-      expect(html).not.toContain("−$901.30")
-      expect(html).not.toContain("the server will reject it")
-      if (optional.slippage_ticks) expect(html).toContain("the server preview includes it")
+      expect(html).toMatch(/aria-label="Submit strategy order">/)
+      expect(html.includes("the server preview includes it")).toBe("slippage_ticks" in optional)
     }
   })
   it("labels net prices as estimates under latency and simulated size impact", () => {
-    const custom = { ...any, rules: { ...any.rules, fill_latency_ms: 1000, impact_ticks: 1 } }
-    const html = render(<StrategyTicket legs={spread} onLegs={() => {}} expiries={[expiry]} underlying="SPX" spot={7000} trading={trading} onClose={() => {}} />, custom)
-    expect(html).toContain("each leg’s size impact")
-    expect(html).toContain("all legs still fill together within the net limit")
-    expect(html).toContain("cannot predict the later quote")
-    expect(html).not.toContain("fills now")
+    // Legs without a spread: the default limit, the mid, is marketable, so plain rules promise a fill now.
+    const crossing = [put(6900, "sell", 5, 5), put(6890, "buy", 4, 4)]
+    const ticket = <StrategyTicket legs={crossing} onLegs={() => {}} expiries={[expiry]} underlying="SPX" spot={7000} trading={trading} onClose={() => {}} />
+    expect(render(ticket, any)).toContain("Marketable: fills now at $1.00 credit per unit")
+    for (const optional of [{ fill_latency_ms: 1000 }, { impact_ticks: 1 }, { fill_latency_ms: 1000, impact_ticks: 1 }]) {
+      const html = render(ticket, { ...any, rules: { ...any.rules, ...optional } })
+      expect(html).toContain("Displayed net prices are estimates")
+      expect(html).toContain("each leg’s size impact")
+      expect(html).toContain("all legs still fill together within the net limit")
+      expect(html).toContain("cannot predict the later quote")
+      expect(html).not.toContain("fills now")
+    }
   })
   it("prices the legs net, shows the expiry risk and places one order", () => {
     const html = render(<StrategyTicket legs={spread} onLegs={() => {}} expiries={[expiry]} underlying="SPX" spot={7000} trading={trading} onClose={() => {}} />, any)

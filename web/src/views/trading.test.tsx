@@ -54,15 +54,15 @@ describe("paper trading fixtures", () => {
     expect(html).toContain("$99,000.00")
   })
   it("leaves buying power to the server for portfolio margin or slippage", () => {
-    for (const optional of [{ margin: "portfolio" as const }, { slippage_ticks: 2 }]) {
+    for (const optional of [{}, { margin: "portfolio" as const }, { slippage_ticks: 2 }]) {
+      // No buying power left: only the server's preview and checks may hold the order back.
       const html = render(<OrderTicket selection={selection} quote={quote} trading={trading} onClose={() => {}} />, (client) => {
         client.setQueryData(tradingQueries(0, "17", true).account.queryKey,
           { ...account, rules: { ...account.rules, ...optional }, buying_power: { ...account.buying_power, available: "0" } })
       })
       expect(html).toContain("Simulated order preview")
-      expect(html).not.toContain("Buying power effect")
-      expect(html).not.toContain("the server will reject it")
-      if (optional.slippage_ticks) expect(html).toContain("the server preview includes it")
+      expect(html).toMatch(/aria-label="Submit order">/)
+      expect(html.includes("the server preview includes it")).toBe("slippage_ticks" in optional)
     }
   })
   it("keeps market size labels factual for optional fill models", () => {

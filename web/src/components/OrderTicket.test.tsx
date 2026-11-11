@@ -1028,3 +1028,21 @@ it.each(["source", "account"])("keeps an open flatten bound after a silent %s fa
     expect(send).not.toHaveBeenCalled()
   } finally { dataSource.set("live"); activeAccount.set("main") }
 })
+
+it.each([{ margin: "portfolio" as const }, { slippage_ticks: 2 }])("leaves an order the account's buying power figure cannot cover to the server's preview and checks (%o)", async (optional) => {
+  const value = { ...account, rules: { ...account.rules, buy_only: false, ...optional }, buying_power: { ...account.buying_power, available: "0" } }
+  vi.mocked(api.account).mockResolvedValue(value)
+  client.setQueryData(tradingQueries(0, "17", true).account.queryKey, value)
+  // The server's own figures, which the ticket shows as they are.
+  vi.spyOn(api, "previewOrder").mockResolvedValue({ account_version: "17", decision: "ok", reason: null,
+    buying_power: { required: "460", before: "24000", after: "23540" }, exposure_change: null, max_loss: "460", max_loss_basis: "expiry_payoff",
+    equity_at_max_loss: "99540", breaches_floor: false, breaches_soft_floor: false, max_units: 51, max_units_basis: "buying_power", simulated: true,
+    breach: { room: "1000", soft_room: null, complete: true, model: "reflection estimate", underlyings: [] } })
+  await render()
+  await waitForRender(() => expect(host.textContent).toContain("$23,540.00"))
+  const terms = { symbol: selection.symbol, side: "buy", type: "limit", quantity: 1, limit_price: "4.60" }
+  expect(api.previewOrder).toHaveBeenLastCalledWith(expect.objectContaining(terms), "open")
+  expect(button("Submit order").disabled).toBe(false)
+  await click("Submit order")
+  expect(api.submitOrder).toHaveBeenCalledWith(expect.objectContaining(terms), "open")
+}, renderTimeout)
