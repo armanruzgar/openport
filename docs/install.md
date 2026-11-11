@@ -66,8 +66,13 @@ docker run --rm -p 127.0.0.1:8080:8080 -v openport:/var/lib/openport -e DATABENT
 `docker build -t openport .` builds the same image from a checkout.
 
 The commands that run once and exit, `--verify-run FILE`, `--backtest` and
-`--import-day`, use the same image and get only the arguments you pass, for example
-`docker run --rm -v openport:/var/lib/openport ghcr.io/armanruzgar/openport --verify-run /var/lib/openport/paper-journal.jsonl`.
+`--import-day`, use the same image and get only the arguments you pass.
+`--verify-run` reproduces a saved replay or scenario run, which the server keeps as
+`replays/RUN.jsonl` beside its journal, or a backtest's day or attempt journal, for
+example
+`docker run --rm -v openport:/var/lib/openport ghcr.io/armanruzgar/openport --verify-run /var/lib/openport/replays/RUN.jsonl`,
+where `RUN` is the run's ID in `GET /api/replay/history`. Account journals, such as
+`paper-journal.jsonl`, are not runs and always fail it.
 Add `--paper-journal /var/lib/openport/paper-journal.jsonl` to a backtest to use the
 server's playbooks, and write its `--out` report inside the volume.
 

@@ -20,6 +20,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **The Docker `--verify-run` example.** The [install guide](docs/install.md) verified
+  the main paper journal, which always fails: `--verify-run` reproduces replay and
+  scenario runs and backtest journals, and an account journal is not a run. The
+  example now verifies a run in `replays/`.
 - **The playbook guide's example trades in the demo market.** The example definition in
   [playbooks](docs/playbooks.md), a 5-point SPX put spread with a 2× credit stop, takes
   in about $0.20 there, no more than its legs' bid-ask, so on every demo day it traded
