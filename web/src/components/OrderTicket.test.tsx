@@ -356,15 +356,33 @@ describe("order ticket interaction", () => {
     expect(sent.oco).toBeUndefined()
   })
   it("chains an order that cancels it, waiting for the underlying", async () => {
-    await render()
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <OrderTicket selection={{ ...selection, spot: 7000 }} quote={quote} trading={trading} onClose={() => {}} />
+    </QueryClientProvider>))
     await setField("Quantity", "2")
     await choose("Chain", "Or, one cancels other")
     await setField("Chained limit", "4.10")
+    expect(host.textContent).toContain("Works beside this order: buy 2 @ $4.10 GTC. The first fill of either cancels the other")
     await setField("Only when SPX crosses", "7010")
-    expect(host.textContent).toContain("The first fill of either cancels the other")
+    expect(host.textContent).toContain("Arms beside this order: buy 2 @ $4.10 GTC when SPX ≥ 7,010.00. The first fill of either cancels the other")
+    await setField("Only when SPX crosses", "6990")
+    expect(host.textContent).toContain("Arms beside this order: buy 2 @ $4.10 GTC when SPX ≤ 6,990.00.")
+    await setField("Only when SPX crosses", "7010")
     await click("Submit order")
     expect(vi.mocked(api.submitOrder).mock.calls[0]![0].oco).toEqual({ symbol: selection.symbol, side: "buy", quantity: 2, type: "limit",
       time_in_force: "gtc", limit_price: "4.10", trigger: { source: "underlying", direction: "at_or_above", level: "7010" } })
+  })
+  it("asks which way a chained level is crossed while the underlying has no price", async () => {
+    await render()
+    await choose("Chain", "Or, one cancels other")
+    await setField("Chained limit", "4.10")
+    await setField("Only when SPX crosses", "6990")
+    expect(host.textContent).toContain("SPX has no price yet: choose whether the order arms at or above the level, or at or below it.")
+    expect(button("Submit order").disabled).toBe(true)
+    await setField("Arms when SPX is", "at_or_below")
+    expect(host.textContent).toContain("Arms beside this order: buy 1 @ $4.10 GTC when SPX ≤ 6,990.00.")
+    await click("Submit order")
+    expect(vi.mocked(api.submitOrder).mock.calls[0]![0].oco).toMatchObject({ trigger: { source: "underlying", direction: "at_or_below", level: "6990" } })
   })
   it("sends a conditional entry with a bracket whose exits oppose the position", async () => {
     await render({ ...trading, fee_per_contract: "0.65" })

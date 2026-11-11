@@ -922,6 +922,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   button was easy to press on the wrong one; an order ticket's submit button sat more
   than two screens down its sheet. Each row's contract now stays at the left edge while
   the table scrolls, and the ticket's submit stays at the foot of the sheet.
+- **A one-cancels-other order with an underlying level says when it arms.** The
+  ticket's chained OCO order read "Works beside this order" whether or not it waited
+  for the underlying to cross a level, and never said which way it was crossed. With
+  no underlying price yet, a level below the market was sent as "at or above" and
+  armed on the first update. The text now gives the level and its direction, and
+  without a price the ticket asks which way the level is crossed.
 
 ## 0.5.1 (2026-10-28)
 
