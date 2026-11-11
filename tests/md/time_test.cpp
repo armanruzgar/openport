@@ -506,5 +506,18 @@ TEST(Calendar, StockExtendedHoursRunPremarketAndAfterHoursOnBusinessDays) {
   EXPECT_FALSE(stock_extended_session(new_york_to_utc({2026, 11, 27}, 17, 0)).open);
   EXPECT_FALSE(stock_extended_session(new_york_to_utc({2026, 9, 26}, 8, 0)).open);
   EXPECT_FALSE(stock_extended_session(new_york_to_utc({2026, 11, 26}, 8, 0)).open);
+  // Closed, the market time is the last session's end: that evening's after hours, also
+  // overnight, on a weekend and on a holiday, never the regular close before them. A
+  // 16:00 mark stale at 21:00 is no fresher at 03:00 or on Saturday.
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 9}, 21, 0)).market_time, new_york_to_utc({2026, 11, 9}, 20, 0));
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 10}, 3, 0)).market_time, new_york_to_utc({2026, 11, 9}, 20, 0));
+  EXPECT_EQ(stock_extended_session(new_york_to_utc(day, 3, 59)).market_time, new_york_to_utc({2026, 9, 21}, 20, 0));
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 14}, 10, 0)).market_time, new_york_to_utc({2026, 11, 13}, 20, 0));
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 16}, 2, 0)).market_time, new_york_to_utc({2026, 11, 13}, 20, 0));
+  // Thanksgiving follows a full day; the Saturday after it, an early close's 17:00.
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 26}, 8, 0)).market_time, new_york_to_utc({2026, 11, 25}, 20, 0));
+  EXPECT_EQ(stock_extended_session(new_york_to_utc({2026, 11, 28}, 10, 0)).market_time, new_york_to_utc({2026, 11, 27}, 17, 0));
+  // Open, it is the moment itself.
+  EXPECT_EQ(stock_extended_session(new_york_to_utc(day, 5, 0)).market_time, new_york_to_utc(day, 5, 0));
 }
 }  // namespace

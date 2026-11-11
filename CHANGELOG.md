@@ -371,6 +371,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   chain's GEX, VEX and gamma flip NaN; a zero or negative multiplier or an expiry such
   as month 13 was taken too. A definition's strike and multiplier must now be positive
   and its expiry a real date, or the file is reported as malformed at that record.
+- **Extended-hours share orders overnight and on weekends.** Closed, the session with
+  premarket and after hours dated its market time to the last regular close (16:00, or
+  13:00 on an early close) from midnight to 04:00 and all through weekends and
+  holidays, though after hours had run on to 20:00 (17:00). A share price that was
+  already stale at 21:00 therefore counted as fresh again at 03:00 or on Saturday, and
+  an armed extended-hours stop could trigger on it. The market time is now the end of
+  the last after-hours session.
 - **A chart of nearly equal values.** A line chart whose values differed only in the
   last digit of a double (0.1 + 0.2 beside 0.3) never finished choosing its axis
   ticks and held the tab until it ran out of memory. The ticks are now counted

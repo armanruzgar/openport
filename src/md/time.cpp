@@ -522,7 +522,17 @@ TradingSession stock_extended_session(Timestamp ts) {
   auto regular = stock_session(ts);
   if (regular.open) return regular;
   const auto local = local_time(ts);
-  if (!Memo::current().day(local.date).business) return regular;
+  // Closed before today's premarket, or all day: the session that ended last is the
+  // previous business day's after hours, not its regular close.
+  const auto earlier_evening = [&] {
+    const auto day = previous_business_day(local.date);
+    return regular.market_time == kInvalidTimestamp ? regular.market_time
+                                                    : new_york_to_utc(day, regular_close_hour(day) + 4, 0);
+  };
+  if (!Memo::current().day(local.date).business) {
+    regular.market_time = earlier_evening();
+    return regular;
+  }
   const int close = regular_close_hour(local.date);
   const auto premarket = new_york_to_utc(local.date, 4, 0), open = new_york_to_utc(local.date, 9, 30);
   const auto close_at = new_york_to_utc(local.date, close, 0), evening = new_york_to_utc(local.date, close + 4, 0);
@@ -533,7 +543,7 @@ TradingSession stock_extended_session(Timestamp ts) {
     result = {"after_hours", true, "after-hours session", ts, evening};
   } else {
     result = regular;
-    result.market_time = ts >= evening ? evening : regular.market_time;
+    result.market_time = ts >= evening ? evening : earlier_evening();
   }
   return result;
 }
