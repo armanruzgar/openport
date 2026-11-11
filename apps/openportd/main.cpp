@@ -812,17 +812,6 @@ int run(int argc, char** argv) {
     return usage(refusal.c_str());
   }
   if (!demo) providers::validate_subscription(settings.provider.name, settings.subscription);
-  // A port another server holds fails now, naming the address and the port: before the
-  // crash log, the journals, the provider and the engine start, not seconds after them.
-  // An --address that is not an IP address is refused by the web server's own start.
-  server::check_port(settings.address, settings.port);
-  if (settings.crash_log.empty() && !settings.paper_journal.empty())
-    settings.crash_log = settings.paper_journal.parent_path() / "crash.log";
-  if (!settings.crash_log.empty()) {
-    try { startup::install_crash_log(settings.crash_log,
-        "openportd " OPENPORT_VERSION " " OPENPORT_BUILD_REVISION " " OPENPORT_BUILD_PLATFORM); }
-    catch (const std::exception& error) { std::fprintf(stderr, "openportd: %s\n", error.what()); }
-  }
   if (!settings.fallback.name.empty()) {
     providers::validate_subscription(settings.fallback.name, settings.subscription);
     settings.fallback.api_key = env_key_for(settings.fallback.name);
@@ -831,6 +820,7 @@ int run(int argc, char** argv) {
   // The provider has not made this run's yet, so those named for this PID (a container's
   // openportd is always PID 1) are an earlier run's too.
   providers::remove_orphaned_demo_directories(providers::OwnDirectories::Orphaned);
+  // Built, not started: an unknown provider or option is the flags' own error.
   auto provider = settings.fallback.name.empty()
       ? providers::make_provider(settings.provider)
       : providers::make_failover_provider(settings.provider, settings.fallback,
@@ -841,6 +831,18 @@ int run(int argc, char** argv) {
   } else if (const auto* replay = dynamic_cast<providers::ReplayProvider*>(provider.get())) {
     // A recording plays what it recorded unless --symbols chooses some of it.
     if (!settings.explicit_symbols) settings.subscription.underlyings = replay->header().subscription.underlyings;
+  }
+  // A port another server holds fails now, naming the address and the port: after every
+  // flag, the provider's included, is checked, so a usage error never hides behind a busy
+  // port; before the crash log, the journals and the engine start, not seconds after them.
+  // An --address that is not an IP address is refused by the web server's own start.
+  server::check_port(settings.address, settings.port);
+  if (settings.crash_log.empty() && !settings.paper_journal.empty())
+    settings.crash_log = settings.paper_journal.parent_path() / "crash.log";
+  if (!settings.crash_log.empty()) {
+    try { startup::install_crash_log(settings.crash_log,
+        "openportd " OPENPORT_VERSION " " OPENPORT_BUILD_REVISION " " OPENPORT_BUILD_PLATFORM); }
+    catch (const std::exception& error) { std::fprintf(stderr, "openportd: %s\n", error.what()); }
   }
 
   server::CandleStore::Options candle_options;

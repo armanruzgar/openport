@@ -34,6 +34,7 @@
 #include <thread>
 #include <vector>
 #include <fcntl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -1515,6 +1516,16 @@ void check_port(const std::string& address, unsigned short port) {
   acceptor.open(endpoint.protocol(), error);
   // As the listener binds: a port another socket only waits to close is free.
   if (!error) acceptor.set_option(asio::socket_base::reuse_address(true), error);
+#ifdef SO_REUSEPORT
+  // Two servers starting at once may check the same port together, which macOS refuses
+  // without this: the checks share it with each other, never with a server listening on
+  // it, which does not set it.
+  if (!error) {
+    const int shared_port = 1;
+    if (::setsockopt(acceptor.native_handle(), SOL_SOCKET, SO_REUSEPORT, &shared_port, sizeof shared_port) != 0)
+      error = boost::system::error_code(errno, boost::system::system_category());
+  }
+#endif
   if (!error) acceptor.bind(endpoint, error);
   if (error) throw std::runtime_error(listen_failure(address, port, error));
 }
