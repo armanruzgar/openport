@@ -19,8 +19,9 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
 The last command reads the existing token and opens its link. If startup has not
 created the file yet, wait a few seconds and retry. Omit `--open` to print it only.
 The service keeps accounts and chart history under
-`$(brew --prefix)/var/openport`; logs are in `var/log/openport.log` and
-`var/log/openport.error.log`. Apple Silicon installs the self-contained archive,
+`$(brew --prefix)/var/openport`, owner-only; logs are in `var/log/openport.log` and
+`var/log/openport.error.log`, which other local accounts can read, so the service
+passes `--no-token-link` and its log shows the `--print-url` command, not the link. Apple Silicon installs the self-contained archive,
 which needs macOS 15 or later;
 Intel Macs build the release tag with Homebrew's CMake, Node, Boost, OpenSSL and
 zstd dependencies. This takes longer and needs network access to fetch build

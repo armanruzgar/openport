@@ -58,9 +58,15 @@ class FormulaServiceTest(unittest.TestCase):
 
     def data_paths(self):
         var, web = self.paths["var"] / "openport", self.paths["opt_pkgshare"] / "web"
-        return ["--address", "127.0.0.1", "--paper-journal", f"{var}/paper-journal.jsonl",
+        return ["--address", "127.0.0.1", "--no-token-link", "--paper-journal", f"{var}/paper-journal.jsonl",
                 "--candle-dir", f"{var}/candles", "--series-dir", f"{var}/series",
                 "--write-token-file", f"{var}/write-token", "--web-root", str(web)]
+
+    def test_the_log_never_carries_the_token_link(self):
+        # launchd creates var/log/openport.log readable by every local account, and
+        # openportd prints the write token's link at each start unless told not to.
+        self.assertIn("--no-token-link", self.started()["args"])
+        self.assertIn("openportd --print-url --open --write-token-file", FORMULA.read_text())
 
     def test_without_settings_it_runs_the_data_paths_as_before(self):
         started = self.started()

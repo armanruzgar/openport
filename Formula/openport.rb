@@ -42,6 +42,8 @@ class Openport < Formula
 
   def post_install
     (var/"openport").mkpath
+    # Accounts, imported holdings and the write token: the owner's alone.
+    (var/"openport").chmod 0700
     (var/"log").mkpath
     (etc/"openport").mkpath
   end
@@ -84,7 +86,7 @@ class Openport < Formula
           esac
         done < "$settings/openportd.args"
       fi
-      exec "#{opt_bin}/openportd" --address 127.0.0.1 \\
+      exec "#{opt_bin}/openportd" --address 127.0.0.1 --no-token-link \\
         --paper-journal "#{var}/openport/paper-journal.jsonl" \\
         --candle-dir "#{var}/openport/candles" \\
         --series-dir "#{var}/openport/series" \\
@@ -108,7 +110,9 @@ class Openport < Formula
       wait a few seconds and retry. For a foreground session, use openportd --open.
       The link saves the token in that browser tab for paper-trading writes.
       Accounts and chart history are kept under #{var}/openport.
-      Protect the token file and logs; the link grants write access.
+      The link grants write access: keep it and the token file private. The
+      service's log, which other local accounts can read, shows that command
+      instead of the link.
 
       The service watches Cboe's delayed SPX, SPY, QQQ, IWM and DIA. Other flags,
       such as --provider, --symbols, --record-dir or --notify-config, go in

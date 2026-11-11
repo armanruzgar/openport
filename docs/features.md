@@ -609,8 +609,8 @@ flattening, exits, stock/strategy actions, and settings writes as well as ticket
 - `openportd --open` opens the saved token link after startup; `--print-url [--open]`
   recovers it later without starting another daemon or feed. Browser launching
   stays opt-in; on shared machines `--print-url` keeps the token out of `ps`.
-  `--no-token-link` keeps the token out of service logs, and the systemd unit uses
-  it. [Installation](install.md).
+  `--no-token-link` keeps the token out of service logs, and the systemd unit and
+  the Homebrew service use it. [Installation](install.md).
 - Homebrew uses an Apple Silicon archive or builds from source on Intel. Release
   automation produces Linux amd64/arm64 deb/rpm packages with a private systemd
   service. Windows uses Docker Desktop or WSL2.

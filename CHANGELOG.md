@@ -716,6 +716,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   "Sell N at market" and counted it on the button, which did nothing when it was the
   only position. It now pairs shorts with their covers as the server does, lists only
   the contracts that will close, and says which longs wait for the short to settle.
+- **The Homebrew service no longer logs the token link.** It ran without
+  `--no-token-link`, so every start (each `keep_alive` restart included) wrote
+  `http://127.0.0.1:8080/#token=…` to `$(brew --prefix)/var/log/openport.log`, which
+  launchd creates readable by every local account, handing them write and admin
+  access. The service now passes the flag, so the log shows the `--print-url` command
+  the caveats already give, and a fresh install makes `var/openport` owner-only.
 
 ## 0.5.1 (2026-10-28)
 
