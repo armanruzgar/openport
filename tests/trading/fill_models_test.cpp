@@ -477,9 +477,11 @@ TEST(QueueFills, RulesAreValidatedOmittedAtDefaultsAndCountAsProgramRules) {
 
 /// A long contract with an armed sell stop at 3.50, then eight ordinary quotes a
 /// second apart with a 0.20 spread: the normal the stop's trigger is measured by.
-TradingSession stopped(ScriptedMarket& market, std::int64_t ticks, int ordinary = 8, const std::string& journal = {}) {
+TradingSession stopped(ScriptedMarket& market, std::int64_t ticks, int ordinary = 8, const std::string& journal = {},
+                       std::int64_t percent = AccountRules{}.stop_stress_percent) {
   AccountRules rules;
   rules.stop_stress_ticks = ticks;
+  rules.stop_stress_percent = percent;
   TradingSession session(config(rules), market.time, journal.empty() ? nullptr : test::create_journal(journal));
   market.seed(session);
   EXPECT_TRUE(session.submit(market.market("entry"), market.time).decision.ok());
@@ -625,13 +627,40 @@ TEST(StopStress, QuotesChangingFasterThanNormalAlsoCount) {
   EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("3.30"));
 }
 
-TEST(StopStress, NeedsEightQuotesOfNormalAndIsOffByDefault) {
-  {
+TEST(StopStress, APercentOtherThanTheDefaultDecidesHowWideAndHowFastIsFast) {
+  // At 300% of a normal 0.20 spread, a stop reached on 0.40 (fast at the default
+  // 200%) is ordinary and one reached on 0.60 is fast.
+  for (const auto& [ask, fast] : {std::pair{"3.80", false}, std::pair{"4.00", true}}) {
     ScriptedMarket market;
-    auto session = stopped(market, 2, 5);
+    auto session = stopped(market, 2, 8, {}, 300);
+    market.next();
+    session.on_quotes({market.quote("3.40", ask)}, {market.valuation()}, market.time);
+    EXPECT_EQ(order(session, 2).stress_ticks, fast ? 2 : 0) << ask;
+    EXPECT_EQ(session.snapshot()->recent_fills.back().price, m(fast ? "3.20" : "3.40")) << ask;
+  }
+  // And against a normal second between quotes, a third of a second is fast and
+  // half of one (fast at the default) is not.
+  for (const auto& [divisor, fast] : {std::pair{3, true}, std::pair{2, false}}) {
+    ScriptedMarket market;
+    auto session = stopped(market, 1, 8, {}, 300);
+    ++market.observation;
+    market.time += md::kNanosPerSecond / divisor;
+    session.on_quotes({market.quote("3.40", "3.60")}, {market.valuation()}, market.time);
+    EXPECT_EQ(order(session, 2).stress_ticks, fast ? 1 : 0) << divisor;
+    EXPECT_EQ(session.snapshot()->recent_fills.back().price, m(fast ? "3.30" : "3.40")) << divisor;
+  }
+}
+
+TEST(StopStress, NeedsEightQuotesOfNormalAndIsOffByDefault) {
+  // Normal is measured from eight valid quotes, the seed quote and seven more: with
+  // fewer, a wide quote that reaches the stop is not yet fast.
+  for (const int ordinary : {5, 6, 7}) {
+    ScriptedMarket market;
+    auto session = stopped(market, 2, ordinary);
     market.next();
     session.on_quotes({market.quote("3.40", "3.80")}, {market.valuation()}, market.time);
-    EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("3.40"));
+    EXPECT_EQ(order(session, 2).stress_ticks, ordinary == 7 ? 2 : 0) << ordinary;
+    EXPECT_EQ(session.snapshot()->recent_fills.back().price, m(ordinary == 7 ? "3.20" : "3.40")) << ordinary;
   }
   JournalFile file;
   ScriptedMarket market;
