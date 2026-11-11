@@ -1,4 +1,4 @@
-import { useMemo, useState, type PointerEvent } from "react"
+import { useMemo, useState, type KeyboardEvent, type PointerEvent } from "react"
 import { extent, labelRows, linear, niceTicks, pad } from "./scale"
 import { useSize } from "./useSize"
 
@@ -52,17 +52,24 @@ interface Props {
   xTicks?: number[]
   /** Left margin for wide y labels such as dollar balances. */
   marginLeft?: number
+  /** What the chart shows, for assistive technology; its series' names otherwise. */
+  label?: string
 }
 
 const margin = { top: 12, right: 16, bottom: 28, left: 52 }
 
 /// Multi-series line chart with optional bid/ask bands, vertical markers,
-/// horizontal reference levels and a crosshair that reads out every series.
-export function LineChart({ series, markers = [], references = [], height = 320, formatX, formatY, xLabel, xTicks, marginLeft = margin.left }: Props) {
+/// horizontal reference levels and a crosshair that reads out every series. The
+/// arrow keys move the crosshair point by point, and a live region reads it out.
+export function LineChart({ series, markers = [], references = [], height = 320, formatX, formatY, xLabel, xTicks, marginLeft = margin.left, label }: Props) {
   const [ref, { width }] = useSize<HTMLDivElement>()
   const [hoverX, setHoverX] = useState<number | null>(null)
+  const [keyed, setKeyed] = useState(false)
   const [dragging, setDragging] = useState<number | null>(null)
   const left = marginLeft
+  // Where the keyboard crosshair stops: every x with a value, in order.
+  const stops = useMemo(() => [...new Set(series.flatMap((s) => s.points.flatMap((p) =>
+    p.y != null && Number.isFinite(p.y) && Number.isFinite(p.x) ? [p.x] : [])))].sort((a, b) => a - b), [series])
 
   const layout = useMemo(() => {
     const xs = series.flatMap((s) => s.points.map((p) => p.x))
@@ -121,6 +128,21 @@ export function LineChart({ series, markers = [], references = [], height = 320,
     const x = layout.x.invert(event.clientX - rect.left)
     if (dragging != null) markers[dragging]?.onDrag?.(x)
     setHoverX(x)
+    setKeyed(false)
+  }
+  const onKey = (event: KeyboardEvent<SVGSVGElement>) => {
+    // A draggable marker's handle takes its own arrow keys.
+    if (event.target !== event.currentTarget || !stops.length) return
+    if (event.key === "Escape") { setHoverX(null); return }
+    let at = -1
+    if (hoverX != null) for (let i = 0; i < stops.length; i++) if (at < 0 || Math.abs(stops[i]! - hoverX) < Math.abs(stops[at]! - hoverX)) at = i
+    const next = event.key === "Home" ? 0 : event.key === "End" ? stops.length - 1
+      : event.key === "ArrowRight" ? (at < 0 ? 0 : Math.min(stops.length - 1, at + 1))
+      : event.key === "ArrowLeft" ? (at < 0 ? stops.length - 1 : Math.max(0, at - 1)) : null
+    if (next == null) return
+    event.preventDefault()
+    setHoverX(stops[next]!)
+    setKeyed(true)
   }
   const endDrag = (event: PointerEvent<SVGSVGElement>) => {
     if (dragging == null) return
@@ -140,11 +162,15 @@ export function LineChart({ series, markers = [], references = [], height = 320,
           return { series: s, point: best }
         })
   const anchor = readout.find((r) => r.point)?.point
+  const values = readout.flatMap(({ series: s, point }) => point && point.y != null ? [`${s.label} ${formatY(point.y)}`] : [])
 
   return (
     <div ref={ref} className="relative w-full select-none" style={{ height }}>
       {layout && (
+        // An image with its name, or a group when a draggable marker's slider sits inside.
         <svg width={width} height={height} onPointerMove={onMove} onPointerUp={endDrag} onPointerCancel={endDrag}
+          role={markers.some((m) => m.onDrag) ? "group" : "img"} aria-label={label ?? series.map((s) => s.label).join(", ")}
+          aria-roledescription="chart" tabIndex={0} onKeyDown={onKey} onBlur={() => { if (keyed) { setHoverX(null); setKeyed(false) } }}
           onPointerLeave={() => { if (dragging == null) setHoverX(null) }} className="block">
           {layout.yTicks.map((t) => (
             <g key={`y${t}`}>
@@ -179,6 +205,7 @@ export function LineChart({ series, markers = [], references = [], height = 320,
                 {m.label}
               </text>
               {m.onDrag && <g role="slider" tabIndex={0} aria-label={`Drag ${m.label}`} aria-valuenow={m.x} aria-valuetext={formatX(m.x)}
+                aria-valuemin={Math.min(layout.x.domain[0], m.x)} aria-valuemax={Math.max(layout.x.domain[1], m.x)}
                 className="cursor-ew-resize outline-none focus-visible:[&>circle]:stroke-accent"
                 onPointerDown={(event) => {
                   event.preventDefault()
@@ -239,6 +266,7 @@ export function LineChart({ series, markers = [], references = [], height = 320,
           )}
         </div>
       )}
+      <p className="sr-only" aria-live="polite">{keyed && anchor ? `${formatX(anchor.x)}: ${values.join(", ")}` : ""}</p>
     </div>
   )
 }

@@ -910,6 +910,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   "$0.500"). Dollar Greeks are now money, compact dollars take the minus sign, order
   and fill times are on the 24-hour New York clock with "ET", the watchlist time is in
   New York time, and both prices of a hint share one precision.
+- **Line and bar charts for screen readers and the keyboard.** The equity, risk
+  profile, payoff, volatility history, backtest and exposure charts had no accessible
+  name and showed their values only on pointer hover. Each chart is now named (by its
+  series, or by its bars' range), takes focus, and the arrow keys, Home and End step
+  through its points while a live region reads each one out. A draggable marker's
+  slider also states its range.
 
 ## 0.5.1 (2026-10-28)
 

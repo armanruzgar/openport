@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type KeyboardEvent } from "react"
 import type { Marker } from "./LineChart"
 import { extent, labelRows, linear, niceTicks, pad } from "./scale"
 import { useSize } from "./useSize"
@@ -9,14 +9,29 @@ interface Props {
   height?: number
   formatX: (x: number) => string
   formatY: (y: number) => string
+  /** What the chart shows, for assistive technology; its bar count and range otherwise. */
+  label?: string
 }
 
 const margin = { top: 14, right: 16, bottom: 28, left: 60 }
 
 /// Signed bars along a numeric axis (exposure by strike): positive teal, negative violet.
-export function BarChart({ bars, markers = [], height = 280, formatX, formatY }: Props) {
+/// The arrow keys move from bar to bar, and a live region reads each one out.
+export function BarChart({ bars, markers = [], height = 280, formatX, formatY, label }: Props) {
   const [ref, { width }] = useSize<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
+  const [keyed, setKeyed] = useState(false)
+  const onKey = (event: KeyboardEvent<SVGSVGElement>) => {
+    if (!bars.length) return
+    if (event.key === "Escape") { setHover(null); return }
+    const next = event.key === "Home" ? 0 : event.key === "End" ? bars.length - 1
+      : event.key === "ArrowRight" ? (hover == null ? 0 : Math.min(bars.length - 1, hover + 1))
+      : event.key === "ArrowLeft" ? (hover == null ? bars.length - 1 : Math.max(0, hover - 1)) : null
+    if (next == null) return
+    event.preventDefault()
+    setHover(next)
+    setKeyed(true)
+  }
 
   const layout = useMemo(() => {
     const xDomain = extent(bars.map((b) => b.x))
@@ -35,7 +50,9 @@ export function BarChart({ bars, markers = [], height = 280, formatX, formatY }:
   return (
     <div ref={ref} className="relative w-full select-none" style={{ height }}>
       {layout && (
-        <svg width={width} height={height} className="block" onPointerLeave={() => setHover(null)}>
+        <svg width={width} height={height} className="block" onPointerLeave={() => setHover(null)} role="img" aria-roledescription="chart"
+          aria-label={label ?? `${bars.length} bars from ${formatX(bars[0]!.x)} to ${formatX(bars[bars.length - 1]!.x)}`}
+          tabIndex={0} onKeyDown={onKey} onBlur={() => { if (keyed) { setHover(null); setKeyed(false) } }}>
           {layout.yTicks.map((t) => (
             <g key={t}>
               <line x1={margin.left} x2={width - margin.right} y1={layout.y(t)} y2={layout.y(t)} className={t === 0 ? "stroke-muted" : "stroke-border"} strokeDasharray={t === 0 ? undefined : "2 3"} />
@@ -61,7 +78,7 @@ export function BarChart({ bars, markers = [], height = 280, formatX, formatY }:
                 height={Math.max(0.5, Math.abs(y1 - y0))}
                 className={b.value >= 0 ? "fill-gex-positive" : "fill-gex-negative"}
                 opacity={hover == null || hover === i ? 0.9 : 0.45}
-                onPointerEnter={() => setHover(i)}
+                onPointerEnter={() => { setHover(i); setKeyed(false) }}
               />
             )
           })}
@@ -84,6 +101,7 @@ export function BarChart({ bars, markers = [], height = 280, formatX, formatY }:
           <span className="tabular">{formatY(hovered.value)}</span>
         </div>
       )}
+      <p className="sr-only" aria-live="polite">{keyed && hovered ? `${formatX(hovered.x)}: ${formatY(hovered.value)}` : ""}</p>
     </div>
   )
 }
