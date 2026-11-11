@@ -6721,6 +6721,12 @@ TEST(PaperStocks, WorkingShareOrdersRestAndFillOnLaterPrices) {
   EXPECT_EQ(json::parse(cancelled.body)["stock_order"]["reason"]["code"], "USER_CANCEL");
   EXPECT_EQ(write(engine, "DELETE", "/api/stocks/orders/3").status, 409);
   EXPECT_EQ(write(engine, "DELETE", "/api/stocks/orders/99").status, 404);
+  // Cancel-all ends the armed stop too, and names it among the share orders it ended.
+  const auto cancel_all = write(engine, "POST", "/api/orders/cancel", json::object());
+  ASSERT_EQ(cancel_all.status, 200) << cancel_all.body;
+  EXPECT_TRUE(json::parse(cancel_all.body)["cancelled_orders"].empty());
+  EXPECT_EQ(json::parse(cancel_all.body)["cancelled_stock_orders"], json::array({"2"}));
+  EXPECT_EQ(read(engine, "/api/stocks/orders?status=open")["stock_orders"].size(), 0U);
   engine.stop();
 }
 

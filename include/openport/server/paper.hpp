@@ -300,6 +300,7 @@ struct TradingReply {
   std::optional<std::uint64_t> alert_id;  ///< CreateAlert: the new alert.
   std::shared_ptr<const TradingView> view;
   std::vector<trading::OrderId> cancelled_orders;
+  std::vector<trading::OrderId> cancelled_stock_orders;  ///< CancelAll: the share orders it ended.
   std::vector<trading::OrderId> created_orders;  ///< Orders the command added, in sequence.
   std::vector<std::uint64_t> stock_fills;        ///< Share changes the command made, by StockFill ID.
   std::map<std::string, trading::Decision> kept_stocks;  ///< Shares a flatten left, and why.

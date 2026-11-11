@@ -2279,6 +2279,14 @@ void Desk::apply_command(PendingCommand& pending, md::Timestamp market_time, md:
         if (orders.at(static_cast<std::size_t>(order.id - 1)).status == OrderStatus::Cancelled)
           reply.cancelled_orders.push_back(order.id);
       }
+      // Cancel-all ends working and armed share orders too: name them as well.
+      if (c.kind == TradingCommand::Kind::CancelAll) {
+        const auto& stock_orders = session.snapshot()->stock_orders;
+        for (const auto& order : before->stock_orders)
+          if (order.open() && order.id >= 1 && order.id <= stock_orders.size() &&
+              stock_orders[static_cast<std::size_t>(order.id - 1)].status == OrderStatus::Cancelled)
+            reply.cancelled_stock_orders.push_back(order.id);
+      }
       for (auto i = before->recent_orders.size(); i < orders.size(); ++i) reply.created_orders.push_back(orders[i].id);
       const auto& stock_fills = session.snapshot()->stock_fills;
       for (auto i = before->stock_fills.size(); i < stock_fills.size(); ++i) reply.stock_fills.push_back(stock_fills[i].id);

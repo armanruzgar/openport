@@ -1607,7 +1607,12 @@ ApiResponse command_body(const TradingCommand& command, const TradingReply& repl
     case TradingCommand::Kind::ClosePositions: {
       body["cancelled_orders"] = json::array();
       for (auto id : reply.cancelled_orders) body["cancelled_orders"].push_back(std::to_string(id));
-      if (command.kind == TradingCommand::Kind::CancelAll) break;
+      if (command.kind == TradingCommand::Kind::CancelAll) {
+        // Share orders have their own IDs (GET /api/stocks/orders).
+        body["cancelled_stock_orders"] = json::array();
+        for (auto id : reply.cancelled_stock_orders) body["cancelled_stock_orders"].push_back(std::to_string(id));
+        break;
+      }
       // Each closing order with its outcome: a rejection carries its reason.
       body["orders"] = json::array();
       body["fills"] = json::array();

@@ -19033,11 +19033,19 @@
             "items": {
               "type": "string"
             }
+          },
+          "cancelled_stock_orders": {
+            "type": "array",
+            "description": "The share orders (IDs of GET /api/stocks/orders) this cancel ended; cancel-all ends working and armed share orders in scope as well as option orders.",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
           "account_version",
-          "cancelled_orders"
+          "cancelled_orders",
+          "cancelled_stock_orders"
         ]
       },
       "AccountListItem": {
