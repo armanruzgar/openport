@@ -454,6 +454,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `history_version`, the account version at which its orders, fills, share fills,
   dividends, cash flows or settlements last changed, and the terminal refetches the
   fills and the delivery alerts' trades only when it moves.
+- **The terminal keeps fewer old copies of market data.** Chain, summary, surface and
+  the other market queries key on their underlying's data version, which changes with
+  each one-second tick, and every superseded version stayed in the browser for the
+  query library's default five minutes: about 300 copies of each chain on the page.
+  They now go five seconds after the page moves on to a newer version.
 
 ## 0.5.1 (2026-10-28)
 
