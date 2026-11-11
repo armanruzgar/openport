@@ -33,6 +33,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   recording. A day now publishes by an exclusive rename where hard links fail, and a
   complete day that still cannot be published stays in its `.record-*` staging folder,
   named in the recording error.
+- **Recorded days replay alone.** A `--record-dir` file for a new trading date
+  repeated only the contract definitions. A snapshot feed such as Cboe sends a quote,
+  open interest or close only when it changes, so a day replayed on its own showed
+  unchanged contracts unquoted or without open interest, and its chain, IV surface,
+  exposure and paper fills differed from the live session. A new day's file now opens
+  with each contract's latest quote, open interest, volume and Greeks and each
+  underlying's latest quote and close.
 - **Analysis imports with lots on opposite sides.** A symbol's long and short lots were
   netted at their signed average cost, which could be negative: long 2 at $1 and short
   1 at $3 read as long 1 at −$1. The ledger refuses a negative cost, so the import

@@ -595,10 +595,13 @@ TEST(RecordingDirectory, RolloverPublishesCompleteIndependentDaysAndKeepsMarketC
   const auto definition = second.next();
   ASSERT_TRUE(definition);
   EXPECT_EQ(std::get<md::ContractDefinition>(definition->event).id, 5U);
+  const auto carried = second.next();
+  ASSERT_TRUE(carried);
+  EXPECT_EQ(std::get<md::OptionQuote>(carried->event).ts, original) << "the day opens with the last quote, at its own time";
   ASSERT_TRUE(second.next());
   EXPECT_FALSE(second.next());
   EXPECT_TRUE(second.diagnostic().empty());
-  EXPECT_EQ(recording.stats().events, 4U);
+  EXPECT_EQ(recording.stats().events, 5U);
   EXPECT_TRUE(second.indexed_end(header.subscription).has_value());
 }
 TEST(RecordingDirectory, DstAndBackwardClocksDoNotSplitOrReopenDays) {
@@ -924,5 +927,85 @@ TEST(RecordingDirectory, AnUnpublishableCompleteDayIsKeptAndNamedInTheError) {
   const auto* status = std::get_if<md::ProviderStatus>(&delivered.back());
   ASSERT_NE(status, nullptr);
   EXPECT_EQ(status->state, md::FeedState::Error);
+}
+}  // namespace
+
+namespace {
+// B-46: a snapshot feed sends a quote, open interest, volume, Greeks or close only when
+// it changes. A new trading date's file opens with each one's latest value, so the day
+// replays alone as the feed stood; it held only definitions, and the chain was unquoted.
+TEST(RecordingDirectory, ANewDayOpensWithTheLatestValuesASnapshotFeedWillNotResend) {
+  test::RecordingFile file;
+  auto header = test::recording_header();
+  header.provider = "cboe";
+  const auto before = md::new_york_to_utc({2026, 11, 9}, 15, 0);
+  std::atomic<md::Timestamp> time{before};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  test::EventCollector sink;
+  md::RecordingDirectory recording(file.directory, header, sink, options);
+  const auto contract = *md::parse_osi("SPXW261120C05000000");
+  const md::OptionQuote quote{7, before, 5, 5.2, 11, 12};
+  const md::OpenInterest interest{7, before - md::kNanosPerDay, 1200};
+  const md::OptionVolume volume{7, before, 300};
+  const md::VendorGreeks greeks{7, before, .2, .5, .01, 2, -.1, .3};
+  const md::UnderlyingQuote spot{"SPX", before, 5000, 5001, 5000.5};
+  const md::UnderlyingClose close{"SPX", before, {2026, 11, 6}, 4990};
+  const std::vector<md::Event> first{
+      md::ContractDefinition{7, contract}, md::OptionQuote{7, before - md::kNanosPerMinute, 4, 4.2, 10, 10}, quote,
+      interest, md::OptionVolume{7, before - md::kNanosPerMinute, 250}, volume,
+      md::OptionVolume{7, before - md::kNanosPerMinute, 260},  // older than the one it follows
+      greeks, md::UnderlyingClose{"SPX", before, {2026, 11, 5}, 4980}, close,
+      md::UnderlyingClose{"SPX", before, {2026, 11, 4}, 4970},  // an earlier date's, sent late
+      spot, md::SnapshotComplete{"SPX", before}};
+  for (const auto& event : first) recording.publish(event);
+  // The next date's snapshot changes only the index level.
+  time = md::new_york_to_utc({2026, 11, 10}, 10, 0);
+  const auto after = time.load();
+  const md::UnderlyingQuote moved{"SPX", after, 5010, 5011, 5010.5};
+  recording.publish(moved);
+  recording.publish(md::SnapshotComplete{"SPX", after});
+  recording.close();
+  ASSERT_TRUE(recording.error().empty()) << recording.error();
+  EXPECT_EQ(sink.snapshot().size(), first.size() + 2) << "carried values are not delivered again";
+  const auto files = published(file.directory);
+  ASSERT_EQ(files.size(), 2U);
+  EXPECT_NE(files[1].filename().string().find("2026-11-10"), std::string::npos);
+  md::RecordingReader reader(files[1]);
+  std::vector<md::RecordedEvent> second;
+  while (auto record = reader.next()) second.push_back(std::move(*record));
+  EXPECT_TRUE(reader.diagnostic().empty()) << reader.diagnostic();
+  const std::vector<md::Event> expected{md::ContractDefinition{7, contract}, quote, interest, volume, greeks, spot, close,
+                                        moved, md::SnapshotComplete{"SPX", after}};
+  ASSERT_EQ(second.size(), expected.size());
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    SCOPED_TRACE(i);
+    test::exact_event(expected[i], second[i].event);
+    EXPECT_EQ(second[i].received, after) << "carried values are stamped with the receipt that opened the day";
+  }
+}
+// Streaming replays batch by market second from the first quote they meet, so the
+// newest carried quote leads and the carried values replay as one batch.
+TEST(RecordingDirectory, TheNewestCarriedQuoteLeadsANewDay) {
+  test::RecordingFile file;
+  std::atomic<md::Timestamp> time{md::new_york_to_utc({2026, 11, 9}, 15, 0)};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, test::recording_header(), discard, options);
+  const auto older = md::new_york_to_utc({2026, 11, 6}, 11, 0), newer = md::new_york_to_utc({2026, 11, 9}, 14, 59);
+  recording.publish(md::ContractDefinition{0, *md::parse_osi("SPXW261120C05000000")});
+  recording.publish(md::ContractDefinition{1, *md::parse_osi("SPXW261120P05000000")});
+  recording.publish(md::OptionQuote{0, older, 1, 1.1, 1, 1});
+  recording.publish(md::OptionQuote{1, newer, 2, 2.1, 1, 1});
+  time = md::new_york_to_utc({2026, 11, 9}, 17, 0);
+  recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5000});
+  recording.close();
+  const auto files = published(file.directory);
+  ASSERT_EQ(files.size(), 2U);
+  std::vector<md::Timestamp> quoted;
+  for (const auto& event : recorded_events(files[1]))
+    if (const auto* option = std::get_if<md::OptionQuote>(&event)) quoted.push_back(option->ts);
+  EXPECT_EQ(quoted, (std::vector<md::Timestamp>{newer, older}));
 }
 }  // namespace

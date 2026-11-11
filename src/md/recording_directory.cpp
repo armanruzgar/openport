@@ -3,16 +3,22 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <fcntl.h>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <unistd.h>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace openport::md {
@@ -21,6 +27,14 @@ class Discard final : public EventSink {
  public:
   void publish(Event) override {}
 };
+/// Underlyings whose latest quote and close a new day repeats, bounded like contracts.
+constexpr std::size_t kUnderlyingLimit = 100'000;
+/// The market time a streaming replay batches an event by; zero for the rest.
+Timestamp quoted_at(const Event& event) {
+  if (const auto* quote = std::get_if<OptionQuote>(&event)) return quote->ts;
+  if (const auto* spot = std::get_if<UnderlyingQuote>(&event)) return spot->ts;
+  return 0;
+}
 void add(RecordingStats& total, const RecordingStats& part) {
   total.events += part.events;
   total.bytes += part.bytes;
@@ -123,7 +137,60 @@ struct RecordingDirectory::Impl {
     const auto suffix = temporary.filename().string().substr(8);
     final = directory / (name + "-" + format_date(date) + "-" + std::to_string(time) + "-" + suffix + ".oprec");
     recording = std::make_unique<RecordingSink>(temporary / "day.oprec", header, discard, options.recording);
-    for (const auto& [id, contract] : contracts) recording->publish(ContractDefinition{id, contract});
+    carry();
+  }
+  /// A new day opens with what the feed has already sent, so it replays alone as the
+  /// feed stood at the rollover: every definition, then each contract's and underlying's
+  /// latest values, which a snapshot feed does not send again until they change. They
+  /// go to the file only; downstream has had them.
+  void carry() {
+    std::vector<Event> values;
+    for (const auto& [id, known] : contracts) {
+      recording->publish(ContractDefinition{id, known.contract});
+      if (known.quote) values.emplace_back(*known.quote);
+      if (known.interest) values.emplace_back(*known.interest);
+      if (known.volume) values.emplace_back(*known.volume);
+      if (known.greeks) values.emplace_back(*known.greeks);
+    }
+    for (const auto& [symbol, spot] : spots) {
+      if (spot.quote) values.emplace_back(*spot.quote);
+      if (spot.close) values.emplace_back(*spot.close);
+    }
+    // A streaming replay batches by the market second of the first quote it meets: the
+    // newest leads, so the carried values replay as one batch.
+    const auto newest = std::max_element(values.begin(), values.end(), [](const Event& a, const Event& b) {
+      return quoted_at(a) < quoted_at(b);
+    });
+    if (newest != values.end()) std::iter_swap(values.begin(), newest);
+    for (auto& value : values) recording->publish(std::move(value));
+  }
+  /// Keeps what the next day's file opens with, as a chain book holds it: the last
+  /// quote, open interest and Greeks, the newest valid volume and the latest close.
+  void remember(const Event& event) {
+    std::visit([&](const auto& value) {
+      using T = std::decay_t<decltype(value)>;
+      if constexpr (std::is_same_v<T, ContractDefinition>) {
+        if (contracts.size() >= 500'000 && !contracts.contains(value.id))
+          throw std::runtime_error("recording: contract cache limit exceeded");
+        contracts[value.id].contract = value.contract;
+      } else if constexpr (std::is_same_v<T, OptionQuote> || std::is_same_v<T, OpenInterest> ||
+                           std::is_same_v<T, OptionVolume> || std::is_same_v<T, VendorGreeks>) {
+        const auto found = contracts.find(value.id);
+        if (found == contracts.end()) return;
+        auto& known = found->second;
+        if constexpr (std::is_same_v<T, OptionQuote>) known.quote = value;
+        else if constexpr (std::is_same_v<T, OpenInterest>) known.interest = value;
+        else if constexpr (std::is_same_v<T, VendorGreeks>) known.greeks = value;
+        else if (std::isfinite(value.contracts) && value.contracts >= 0 && (!known.volume || value.ts >= known.volume->ts))
+          known.volume = value;
+      } else if constexpr (std::is_same_v<T, UnderlyingQuote> || std::is_same_v<T, UnderlyingClose>) {
+        if (spots.size() >= kUnderlyingLimit && !spots.contains(value.symbol))
+          throw std::runtime_error("recording: underlying cache limit exceeded");
+        auto& spot = spots[value.symbol];
+        if constexpr (std::is_same_v<T, UnderlyingQuote>) spot.quote = value;
+        else if (!spot.close || value.date >= spot.close->date) spot.close = value;
+      }
+    }, event);
   }
   void finish() {
     if (!recording) return;
@@ -310,7 +377,19 @@ struct RecordingDirectory::Impl {
   std::atomic<Timestamp> stamp{0};
   Discard discard;
   std::unique_ptr<RecordingSink> recording;
-  std::map<InstrumentId, OptionContract> contracts;
+  struct Known {
+    OptionContract contract;
+    std::optional<OptionQuote> quote;
+    std::optional<OpenInterest> interest;
+    std::optional<OptionVolume> volume;
+    std::optional<VendorGreeks> greeks;
+  };
+  struct Spot {
+    std::optional<UnderlyingQuote> quote;
+    std::optional<UnderlyingClose> close;
+  };
+  std::map<InstrumentId, Known> contracts;
+  std::map<std::string, Spot> spots;
   std::string name, failure, warning;
   Date date;
   bool closed = false;
@@ -337,11 +416,7 @@ void RecordingDirectory::publish(Event event) {
   p.roll(p.stamp);
   if (p.failure.empty()) {
     try {
-      if (const auto* definition = std::get_if<ContractDefinition>(&event)) {
-        if (p.contracts.size() >= 500'000 && !p.contracts.contains(definition->id))
-          throw std::runtime_error("recording: contract cache limit exceeded");
-        p.contracts[definition->id] = definition->contract;
-      }
+      p.remember(event);
       p.recording->publish(event);
       if (!p.recording->error().empty()) throw std::runtime_error(p.recording->error());
     } catch (const std::exception& error) { p.fail(error.what()); }

@@ -636,7 +636,10 @@ Both CLIs accept `--record FILE`; the probe also accepts repeated `--option KEY=
 creating the directory if needed. It rolls at the calendar's New York 17:00 boundary,
 even while the feed is idle; weekends and holidays advance to the next business date.
 The receipt clock assigns the date; delayed market timestamps remain untouched.
-Each new file repeats known contract definitions without duplicating live delivery.
+Each new file opens with the known contract definitions and each contract's and
+underlying's latest quote, open interest, volume, Greeks and close, at their own
+market times, so a day replays alone even from a snapshot feed, which sends a value
+only when it changes. These go to the file only, never to live delivery again.
 Names include the provider, trading date, start nanoseconds and a unique suffix, so
 restarting within a date creates another file without overwriting the earlier one.
 A backward wall-clock adjustment does not reopen an earlier date.
