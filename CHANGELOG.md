@@ -1203,6 +1203,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   menu showed the front expiry as if the leg were on it. It is now marked expired, asks
   for nothing, shows its own expiry as not listed, and can be moved to the nearest
   listed expiry or removed.
+- **Spread alerts start only from held legs that make one.** **Start from held legs**
+  listed every underlying with a position, and picking one held as a single leg, more
+  than four legs, or legs in a ratio above 10 silently did nothing. The list now holds
+  only the underlyings whose legs make a spread alert, and says so when none do.
 
 ## 0.5.1 (2026-10-28)
 

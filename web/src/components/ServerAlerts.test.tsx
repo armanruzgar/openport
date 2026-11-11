@@ -115,6 +115,29 @@ describe("account alerts", () => {
     expect(api.createAlert).toHaveBeenLastCalledWith({ scope: "spread", metric: "mark", direction: "at_or_above", level: "-1.50", repeat: false,
       legs: [{ symbol: "SPXW  261022C05000000", side: "buy", ratio: 1 }, { symbol: "SPXW  261022C05100000", side: "sell", ratio: 2 }] }, "open")
   })
+  it("offers only underlyings whose held legs make a spread alert, and fills those legs", async () => {
+    const base = portfolio.positions[0]!
+    vi.mocked(api.portfolio).mockResolvedValue({ ...portfolio, positions: [
+      { ...base, symbol: "SPXW  261022C05000000", underlying: "SPX", quantity: 1 }, { ...base, symbol: "SPXW  261022C05100000", underlying: "SPX", quantity: -2 },
+      // One leg alone, and a 1:11 pair: neither makes a spread alert.
+      { ...base, symbol: "QQQ   261022C00500000", underlying: "QQQ", quantity: 1 },
+      { ...base, symbol: "IWM   261022C00200000", underlying: "IWM", quantity: 1 }, { ...base, symbol: "IWM   261022C00210000", underlying: "IWM", quantity: 11 },
+    ] })
+    await render(<ServerAlerts />)
+    await set("Alert scope", "spread")
+    expect([...field("Use held legs").querySelectorAll("option")].map((option) => option.value)).toEqual(["", "SPX"])
+    await set("Use held legs", "SPX")
+    expect(field("Leg 1 contract").value).toBe("SPXW  261022C05000000")
+    expect(field("Leg 2 contract").value).toBe("SPXW  261022C05100000")
+    expect(field("Leg 2 ratio").value).toBe("2")
+  })
+  it("says when no held underlying makes a spread alert", async () => {
+    vi.mocked(api.portfolio).mockResolvedValue({ ...portfolio, positions: [{ ...portfolio.positions[0]!, symbol: "QQQ   261022C00500000", underlying: "QQQ", quantity: 1 }] })
+    await render(<ServerAlerts />)
+    await set("Alert scope", "spread")
+    expect(host.querySelector('[aria-label="Use held legs"]')).toBeNull()
+    expect(host.textContent).toContain("No underlying you hold has 2 to 4 legs with ratios up to 10")
+  })
   it("shows when an alert fired and reports a refusal without losing the form", async () => {
     vi.mocked(api.alerts).mockResolvedValue({ account_version: "1", alerts: [{ ...alert, fired: 2, armed: false, repeat: true,
       fired_at: "2026-09-22T14:30:00.000Z", value: "26.50" }] })

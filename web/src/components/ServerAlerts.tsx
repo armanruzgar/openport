@@ -47,6 +47,9 @@ export function ServerAlerts() {
     notifications.channels.some((channel) => channel.enabled && channel.events.includes("alert"))
   const held = [...new Set(positions.filter((p) => p.quantity !== 0).map((p) => p.symbol))]
   const heldUnderlyings = [...new Set(positions.filter((p) => p.quantity !== 0).map((p) => p.underlying))]
+  // A spread alert takes 2 to 4 legs with ratios up to 10: offer the underlyings whose held legs make one.
+  const spreadable = (legs: OrderLeg[]) => legs.length >= 2 && legs.length <= 4 && legs.every((leg) => leg.ratio <= 10)
+  const spreadSources = heldUnderlyings.filter((underlying) => spreadable(heldLegs(positions, underlying)))
   const [scope, setScope] = useState<AlertScope>("underlying")
   const [metric, setMetric] = useState("price")
   const [symbol, setSymbol] = useState(underlyings[0]?.symbol ?? "SPX")
@@ -121,12 +124,13 @@ export function ServerAlerts() {
         {scope === "contract" && <datalist id="alert-contracts">{held.map((s) => <option key={s} value={s} />)}</datalist>}</label>}
       {scope === "spread" && <fieldset className="col-span-2 space-y-2">
         <legend className="trade-label">Spread legs · buys add, sells subtract</legend>
-        {heldUnderlyings.length > 0 && <label className="trade-label">Start from held legs
+        {spreadSources.length > 0 ? <label className="trade-label">Start from held legs
           <select className="trade-input" aria-label="Use held legs" value="" onChange={(event) => {
             const held = heldLegs(positions, event.target.value)
-            if (held.length >= 2 && held.length <= 4 && held.every((leg) => leg.ratio <= 10)) setSpreadLegs(held)
-          }}><option value="">Choose an underlying</option>{heldUnderlyings.map((underlying) =>
-              <option key={underlying} value={underlying}>{underlying}</option>)}</select></label>}
+            if (spreadable(held)) setSpreadLegs(held)
+          }}><option value="">Choose an underlying</option>{spreadSources.map((underlying) =>
+              <option key={underlying} value={underlying}>{underlying}</option>)}</select></label>
+          : heldUnderlyings.length > 0 && <p className="text-xs text-muted">No underlying you hold has 2 to 4 legs with ratios up to 10 to start a spread from; enter the legs below.</p>}
         {spreadLegs.map((leg, index) => <div key={index} className="grid grid-cols-[1fr_4rem_3rem_auto] gap-1">
           <input className="trade-input min-w-0" aria-label={`Leg ${index + 1} contract`} placeholder="Contract OSI" value={leg.symbol}
             onChange={(event) => changeLeg(index, { symbol: event.target.value.toUpperCase() })} />
