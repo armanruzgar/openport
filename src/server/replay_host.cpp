@@ -465,7 +465,7 @@ class ArchivedReplay final : public MetricsSource {
     view_->contracts = session.contracts();
     view_->valuations = session.valuations();
     // The equity history beside the journal, read as it is: an archive never compacts it.
-    view_->equity_samples = read_equity_history(file.string() + ".equity.csv", view_->equity_error);
+    view_->equity_samples = shared_samples(read_equity_history(file.string() + ".equity.csv", view_->equity_error));
     if (!view_->equity_error.empty()) view_->equity_error_time = md::now();
     view_->journal_transactions = recovery.records.size();
     view_->journal_bytes = std::filesystem::file_size(file);

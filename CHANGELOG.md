@@ -1379,6 +1379,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   default 20 runs of 252 days could take tens of GB, more with sweeps. Before a start,
   the oldest finished unpinned runs now also go until the rest take at most
   `--backtest-keep-gb` (decimal GB, default 20, 0 unlimited); the newest always stays.
+- **A long-lived account no longer copies its whole equity history on every
+  publication.** Every market batch and command copied each account's full equity
+  curve (one mark a minute plus every fill, never pruned for the current attempt:
+  about 22 MB a year) into its new view, and each fill's sample scanned the whole
+  history for a duplicate. The history is now shared copy-on-write between the store
+  and its views, and a fill's sample is checked against the highest fill kept.
 
 ## 0.5.1 (2026-10-28)
 

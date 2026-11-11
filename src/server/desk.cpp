@@ -1109,7 +1109,11 @@ void Desk::publish_trading() {
         view->equity_error_recovered = account.equity->error_recovered();
         if (account.damaged) {
           const auto& snapshot = *view->snapshot;
-          std::erase_if(view->equity_samples, [&](const auto& sample) { return sample.time >= snapshot.time; });
+          // Samples are in time order: keep those before the snapshot. The view's copy
+          // diverges from the store's here, which keeps its own.
+          const auto from = std::lower_bound(view->equity_samples.begin(), view->equity_samples.end(), snapshot.time,
+              [](const EquitySample& sample, md::Timestamp at) { return sample.time < at; });
+          view->equity_samples.truncate(from.index());
           if (snapshot.time > 0 && snapshot.valuation_complete) {
             const auto& rules = view->config.rules;
             EquitySample last{snapshot.time, snapshot.evaluation.attempt, snapshot.equity, {}, snapshot.evaluation.peak, {}, {}, 0};

@@ -1237,7 +1237,7 @@ struct EquityDesk {
     ASSERT_TRUE(reply.decision.ok()) << reply.decision.message;
   }
   std::shared_ptr<const trading::TradingSnapshot> snapshot() const { return desk->trading_view()->snapshot; }
-  const std::vector<server::EquitySample>& samples() const { return desk->trading_view()->equity_samples; }
+  const server::EquitySamples& samples() const { return desk->trading_view()->equity_samples; }
 };
 
 TEST(DeskEquity, APassedAttemptsHistoryHoldsThePassingEquityAndTomorrowsFloorStopsRising) {

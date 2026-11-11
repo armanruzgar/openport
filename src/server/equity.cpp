@@ -200,8 +200,17 @@ std::vector<EquitySample> read_equity_history(const std::filesystem::path& file,
   catch (const std::exception& e) { error = std::string("equity: ") + e.what(); }
   return samples;
 }
+EquitySamples shared_samples(const std::vector<EquitySample>& samples) {
+  EquitySamples shared;
+  for (const auto& sample : samples) shared.push_back(sample);
+  return shared;
+}
 EquityStore::EquityStore(std::filesystem::path file, bool read_only) : file_(std::move(file)), read_only_(read_only) {
-  samples_ = read_equity_history(file_, error_);
+  for (const auto& sample : read_equity_history(file_, error_)) {
+    last_fill_ = std::max(last_fill_, sample.fill);
+    last_stock_fill_ = std::max(last_stock_fill_, sample.stock_fill);
+    samples_.push_back(sample);
+  }
   if (!error_.empty()) fail(error_);
   if (read_only) return;
   // A history an earlier version left readable to others is tightened.
@@ -223,11 +232,12 @@ void EquityStore::compact() {
   const auto old = newest.time - 90 * md::kNanosPerDay;
   std::size_t earlier = 0;
   for (auto it = samples_.rbegin(); it != samples_.rend(); ++it) if (it->attempt != newest.attempt) ++earlier;
-  std::erase_if(samples_, [&](const EquitySample& s) {
-    if (s.attempt == newest.attempt) return false;
-    if (s.time < old || earlier > 100'000) { --earlier; return true; }
-    return false;
-  });
+  EquitySamples kept;
+  for (const auto& s : samples_) {
+    if (s.attempt != newest.attempt && (s.time < old || earlier > 100'000)) { --earlier; continue; }
+    kept.push_back(s);
+  }
+  samples_ = std::move(kept);
   std::string text;
   for (const auto& sample : samples_) text += line(sample);
   trading::check_storage_space(file_, text.size());
@@ -249,11 +259,14 @@ void EquityStore::append(const EquitySample& sample) noexcept {
       if (!sample.decision && sample.attempt == last.attempt && sample.fill == 0 && sample.stock_fill == 0 && last.time / md::kNanosPerMinute == sample.time / md::kNanosPerMinute &&
           last.floor == sample.floor && last.target == sample.target && side(last) == side(sample) &&
           (!sample.risk || last.risk)) return;
-      if (sample.fill != 0 && std::any_of(samples_.rbegin(), samples_.rend(), [&](const EquitySample& s) { return s.fill == sample.fill; })) return;
-      if (sample.stock_fill != 0 && std::any_of(samples_.rbegin(), samples_.rend(), [&](const EquitySample& s) { return s.stock_fill == sample.stock_fill; })) return;
+      // A fill's or share change's sample is kept once: IDs only grow.
+      if (sample.fill != 0 && sample.fill <= last_fill_) return;
+      if (sample.stock_fill != 0 && sample.stock_fill <= last_stock_fill_) return;
     }
     const bool reset = !samples_.empty() && samples_.back().attempt != sample.attempt;
     samples_.push_back(sample);
+    last_fill_ = std::max(last_fill_, sample.fill);
+    last_stock_fill_ = std::max(last_stock_fill_, sample.stock_fill);
     if (!error_.empty() && !error_recovered_) {
       compact();
       error_recovered_ = true;

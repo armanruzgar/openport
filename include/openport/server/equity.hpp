@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "openport/trading/session.hpp"
+#include "openport/trading/shared.hpp"
 
 namespace openport::server {
 struct EquityRisk {
@@ -35,6 +36,11 @@ struct EquitySample {
 /// Reads a history file as it is, for an archive: nothing is compacted or rewritten.
 /// Invalid rows are skipped and reported in `error`.
 [[nodiscard]] std::vector<EquitySample> read_equity_history(const std::filesystem::path& file, std::string& error);
+/// Samples in time order whose copies share storage: a publication copies them in
+/// O(1), however long an account's history is.
+using EquitySamples = trading::SharedVector<EquitySample>;
+[[nodiscard]] EquitySamples shared_samples(const std::vector<EquitySample>& samples);
+
 /// Engine-thread owned. Append-only CSV beside the journal, monetary values in
 /// micro-dollars, timestamps in nanoseconds. Keeps one plain mark per minute, every
 /// fill, decision, floor changes and the first mark at or past the target or floor; the current
@@ -43,7 +49,7 @@ class EquityStore {
  public:
   explicit EquityStore(std::filesystem::path file, bool read_only = false);
   void append(const EquitySample& sample) noexcept;
-  [[nodiscard]] const std::vector<EquitySample>& samples() const { return samples_; }
+  [[nodiscard]] const EquitySamples& samples() const { return samples_; }
   [[nodiscard]] const std::string& error() const { return error_; }
   [[nodiscard]] md::Timestamp error_time() const { return error_time_; }
   [[nodiscard]] md::Timestamp error_market_time() const { return error_market_time_; }
@@ -52,7 +58,10 @@ class EquityStore {
   void compact();
   void fail(std::string message, md::Timestamp market_time = 0);
   std::filesystem::path file_;
-  std::vector<EquitySample> samples_;
+  EquitySamples samples_;
+  /// The highest fill and share-change IDs kept: IDs only grow, so a sample whose ID
+  /// is not above them is one already kept, found without scanning the history.
+  std::uint64_t last_fill_ = 0, last_stock_fill_ = 0;
   std::size_t lines_ = 0;
   std::string error_;
   md::Timestamp error_time_ = 0, error_market_time_ = 0;

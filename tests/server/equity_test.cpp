@@ -33,8 +33,15 @@ TEST(EquityStore, PersistsMinuteAndFillSamplesReloadsAndLeavesGaps) {
   EquityStore recovered(file);
   ASSERT_EQ(recovered.samples().size(), 3U);
   EXPECT_EQ(recovered.samples()[1].equity, m("9989.35"));
+  // I-29: a fill already kept, here the reloaded fill 1, is known without a scan.
+  sample.fill = 1; recovered.append(sample);
+  ASSERT_EQ(recovered.samples().size(), 3U);
+  // A publication's copy shares the history and keeps what it saw.
+  const auto published = recovered.samples();
+  EXPECT_TRUE(published.same(recovered.samples()));
   sample.time += 10 * md::kNanosPerMinute; sample.fill = 0; recovered.append(sample);
   ASSERT_EQ(recovered.samples().size(), 4U);
+  EXPECT_EQ(published.size(), 3U);
   EXPECT_EQ(recovered.samples().back().time, sample.time);
   EXPECT_FALSE(recovered.samples().back().tomorrow_floor);
 }

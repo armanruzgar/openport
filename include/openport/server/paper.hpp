@@ -123,7 +123,7 @@ struct TradingView {
   std::vector<MarketHalt> halts;
   trading::BreachRisk breach;
   std::vector<trading::RiskWarning> warnings;
-  std::vector<EquitySample> equity_samples;
+  EquitySamples equity_samples;  ///< shares the account's history: copying costs nothing
   std::string equity_error;
   md::Timestamp equity_error_time = 0, equity_error_market_time = 0;
   bool equity_error_recovered = false;
