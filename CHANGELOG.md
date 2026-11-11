@@ -664,6 +664,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   recorder, which a provider thread holds through each frame write and a day's
   rollover, so the engine paused its publication for the length of the disk write. The
   recorder is now read first.
+- **A failed update check keeps the release it already knew.** With update checks on,
+  each daily check first cleared the release the previous check had found, so a check
+  made offline, rate-limited by GitHub or answered with something unreadable hid the
+  "is available" notice for another day. The known release now stays until a check
+  names the latest one.
 
 ## 0.5.1 (2026-10-28)
 

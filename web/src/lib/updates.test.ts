@@ -128,6 +128,40 @@ describe("browser update checks", () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
+  it.each(["network", "http", "json", "draft", "tag"])("keeps the release it knew through a %s failure a day later", async (failure) => {
+    const { store, fetcher, create, advance, items } = setup()
+    store.setEnabled(true)
+    await store.check("0.3.0")
+    expect(store.get().release?.version).toBe("v0.4.0")
+    advance(updateInterval)
+    let finish!: (value: Response) => void
+    fetcher.mockImplementation(() => new Promise((resolve, reject) => {
+      if (failure === "network") reject(new TypeError("offline"))
+      else finish = resolve
+    }))
+    const checking = store.check("0.3.0")
+    // While the request is out, the notice still has the release to show.
+    expect(create().get().release?.version).toBe("v0.4.0")
+    if (failure !== "network") finish(failure === "http" ? new Response("rate limited", { status: 403 })
+      : failure === "json" ? new Response("invalid JSON")
+      : new Response(JSON.stringify({ tag_name: failure === "tag" ? "not-a-version" : "v0.5.0", draft: failure === "draft", prerelease: false })))
+    await checking
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(store.get().release?.version).toBe("v0.4.0")
+    expect(create().get().release?.version).toBe("v0.4.0")
+    expect(JSON.parse(items.get("openport.updates.cache")!).checkedAt).toBe(Date.UTC(2026, 8, 27) + updateInterval)
+  })
+
+  it("replaces the release it knew with the latest one a successful check names", async () => {
+    const { store, fetcher, advance } = setup()
+    store.setEnabled(true)
+    await store.check("0.3.0")
+    advance(updateInterval)
+    fetcher.mockResolvedValue(response("v0.3.0"))
+    await store.check("0.3.0")
+    expect(store.get().release?.version).toBe("v0.3.0")
+  })
+
   it("ignores untrusted response URLs and persists dismissal for that release", async () => {
     const { store, fetcher, create, advance } = setup()
     fetcher.mockResolvedValue(new Response(JSON.stringify({ tag_name: "v0.4.0", html_url: "javascript:bad()", draft: false, prerelease: false })))

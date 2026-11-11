@@ -95,20 +95,23 @@ export function createUpdateStore(
         const checkedAt = now()
         // A clock moved backwards still waits; it cannot cause another request.
         if (saved && checkedAt - saved.checkedAt < updateInterval) { refresh(); return }
-        // Reserve the day before the request, including failed or interrupted attempts.
-        if (!write(cacheKey, JSON.stringify({ checkedAt, release: null }))) return
+        // Reserve the day before the request, including failed or interrupted attempts. The
+        // release already known stays until a response names the latest one.
+        const known = saved?.release ?? null
+        if (!write(cacheKey, JSON.stringify({ checkedAt, release: known }))) return
         refresh()
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), 10_000)
-        let release: Release | null = null
+        let release = known
         try {
           const response = await fetcher(releaseEndpoint, {
             credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", cache: "no-store", signal: controller.signal,
           })
           if (response.ok) {
             const body: unknown = await response.json()
-            if (body && typeof body === "object" && "tag_name" in body && "draft" in body && body.draft === false
-              && "prerelease" in body && body.prerelease === false) release = releaseFor(body.tag_name)
+            const latest = body && typeof body === "object" && "tag_name" in body && "draft" in body && body.draft === false
+              && "prerelease" in body && body.prerelease === false ? releaseFor(body.tag_name) : null
+            if (latest) release = latest
           }
         } catch { /* Offline, rate-limited and malformed responses stay silent. */ }
         finally { clearTimeout(timer) }
