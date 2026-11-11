@@ -8,6 +8,8 @@
 #include <limits>
 #include <map>
 #include <sstream>
+#include <string>
+#include <tuple>
 #include <gtest/gtest.h>
 
 #include "trading/margin_detail.hpp"
@@ -94,7 +96,11 @@ TEST(TradingMarginAllocation, SeededMixedExpirySubadditivityRate) {
     for (const auto account : {AccountType::Margin, AccountType::Ira}) {
       if (account == AccountType::Ira && (disallowed_shorts(a, {}, account) || disallowed_shorts(b, {}, account) ||
                                          disallowed_shorts(ab, {}, account))) continue;
-      const MarginPolicy policy{account, 0, 0};
+      // The exact allocation itself, with the work replay drivers 1-12 allowed: driver
+      // 13's budget leaves a few dozen of these solves, the costliest, to the bounded
+      // allocator (Driver13GivesUpOnABookDriver12Certified).
+      MarginPolicy policy{account, 0, 0};
+      policy.revised_budget = false;
       auto& count = account == AccountType::Margin ? margin : ira;
       ++count.checked;
       const auto old_sum = detail::pairing_margin_requirement(a, {}, policy) + detail::pairing_margin_requirement(b, {}, policy);
@@ -223,6 +229,10 @@ TEST(TradingMarginAllocation, OddShortSharesRoundOnlyTheUnderlyingTotal) {
 }
 
 TEST(TradingMarginAllocation, LargeBooksCertifyTinyDualPriceResiduals) {
+  // The certificate itself, with the work replay drivers 1-12 allowed: at 10,000 times
+  // the quantities it takes nearly all of driver 13's budget.
+  MarginPolicy policy;
+  policy.revised_budget = false;
   for (const Quantity scale : {1, 10000}) {
     std::vector<MarginLeg> book;
     for (int i = 0; i < 80; ++i) {
@@ -233,7 +243,7 @@ TEST(TradingMarginAllocation, LargeBooksCertifyTinyDualPriceResiduals) {
       book.push_back({contract, (shorted ? -2 : 2) * scale,
                       shorted ? dollars("600.000002") * scale : Money{}, 500.0});
     }
-    const auto result = margin_breakdown(book);
+    const auto result = margin_breakdown(book, {}, policy);
     ASSERT_EQ(result.size(), 1U);
     EXPECT_EQ(result[0].allocation, "exact");
     EXPECT_EQ(result[0].requirement, dollars("8400") * scale);
@@ -501,6 +511,69 @@ bool same_answers(const std::vector<MarginUnderlying>& a, const std::vector<Marg
   return true;
 }
 
+// An irregular book as an account builds one: 15 to 30 legs over four expiries,
+// strikes 470-530 every 5, 1 to 20 contracts long or short each and shorts at a random
+// whole-cent value. bench/bench_margin.cpp times the same books (BM_MarginJointIrregular).
+std::vector<MarginLeg> irregular_book(std::uint32_t seed) {
+  std::uint32_t state = seed * 2654435761U + 12345U;
+  const auto next = [&]() { state = state * 1664525U + 1013904223U; return state >> 8; };
+  static constexpr const char* expiries[] = {"261022", "261029", "261105", "261120"};
+  std::map<std::string, Quantity> positions;
+  const std::size_t count = 15 + next() % 16;
+  while (positions.size() < count) {
+    const auto expiry = expiries[next() % 4];
+    const char type = next() % 2 ? 'C' : 'P';
+    const auto strike = 470 + 5 * static_cast<int>(next() % 13);
+    auto quantity = static_cast<Quantity>(1 + next() % 20);
+    if (next() % 2) quantity = -quantity;
+    positions[std::string("SPY") + expiry + type + "00" + std::to_string(strike) + "000"] = quantity;
+  }
+  std::vector<MarginLeg> legs;
+  for (const auto& [symbol, quantity] : positions) {
+    MarginLeg leg{*md::parse_osi(symbol), quantity, {}, 500.0};
+    if (quantity < 0) leg.value = Money::from_micros(10000 * static_cast<std::int64_t>(100 + next() % 3000)) * 100 * -quantity;
+    legs.push_back(leg);
+  }
+  return legs;
+}
+
+// I-21: replay driver 13 gives the exact allocation a few milliseconds' work, its exact
+// checks (dual bounds, basis eliminations and whole-contract validation) charged with
+// its pivots; drivers 1-12 gave it 50,000,000 units of pivots alone. A 15-leg irregular
+// book whose certificate takes about 16,500,000 pivot units and 35,000,000 units in
+// all is certified under driver 12, and under driver 13 the bounded allocator answers
+// once the budget runs out, never below the certified minimum. Counted in work units,
+// not timed.
+TEST(TradingMarginAllocation, Driver13GivesUpOnABookDriver12Certified) {
+  const auto book = irregular_book(13);
+  ASSERT_EQ(book.size(), 15U);
+  // What a solve did, in the units driver 13 charges.
+  const auto units = [](const detail::MarginWork& from, const detail::MarginWork& to) {
+    return (to.pivots - from.pivots) + (to.checks - from.checks) + detail::kExactRationalWork * (to.rational - from.rational);
+  };
+  MarginPolicy driver12;
+  driver12.revised_budget = false;
+  auto before = detail::margin_work();
+  const auto certified = margin_breakdown(book, {}, driver12);
+  auto after = detail::margin_work();
+  ASSERT_EQ(certified.size(), 1U);
+  EXPECT_EQ(certified[0].allocation, "exact");
+  EXPECT_LE(after.pivots - before.pivots, detail::kLegacyExactMarginWork);
+  EXPECT_GT(units(before, after), 2 * detail::kExactMarginWork);
+  before = detail::margin_work();
+  const auto bounded = margin_breakdown(book);
+  after = detail::margin_work();
+  ASSERT_EQ(bounded.size(), 1U);
+  EXPECT_EQ(bounded[0].allocation, "bounded");
+  // It stops as its budget runs out: each charge is made as its work is done.
+  EXPECT_GE(units(before, after), detail::kExactMarginWork / 2);
+  EXPECT_LE(units(before, after), detail::kExactMarginWork + detail::kExactMarginWork / 10);
+  EXPECT_GE(bounded[0].requirement, certified[0].requirement);
+  EXPECT_LE(bounded[0].requirement, detail::pairing_margin_requirement(book));
+  EXPECT_EQ(margin_requirement(book), bounded[0].requirement);
+  EXPECT_EQ(margin_requirement(book, {}, driver12), certified[0].requirement);
+}
+
 // I-21: a cache keeps each underlying's strategy margin by every input the solver reads.
 // An unchanged underlying is not solved again, whether its parts are asked for or not;
 // a changed buy-back value (a mark), quantity, spot, expiry time (an early close moves
@@ -560,6 +633,9 @@ TEST(TradingMarginAllocation, ACacheSolvesEachUnderlyingOnceForItsInputs) {
   auto legacy = cached;
   legacy.exact = false;
   EXPECT_EQ(solved(book, legacy), 2U);
+  auto driver12 = cached;
+  driver12.revised_budget = false;
+  EXPECT_EQ(solved(book, driver12), 2U);
   // The cache keeps what it has room for, the answer used least recently making room.
   detail::MarginCache small(1);
   cached.cache = &small;
@@ -604,6 +680,7 @@ TEST(TradingMarginAllocation, ASessionSolvesAnUnchangedBookOnce) {
   const auto result = session.submit(request, time);
   ASSERT_TRUE(result.decision.ok()) << result.decision.message;
   ASSERT_EQ(session.snapshot()->positions.size(), 4U);
+  session.on_quotes(quotes, values, time);  // the book at the quotes' marks
   const auto requirement = session.snapshot()->buying_power.short_requirement;
   ASSERT_GT(requirement, Money{});
   const auto solves = [] { return detail::margin_work().solves; };

@@ -78,9 +78,16 @@ underlying prices, account policies and compatible position values.
 ## Determinism and fallback
 
 Symbols, expiries, columns, pivot ties and branch order are deterministic. The
-budget allows 50,000,000 work units per underlying (dictionary cell visits and
-cubic rational-basis elimination bounds), at most 128
-allocation resources and 1,000,000 matrix cells. Rational arithmetic uses checked
+work budget is counted per underlying in units of one simplex dictionary cell
+visited. From replay driver 13 the exact checks count too, as they are done: each
+matrix cell they sweep (dual bounds, basis equations and whole-contract validation)
+is one unit and each exact rational operation 400 units, about what one costs
+against a dictionary cell on a GitHub runner. The budget is 10,000,000 units, three
+to four milliseconds of work there. Runs recorded with drivers 1–12 keep their
+budget of 50,000,000 units of pivots alone, each basis elimination charged its cubic
+bound before it starts and the exact checks not counted, which let an irregular
+book run for 20–50 ms before it was certified or gave up. Either way at most 128
+allocation resources and 1,000,000 matrix cells are allowed. Rational arithmetic uses checked
 signed 128-bit intermediates. The floating-point proposal dictionary scales both
 payoff units and quantities; published costs and certificates remain unscaled
 exact values. Exhausting
@@ -121,9 +128,13 @@ oracle, including cash, IRA and margin accounts and house uplifts. Separate
 rational-value regressions check fractional micro-dollar buy-back values and
 odd short-share remainders. Seed
 `0xF490123` checks 20,736 margin pairs and 5,423 allowed IRA pairs: zero
-subadditivity violations and zero fallbacks. Tests also cover integer branching,
+subadditivity violations and zero fallbacks with the work drivers 1–12 allowed;
+driver 13's budget leaves a few dozen of those 78,477 solves, the costliest, to the
+bounded allocator. Tests also cover integer branching,
 forced resource-limit reporting, a large-quantity certificate, share covers,
-deterministic journals, and verification/resumption of both driver choices.
+deterministic journals, and verification/resumption of both driver choices. A test
+counts the work units of an irregular 15-leg book, which driver 12 certifies and
+driver 13 gives up on within its budget.
 
 Five Release benchmark repetitions on the development host measured these CPU
 medians. Timings are measurements, not wall-clock limits; every listed result was

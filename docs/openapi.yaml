@@ -22027,7 +22027,7 @@
           },
           "restart": {
             "type": "string",
-            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (12), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
+            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (13), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
           },
           "at": {
             "type": "string",

@@ -1017,6 +1017,9 @@ struct State {
   /// Transient compatibility: false for replay drivers 1–11, whose resets kept where an
   /// attempt's stock fills start only for microscalping (see set_revised_share_attempts).
   bool revised_share_attempts = true;
+  /// Transient compatibility: false for replay drivers 1–12, whose exact margin
+  /// allocation had its older work budget (see set_revised_margin_budget).
+  bool revised_margin_budget = true;
   std::set<std::string> walked; ///< Transient symbols to match after this transaction's market is in place.
   SessionConfig config;
   Timestamp time = 0;

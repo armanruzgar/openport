@@ -11,6 +11,17 @@
 #include "openport/trading/evaluation.hpp"
 
 namespace openport::trading::detail {
+/// The exact allocation's work budget per underlying, in units of one simplex
+/// dictionary cell visited. Replay drivers 1-12 gave it 50,000,000 units of pivots
+/// alone (and the cubic bound of each basis elimination), which let an irregular book
+/// run 20-50 ms before it gave up. From driver 13 its exact checks count as they are
+/// done, a matrix cell swept one unit and an exact rational operation 400, about what
+/// one costs against a dictionary cell; 10,000,000 units are 3-4 ms on a GitHub
+/// runner. Running out returns the bounded allocator. bench/bench_margin.cpp
+/// measures them (docs/margin-allocation.md).
+inline constexpr std::uint64_t kLegacyExactMarginWork = 50'000'000;
+inline constexpr std::uint64_t kExactMarginWork = 10'000'000;
+inline constexpr std::uint64_t kExactRationalWork = 400;
 /// The pre-improvement allocator, retained as an incumbent and a benchmark/test baseline.
 Money pairing_margin_requirement(const std::vector<MarginLeg>& legs, const std::vector<MarginStock>& stocks = {},
                                  const MarginPolicy& policy = {});

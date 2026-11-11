@@ -476,6 +476,10 @@ class TradingSession {
   /// where the new attempt's stock fills start only for a microscalping plan, and an
   /// attempt's summary keeps none.
   void set_revised_share_attempts(bool revised);
+  /// Preserve the exact margin allocation's work budget when verifying replay drivers
+  /// 1–12: 50,000,000 units of simplex pivots, its exact checks uncounted, so a book
+  /// the current budget gives up on may still be certified.
+  void set_revised_margin_budget(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

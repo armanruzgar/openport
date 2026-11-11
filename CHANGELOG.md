@@ -46,6 +46,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the attempt that bought them (below). Runs recorded with drivers 1–11 still pass
   `--verify-run` as they were recorded; like driver 11's, they can no longer be resumed
   or restarted.
+- **Replay driver 13.** New reproducible runs record driver 13, whose exact margin
+  allocation gives up after a few milliseconds' work instead of tens (below), so a book
+  of irregular legs that needs more gets the bounded allocator's requirement. Runs
+  recorded with drivers 1–12 still pass `--verify-run` with their original
+  requirements; like driver 12's, they can no longer be resumed or restarted.
 - **Kill-switch and reset reasons are short text.** `POST /api/risk/kill` and
   `POST /api/account/reset` now refuse a `reason` over 200 bytes or with control
   characters (400 `INVALID_REQUEST`); a script that sent long or multi-line reasons
@@ -567,11 +572,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **Margin solved again on every transaction.** An account's strategy margin was
   solved anew for every snapshot, working order's buying power and preview, several
   times in each transaction, though the exact allocation of an irregular book of
-  15–30 legs over several expiries takes tens of milliseconds of the engine thread.
-  Each underlying's answer is now kept by every input it depends on (positions,
-  marks, spot, account policy, and expiry times under the calendar in force), so an
-  underlying whose inputs did not change is not solved again. No requirement
-  changes.
+  15–30 legs over several expiries could take tens of milliseconds of the engine
+  thread before it was certified or gave up. Each underlying's answer is now kept by
+  every input it depends on (positions, marks, spot, account policy, and expiry times
+  under the calendar in force), so an underlying whose inputs did not change is not
+  solved again, which changes no requirement. The exact allocation's work budget
+  also counts its exact checks now, not only its simplex pivots, and allows a few
+  milliseconds' work (replay driver 13): a book that needs more is answered by the
+  bounded allocator, labelled `bounded` as before, whose requirement can be higher
+  than the certified minimum.
 - **Shares bought just before an account reset.** Share round trips were placed in an
   attempt by when they opened, and a reset starts the new attempt at the current market
   time, so shares bought and then closed by a reset at that same time (within one demo

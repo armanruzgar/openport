@@ -3806,6 +3806,7 @@ TEST(Desk, EveryReplayDriverRoundTripsThroughItsOptions) {
     EXPECT_EQ(options.revised_share_orders, driver >= 10) << driver;
     EXPECT_EQ(options.revised_lifecycle, driver >= 11) << driver;
     EXPECT_EQ(options.revised_share_attempts, driver >= 12) << driver;
+    EXPECT_EQ(options.revised_margin_budget, driver >= 13) << driver;
   }
   server::Desk::Options current;
   EXPECT_EQ(server::replay_driver(current), server::kReplayDriver);

@@ -1016,6 +1016,7 @@ std::map<std::string, double> share_prices(const State& s) {
 MarginPolicy allocation_policy(const State& s) {
   auto policy = margin_policy(s.config.rules);
   policy.exact = s.exact_margin;
+  policy.revised_budget = s.revised_margin_budget;
   policy.cache = s.margin_cache.get();
   return policy;
 }
@@ -6164,6 +6165,10 @@ void TradingSession::set_revised_lifecycle(bool revised) {
 }
 void TradingSession::set_revised_share_attempts(bool revised) {
   impl_->state.revised_share_attempts = revised;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
+void TradingSession::set_revised_margin_budget(bool revised) {
+  impl_->state.revised_margin_budget = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {

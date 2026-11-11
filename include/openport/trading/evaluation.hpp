@@ -538,6 +538,10 @@ struct MarginPolicy {
   std::int64_t house_percent = 0;  ///< On top of the naked and short-sale requirements, or of the scan.
   std::int64_t vol_shock = 0;      ///< Portfolio margin's implied-volatility shock, in points.
   bool exact = true;             ///< False only when re-executing older run drivers.
+  /// The exact allocation's work budget of replay driver 13 on: a few milliseconds'
+  /// work, its exact checks counted with its pivots. False for drivers 1-12, whose
+  /// budget was 50,000,000 units of pivots alone (docs/margin-allocation.md).
+  bool revised_budget = true;
   /// Strategy margin already solved, per underlying, which a session keeps; null
   /// solves every time. It changes no answer, only whether one is solved again.
   detail::MarginCache* cache = nullptr;

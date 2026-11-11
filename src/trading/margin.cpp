@@ -896,7 +896,7 @@ std::string solve_key(const std::string& underlying, const std::vector<const Mar
     put(value.size());
     key += value;
   };
-  put(policy.account); put(policy.house_percent); put(policy.vol_shock); put(policy.exact);
+  put(policy.account); put(policy.house_percent); put(policy.vol_shock); put(policy.exact); put(policy.revised_budget);
   text(underlying);
   put(stock != nullptr);
   if (stock) { text(stock->underlying); put(stock->shares); put(stock->value.micros()); }

@@ -19,7 +19,8 @@ class ExactMargin {
   };
  public:
   ExactMargin(const Book& book, const MarginStock* stock, const MarginPolicy& policy)
-      : stock_(stock), policy_(policy) {
+      : stock_(stock), policy_(policy), counted_(policy.revised_budget),
+        work_(policy.revised_budget ? detail::kExactMarginWork : detail::kLegacyExactMarginWork) {
     for (const auto* side : {&book.short_puts, &book.short_calls, &book.long_puts, &book.long_calls})
       for (const auto& unit : *side) {
         units_.push_back(&unit);
@@ -166,9 +167,20 @@ class ExactMargin {
     objective_.push_back(c.saving); columns_.push_back(c);
     return columns_.size() - 1;
   }
-  Rational bound(std::vector<Rational> y, bool feasible, bool& price_pairs) const {
-    // Exact arithmetic is counted as it is done (detail::margin_work).
-    std::uint64_t operations = 0;
+  /// The exact checks' work, as it is done: counted on the thread (detail::margin_work)
+  /// and, from replay driver 13 on, charged to the budget the simplex pivots draw on,
+  /// a matrix cell swept one unit, as a dictionary cell is, and an exact rational
+  /// operation kExactRationalWork. Exhausting it ends the proof.
+  void account(std::uint64_t cells, std::uint64_t operations) {
+    auto& work = detail::margin_work();
+    work.checks += cells;
+    work.rational += operations;
+    if (!counted_) return;
+    const auto units = cells + detail::kExactRationalWork * operations;
+    if (units > work_) { work_ = 0; throw detail::MarginWorkLimit{}; }
+    work_ -= units;
+  }
+  Rational bound(std::vector<Rational> y, bool feasible, bool& price_pairs) {
     {
       // The only columns without a capacity row are reserves. Their dual
       // constraint is sum(payoff prices) <= 100000 micro-dollars.
@@ -176,7 +188,7 @@ class ExactMargin {
         Rational sum;
         for (const auto row : pool.rows) sum = sum + y[row];
         auto excess = sum - Rational(feasible ? 100000 : 0);
-        operations += 2 * pool.rows.size() + 1;
+        account(pool.rows.size(), 2 * pool.rows.size() + 1);
         for (const auto row : pool.rows) {
           if (!(Rational{} < excess)) break;
           const auto take = std::min(excess, y[row]);
@@ -186,36 +198,40 @@ class ExactMargin {
     }
     for (std::size_t j = 0; j < columns_.size(); ++j) {
       Rational price;
-      for (std::size_t i = 0; i < a_.size(); ++i) if (a_[i][j]) { price = price + y[i] * Rational(a_[i][j]); ++operations; }
+      std::uint64_t products = 0;
+      for (std::size_t i = 0; i < a_.size(); ++i) if (a_[i][j]) { price = price + y[i] * Rational(a_[i][j]); ++products; }
+      account(a_.size(), products + 1);
       const auto needed = feasible ? objective_[j] : Rational{};
-      ++operations;
       if (price < needed) {
         if (columns_[j].reserve) throw detail::MarginWorkLimit{};
         if (columns_[j].pool < 0 && is_short(columns_[j].other)) price_pairs = true;
         y[columns_[j].unit] = y[columns_[j].unit] + needed - price;
       }
     }
+    account(pairs_.size(), 2 * pairs_.size());
     for (const auto& pair : pairs_) {
       const auto price = y[pair.unit] + y[pair.other];
       const auto needed = feasible ? pair.saving : Rational{};
-      operations += 2;
       if (price < needed) { price_pairs = true; y[pair.unit] = y[pair.unit] + needed - price; }
     }
     Rational result;
-    for (std::size_t i = 0; i < b_.size(); ++i) if (b_[i]) { result = result + y[i] * Rational(b_[i]); ++operations; }
-    auto& work = detail::margin_work();
-    work.checks += a_.size() * columns_.size() + b_.size();
-    work.rational += operations;
+    std::uint64_t products = 0;
+    for (std::size_t i = 0; i < b_.size(); ++i) if (b_[i]) { result = result + y[i] * Rational(b_[i]); ++products; }
+    account(b_.size(), products);
     return result;
   }
   std::vector<Rational> basis_prices(const detail::MarginSimplex& lp,
       const std::vector<std::size_t>& active, const std::vector<std::size_t>& rows) {
     const auto columns = lp.basic_columns(), prices = lp.price_rows();
     const auto size = prices.size();
-    if (columns.size() != size || size * size * (size + 1) > work_) throw detail::MarginWorkLimit{};
-    work_ -= size * size * (size + 1);
-    auto& work = detail::margin_work();
-    work.checks += size * (size + 1);
+    if (columns.size() != size) throw detail::MarginWorkLimit{};
+    // Replay drivers 1-12 charged the elimination's cubic bound before starting it;
+    // from driver 13 it is charged by the operations it does.
+    if (!counted_) {
+      if (size * size * (size + 1) > work_) throw detail::MarginWorkLimit{};
+      work_ -= size * size * (size + 1);
+    }
+    account(size * (size + 1), 0);
     std::vector<std::vector<Rational>> equations(size, std::vector<Rational>(size + 1));
     for (std::size_t i = 0; i < size; ++i) {
       for (std::size_t j = 0; j < size; ++j) equations[i][j] = Rational(a_[rows[prices[j]]][active[columns[i]]]);
@@ -226,10 +242,10 @@ class ExactMargin {
       while (pivot < size && equations[pivot][j] == Rational{}) ++pivot;
       if (pivot == size) throw detail::MarginWorkLimit{};
       std::swap(equations[j], equations[pivot]);
-      work.checks += size - j;
+      account(size - j, 0);
       for (std::size_t i = j + 1; i < size; ++i) {
         if (equations[i][j] == Rational{}) continue;
-        work.rational += size - j + 1;
+        account(0, size - j + 1);
         const auto ratio = equations[i][j] / equations[j][j];
         for (std::size_t k = j + 1; k <= size; ++k) equations[i][k] = equations[i][k] - ratio * equations[j][k];
         equations[i][j] = {};
@@ -237,7 +253,7 @@ class ExactMargin {
     }
     std::vector<Rational> y(b_.size());
     for (std::size_t i = size; i-- > 0;) {
-      work.rational += size - i + 1;
+      account(0, size - i + 1);
       auto value = equations[i][size];
       for (std::size_t j = i + 1; j < size; ++j) value = value - equations[i][j] * y[rows[prices[j]]];
       value = value / equations[i][i];
@@ -333,27 +349,28 @@ class ExactMargin {
     if (split == x.size()) {
       // Recompute reserves from integer payoffs. Validate capacity and branch
       // constraints exactly; floats never enter the requirement or the parts.
-      auto& work = detail::margin_work();
       for (std::size_t j = 0; j < columns_.size(); ++j) {
         if (!columns_[j].reserve) continue;
         for (const auto row : pools_[static_cast<std::size_t>(columns_[j].pool)].rows) {
           Rational payoff;
-          work.checks += columns_.size();
+          std::uint64_t products = 0;
           for (std::size_t k = 0; k < columns_.size(); ++k)
-            if (!columns_[k].reserve && a_[row][k]) { payoff = payoff + Rational(a_[row][k]) * Rational(integer[k]); ++work.rational; }
+            if (!columns_[k].reserve && a_[row][k]) { payoff = payoff + Rational(a_[row][k]) * Rational(integer[k]); ++products; }
+          account(columns_.size(), products);
           integer[j] = std::max(integer[j], payoff.ceil());
         }
       }
       for (std::size_t i = 0; i < a_.size(); ++i) {
         Rational used;
-        work.checks += columns_.size();
-        for (std::size_t j = 0; j < columns_.size(); ++j) if (a_[i][j]) { used = used + Rational(a_[i][j]) * Rational(integer[j]); ++work.rational; }
-        ++work.rational;
+        std::uint64_t products = 0;
+        for (std::size_t j = 0; j < columns_.size(); ++j) if (a_[i][j]) { used = used + Rational(a_[i][j]) * Rational(integer[j]); ++products; }
+        account(columns_.size(), products + 1);
         if (Rational(b_[i]) < used) throw detail::MarginWorkLimit{};
       }
       Rational cost = base_;
-      work.checks += columns_.size();
-      for (std::size_t j = 0; j < columns_.size(); ++j) if (integer[j]) { cost = cost - objective_[j] * Rational(integer[j]); ++work.rational; }
+      std::uint64_t products = 0;
+      for (std::size_t j = 0; j < columns_.size(); ++j) if (integer[j]) { cost = cost - objective_[j] * Rational(integer[j]); ++products; }
+      account(columns_.size(), products);
       if (cost.ceil() < best_) { best_ = cost.ceil(); best_x_ = std::move(integer); incumbent_.clear(); }
       if (lower_bound(upper) < best_) {
         if (pools_first) search(stage + 1);
@@ -426,5 +443,7 @@ class ExactMargin {
   bool lattice_ = true;
   std::vector<Quantity> best_x_;
   Parts incumbent_;
-  std::size_t work_ = 50000000;
+  /// Replay driver 13 on: the exact checks are charged to the budget too.
+  bool counted_;
+  std::size_t work_;
 };

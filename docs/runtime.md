@@ -1105,7 +1105,7 @@ be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
 their existing journal bytes; restart creates a byte-identical prefix on the current
-driver (12).
+driver (13).
 
 ### Verifying a run
 
@@ -1260,6 +1260,15 @@ trades view, the portfolio's lifetimes and the rules comparison
 microscalping plans; their attempts keep placing share round trips by when they opened.
 Runs recorded with drivers 1–11 verify as they were recorded; they can no longer be
 resumed or restarted.
+
+Driver 13 gives the exact strategy-margin allocation a budget of a few milliseconds'
+work per underlying, its exact checks (dual bounds, basis eliminations and
+whole-contract validation) counted with its simplex pivots, before the bounded
+allocator answers ([margin allocation](margin-allocation.md)). Drivers 1–12 allowed
+50,000,000 units of pivots alone, so an irregular book could hold the engine for tens
+of milliseconds on every solve; a book that needs more than the new budget now gets
+the bounded allocator's requirement. Runs recorded with drivers 1–12 verify as they
+were recorded; they can no longer be resumed or restarted.
 
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).

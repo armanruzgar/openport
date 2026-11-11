@@ -715,6 +715,7 @@ void Desk::start_trading() {
       account.session->set_revised_share_orders(options_.revised_share_orders);
       account.session->set_revised_lifecycle(options_.revised_lifecycle);
       account.session->set_revised_share_attempts(options_.revised_share_attempts);
+      account.session->set_revised_margin_budget(options_.revised_margin_budget);
       account.session->set_actor("system");
       account.sampled_snapshot = account.session->snapshot();
     } catch (const TradingError& error) {
@@ -895,6 +896,7 @@ void Desk::create_account(const TradingCommand& c, TradingReply& reply) {
     account.session->set_revised_share_orders(options_.revised_share_orders);
     account.session->set_revised_lifecycle(options_.revised_lifecycle);
     account.session->set_revised_share_attempts(options_.revised_share_attempts);
+    account.session->set_revised_margin_budget(options_.revised_margin_budget);
     account.session->set_actor("system");
     account.equity = std::make_unique<EquityStore>(file.string() + ".equity.csv");
   } catch (const TradingError& error) {
@@ -2691,6 +2693,7 @@ constexpr bool Desk::Options::* kDriverOptions[] = {
     &Desk::Options::revised_share_orders,  // 10: share-order client IDs, OCO pairs and stop sessions
     &Desk::Options::revised_lifecycle,     // 11: order and account upkeep, settlement marks and change histories
     &Desk::Options::revised_share_attempts,  // 12: where each attempt's stock fills start
+    &Desk::Options::revised_margin_budget,   // 13: the exact margin allocation's work budget
 };
 static_assert(std::size(kDriverOptions) == static_cast<std::size_t>(kReplayDriver - 1), "each driver after the first adds one option");
 }  // namespace

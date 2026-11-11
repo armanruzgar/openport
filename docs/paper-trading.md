@@ -2297,7 +2297,8 @@ cannot manufacture fractional savings. The [model and proof](margin-allocation.m
 explain the constraints, certificates, and subadditivity.
 
 `margin[].allocation` reports `exact` for a certified minimum, `bounded` when a
-hard work or arithmetic limit invokes the retained conservative search, and
+hard work or arithmetic limit invokes the retained conservative search (the work
+limit is a few milliseconds' work per underlying from replay driver 13 on), and
 `legacy` for an older recorded run's allocator. Portfolio scans report null.
 The terminal shows this status beside the breakdown. Limits depend on operations,
 never elapsed time; symbol, expiry and variable order resolve ties deterministically.
