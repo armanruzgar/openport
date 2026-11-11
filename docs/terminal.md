@@ -83,7 +83,9 @@ Use Orders and Journal for the server's retained trade records.
 ## Chart studies and annotations
 
 SMA and EMA use loaded closing prices and a configurable 2–200-bar period (default
-20). EMA starts at the first complete SMA. Bollinger bands use that SMA plus/minus
+20); a period typed outside that range is not applied, and the field returns to the
+period in use when it loses focus or Enter is pressed. EMA starts at the first
+complete SMA. Bollinger bands use that SMA plus/minus
 two population standard deviations. Studies have a full-period warm-up and are
 calculated before the visible window, so panning does not restart the average.
 They are derived from the loaded history, which may be shorter than a full session.
@@ -91,9 +93,9 @@ They are derived from the loaded history, which may be shorter than a full sessi
 The VWAP calculation uses typical price `(high + low + close) / 3`, weighted by
 bar volume and reset by New York calendar date. A missing volume makes that
 session unavailable. **The current candle endpoint supplies OHLC without volume,
-so VWAP is unavailable and the chart explicitly says so.** No volume is fabricated
-or substituted with option-chain volume. Enabling a real VWAP display requires a
-future volume-bearing underlying candle source/API.
+so the chart does not offer VWAP.** The VWAP study appears once the loaded bars carry
+volume. No volume is fabricated or substituted with option-chain volume. Enabling a
+real VWAP display requires a future volume-bearing underlying candle source/API.
 
 **Draw level** places a horizontal annotation with one chart tap. **Draw trendline**
 uses two taps on different bars. **Cancel drawing** exits drawing mode. The

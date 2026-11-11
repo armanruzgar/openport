@@ -49,6 +49,13 @@ export function PriceChart({ symbol, spot, expiry }: { symbol: string; spot: num
     return () => window.removeEventListener("openport:workspace", reload)
   }, [])
   const studies = studyPrefs(prefs.studies)
+  // The typed period while it is not yet a whole 2–200; the saved one otherwise.
+  const [periodText, setPeriodText] = useState<string | null>(null)
+  const typePeriod = (text: string) => {
+    setPeriodText(text)
+    const period = Number(text)
+    if (text.trim() !== "" && Number.isInteger(period) && period >= 2 && period <= 200) update({ studies: { ...studies, period } })
+  }
   const [drawings, setDrawings] = useState(() => loadDrawings(symbol))
   const [drawMode, setDrawMode] = useState<"horizontal" | "trend" | null>(null)
   const [anchor, setAnchor] = useState<DrawingPoint | null>(null)
@@ -87,6 +94,10 @@ export function PriceChart({ symbol, spot, expiry }: { symbol: string; spot: num
   const data = candles.data
   const bars = data?.symbol === symbol && data.interval === prefs.interval ? data.bars : []
   const kinds = new Set(levels.map((level) => level.kind))
+  // VWAP weighs bars by volume. No candle source sends volume yet, so the study is offered
+  // only once bars carry it.
+  const volume = bars.some((bar) => "v" in bar && bar.v != null)
+  const offered: ("sma" | "ema" | "bollinger" | "vwap")[] = volume ? ["sma", "ema", "bollinger", "vwap"] : ["sma", "ema", "bollinger"]
   const name = `${intervalNames[prefs.interval]} candles`
   return (
     <section className="min-w-0 rounded-lg border border-border bg-panel" aria-label={`${symbol} chart`}>
@@ -108,18 +119,19 @@ export function PriceChart({ symbol, spot, expiry }: { symbol: string; spot: num
       {!prefs.hidden && (
         <div className="p-3">
           <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
-            {(["sma", "ema", "bollinger", "vwap"] as const).map((study) => <label key={study} className="flex items-center gap-1">
+            {offered.map((study) => <label key={study} className="flex items-center gap-1">
               <input type="checkbox" checked={studies[study]} onChange={(event) => update({ studies: { ...studies, [study]: event.target.checked } })} />
               {study === "bollinger" ? "Bollinger ±2σ" : study.toUpperCase()}
             </label>)}
-            <label className="flex items-center gap-1">Period<input className="trade-input !w-16" aria-label="Study period" type="number" min={2} max={200} value={studies.period}
-              onChange={(event) => { const period = Number(event.target.value); if (Number.isInteger(period) && period >= 2 && period <= 200) update({ studies: { ...studies, period } }) }} /></label>
+            <label className="flex items-center gap-1">Period<input className="trade-input !w-16" aria-label="Study period" type="number" min={2} max={200} step={1}
+              value={periodText ?? studies.period} aria-invalid={periodText != null && Number(periodText) !== studies.period}
+              onChange={(event) => typePeriod(event.target.value)} onBlur={() => setPeriodText(null)}
+              onKeyDown={(event) => { if (event.key === "Enter") setPeriodText(null) }} /></label>
             <button className="trade-button" aria-pressed={drawMode === "horizontal"} onClick={() => { setDrawMode(drawMode === "horizontal" ? null : "horizontal"); setAnchor(null) }}>Draw level</button>
             <button className="trade-button" aria-pressed={drawMode === "trend"} onClick={() => { setDrawMode(drawMode === "trend" ? null : "trend"); setAnchor(null) }}>Draw trendline</button>
             {drawMode && <button className="trade-button" onClick={() => { setDrawMode(null); setAnchor(null) }}>Cancel drawing</button>}
           </div>
           {drawMode && <p role="status" className="mb-2 text-xs text-accent">{drawMode === "horizontal" ? "Tap the chart to place a horizontal line." : anchor ? "Tap a different bar for the second anchor." : "Tap the first trendline anchor, then a different bar."}</p>}
-          {studies.vwap && <p className="mb-2 text-xs text-muted">VWAP requires bar volume. The current candle endpoint supplies OHLC only; no VWAP is inferred.</p>}
           {(studies.sma || studies.ema || studies.bollinger) && <p className="mb-2 text-[11px] text-muted">Derived from loaded closes · {studies.period}-bar warm-up · EMA seeded with SMA · Bollinger uses population deviation.</p>}
           {bars.length ? (
             <CandleChart key={`${symbol}/${prefs.interval}`} bars={bars} interval={prefs.interval} levels={displayedLevels} band={band}

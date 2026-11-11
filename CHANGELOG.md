@@ -789,6 +789,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   sorted every trade's peers once per trade, which took seconds per tick with a few
   thousand closed trades. Each is now computed once per change of the data or filters,
   and the coach report finds every peer group's median size in one pass.
+- **The chart no longer offers a VWAP it cannot draw.** Candles carry no volume from
+  any provider, so ticking VWAP only ever showed a note. The study now appears once
+  the loaded bars carry volume.
+- **The chart's study period takes typed values.** The Period field applied only whole
+  values from 2 to 200 and threw every other keystroke away, so it could not be
+  cleared and 14 could not be typed digit by digit (the 1 was dropped and the 4 made
+  204). The field now keeps what is typed, applies it once it is a whole 2–200, and
+  returns to the period in use on Enter or when it loses focus.
 
 ## 0.5.1 (2026-10-28)
 
