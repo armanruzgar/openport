@@ -986,6 +986,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **The header says which underlying is shown.** The underlying buttons marked the
   current symbol only by colour, so a screen reader heard a row of identical buttons.
   The current one now carries `aria-current`.
+- **A second new playbook saves.** New playbook always proposed the ID `put-spread`, and
+  the server never reuses an ID, archived playbooks' included, so a second New playbook
+  › Save version failed with `INVALID_PLAYBOOK` until the ID was changed by hand in the
+  JSON. The template now takes the first unused ID (`put-spread-2`, ...), and the
+  editor says that IDs are permanent.
 
 ## 0.5.1 (2026-10-28)
 

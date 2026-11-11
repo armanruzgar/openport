@@ -20,6 +20,16 @@ export const newPlaybook: Playbook = {
   sizing: { units: 1 }, management: { take_profit_percent: 50, stop_credit_multiple: 2, close_by: "15:45" },
   guardrails: { max_entries_per_day: 1, cooldown_minutes: 30 },
 }
+/**
+ * The New playbook template with an ID no playbook on the server has used, archived ones
+ * included: the server never reuses an ID ("put-spread", then "put-spread-2", ...).
+ */
+export function newPlaybookDraft(taken: Iterable<string>): Playbook {
+  const used = new Set(taken)
+  let id = newPlaybook.id
+  for (let n = 2; used.has(id); n++) id = `${newPlaybook.id}-${n}`
+  return { ...newPlaybook, id }
+}
 const pct = (value: number | null) => value == null ? "—" : `${(100 * value).toFixed(1)}%`
 function Stats({ rows }: { rows: [string, PlaybookStats][] }) {
   return <div className="overflow-x-auto"><table className="w-full text-left text-xs tabular">
@@ -88,7 +98,7 @@ function Playbooks() {
   const report = data.reports?.[selected]
   return <div className="space-y-4">
     <PageHeader title="Playbooks" subtitle="Written setups, staged orders and adherence for this account.">
-      <button className="trade-button" disabled={!!blocked || busy} onClick={() => { setEditing(JSON.stringify(newPlaybook, null, 2)); setError(null) }}>New playbook</button>
+      <button className="trade-button" disabled={!!blocked || busy} onClick={() => { setEditing(JSON.stringify(newPlaybookDraft(Object.keys(data.definitions)), null, 2)); setError(null) }}>New playbook</button>
     </PageHeader>
     <WriteAccess trading={trading} />
     <p className="text-xs text-muted">Orders and fills are simulated. Auto sends orders automatically on paper, including live accounts. All times are New York time.</p>
@@ -123,7 +133,8 @@ function Playbooks() {
         <button className="trade-button" disabled={busy} onClick={() => setConfirmAuto(null)}>Cancel</button></div>
     </Dialog>}
     {editing != null && <Panel title="Edit playbook definition">
-      <p className="mb-3 text-xs text-muted">This JSON contains the complete rules. Saving an edit creates a new version; old versions remain readable. Use fixed units or floor_share (0–1). Take-profit percent is the closing premium as a percent of the entry credit or debit. Price references use point offsets; IV rank uses fractions. Missing condition inputs prevent entry.</p>
+      <p className="mb-3 text-xs text-muted">This JSON contains the complete rules. Saving an edit creates a new version; old versions remain readable.
+        A playbook's id (lowercase letters, digits and hyphens, up to 15) is its own for good: no other playbook can take it, an archived one's included. Use fixed units or floor_share (0–1). Take-profit percent is the closing premium as a percent of the entry credit or debit. Price references use point offsets; IV rank uses fractions. Missing condition inputs prevent entry.</p>
       <label className="trade-label">Definition JSON<textarea aria-label="Playbook definition" className="trade-input min-h-96 font-mono text-xs" value={editing} onChange={(event) => setEditing(event.target.value)} /></label>
       <div className="mt-3 flex gap-2"><button className="trade-button" disabled={!!blocked || busy} onClick={() => void mutate(() => api.savePlaybook(JSON.parse(editing) as Playbook, trading.write), true)}>Save version</button>
         <button className="trade-button" onClick={() => setEditing(null)}>Cancel edit</button></div>

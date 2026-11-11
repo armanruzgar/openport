@@ -10,7 +10,7 @@ import type { BacktestReport } from "../api/backtest-types"
 import { AutoPlaybookIndicator, PassOddsCard, StagedOrders } from "../components/Playbooks"
 import { trades, status } from "../test/trading-fixtures"
 import { JournalView } from "./JournalView"
-import { newPlaybook, PlaybooksView } from "./PlaybooksView"
+import { newPlaybook, newPlaybookDraft, PlaybooksView } from "./PlaybooksView"
 import { renderTimeout, waitForRender } from "../test/render"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
@@ -174,6 +174,20 @@ describe("Playbooks page and staged actions", { timeout: renderTimeout }, () => 
     await click("Save version")
     expect(api.savePlaybook).toHaveBeenCalledWith(edit, "open")
     expect(host.querySelector("textarea")).toBeNull()
+  })
+  it("proposes a new playbook under an ID no playbook has used, archived ones included", async () => {
+    const saved = catalogue()
+    saved.definitions["put-spread-2"] = { versions: [{ ...newPlaybook, id: "put-spread-2", version: 1 }], deleted: true }
+    vi.mocked(api.playbooks).mockResolvedValue(saved)
+    await render(<PlaybooksView />)
+    await waitForRender(() => expect(host.textContent).toContain("Morning put spread"))
+    await click("New playbook")
+    const draft = JSON.parse(host.querySelector<HTMLTextAreaElement>('textarea[aria-label="Playbook definition"]')!.value) as typeof newPlaybook
+    expect(draft).toEqual({ ...newPlaybook, id: "put-spread-3" })
+    expect(host.textContent).toContain("no other playbook can take it, an archived one's included")
+    await click("Save version")
+    expect(api.savePlaybook).toHaveBeenCalledWith({ ...newPlaybook, id: "put-spread-3" }, "open")
+    expect(newPlaybookDraft([]).id).toBe("put-spread")
   })
   it("stages on the selected account without sending when its mode changes", async () => {
     await render(<PlaybooksView />)
