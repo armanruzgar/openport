@@ -6257,6 +6257,12 @@ TEST(AccountGroups, AllocateByRatioOrByEquity) {
       {{"main", Money::parse("1")}, {"small", Money::parse("0.5")}, {"big", Money::parse("2.5")}}};
   EXPECT_EQ(server::allocate(group, 3), (std::vector<trading::Quantity>{3, 1, 7}));
   EXPECT_EQ(server::allocate(group, 0), (std::vector<trading::Quantity>{0, 0, 0}));
+  // A ratio share past the largest quantity is refused, not wrapped.
+  const server::AccountGroup wide{"wide", server::Allocation::Ratio, {{"main", Money::parse("100")}, {"small", Money::parse("0.5")}}};
+  constexpr auto most = std::numeric_limits<trading::Quantity>::max();
+  EXPECT_EQ(server::allocate(wide, most / 100), (std::vector<trading::Quantity>{most / 100 * 100, most / 100 / 2}));
+  EXPECT_THROW(static_cast<void>(server::allocate(wide, most / 100 + 1)), std::invalid_argument);
+  EXPECT_THROW(static_cast<void>(server::allocate(wide, 1106804644422573097)), std::invalid_argument);
   group.allocation = server::Allocation::Equity;
   // 10 units by equity 50k, 25k, 25k: 5, 2.5, 2.5; the tie's remainder goes to the earlier member.
   EXPECT_EQ(server::allocate(group, 10, {Money::parse("50000"), Money::parse("25000"), Money::parse("25000")}),
@@ -6410,6 +6416,27 @@ TEST_F(PaperEngine, CopiedOrdersFanOutAsEachAccountsOwnSubmission) {
   expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "even"}, {"order", copied}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "none"}, {"order", order(market)}}), 404, "UNKNOWN_GROUP");
   expect_error(write(*engine, "POST", "/api/orders/copy?account=" + half, {{"group", "even"}, {"order", order(market)}}), 400, "INVALID_REQUEST");
+  // A body that is empty or not JSON is the client's mistake, not a groups outage.
+  for (const auto* text : {"", "{", "{}{}", "NaN"}) {
+    for (const auto& [verb, route] : {std::pair{"PUT", "/api/account-groups/even"}, std::pair{"POST", "/api/orders/copy"},
+                                       std::pair{"POST", "/api/orders/copy/preview"}}) {
+      server::ApiRequest malformed{verb, route, text};
+      malformed.content_type = "application/json";
+      server::ApiResponse answered;
+      server::handle_api_async(malformed, *engine, [&](server::ApiResponse value) { answered = std::move(value); });
+      expect_error(answered, 400, "INVALID_REQUEST");
+    }
+  }
+  // A quantity whose share at a member's ratio is past the largest quantity is refused
+  // whole, not wrapped to a small order the member could fill.
+  ASSERT_EQ(write(*engine, "PUT", "/api/account-groups/wide", {{"allocation", "ratio"},
+      {"members", {{{"account", "main"}, {"ratio", "100"}}, {{"account", half}, {"ratio", "0.5"}}}}}).status, 200);
+  const auto orders_before = read(*engine, "/api/orders")["orders"].size();
+  auto huge = order(market, "copy-huge", "4.20");
+  huge["quantity"] = 1106804644422573097LL;
+  expect_error(write(*engine, "POST", "/api/orders/copy", {{"group", "wide"}, {"order", huge}}), 400, "INVALID_REQUEST");
+  EXPECT_EQ(read(*engine, "/api/orders")["orders"].size(), orders_before);
+  ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/wide").status, 200);
   ASSERT_EQ(write(*engine, "DELETE", "/api/account-groups/even").status, 200);
   expect_error(write(*engine, "DELETE", "/api/account-groups/even"), 404, "UNKNOWN_GROUP");
   engine->stop();

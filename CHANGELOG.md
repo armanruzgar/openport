@@ -32,6 +32,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Copied orders and account-group bodies.** A ratio group sized each member as the
+  order's quantity times its ratio and narrowed the result to 64 bits, so an absurd
+  quantity (one whose share at a ratio up to 100 passes 2^63 - 1) wrapped to a small
+  order the member's account could fill. `POST /api/orders/copy` and its preview now
+  refuse such a quantity whole with 400 `INVALID_REQUEST` and send nothing. An empty or
+  malformed JSON body on `PUT /api/account-groups/{name}` or the copy routes answered
+  503 `GROUPS_UNAVAILABLE`, a temporary outage a client may retry; it is 400
+  `INVALID_REQUEST`, as on `POST /api/orders`.
 - **Implied session moves around an expiry without MFIV.** Each expiry's total variance
   used MFIV, or ATM when MFIV was missing, and consecutive totals were subtracted
   whatever their basis. MFIV sits above ATM on a skewed smile, so an MFIV expiry

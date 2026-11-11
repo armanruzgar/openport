@@ -2235,16 +2235,21 @@ void fee_model(const json& body, AccountRules& rules) {
 json strict_json(const std::string& body) {
   // JSON parsers normally keep the last duplicate key; that is ambiguous for orders.
   std::vector<std::set<std::string>> keys;
-  return json::parse(body, [&](int depth, json::parse_event_t event, json& parsed) {
-    // The transport checks depth first (check_request_json); this keeps direct callers bounded too.
-    if (depth >= kRequestJsonDepthMax && (event == json::parse_event_t::object_start || event == json::parse_event_t::array_start))
-      throw std::invalid_argument("Request body nests deeper than " + std::to_string(kRequestJsonDepthMax) + " levels");
-    if (event == json::parse_event_t::object_start) keys.emplace_back();
-    if (event == json::parse_event_t::key && !keys.back().insert(parsed.get<std::string>()).second)
-      throw std::invalid_argument("Duplicate JSON field");
-    if (event == json::parse_event_t::object_end) keys.pop_back();
-    return true;
-  });
+  try {
+    return json::parse(body, [&](int depth, json::parse_event_t event, json& parsed) {
+      // The transport checks depth first (check_request_json); this keeps direct callers bounded too.
+      if (depth >= kRequestJsonDepthMax && (event == json::parse_event_t::object_start || event == json::parse_event_t::array_start))
+        throw std::invalid_argument("Request body nests deeper than " + std::to_string(kRequestJsonDepthMax) + " levels");
+      if (event == json::parse_event_t::object_start) keys.emplace_back();
+      if (event == json::parse_event_t::key && !keys.back().insert(parsed.get<std::string>()).second)
+        throw std::invalid_argument("Duplicate JSON field");
+      if (event == json::parse_event_t::object_end) keys.pop_back();
+      return true;
+    });
+  } catch (const json::parse_error&) {
+    // An empty or malformed body is the client's mistake on every route, a 400.
+    throw std::invalid_argument("Request body must be valid JSON");
+  }
 }
 /// The optional scope of a bulk command: one underlying, or every one.
 std::string scope_field(const json& body) {
@@ -4381,6 +4386,9 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
     complete(api_error(reason_status(error.code()), std::string(to_string(error.code())), error.what()));
   } catch (const std::invalid_argument& error) {
     complete(api_error(400, "INVALID_REQUEST", error.what()));
+  } catch (const json::exception&) {
+    // A body of the wrong shape is the client's mistake, never a groups outage.
+    complete(api_error(400, "INVALID_REQUEST", "Request body does not have the documented fields and types"));
   } catch (const std::exception& error) {
     complete(api_error(503, "GROUPS_UNAVAILABLE", error.what()));
   }

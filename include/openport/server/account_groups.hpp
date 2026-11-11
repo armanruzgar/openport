@@ -45,7 +45,8 @@ void validate_group(const AccountGroup& group);
 
 /// Each member's quantity of an order of `quantity` units. `equity` gives the members'
 /// marked equity, in member order, for equity allocation; a member without positive
-/// equity takes none. A member may get zero units.
+/// equity takes none. A member may get zero units. Throws std::invalid_argument when
+/// a ratio member's share is past the largest quantity.
 [[nodiscard]] std::vector<trading::Quantity> allocate(const AccountGroup& group, trading::Quantity quantity,
                                                       const std::vector<std::optional<trading::Money>>& equity = {});
 

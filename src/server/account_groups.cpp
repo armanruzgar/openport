@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <limits>
 #include <numeric>
 #include <set>
 #include <stdexcept>
@@ -65,8 +66,14 @@ std::vector<Quantity> allocate(const AccountGroup& group, Quantity quantity, con
   std::vector<Quantity> sizes(group.members.size(), 0);
   if (quantity <= 0) return sizes;
   if (group.allocation == Allocation::Ratio) {
-    for (std::size_t i = 0; i < sizes.size(); ++i)
-      sizes[i] = static_cast<Quantity>(static_cast<Wide>(quantity) * group.members[i].ratio.micros() / 1'000'000);
+    for (std::size_t i = 0; i < sizes.size(); ++i) {
+      const Wide size = static_cast<Wide>(quantity) * group.members[i].ratio.micros() / 1'000'000;
+      // Narrowed as it is, a size past the largest quantity would wrap to a small
+      // order the member's account could fill.
+      if (size > std::numeric_limits<Quantity>::max())
+        throw std::invalid_argument("The order's quantity times a member's ratio is past the largest order quantity");
+      sizes[i] = static_cast<Quantity>(size);
+    }
     return sizes;
   }
   // Equity: the floors of each member's share, then the largest remainders (earlier

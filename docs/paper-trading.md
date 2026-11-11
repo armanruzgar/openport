@@ -4452,7 +4452,9 @@ in `account-groups.json` beside the main journal, replaced atomically. Groups ar
 configuration, not trading: no journal records them, and deleting one changes no
 account. Sandbox servers and visitors are not offered them. An archived account stays
 in its groups: the terminal's group editor shows it as a checked row marked archived,
-and saving the group keeps it unless it is unchecked.
+and saving the group keeps it unless it is unchecked. A body that is empty, not JSON
+or not of this shape is 400 `INVALID_REQUEST`; 503 `GROUPS_UNAVAILABLE` means only
+that the groups file could not be written.
 
 `POST /api/orders/copy` takes `{"group": name, "order": {...}}`, the order as
 `POST /api/orders` takes it, and mirrors it in the server layer: each member account
@@ -4462,7 +4464,9 @@ to `/api/orders?account=<id>`. Nothing is shared between the submissions; one ac
 refusal (a delta limit, a plan rule, a decided attempt) does not stop another's.
 
 - **Ratio**: each member trades the order's quantity times its ratio (0.0001 to 100),
-  rounded down: a 3-lot copied at ratios 1, 0.5 and 2.5 is 3, 1 and 7.
+  rounded down: a 3-lot copied at ratios 1, 0.5 and 2.5 is 3, 1 and 7. A quantity
+  whose share for any member is past the largest order quantity (2^63 - 1) is
+  refused whole with 400 `INVALID_REQUEST`, and no member is sent anything.
 - **Equity**: the order's quantity is split across the members in proportion to their
   marked equity when the request arrives, each taking the floor of its share and the
   largest remainders (earlier members first on ties) the units rounding leaves, so the
