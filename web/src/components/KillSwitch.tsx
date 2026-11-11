@@ -55,7 +55,7 @@ export function KillSwitch({ kill, trading }: { kill: KillState; trading: Tradin
         </li>)}
       </ol>
     </details>}
-    <label className="trade-label">Reason<input className="trade-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder={kill.latched ? "Why is it safe to resume?" : "Why are you stopping trading?"} /></label>
+    <label className="trade-label">Reason<input className="trade-input" maxLength={200} value={reason} onChange={(e) => setReason(e.target.value)} placeholder={kill.latched ? "Why is it safe to resume?" : "Why are you stopping trading?"} /></label>
     <button className="trade-button" type="button" disabled={blocked || !reason.trim()} onClick={() => { setError(undefined); setAction(kill.latched ? "reset" : "trip") }}>{kill.latched ? "Reset kill switch…" : "Trip kill switch…"}</button>
     {result && <p role="status" className="text-xs text-muted">{result}</p>}
     {action && <Dialog title={action === "trip" ? "Confirm kill switch" : "Confirm kill-switch reset"} onClose={() => { if (!pending) setAction(null) }}>

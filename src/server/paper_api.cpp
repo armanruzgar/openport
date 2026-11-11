@@ -2274,6 +2274,16 @@ bool valid_client_order_id(std::string_view id) {
   return !id.empty() && id.size() <= 128 &&
          std::none_of(id.begin(), id.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; });
 }
+/// A kill-switch or account-reset reason: the journal keeps it with every change of the
+/// latch, refusals repeat it and /api/risk lists it, so at most 200 bytes of text without
+/// control characters. The reducer refuses a blank one (INVALID_REASON).
+std::string reason_field(const json& body) {
+  auto reason = string_field(body, "reason");
+  if (reason.size() > 200) throw std::invalid_argument("reason must be at most 200 bytes");
+  if (std::any_of(reason.begin(), reason.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
+    throw std::invalid_argument("reason must be text without control characters");
+  return reason;
+}
 /// Account IDs are lowercase letters, digits and single hyphens, as their journals are named.
 bool valid_account(std::string_view id) {
   return !id.empty() && id.size() <= 40 && id.front() != '-' && id.back() != '-' && id.find("--") == std::string_view::npos &&
@@ -2839,7 +2849,7 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
     const auto action = string_field(body, "action");
     if (action != "trip" && action != "reset") throw std::invalid_argument("action must be trip or reset");
     command.kind = action == "trip" ? TradingCommand::Kind::Trip : TradingCommand::Kind::Reset;
-    command.reason = string_field(body, "reason");
+    command.reason = reason_field(body);
   } else if (path == "/api/account/reset") {
     // Either a preset ID, or a custom starting balance and complete rules.
     fields(body, {"reason"}, {"plan", "initial_cash", "rules", "fill_model", "fee_model", "margin", "account_type",
@@ -2854,7 +2864,7 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
         command.program_cost_overrides |= cost_bit;
       cost_bit <<= 1;
     }
-    command.reason = string_field(body, "reason");
+    command.reason = reason_field(body);
     if (body.contains("plan")) {
       if (body.contains("initial_cash") || body.contains("rules"))
         throw std::invalid_argument("plan excludes initial_cash and rules");

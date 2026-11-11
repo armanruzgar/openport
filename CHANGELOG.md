@@ -35,6 +35,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   reserved as one, and stops reached only in their session. Runs recorded with
   drivers 1–9 still pass `--verify-run` with their original share orders; like driver
   9's, they can no longer be resumed or restarted.
+- **Kill-switch and reset reasons are short text.** `POST /api/risk/kill` and
+  `POST /api/account/reset` now refuse a `reason` over 200 bytes or with control
+  characters (400 `INVALID_REQUEST`); a script that sent long or multi-line reasons
+  must shorten them.
+
+### Providers
+
 
 ### Providers
 

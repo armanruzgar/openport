@@ -16808,7 +16808,9 @@
                 "description": "Override portfolio margin's implied-volatility shock, in points up and down."
               },
               "reason": {
-                "type": "string"
+                "type": "string",
+                "maxLength": 200,
+                "description": "Nonblank text without control characters, at most 200 bytes."
               },
               "fee_model": {
                 "type": "string",
@@ -22143,7 +22145,10 @@
             ]
           },
           "reason": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Nonblank text without control characters, at most 200 bytes; the journal keeps it with the change and refusals repeat it."
           }
         },
         "required": [

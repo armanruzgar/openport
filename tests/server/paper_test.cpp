@@ -1195,6 +1195,18 @@ TEST(PaperStatus, PublishesConfiguredMoneyStringsInStatusAndTick) {
   EXPECT_EQ(json::parse(server::tick_message(engine))["trading"], status);
 }
 
+TEST_F(PaperEngine, KillAndResetReasonsAreShortText) {
+  seed();
+  // The journal keeps a reason with each change of the latch, and refusals repeat it.
+  for (const auto& reason : {std::string(201, 'x'), std::string("line\nbreak"), std::string("\x1b[31m")}) {
+    expect_error(write(*engine, "POST", "/api/risk/kill", {{"action", "trip"}, {"reason", reason}}), 400, "INVALID_REQUEST");
+    expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", reason}}), 400, "INVALID_REQUEST");
+  }
+  const auto tripped = write(*engine, "POST", "/api/risk/kill", {{"action", "trip"}, {"reason", std::string(200, 'x')}});
+  ASSERT_EQ(tripped.status, 200) << tripped.body;
+  EXPECT_EQ(json::parse(tripped.body)["kill"]["reason"], std::string(200, 'x'));
+}
+
 TEST_F(PaperEngine, CancelFillOrderingKillAndRevisionChecks) {
   seed();
   ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "cancel-first")).status, 201);
