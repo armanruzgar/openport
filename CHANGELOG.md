@@ -1236,6 +1236,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   could show the sandbox's positions, orders and fills, a late sandbox response could be
   shown as current, and the next alert asked to confirm a changed destination. Every
   change of account now starts a new scope, however it came about.
+- **The 1-9 page keys work after clicking a button.** Chromium and Firefox keep focus
+  on a button clicked with the mouse, and the page shortcuts ignored any key pressed on
+  a button, so after clicking a sidebar page, a tab or any other button the advertised
+  "1-9 Switch sidebar page" did nothing until focus moved. Digits now switch pages from
+  a focused button; the left and right arrows still stay with it.
 
 ## 0.5.1 (2026-10-28)
 

@@ -35,3 +35,28 @@ it("steps expiries from the one the chain shows, while a new version's summary l
     expect(navigate.mock.calls).toEqual([[{ expiry: "2026-10-23PM" }], [{ expiry: "2026-10-09PM" }]])
   } finally { await act(async () => root.unmount()); client.clear() }
 })
+
+it("switches pages with a digit while a clicked button keeps focus, and leaves it the arrows", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true)
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value() { this.open = true } })
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value() { this.open = false } })
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open"))
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  client.setQueryData(["summary", "SPX", 1], { symbol: "SPX", as_of: status.underlyings[0]!.as_of, expiries: [expiry, { ...expiry, id: "2026-10-23PM" }] } as unknown as Summary)
+  const host = document.createElement("div"), root = createRoot(host)
+  document.body.append(host)
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><App /></QueryClientProvider>))
+    // A button clicked with the mouse keeps focus in Chromium and Firefox.
+    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === "Symbol ⌘/Ctrl K")!
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    const key = (name: string) => act(async () => { button.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true })) })
+    await key("4")
+    expect(navigate).toHaveBeenLastCalledWith({ view: "orders" })
+    navigate.mockClear()
+    await key("ArrowRight")
+    expect(navigate).not.toHaveBeenCalled()
+  } finally { await act(async () => root.unmount()); client.clear(); host.remove() }
+})

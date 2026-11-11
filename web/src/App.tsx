@@ -67,13 +67,17 @@ export function App() {
       }
       if (event.metaKey || event.ctrlKey) return
       if (event.key === "?") { event.preventDefault(); setHelp(true); return }
-      if (target?.closest('button, [role="radiogroup"], [role="tablist"], [data-chain]')) return
+      // Radio groups, tab lists and the chain move with their own arrow keys. A plain button
+      // keeps focus after a mouse click (the sidebar page just chosen, say): digits still
+      // switch pages from it, and only the arrows stay its own.
+      if (target?.closest('[role="radiogroup"], [role="tablist"], [data-chain]')) return
       const next = pages[Number(event.key) - 1]
       if (next) {
         event.preventDefault()
         navigate({ view: next })
         return
       }
+      if (target?.closest("button")) return
       if ((event.key === "ArrowLeft" || event.key === "ArrowRight") && symbol && view === "chain") {
         // Step from what the chain shows: the last summary loaded, while the new version's loads,
         // and the default expiry once the route's has rolled off.
