@@ -312,11 +312,24 @@ function NoteEditor({ trades, trading }: { trades: { id: string; note?: string; 
   </form>
 }
 
-function TradeRow({ trade: t, expanded, onToggle }: { trade: Trade; expanded: boolean; onToggle: () => void }) {
-  return <tr className="cursor-pointer border-t border-border/40 hover:bg-raised/50" onClick={onToggle} aria-expanded={expanded}>
+/**
+ * A journal row's name. On a row that opens, it is the button that opens and closes the
+ * row's details, so a keyboard or screen reader reaches them; a click anywhere on the
+ * row does the same.
+ */
+function RowToggle({ label, expanded, onToggle }: { label: string; expanded: boolean; onToggle?: () => void }) {
+  if (!onToggle) return <span className="font-medium">{label}</span>
+  return <button type="button" className="text-left font-medium hover:underline focus-visible:underline" aria-expanded={expanded}
+    title={expanded ? "Hide details" : "Show details"} onClick={(event) => { event.stopPropagation(); onToggle() }}>{label}</button>
+}
+const rowClass = (opens: boolean) => `border-t border-border/40 ${opens ? "cursor-pointer hover:bg-raised/50" : ""}`
+
+/** A round trip's row; a strategy's or whole trade's legs, listed under it, do not open on their own. */
+function TradeRow({ trade: t, expanded = false, onToggle }: { trade: Trade; expanded?: boolean; onToggle?: () => void }) {
+  return <tr className={rowClass(!!onToggle)} onClick={onToggle}>
     <td className="px-2 py-2 text-left">
       <span className={`mr-2 inline-block h-3 w-0.5 align-middle ${t.status === "open" ? "bg-accent" : tradeNet(t) >= 0 ? "bg-bullish" : "bg-bearish"}`} />
-      <span className="font-medium">{contractLabel(t)}</span>
+      <RowToggle label={contractLabel(t)} expanded={expanded} onToggle={onToggle} />
       {exitLabel(t) && <span className={`ml-1 text-[10px] ${t.closed_by === "system" ? "text-warn" : "text-muted"}`}>({exitLabel(t)})</span>}
       <Tags trade={t} />
       <SettlementPrint trade={t} />
@@ -345,10 +358,10 @@ export function StrategyRow({ group, expanded, onToggle }: { group: TradeGroup; 
   // Open strategies keep realised P&L and fees on every leg, plus the remaining unrealised P&L.
   const value = group.status === "open" ? (group.unrealised == null ? null : group.unrealised + group.net) : group.net
   const held = group.closed ? (Date.parse(group.closed) - Date.parse(group.opened)) / 1000 : null
-  return <tr className="cursor-pointer border-t border-border/40 hover:bg-raised/50" onClick={onToggle} aria-expanded={expanded}>
+  return <tr className={rowClass(true)} onClick={onToggle}>
     <td className="px-2 py-2 text-left">
       <span className={`mr-2 inline-block h-3 w-0.5 align-middle ${group.status === "open" ? "bg-accent" : group.net >= 0 ? "bg-bullish" : "bg-bearish"}`} />
-      <span className="font-medium">{group.label}</span> <span className="text-[10px] text-muted">{group.trades.length} legs · #{order.id}</span>
+      <RowToggle label={group.label} expanded={expanded} onToggle={onToggle} /> <span className="text-[10px] text-muted">{group.trades.length} legs · #{order.id}</span>
       <Tags trade={group.trades[0]} />
     </td>
     <td className="px-2 py-2 text-accent">strategy</td>
@@ -395,10 +408,10 @@ export function WholeRow({ group, expanded, onToggle }: { group: TradeGroup; exp
   const net = Number(whole.net)
   const value = whole.status === "open" ? (whole.unrealised == null ? null : net + Number(whole.unrealised)) : net
   const held = whole.closed ? (Date.parse(whole.closed) - Date.parse(whole.opened)) / 1000 : null
-  return <tr className="cursor-pointer border-t border-border/40 hover:bg-raised/50" onClick={onToggle} aria-expanded={expanded}>
+  return <tr className={rowClass(true)} onClick={onToggle}>
     <td className="px-2 py-2 text-left">
       <span className={`mr-2 inline-block h-3 w-0.5 align-middle ${whole.status === "open" ? "bg-accent" : net >= 0 ? "bg-bullish" : "bg-bearish"}`} />
-      <span className="font-medium">{group.label}</span> <span className="text-[10px] text-muted">{whole.round_trips.length} round trips · {whole.entries} entries · #{whole.id}</span>
+      <RowToggle label={group.label} expanded={expanded} onToggle={onToggle} /> <span className="text-[10px] text-muted">{whole.round_trips.length} round trips · {whole.entries} entries · #{whole.id}</span>
       <Tags trade={group.trades[0]} />
     </td>
     <td className="px-2 py-2 text-accent">whole trade</td>
@@ -469,7 +482,7 @@ function History({ trades, wholes = [], trading }: { trades: Trade[]; wholes?: W
                   : <TradeRow trade={group.trades[0]!} expanded={expanded === group.key} onToggle={() => toggle(group.key)} />}
                 {expanded === group.key && (group.order || group.whole
                   ? <>
-                    {group.trades.map((t) => <TradeRow key={t.id} trade={t} expanded={false} onToggle={() => {}} />)}
+                    {group.trades.map((t) => <TradeRow key={t.id} trade={t} />)}
                     <tr className="bg-raised/30"><td colSpan={headers.length} className="px-4 py-3 text-left">
                       {group.whole
                         ? <><ReviewMetrics review={group.whole.review} label="Whole-trade excursions" />
@@ -512,11 +525,10 @@ function Shares({ trades, trading }: { trades: ShareTrade[]; trading: TradingSta
             {shareHeaders.map((h, i) => <th key={h} scope="col" className={`px-2 py-2 font-normal ${i === 0 ? "text-left" : ""}`}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {trades.map((t) => <Fragment key={t.id}><tr className="cursor-pointer border-t border-border/40 hover:bg-raised/50"
-              onClick={() => setExpanded(expanded === t.id ? null : t.id)} aria-expanded={expanded === t.id}>
+            {trades.map((t) => <Fragment key={t.id}><tr className={rowClass(true)} onClick={() => setExpanded(expanded === t.id ? null : t.id)}>
               <td className="px-2 py-2 text-left">
                 <span className={`mr-2 inline-block h-3 w-0.5 align-middle ${t.status === "open" ? "bg-accent" : tradeNet(t) >= 0 ? "bg-bullish" : "bg-bearish"}`} />
-                <span className="font-medium">{t.symbol} {t.max_shares}</span>
+                <RowToggle label={`${t.symbol} ${t.max_shares}`} expanded={expanded === t.id} onToggle={() => setExpanded(expanded === t.id ? null : t.id)} />
                 <Tags trade={t} />
               </td>
               <td className={`px-2 py-2 ${t.direction === "long" ? "text-bullish" : "text-bearish"}`}>{t.direction}</td>

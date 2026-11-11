@@ -81,10 +81,13 @@ export function FlowView({ symbol }: { symbol: string }) {
                   <th className="py-1 text-right font-normal">Puts</th><th className="py-1 text-right font-normal">Net</th>
                 </tr></thead>
                 <tbody>{data.expiries.map((row) => (
-                  <tr key={row.expiry} aria-selected={row.expiry === shownExpiry}
+                  <tr key={row.expiry}
                     className={`cursor-pointer border-t border-border/50 ${row.expiry === shownExpiry ? "bg-raised" : "hover:bg-raised/60"}`}
                     onClick={() => setExpiry(row.expiry === shownExpiry ? null : row.expiry)}>
-                    <td className="py-1">{expiryLabel(row.expiry, true)}</td>
+                    {/* The expiry is the row's button, so the keyboard can pick it too; a click anywhere on the row does the same. */}
+                    <td className="py-1"><button type="button" className="text-left hover:underline focus-visible:underline" aria-pressed={row.expiry === shownExpiry}
+                      title={`Net premium by strike for ${expiryLabel(row.expiry, true)}`}
+                      onClick={(event) => { event.stopPropagation(); setExpiry(row.expiry === shownExpiry ? null : row.expiry) }}>{expiryLabel(row.expiry, true)}</button></td>
                     <td className={`py-1 text-right ${row.call_net < 0 ? "text-bearish" : "text-bullish"}`}>{money(row.call_net)}</td>
                     <td className={`py-1 text-right ${row.put_net < 0 ? "text-bearish" : "text-bullish"}`}>{money(row.put_net)}</td>
                     <td className="py-1 text-right">{money(row.net)}</td>

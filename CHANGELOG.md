@@ -797,6 +797,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   cleared and 14 could not be typed digit by digit (the 1 was dropped and the 4 made
   204). The field now keeps what is typed, applies it once it is a whole 2–200, and
   returns to the period in use on Enter or when it loses focus.
+- **Journal rows and Flow expiries open from the keyboard.** A trade, strategy, whole
+  trade or share row in the Journal, and an expiry in Flow's net premium table, opened
+  only on a mouse click: nothing in the row took focus, so a keyboard or screen reader
+  could not reach a trade's fills, review, chart, notes and tags, or an expiry's
+  strikes. The row's name is now a button that opens and closes it and says whether it
+  is open; a click anywhere on the row still works.
 
 ## 0.5.1 (2026-10-28)
 

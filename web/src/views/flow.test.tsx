@@ -70,6 +70,14 @@ describe("flow", () => {
     html = render(<FlowView symbol="SPX" />, [[["flow", "SPX", { limit: 200 }, 1], { ...flow, dropped_trades: 1200 }]])
     expect(html).toContain("dropped 1,200 option trades under load")
   })
+
+  it("picks an expiry with a button the keyboard reaches", () => {
+    const html = render(<FlowView symbol="SPX" />, [[["flow", "SPX", { limit: 200 }, 1], flow]])
+    const expiries = html.slice(html.indexOf("Net premium by expiry"), html.indexOf("Net premium by strike · "))
+    // The row's expiry is a toggle button, not a clickable row a keyboard cannot focus.
+    expect(expiries).toMatch(/<button type="button"[^>]*aria-pressed="false"[^>]*>Oct 21[^<]*<\/button>/)
+    expect(expiries).not.toContain("aria-selected")
+  })
 })
 
 describe("earnings", () => {

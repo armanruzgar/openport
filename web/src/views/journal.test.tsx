@@ -12,6 +12,7 @@ import { JournalView } from "./JournalView"
 import { OrdersView } from "./OrdersView"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
+vi.mock("../charts/useSize", () => ({ useSize: () => [{ current: null }, { width: 700, height: 200 }] }))
 vi.mock("../lib/journal", async (original) => {
   const actual = await original<typeof import("../lib/journal")>()
   return { ...actual, tradeBuckets: vi.fn(actual.tradeBuckets), orderLabel: vi.fn(actual.orderLabel), osiLabel: vi.fn(actual.osiLabel) }
@@ -72,6 +73,26 @@ describe("journal and orders on live ticks", () => {
     for (let i = 0; i < 5; i++) await tick(<OrdersView />)
     expect(vi.mocked(orderLabel).mock.calls.length).toBe(orders)
     expect(vi.mocked(osiLabel).mock.calls.length).toBe(fills)
+  })
+
+  it("opens a trade's details from a button in its row, so the keyboard reaches them", async () => {
+    await render(<JournalView />)
+    const history = host.querySelector('[role="region"][aria-label="Trade history"]')!
+    const toggles = [...history.querySelectorAll<HTMLButtonElement>("tbody button[aria-expanded]")]
+    // One per closed round trip, named by its contract.
+    expect(toggles).toHaveLength(2)
+    expect(toggles.map((button) => button.getAttribute("aria-expanded"))).toEqual(["false", "false"])
+    expect(toggles[0]!.textContent).toMatch(/^SPX /)
+    toggles[0]!.focus()
+    expect(document.activeElement).toBe(toggles[0])
+    expect(history.textContent).not.toContain("Contracts in / out")
+    // Enter and Space press a focused button; the click opens the details once, not twice.
+    await act(async () => toggles[0]!.click())
+    expect(toggles[0]!.getAttribute("aria-expanded")).toBe("true")
+    expect(history.textContent).toContain("Contracts in / out")
+    await act(async () => toggles[0]!.click())
+    expect(toggles[0]!.getAttribute("aria-expanded")).toBe("false")
+    expect(history.textContent).not.toContain("Contracts in / out")
   })
 
   it("flags oversized trades from one pass over the peers", () => {
