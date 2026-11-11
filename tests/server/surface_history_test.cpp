@@ -1,11 +1,13 @@
 #include "openport/server/series.hpp"
 #include "openport/server/api.hpp"
+#include "server/series_api.hpp"
 #include "support/recording.hpp"
 #include "support/contract_capture.hpp"
 #include "support/synthetic_chain.hpp"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -71,16 +73,12 @@ TEST(SurfaceHistory, ReloadsPreciseFitsAndLastCloseAndRepairsTornFiles) {
   auto values = loaded.surfaces("SPX", 0, at({2026, 9, 22}, 16));
   ASSERT_EQ(values.size(), 1u);
   EXPECT_EQ(values[0].time, last.time);
-  ASSERT_EQ(values[0].expiries.size(), last.expiries.size());
-  ASSERT_FALSE(values[0].expiries.empty());
-  for (std::size_t i = 0; i < values[0].expiries.size(); ++i) {
-    const auto& fit = values[0].expiries[i].fit;
-    EXPECT_EQ(fit.status, last.expiries[i].fit.status);
-    if (fit.status == analytics::SviStatus::Ok) {
-      EXPECT_DOUBLE_EQ(fit.parameters.a, last.expiries[i].fit.parameters.a);
-      EXPECT_DOUBLE_EQ(fit.years, last.expiries[i].fit.years);
-    }
-  }
+  // Everything the history serves comes back as written: the spot, and each expiry's
+  // forward, calendar check, fit status and reason, SVI parameters, error, butterfly,
+  // points and range. Some expiries fit, so the parameters are compared too.
+  ASSERT_TRUE(std::any_of(last.expiries.begin(), last.expiries.end(),
+                          [](const auto& expiry) { return expiry.fit.status == analytics::SviStatus::Ok; }));
+  EXPECT_EQ(server::surface_snapshot_json(values[0]), server::surface_snapshot_json(last));
   // An interrupted append's row, left without its newline, refused every later snapshot
   // of the month. It is cut now, the file as it was kept beside it, and recording goes on.
   { std::ofstream out(directory / "SPX-2026-09.surfaces", std::ios::app); out << "{\"schema\":"; }
@@ -105,6 +103,65 @@ TEST(SurfaceHistory, ReloadsPreciseFitsAndLastCloseAndRepairsTornFiles) {
   EXPECT_EQ(damaged.surfaces("SPX", 0, at({2026, 9, 23}, 16)).size(), 2u);
   last.time = at({2026, 9, 23}, 16);
   EXPECT_FALSE(damaged.insert_surface("SPX", last));
+}
+/// Loads `contents` as SPX's surfaces for `month`: the load must refuse the month for
+/// `reason`, and the month then refuse `later` as damaged.
+void expect_damaged(const std::filesystem::path& directory, const std::string& month, const std::string& contents,
+                    const std::string& reason, const server::SurfaceSnapshot& later) {
+  std::filesystem::create_directories(directory);
+  { std::ofstream out(directory / ("SPX-" + month + ".surfaces")); out << contents; }
+  server::SeriesStore store(directory);
+  const auto refused = store.status(0).last_error;
+  EXPECT_NE(refused.find(reason), std::string::npos) << refused;
+  EXPECT_FALSE(store.insert_surface("SPX", later));
+  const auto appending = store.status(0).last_error;
+  EXPECT_NE(appending.find("damaged"), std::string::npos) << appending;
+}
+// Every check decode makes fails the month closed, though a good row follows the bad
+// one: the error says why, and the month takes no snapshot until it is repaired.
+TEST(SurfaceHistory, EachInvalidRowLeavesItsMonthDamaged) {
+  test::RecordingFile temp;
+  const auto september = server::surface_snapshot(snapshot(at({2026, 9, 21}, 15, 57)));
+  auto october = september;
+  october.time = at({2026, 10, 1}, 10, 1);
+  october.slot = "10:00";
+  // Rows as insert_surface writes them.
+  const auto written = temp.directory / "written";
+  {
+    server::SeriesStore store(written);
+    ASSERT_TRUE(store.insert_surface("SPX", september));
+    ASSERT_TRUE(store.insert_surface("SPX", october));
+  }
+  const auto row_of = [&](const char* month) {
+    std::ifstream input(written / (std::string("SPX-") + month + ".surfaces"));
+    return std::string(std::istreambuf_iterator<char>(input), {});
+  };
+  const auto september_row = row_of("2026-09"), october_row = row_of("2026-10");
+  const auto good = json::parse(september_row);
+  const auto& expiries = good.at("expiries");
+  std::size_t fitted = 0;
+  while (fitted < expiries.size() && expiries.at(fitted).at("svi_status") != "ok") ++fitted;
+  ASSERT_LT(fitted, expiries.size());
+  const auto fit = "/expiries/" + std::to_string(fitted);
+  struct Damage {
+    std::string reason, pointer;
+    json value;
+  };
+  const std::vector<Damage> damages{
+      {"unsupported surface snapshot version", "/schema", 2},
+      {"invalid surface capture time or slot", "/slot", "10:00"},
+      {"invalid surface expiry", "/expiries/0/id", "bogus"},
+      {"invalid SVI status", "/expiries/0/svi_status", "bogus"},
+      {"invalid SVI parameters or range", fit + "/svi/sigma", -0.1},
+      {"invalid SVI parameters or range", fit + "/svi_min_k", good.at(json::json_pointer(fit + "/svi_max_k"))}};
+  for (std::size_t i = 0; i < damages.size(); ++i) {
+    SCOPED_TRACE(damages[i].pointer);
+    auto bad = good;
+    bad[json::json_pointer(damages[i].pointer)] = damages[i].value;
+    expect_damaged(temp.directory / std::to_string(i), "2026-09", bad.dump() + '\n' + september_row, damages[i].reason, september);
+  }
+  // A September row in October's file.
+  expect_damaged(temp.directory / "month", "2026-10", september_row + october_row, "surface month mismatch", october);
 }
 TEST(SurfaceHistory, ComparisonsUseExactTargetSessionsAndNeverFutureCloses) {
   SurfaceSource source;
