@@ -24,8 +24,15 @@ export function niceTicks(min: number, max: number, count = 5): number[] {
   const power = 10 ** Math.floor(Math.log10(raw))
   const step = ([1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= raw) ?? 10 * power)
   const start = Math.ceil(min / step) * step
+  // Count the ticks instead of adding steps until past max: across a span of a few
+  // ulps a step is below the doubles' spacing, so adding it never moves the tick.
+  const last = Math.floor((max - start) / step + 1e-9)
+  if (!(last >= 0)) return min < max ? [min] : []
   const ticks: number[] = []
-  for (let t = start; t <= max + step * 1e-9; t += step) ticks.push(Number(t.toPrecision(12)))
+  for (let i = 0; i <= Math.min(last, 1000); i++) {
+    const tick = Number((start + i * step).toPrecision(12))
+    if (tick !== ticks.at(-1)) ticks.push(tick)
+  }
   return ticks
 }
 

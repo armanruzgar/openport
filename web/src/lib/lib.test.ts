@@ -65,6 +65,16 @@ describe("scale", () => {
     expect(niceTicks(7600, 7900, 4)).toEqual([7600, 7700, 7800, 7900])
   })
 
+  it("ends on a span only a few ulps wide, with one tick for values that print alike", () => {
+    // A step below the doubles' spacing used to leave the tick in place and loop until out of memory.
+    expect(niceTicks(0.3, 0.1 + 0.2, 5)).toEqual([0.3])
+    expect(niceTicks(100, 100.00000000000001, 5)).toEqual([100])
+    expect(niceTicks(7000, 7000.000000000001, 5)).toEqual([7000])
+    expect(niceTicks(1, 1.0000000000000004, 5)).toEqual([1])
+    expect(niceTicks(1, 1.0000000000000007, 5)).toEqual([1])
+    expect(niceTicks(2, 1, 5)).toEqual([])
+  })
+
   it("ignores missing values in extents", () => {
     expect(extent([3, null, 1, Number.NaN, 2])).toEqual([1, 3])
     expect(extent([null])).toBeNull()
