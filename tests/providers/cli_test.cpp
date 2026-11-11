@@ -1018,7 +1018,7 @@ TEST(Cli, DaemonSaysWhyPaperTradingIsOffBeforeWebStartupFails) {
                       "' --option speed=max " + paper + " --address invalid-address");
   };
   const std::vector<std::pair<std::filesystem::path, std::string>> journals{
-      {folder, "JOURNAL_IO: "}, {damaged, "ACCOUNT_DAMAGED: Invalid journal JSON at record 1"}};
+      {folder, "JOURNAL_IO: "}, {damaged, "JOURNAL_CORRUPT: Invalid journal JSON at record 1"}};
   for (const auto& [journal, reason] : journals) {
     const auto result = start("--paper-journal '" + journal.string() + "'");
     EXPECT_EQ(result.status, 2) << result.output;
