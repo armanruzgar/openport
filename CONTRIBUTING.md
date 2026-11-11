@@ -21,7 +21,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DOPENPORT_WERROR=ON
 cmake --build build -j
 (cd build && ctest -j 8)                 # C++ tests
 ./build/bench/openport_bench             # pricing benchmarks
-./build/bench/openport_bench_trading --benchmark_filter=BM_Margin  # pairing / joint allocation, 14 and 80 legs
+./build/bench/openport_bench_trading --benchmark_filter=BM_Margin  # pairing / joint allocation, regular and irregular books
 cd web && npm ci && npx tsc -p tsconfig.json && npx vitest run && npm run build
 ```
 
@@ -36,7 +36,9 @@ CI runs on every push and pull request: the C++ suite with GCC 13 on Ubuntu 24.0
 Apple Clang on macOS, both with `-DOPENPORT_WERROR=ON`, again under AddressSanitizer
 and UndefinedBehaviorSanitizer with GCC 13, the web checks, the Python client and a
 Docker smoke test. The Ubuntu build also compiles the benchmarks (without running
-them), and a GCC build with `-DOPENPORT_BUILD_PROVIDERS=OFF` checks that the pricing,
+them); the Margin benchmark workflow runs the margin benchmarks on a GitHub runner
+on demand (`gh workflow run bench.yml`, `-f os=macos-15` for macOS), for the timings
+in [docs/margin-allocation.md](docs/margin-allocation.md). A GCC build with `-DOPENPORT_BUILD_PROVIDERS=OFF` checks that the pricing,
 analytics and trading libraries and their tests still build without the providers. A second Ubuntu job runs the same suite at the same time with
 `OPENPORT_VERIFY_REVIEWS=1` and `OPENPORT_VERIFY_JOURNAL=1`. Every C++ job runs
 each test in its own process through CTest, in parallel, starting the expensive
