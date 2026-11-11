@@ -517,5 +517,34 @@ TEST(CorporateActions, PortfolioMarginTakesFromEquityOnlyWhatItsScanCovers) {
     else { EXPECT_TRUE(bought.decision.ok()) << bought.decision.message; }
   }
 }
+
+TEST(CorporateActions, AnIncompleteScanListsTheOptionMinimumOnAdjustedSeriesToo) {
+  const auto standard = *md::parse_osi("SPY261016C00500000");
+  auto adjusted = standard;
+  adjusted.root = "SPY1";
+  adjusted.standard = false;
+  AccountRules rules;
+  rules.margin = MarginMode::Portfolio;
+  Spy f;
+  TradingSession s(roomy(rules), f.time);
+  ASSERT_TRUE(s.define(standard, f.time).decision.ok());
+  ASSERT_TRUE(s.define(adjusted, f.time, Deliverable{150, m("25")}).decision.ok());
+  f.quote(s, standard, "9.90", "10.10");
+  f.quote(s, adjusted, "14.90", "15.10");
+  ASSERT_TRUE(s.submit(f.market("standard", standard, 1, Side::Sell), f.time).decision.ok());
+  ASSERT_TRUE(s.submit(f.market("adjusted", adjusted, 1, Side::Sell), f.time).decision.ok());
+  // An hour on, quotes without valuations: the scan is incomplete, and strategy margin
+  // plus the option minimum on both contracts holds the requirement.
+  f.time += 60 * md::kNanosPerMinute;
+  f.observation += 2;
+  ASSERT_TRUE(s.on_quotes({{standard.osi_symbol(), f.observation - 1, f.time, m("9.90"), m("10.10"), 10, 10},
+                           {adjusted.osi_symbol(), f.observation, f.time, m("14.90"), m("15.10"), 10, 10}},
+                          {}, f.time, {{"SPY", f.time, Money::from_double(f.spot)}}).decision.ok());
+  const auto& snapshot = *s.snapshot();
+  Money listed;
+  for (const auto& item : snapshot.margin) listed = listed + item.requirement;
+  EXPECT_EQ(listed, snapshot.buying_power.short_requirement);
+  EXPECT_FALSE(snapshot.margin.empty());
+}
 }  // namespace
 }  // namespace openport::trading

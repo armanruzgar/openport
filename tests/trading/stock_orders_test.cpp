@@ -630,5 +630,20 @@ TEST(StockOrders, AShortEntrysBracketBuysBackOnlyTheSharesStillShort) {
   EXPECT_EQ(stock_order(s, 2).reason.code, Reason::OCO_FILLED);
   EXPECT_TRUE(s.snapshot()->stocks.empty());
 }
+
+TEST(StockOrders, AnOcoPairTakesAClientIdOfUpTo64Bytes) {
+  const auto open = ny(10);
+  TradingSession s(config(), open);
+  ASSERT_TRUE(s.trade_stock("SPY", 100, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+  const std::string longest(64, 'x');
+  auto pair = order(longest, Side::Sell, StockOrderType::Limit, 100, "510.00");
+  pair.oco.push_back(order("", Side::Sell, StockOrderType::Stop, 100, std::nullopt, "495.00"));
+  const auto placed = s.submit_stock_order(pair, open);
+  ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+  ASSERT_EQ(s.snapshot()->stock_orders.size(), 2u);
+  EXPECT_EQ(stock_order(s, 2).request.client_order_id, longest + ":oco");
+  pair.client_order_id = std::string(65, 'x');
+  EXPECT_THROW(s.submit_stock_order(pair, open), TradingError);
+}
 }  // namespace
 }  // namespace openport::trading

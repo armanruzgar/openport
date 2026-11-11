@@ -463,5 +463,30 @@ TEST(TradingMarginAllocation, RandomSmallBooksEqualTheBruteForceOptimum) {
   }
   EXPECT_GT(improved, 0);
 }
+
+TEST(TradingMarginAllocation, TheFallbackAllocationDoesNotDependOnLegOrder) {
+  // A book the exact solver gives up on, in symbol order, reversed and rotated.
+  const std::vector<MarginLeg> book{
+      option("SPY261022C00510000", -23, "12582.38"), option("SPY261022P00470000", 11),
+      option("SPY261022P00490000", -50, "29440.00"), option("SPY261022P00500000", -28, "4886.28"),
+      option("SPY261029P00490000", -29, "17225.13"), option("SPY261029P00510000", 13),
+      option("SPY261029P00530000", -17, "6272.15"), option("SPY261105C00530000", -15, "8802.00"),
+      option("SPY261105P00480000", -31, "9727.18"), option("SPY261120P00480000", 7),
+      option("SPY261120P00490000", 19), option("SPY261120P00500000", 44), option("SPY261120P00510000", 38)};
+  auto legacy = MarginPolicy{};
+  legacy.exact = false;
+  for (const auto& policy : {MarginPolicy{}, legacy}) {
+    SCOPED_TRACE(policy.exact ? "exact" : "legacy");
+    const auto expected = margin_requirement(book, {}, policy);
+    auto reordered = book;
+    std::reverse(reordered.begin(), reordered.end());
+    EXPECT_EQ(margin_requirement(reordered, {}, policy), expected);
+    for (const std::ptrdiff_t k : {3, 7, 11}) {
+      reordered = book;
+      std::rotate(reordered.begin(), reordered.begin() + k, reordered.end());
+      EXPECT_EQ(margin_requirement(reordered, {}, policy), expected) << k;
+    }
+  }
+}
 }  // namespace
 }  // namespace openport::trading

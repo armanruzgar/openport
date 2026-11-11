@@ -515,6 +515,22 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   are now listed, with Cancel, under Positions → Shares and on the Orders page, Close
   all names the ones it leaves and the short sales they would open, and the reserved
   buying power says it is held by working orders.
+- **Strategy margin and leg order.** When the exact allocator gave up on a large book,
+  the fallback's requirement depended on the order the legs were listed in (by up to
+  4% on one book), so `margin_requirement` and `margin_breakdown` could answer
+  differently for the same positions. Legs are now taken in symbol order, as the
+  account's own book already gave them.
+- **Margin rows during an incomplete scan.** Under portfolio margin with an adjusted
+  series held, the snapshot's `margin` rows left out the option minimum that the
+  requirement includes while the scan is incomplete, so they summed to less than
+  `short_requirement`. They now include it.
+- **A queued buy-to-close on an ask-only quote.** With queue fills on, an order's wait
+  reason read the bid of a quote that had none, which is undefined behaviour: a
+  random `QUEUE` reason, or an abort in hardened builds. Such an order now waits on its
+  limit.
+- **Long client IDs with an `oco` partner.** A share order whose `client_order_id` was
+  61-64 bytes was refused once it had an `oco` partner, with a message saying IDs may be
+  1-64 bytes. The partner's terms are now checked without the `:oco` suffix.
 - **Share stops and after-hours prints.** A regular-hours share stop was reached by an
   after-hours or premarket print, and then sold at the next open at whatever price it
   printed. A stop is now reached only by a print from the regular session, its close

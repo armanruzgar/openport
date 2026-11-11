@@ -86,7 +86,10 @@ payoff units and quantities; published costs and certificates remain unscaled
 exact values. Exhausting
 a limit or failing to certify a numerical proposal returns the retained bounded
 allocator and reports `allocation: "bounded"`. Such a result is feasible and
-conservative but carries no optimality or subadditivity claim. `exact` is emitted
+conservative but carries no optimality or subadditivity claim. The bounded allocator's
+answer depends on the order it meets the legs in, so every caller's legs are taken in
+symbol order, the order the account's own book gives, and the same book gets the same
+requirement however it is listed. `exact` is emitted
 only after proof, including the min-cost-flow shortcut for books of naked shorts
 whose pools cannot improve their requirement. No cutoff uses the wall clock.
 

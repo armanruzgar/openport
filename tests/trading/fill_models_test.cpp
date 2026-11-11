@@ -673,5 +673,20 @@ TEST(StopStress, NeedsEightQuotesOfNormalAndIsOffByDefault) {
   EXPECT_EQ(journal.find("stress"), std::string::npos);
 }
 
+
+TEST(QueueFills, AnAskOnlyQuoteLeavesAQueuedBuyToCloseWaitingOnItsLimit) {
+  ScriptedMarket market;
+  TradingSession session(config(queued()), market.time);
+  market.seed(session);
+  ASSERT_TRUE(session.submit(market.market("open", 1, Side::Sell), market.time).decision.ok());
+  ASSERT_TRUE(session.submit(market.limit("close", 1, "4.00", Side::Buy, TimeInForce::Gtc), market.time).decision.ok());
+  ASSERT_TRUE(order(session, 2).queue);
+  EXPECT_EQ(wait_code(session, 2), "QUEUE");
+  // The bid goes: the buy-to-close may still take the ask, but there is no bid to queue at.
+  market.next();
+  const QuoteObservation ask_only{market.symbol(), market.observation, market.time, std::nullopt, m("4.20"), 0, 10};
+  ASSERT_TRUE(session.on_quotes({ask_only}, {market.valuation()}, market.time).decision.ok());
+  EXPECT_EQ(wait_code(session, 2), "LIMIT");
+}
 }  // namespace
 }  // namespace openport::trading

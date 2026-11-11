@@ -98,8 +98,10 @@ void validate_stock_order(const StockOrderRequest& r) {
   for (const auto& other : r.oco) {
     if (!other.oco.empty() || other.stop_loss || other.take_profit) refuse("An oco partner takes no oco or bracket of its own");
     if (other.symbol != r.symbol) refuse("An oco partner trades the same symbol");
+    // The partner's own terms. It takes the order's ID, already checked, with ":oco"
+    // added only once accepted, so a 61-64 byte ID is not refused for the suffix.
     auto named = other;
-    named.client_order_id = r.client_order_id + ":oco";
+    named.client_order_id = r.client_order_id;
     validate_stock_order(named);
   }
 }

@@ -1144,15 +1144,19 @@ Money requirement(const State& s, const MarginBook& book) { return margin_of(s, 
 /// margin's parts, each underlying adding the option minimum.
 std::vector<MarginUnderlying> margin_detail(const State& s) {
   if (!s.deliverables.empty()) {
-    const auto groups = lot_groups(s, margin_legs(s, held_book(s)), margin_stocks(s));
+    const auto book = held_book(s);
+    const auto groups = lot_groups(s, margin_legs(s, book), margin_stocks(s));
     if (groups.size() > 1) {
       // Each adjusted group's parts, scaled back to its deliverable and named by its series.
       std::vector<MarginUnderlying> detail;
       const bool portfolio = s.config.rules.margin == MarginMode::Portfolio;
+      bool scanned_whole = false;
       if (portfolio)
         if (auto scanned = portfolio_margin_breakdown(groups[0].legs, s.valuations, s.time, s.config.limits.max_valuation_age,
-            s.ledger.stocks(), share_prices(s), margin_policy(s.config.rules)))
+            s.ledger.stocks(), share_prices(s), margin_policy(s.config.rules))) {
           detail = std::move(*scanned);
+          scanned_whole = true;
+        }
       if (detail.empty() && (!groups[0].legs.empty() || !groups[0].stocks.empty()))
         detail = margin_breakdown(groups[0].legs, groups[0].stocks, allocation_policy(s));
       for (std::size_t g = 1; g < groups.size(); ++g) {
@@ -1182,6 +1186,16 @@ std::vector<MarginUnderlying> margin_detail(const State& s) {
           same->parts.insert(same->parts.end(), item.parts.begin(), item.parts.end());
         }
       }
+      // An incomplete scan falls back to strategy margin plus the option minimum on
+      // every option held, standard and adjusted, as margin_of reckons it.
+      if (portfolio && !scanned_whole)
+        for (const auto& [symbol, entry] : book) {
+          const auto& contract = s.contracts.at(symbol);
+          const auto minimum = Money::from_double(0.375 * contract.multiplier) * magnitude(entry.first);
+          const auto same = std::find_if(detail.begin(), detail.end(), [&](const auto& u) { return u.underlying == contract.underlying; });
+          if (same != detail.end()) same->requirement = same->requirement + minimum;
+          else detail.push_back({contract.underlying, minimum, {}, std::nullopt, "exact"});
+        }
       return detail;
     }
   }
@@ -4328,7 +4342,9 @@ std::optional<OrderWait> waiting_for(const State& s, const Order& o, bool data_c
     const bool buy = r.side == Side::Buy;
     const bool given = !buy && ask_only_single(s, o);
     const bool inside = inside_single(s, o);
-    if (!given && !inside && !marketable(o, book.quote) && queue_eligible(s, o) && o.queue &&
+    // A queue spot counts only on a two-sided quote: an ask-only book that lets a
+    // buy-to-close through has no bid for touch_of to read.
+    if (!given && !inside && !marketable(o, book.quote) && valid_quote(book.quote) && queue_eligible(s, o) && o.queue &&
         o.queue->price == *r.limit_price && touch_of(book.quote, r.side, *r.limit_price) != Touch::Behind)
       return wait("QUEUE", "Waits behind an estimated " + std::to_string(o.queue->ahead) + " contracts at " +
                   r.limit_price->str() + " until trades use them up, or the far side reaches the limit");

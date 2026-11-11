@@ -888,10 +888,19 @@ std::vector<MarginUnderlying> strategy(const std::vector<MarginLeg>& legs, const
   for (const auto& stock : stocks)
     if (stock.shares != 0) underlyings[stock.underlying].second = &stock;
   std::vector<MarginUnderlying> result;
-  for (const auto& [underlying, group] : underlyings) {
+  for (auto& [underlying, group] : underlyings) {
+    // The bounded fallback's answer depends on the order it meets the legs in, so every
+    // caller gets the one for the legs in symbol order, the order the account's own
+    // book (a map by symbol) already gives.
+    auto& ordered = group.first;
+    std::vector<std::pair<std::string, const MarginLeg*>> named;
+    named.reserve(ordered.size());
+    for (const auto* leg : ordered) named.emplace_back(leg->contract.osi_symbol(), leg);
+    std::stable_sort(named.begin(), named.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (std::size_t i = 0; i < named.size(); ++i) ordered[i] = named[i].second;
     MarginUnderlying item;
     item.underlying = underlying;
-    item.requirement = underlying_requirement(group.first, group.second, policy, explain ? &item.parts : nullptr, improve, &item.allocation);
+    item.requirement = underlying_requirement(ordered, group.second, policy, explain ? &item.parts : nullptr, improve, &item.allocation);
     result.push_back(std::move(item));
   }
   return result;
