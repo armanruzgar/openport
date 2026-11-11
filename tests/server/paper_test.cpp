@@ -236,6 +236,9 @@ TEST_F(PaperEngine, ProgramCostOverridesAndCustomVerification) {
   EXPECT_EQ(json::parse(response.body)["rules"]["phase"], "verification");
   for (const auto* key : {"evaluation_fee", "reset_fee", "activation_fee"}) {
     expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", "bad"}, {key, "-1"}}), 400, "INVALID_RULES");
+    // Over $1,000,000 a fee could leave every later reset that charges one overflowing.
+    expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", "bad"}, {key, "1000000.000001"}}),
+                 400, "INVALID_RULES");
   }
   expect_error(write(*engine, "POST", "/api/account/reset", {{"plan", "practice"}, {"reason", "bad"}, {"max_resets", 1.5}}), 400, "INVALID_REQUEST");
   engine->stop();

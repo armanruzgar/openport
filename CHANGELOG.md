@@ -525,6 +525,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   large or fractional one recovered quietly with nulls or an emptied array, and a
   removal written as a string deleted that key. Recovery now refuses each as
   `JOURNAL_CORRUPT`, before padding anything; what openportd writes is unchanged.
+- **Program fees and payout caps that lock an account.** A fee near the money range
+  ($9.2 trillion) was accepted, after which every reset charging a fee, a same-plan
+  reset that inherits it included, failed with `ARITHMETIC_OVERFLOW`; and a payout cap,
+  or a payout review's cap, below the payout minimum blocked every payout it applied
+  to for good, as "below the minimum". Rules set from now on take fees of at most
+  $1,000,000 each and caps of at least the minimum (`INVALID_RULES`); journals and
+  recorded runs from before keep theirs.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

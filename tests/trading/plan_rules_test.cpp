@@ -375,6 +375,48 @@ TEST(ProgramCosts, DefaultsKeepBytesAndNegativeOrFractionalSettingsAreRejected) 
   EXPECT_FALSE(Json::parse(free.snapshot_json()).contains("fee_charged"));
 }
 
+TEST(ProgramCosts, NewRulesBoundFeesAndPayoutCapsThatRecordedRulesNeedNotMeet) {
+  const auto refused = [](const AccountRules& rules) {
+    try {
+      validate_new_rules(rules);
+    } catch (const TradingError& error) {
+      return error.code() == Reason::INVALID_RULES;
+    }
+    return false;
+  };
+  // Fees up to $1,000,000 each: a lifetime of resets then sums far inside the money range.
+  auto fees = plan();
+  fees.evaluation_fee = fees.reset_fee = fees.activation_fee = m("1000000");
+  EXPECT_FALSE(refused(fees));
+  for (const auto field : {&AccountRules::evaluation_fee, &AccountRules::reset_fee, &AccountRules::activation_fee}) {
+    auto over = fees;
+    over.*field = m("1000000.000001");
+    EXPECT_TRUE(refused(over));
+    EXPECT_NO_THROW(validate_rules(over)) << "recovery and recorded runs still accept it";
+  }
+  // A payout capped below the minimum could never be paid, and its cycle never end.
+  auto funded = plan();
+  funded.phase = Phase::Funded;
+  funded.payouts.qualifying_days = 1;
+  funded.payouts.minimum = m("50");
+  funded.payouts.review = PayoutReview{60, 0, false, {ReviewStep::Cap}, m("25")};
+  EXPECT_TRUE(refused(funded));
+  EXPECT_NO_THROW(validate_rules(funded));
+  funded.payouts.review->cap = m("50");
+  EXPECT_FALSE(refused(funded));
+  funded.payouts.caps = {m("100"), m("49.99")};
+  EXPECT_TRUE(refused(funded));
+  EXPECT_NO_THROW(validate_rules(funded));
+  funded.payouts.caps.back() = m("50");
+  EXPECT_FALSE(refused(funded));
+  // An account whose journal holds a fee from before the bound recovers with it.
+  JournalFile file;
+  auto recorded = fees;
+  recorded.reset_fee = m("9223372036854.775807");
+  { TradingSession s(config(recorded), 0, test::create_journal(file.path)); }
+  EXPECT_EQ(TradingSession::recover(FileJournal::read(file.path)).config().rules.reset_fee, recorded.reset_fee);
+}
+
 TEST(ProgramCosts, ActivationAndPayoutsSurviveResets) {
   ScriptedMarket f;
   auto rules = plan("100", "1000");

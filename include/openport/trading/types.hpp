@@ -980,6 +980,11 @@ void validate_limits(const Limits& limits);
 /// Scaling takes at most 16 steps: profit zero first then strictly increasing,
 /// contracts non-decreasing from 1 to 10000; empty disables it.
 void validate_rules(const AccountRules& rules);
+/// validate_rules, and the bounds that only rules being set now must meet, so that
+/// journals and recorded runs from before a bound still recover and replay: program
+/// fees at most $1,000,000 each, and payout caps (a review's cap too) no lower than
+/// the payout minimum, which would block every payout they apply to for good.
+void validate_new_rules(const AccountRules& rules);
 /// Validate the optional calendar and opening restrictions independently.
 void validate_time_rules(const AccountRules& rules);
 

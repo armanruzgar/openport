@@ -12998,7 +12998,8 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Money"
-            }
+            },
+            "description": "Largest payout by payout number; the last repeats; empty is uncapped. Each at least minimum when the rules are set (INVALID_RULES)."
           },
           "consistency_percents": {
             "type": "array",
@@ -13575,15 +13576,15 @@
           },
           "evaluation_fee": {
             "$ref": "#/components/schemas/Money",
-            "description": "Nonnegative bookkeeping cost of a new purchase; omitted defaults to zero."
+            "description": "Nonnegative bookkeeping cost of a new purchase; omitted defaults to zero. At most 1000000 when set (INVALID_RULES)."
           },
           "reset_fee": {
             "$ref": "#/components/schemas/Money",
-            "description": "Nonnegative bookkeeping cost of restarting the same plan; omitted defaults to zero."
+            "description": "Nonnegative bookkeeping cost of restarting the same plan; omitted defaults to zero. At most 1000000 when set (INVALID_RULES)."
           },
           "activation_fee": {
             "$ref": "#/components/schemas/Money",
-            "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; omitted defaults to zero."
+            "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; omitted defaults to zero. At most 1000000 when set (INVALID_RULES)."
           },
           "max_resets": {
             "type": "integer",
@@ -16817,17 +16818,17 @@
               "evaluation_fee": {
                 "type": "string",
                 "pattern": "^\\d+(\\.\\d{1,6})?$",
-                "description": "Nonnegative bookkeeping cost of a new purchase; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+                "description": "Nonnegative bookkeeping cost of a new purchase; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
               },
               "reset_fee": {
                 "type": "string",
                 "pattern": "^\\d+(\\.\\d{1,6})?$",
-                "description": "Nonnegative bookkeeping cost of restarting the same plan; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+                "description": "Nonnegative bookkeeping cost of restarting the same plan; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
               },
               "activation_fee": {
                 "type": "string",
                 "pattern": "^\\d+(\\.\\d{1,6})?$",
-                "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+                "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
               },
               "max_resets": {
                 "type": "integer",
@@ -19846,17 +19847,17 @@
               "evaluation_fee": {
                 "type": "string",
                 "pattern": "^\\d+(\\.\\d{1,6})?$",
-                "description": "Nonnegative bookkeeping cost of a new purchase; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+                "description": "Nonnegative bookkeeping cost of a new purchase; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
               },
               "reset_fee": {
                 "type": "string",
                 "pattern": "^\\d+(\\.\\d{1,6})?$",
-                "description": "Nonnegative bookkeeping cost of restarting the same plan; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+                "description": "Nonnegative bookkeeping cost of restarting the same plan; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
               },
               "activation_fee": {
                 "type": "string",
                 "pattern": "^\\d+(\\.\\d{1,6})?$",
-                "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+                "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
               },
               "max_resets": {
                 "type": "integer",
@@ -23763,17 +23764,17 @@
                       "evaluation_fee": {
                         "type": "string",
                         "pattern": "^\\d+(\\.\\d{1,6})?$",
-                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances. At most 1000000 when set (INVALID_RULES)."
                       },
                       "reset_fee": {
                         "type": "string",
                         "pattern": "^\\d+(\\.\\d{1,6})?$",
-                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances. At most 1000000 when set (INVALID_RULES)."
                       },
                       "activation_fee": {
                         "type": "string",
                         "pattern": "^\\d+(\\.\\d{1,6})?$",
-                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances. At most 1000000 when set (INVALID_RULES)."
                       },
                       "max_resets": {
                         "type": "integer",
@@ -26741,17 +26742,17 @@
           "evaluation_fee": {
             "type": "string",
             "pattern": "^\\d+(\\.\\d{1,6})?$",
-            "description": "Nonnegative bookkeeping cost of a new purchase; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+            "description": "Nonnegative bookkeeping cost of a new purchase; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
           },
           "reset_fee": {
             "type": "string",
             "pattern": "^\\d+(\\.\\d{1,6})?$",
-            "description": "Nonnegative bookkeeping cost of restarting the same plan; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+            "description": "Nonnegative bookkeeping cost of restarting the same plan; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
           },
           "activation_fee": {
             "type": "string",
             "pattern": "^\\d+(\\.\\d{1,6})?$",
-            "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted."
+            "description": "Nonnegative bookkeeping cost on entering a preset unlocked by a pass; defaults to zero on a fresh purchase; same-plan resets retain the current setting when omitted. At most 1000000 when set (INVALID_RULES)."
           },
           "max_resets": {
             "type": "integer",
@@ -32135,17 +32136,17 @@
                       "evaluation_fee": {
                         "type": "string",
                         "pattern": "^\\d+(\\.\\d{1,6})?$",
-                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances. At most 1000000 when set (INVALID_RULES)."
                       },
                       "reset_fee": {
                         "type": "string",
                         "pattern": "^\\d+(\\.\\d{1,6})?$",
-                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances. At most 1000000 when set (INVALID_RULES)."
                       },
                       "activation_fee": {
                         "type": "string",
                         "pattern": "^\\d+(\\.\\d{1,6})?$",
-                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances."
+                        "description": "Nonnegative bookkeeping program cost; defaults to zero and does not change paper balances. At most 1000000 when set (INVALID_RULES)."
                       },
                       "max_resets": {
                         "type": "integer",
@@ -34883,7 +34884,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "The cap step's payout maximum, required exactly when a ladder step caps; at least payouts.minimum when the rules are set (INVALID_RULES)."
           }
         },
         "required": [

@@ -451,4 +451,18 @@ void validate_rules(const AccountRules& r) {
           "Fee schedule amounts must be $0 to $1,000, with at most 16 index roots of 1 to 6 uppercase letters or digits");
   }
 }
+void validate_new_rules(const AccountRules& r) {
+  validate_rules(r);
+  // Resets sum every attempt's fee: one near the money range left each later reset
+  // that charged a fee overflowing, on the same program too, which inherits its fees.
+  const auto most = Money::from_micros(1'000'000'000'000);
+  if (r.evaluation_fee > most || r.reset_fee > most || r.activation_fee > most)
+    throw TradingError(Reason::INVALID_RULES, "Program fees must be at most $1,000,000 each");
+  // A payout capped below the minimum can never be paid, and the cycle holding it
+  // only ends with a payout.
+  const auto& p = r.payouts;
+  if (std::any_of(p.caps.begin(), p.caps.end(), [&](Money cap) { return cap < p.minimum; }) ||
+      (p.review && p.review->cap > Money{} && p.review->cap < p.minimum))
+    throw TradingError(Reason::INVALID_RULES, "Payout caps, and a payout review's cap, must be at least the payout minimum");
+}
 }  // namespace openport::trading

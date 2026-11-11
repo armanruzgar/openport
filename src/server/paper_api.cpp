@@ -2188,7 +2188,7 @@ AccountRules parse_rules(const json& j) {
   // Out of range is a rule error (INVALID_RULES from validate_rules), not a malformed
   // request; saturate first so the conversion to nanoseconds cannot overflow.
   rules.expiry_cutoff = std::clamp<std::int64_t>(integer_field(j, "expiry_cutoff_seconds"), -1, 86'400) * md::kNanosPerSecond;
-  validate_rules(rules);
+  validate_new_rules(rules);
   return rules;
 }
 /// A preset's name belongs to its own balance and rules, so an attempt recorded under
@@ -2210,7 +2210,8 @@ void margin_model(const json& body, AccountRules& rules) {
                            rules.stock_borrow_rate_bps != plan.stock_borrow_rate_bps))
     throw TradingError(Reason::PLAN_LOCKED, "Financing rates can be overridden only on practice accounts; "
                        "evaluation, verification and funded plans use their own rates");
-  validate_rules(rules);
+  // The last step of a create or reset request: the rules it sets, its fee fields too.
+  validate_new_rules(rules);
 }
 /// Presets override only execution settings; all evaluation rules stay intact.
 /// Queue fills, its seed and stop stress are program rules: an attempt that
@@ -4078,7 +4079,7 @@ ApiResponse validate_rule_pack(const ApiRequest& request, const MetricsSource& s
         rules_body["plan"] = plan_name;
         auto rules = parse_rules(rules_body);
         normalize_event_rules(rules);
-        validate_rules(rules);
+        validate_new_rules(rules);
         json unlocked = nullptr;
         if (plan.contains("unlocked_by") && !plan.at("unlocked_by").is_null()) {
           const auto prior = string_field(plan, "unlocked_by");

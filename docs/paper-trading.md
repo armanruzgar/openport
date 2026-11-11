@@ -2928,7 +2928,9 @@ The reset dialog, Rules and attempt history show the phase and its pacing.
 #### Program costs and reset limits (F64)
 
 `evaluation_fee`, `reset_fee` and `activation_fee` are nonnegative `Money` values
-(decimal strings in HTTP; integer micro-dollars in the reducer and journal).
+(decimal strings in HTTP; integer micro-dollars in the reducer and journal), each
+at most $1,000,000 when set (`INVALID_RULES`; journals from before the bound still
+load with theirs).
 `max_resets` is a whole number from 0 to 1,000,000; **0 means unlimited**. All four
 fields default to zero for a fresh purchase. A same-plan reset retains each current
 setting unless explicitly supplied. Set them beside a preset in create/reset requests, or
@@ -3064,7 +3066,7 @@ fails the account like an evaluation; it stays closed until a reset. `PayoutRule
 | `minimum` | Smallest payout |
 | `buffer` | Optional nonnegative money above `Evaluation::starting_balance` that must remain as equity after a payout; zero (default) disables |
 | `buffer_payouts` | Integer 0–100: apply the buffer to the first N payouts; zero (default) applies to every payout |
-| `caps` | Largest payout by payout number; the last cap repeats; empty is uncapped |
+| `caps` | Largest payout by payout number; the last cap repeats; empty is uncapped. Each is at least `minimum` when the rules are set (`INVALID_RULES`): a lower cap could never be paid |
 | `consistency_percents` | Optional list of up to 64 integer percentages, each 1–100. Best positive day at most this share of cycle net realised profit. Indexed by payout number; last repeats; empty (default) disables |
 
 **Scaling plan (F39).** `AccountRules::scaling` is an optional list of up to 16
@@ -3228,7 +3230,8 @@ realised profit (exactly, `pnl × 100 > percent × cycle profit`) as `oversized`
 the last repeating (default `warning, forfeit, cap`): `warning` records the trades and
 pays as usual; `forfeit` voids their profit, which leaves the account with the payout and
 is not paid; `cap` forfeits and also caps the payout at `cap` (required exactly when a step
-caps). Forfeited profit comes off the profit the withdrawal share is taken from, and off
+caps, and at least `payouts.minimum` when the rules are set: the offending trades stay in
+the cycle until a payout, so a cap below the minimum would block every later one). Forfeited profit comes off the profit the withdrawal share is taken from, and off
 the equity every floor and buffer check reads. The payout preview (`payout.review: {step,
 trades: [{id, pnl, held_seconds, closed, offences}], forfeited}` and `payout.forfeit`)
 shows what a request now would do; the journaled `payout` event and the account's
