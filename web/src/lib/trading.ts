@@ -98,11 +98,18 @@ function tickCents(root: string, below: boolean): bigint {
 export function comboTickCents(roots: string[]): number {
   return roots.length ? Math.min(...roots.map((root) => Number(tickCents(root, true)))) : 1
 }
-/** Nearest valid limit on the root's tier tick, for suggested prices. */
-export function roundToTick(root: string, value: number): Money | null {
+/**
+ * Nearest valid limit on the root's tier tick, for suggested prices; `toward` "down"
+ * or "up" takes the tick on that side instead, as a buy or a sell would want.
+ */
+export function roundToTick(root: string, value: number, toward?: "down" | "up"): Money | null {
   if (!Number.isFinite(value) || value <= 0) return null
   const cents = Number(tickCents(root, value < 3))
-  const rounded = Math.max(cents, Math.round((value * 100) / cents) * cents)
+  const ticks = (value * 100) / cents
+  const nearest = Math.round(ticks)
+  // A price on the tick but for float noise (48.1 is 4810.000000000001 cents) stays put.
+  const whole = Math.abs(ticks - nearest) < 1e-6 || !toward ? nearest : toward === "down" ? Math.floor(ticks) : Math.ceil(ticks)
+  const rounded = Math.max(cents, whole * cents)
   return (rounded / 100).toFixed(2)
 }
 export function limitPriceTick(root: string, value: Money): Money {

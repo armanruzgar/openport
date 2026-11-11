@@ -398,6 +398,20 @@ describe("order ticket interaction", () => {
     expect(host.textContent).toContain("INVALID_TICK: Limit price is not a positive multiple")
     expect(button("New order")).toBeDefined()
   })
+  it("snaps the mid of an odd-tick spread to the tick on the passive side", async () => {
+    // SPXW above $3 trades in dimes: the 4.55 mid of 4.50 × 4.60 is refused as INVALID_TICK.
+    await render()
+    const quick = (cell: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[title="Use the ${cell} as the limit"]`)!.click())
+    await quick("mid")
+    expect(field("Limit price").value).toBe("4.50")
+    await choose("Side", "Sell")
+    await quick("mid")
+    expect(field("Limit price").value).toBe("4.60")
+    await quick("bid")
+    expect(field("Limit price").value).toBe("4.50")
+    await quick("ask")
+    expect(field("Limit price").value).toBe("4.60")
+  })
   it("uses buttons and arrow keys for valid ticks and pads cents on blur", async () => {
     await render()
     await setField("Limit price", "3")

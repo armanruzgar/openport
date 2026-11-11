@@ -4615,7 +4615,8 @@ Limit prices display cents, with buttons and arrow keys following the root's tie
 tick table above (including downward steps across $3.00). Typed off-tick prices
 still receive the server's `INVALID_TICK` reason. On wide screens the ticket docks
 beside the chain; elsewhere it is a dialog. It names the strategy from the held
-position (Long Call, Close Short Put...), sets the limit from Bid/Mid/Ask, says whether
+position (Long Call, Close Short Put...), sets the limit from Bid/Mid/Ask (snapped to
+the root's tick, down for a buy and up for a sell, so a mid between ticks is valid), says whether
 the order is marketable at the far side or will rest, and requests buying power and
 floor risk from the server preview. The web has no second copy of margin rules.
 Quoted premium estimates exclude slippage; the server preview includes the plan's

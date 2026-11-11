@@ -212,6 +212,21 @@ describe("conditional orders", () => {
     expect(roundToTick("SPXW", 0.01)).toBe("0.05")
     expect(roundToTick("SPXW", -1)).toBeNull()
   })
+  it("rounds a price between ticks to the side a buy or a sell asks for", () => {
+    // The mids of odd-tick spreads: 47.60 × 48.70 and 16.00 × 16.50 on SPXW.
+    expect(roundToTick("SPXW", 48.15, "down")).toBe("48.10")
+    expect(roundToTick("SPXW", 48.15, "up")).toBe("48.20")
+    expect(roundToTick("SPXW", 16.25, "down")).toBe("16.20")
+    expect(roundToTick("SPXW", 16.25, "up")).toBe("16.30")
+    // Across the $3 tier and on a tick already, float noise included.
+    expect(roundToTick("SPXW", 2.975, "down")).toBe("2.95")
+    expect(roundToTick("SPXW", 2.975, "up")).toBe("3.00")
+    expect(roundToTick("SPXW", 48.1, "up")).toBe("48.10")
+    expect(roundToTick("SPXW", 48.1, "down")).toBe("48.10")
+    expect(roundToTick("XSP", 3.125, "up")).toBe("3.15")
+    expect(roundToTick("SPY", 1.005, "up")).toBe("1.01")
+    expect(roundToTick("SPXW", 0.02, "down")).toBe("0.05")
+  })
 })
 
 describe("equity ticks", () => {

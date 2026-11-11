@@ -287,7 +287,11 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
       void refresh()
     }
   }
-  const setPrice = (value: number | null | undefined) => { if (value != null && Number.isFinite(value)) setLimitPrice(limitPriceText(value.toFixed(2))) }
+  // A quote (the mid of an odd-tick spread above all) can sit between ticks: snap it to
+  // the contract's tick on the passive side, down for a buy and up for a sell.
+  const setPrice = (value: number | null | undefined) => {
+    if (value != null && Number.isFinite(value)) setLimitPrice(roundToTick(root, value, side === "buy" ? "down" : "up") ?? limitPriceText(value.toFixed(2)))
+  }
   const entryPrice = Number(estimatedPrice)
   // Suggested exits: 25% of premium at risk, 50% target, or 0.5% of spot.
   const suggest = (kind: "stop" | "target", source: "option" | "underlying") => {

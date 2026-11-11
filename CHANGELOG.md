@@ -97,6 +97,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   loss limit, the one that fails the attempt or locks the day. On `static-100k` it
   showed $8,000 of floor room while a $4,000 loss ends the attempt. The plan's daily
   loss room now counts, and the risk limit's part is labelled as such.
+- **The ticket's Mid price is a valid limit.** On a contract whose tick is more than a
+  cent (SPX and SPXW above $3, for one) with a spread an odd number of ticks wide,
+  the Mid button filled in a limit between ticks, which the preview and the order
+  refused with `INVALID_TICK`. Bid, Mid and Ask now snap to the contract's tick, down
+  for a buy and up for a sell.
 
 ## 0.5.1 (2026-10-28)
 
