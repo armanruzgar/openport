@@ -815,6 +815,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   could not reach a trade's fills, review, chart, notes and tags, or an expiry's
   strikes. The row's name is now a button that opens and closes it and says whether it
   is open; a click anywhere on the row still works.
+- **The exposure heatmap keeps your scroll position.** Each time spot crossed to a new
+  nearest strike, the **By strike and expiry** grid jumped back to centre the spot
+  row, even after you had scrolled elsewhere. It now follows spot only until you
+  scroll it.
 
 ## 0.5.1 (2026-10-28)
 

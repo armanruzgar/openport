@@ -25,14 +25,18 @@ export function Heatmap({ label = "Exposure by strike and expiry", rows, columns
     return magnitudes[Math.floor(0.98 * (magnitudes.length - 1))] || 1
   }, [values])
 
-  // Open with the spot row in the middle of the view.
+  // Open with the spot row in the middle of the view and follow it as spot crosses
+  // strikes, until the trader scrolls the grid: from then on the view stays theirs.
   const scroller = useRef<HTMLDivElement>(null)
   const spotRow = useRef<HTMLTableRowElement>(null)
+  const centred = useRef<number | null>(null)
   useLayoutEffect(() => {
     const container = scroller.current
     const row = spotRow.current
     if (!container || !row) return
+    if (centred.current != null && Math.abs(container.scrollTop - centred.current) > 1) return
     container.scrollTop = row.offsetTop - container.clientHeight / 2
+    centred.current = container.scrollTop
   }, [highlightRow])
 
   const colour = (v: number | null) => {
