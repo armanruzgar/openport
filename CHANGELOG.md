@@ -1157,6 +1157,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   dependencies are, and a test fails for any fetched library without a checksum.
   unordered_dense, fetched and configured on every build but never used, is gone, as
   is its entry in the third-party notices.
+- **The remote-access Caddy example compresses the API.** Its site block had no
+  `encode`, so every API answer reached a phone or a remote browser uncompressed (an
+  SPX chain, about 85 KB, is about 15 KB gzipped), on every refresh. It now has
+  `encode zstd gzip`, as the demo deployment's Caddyfile does.
 
 ## 0.5.1 (2026-10-28)
 

@@ -56,12 +56,18 @@ terminal.example.com {
     header_up -Authorization
     header_up Host {upstream_hostport}
   }
+  # Compress API answers too; openportd gzips the terminal's own files.
+  encode zstd gzip
   reverse_proxy 127.0.0.1:8080 {
     header_up X-Real-IP {remote_host}
   }
   header Referrer-Policy no-referrer
 }
 ```
+
+`encode` matters over a phone or home uplink: openportd compresses only the terminal's
+files, and its JSON is several times larger uncompressed (an SPX chain, about 85 KB,
+gzips to about 15 KB) and is read again on every refresh.
 
 Start the engine on loopback with `--write-token-file PATH --allowed-host
 terminal.example.com --allowed-origin https://terminal.example.com`. Add
