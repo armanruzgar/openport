@@ -554,6 +554,17 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   fall behind a few dozen messages a second. The set is now rebuilt only when the
   subscribed contracts change, and strikes are selected again only when spot moves
   the window past one.
+- **tastytrade's hourly chain refresh keeps the stream.** Every hour the adapter closed
+  DXLink, reported every underlying `connecting`, fetched the chains, handshook again
+  and subscribed everything anew, at most 10,000 subscriptions a minute, with no
+  quotes meanwhile. Chains are now fetched again on the open stream, one underlying at
+  a time, and DXLink is sent only what changed; the stream reconnects only to renew its
+  quote token or after a failure.
+- **tastytrade health with timed and untimed quotes mixed.** An underlying's state was
+  each option quote's own: `live` when both sides carried a time, `stale` when a
+  priced side had none, so contracts of both kinds flipped it on every quote, one
+  status event each through the queue and into recordings. It is now `live` once a
+  timed quote arrives and turns `stale` only after a minute without one.
 - **The terminal says when it loses the server.** With `openportd` stopped or out of
   reach, the header kept a green pulsing **live** badge, a demo or replay feed stayed
   “<1 min old”, and the ticket said an order would fill now at the ask with Buy

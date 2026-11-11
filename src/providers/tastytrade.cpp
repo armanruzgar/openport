@@ -303,12 +303,23 @@ void TastytradeMapper::event(const Json& event) {
     // Streams publish repeated quotes too: they are observations, not snapshots.
     sink_.publish(md::OptionQuote{id, ts, bid, ask, std::max(0.0, number(field(event, "bidSize"), 0)),
                                                  std::max(0.0, number(field(event, "askSize"), 0))});
-    const auto state = ts > 0 ? md::FeedState::Live : md::FeedState::Stale;
-    if ((bid > 0 || ask > 0) && (!live_.contains(name) || live_.at(name) != state)) {
-      live_[name] = state;
-      sink_.publish(md::ProviderStatus{md::now(), state,
-                    ts > 0 ? "tastytrade: real-time DXLink quotes (operator-selected millisecond units)" :
-                             "tastytrade: quotes received; DXLink timestamp units unconfirmed", name});
+    if (bid > 0 || ask > 0) {
+      // One state for the underlying, not each quote's own: with timed and untimed
+      // contracts mixed it flipped Live and Stale on every quote, each a status event
+      // through the queue and into recordings.
+      const auto now = clock_();
+      const auto [entry, fresh] = live_.try_emplace(name);
+      auto& health = entry->second;
+      if (ts > 0) health.timed = now;
+      const bool timed = health.timed && now - *health.timed <= kUntimedGrace;
+      const auto state = timed ? md::FeedState::Live : md::FeedState::Stale;
+      if (fresh || health.state != state) {
+        health.state = state;
+        sink_.publish(md::ProviderStatus{now, state,
+                      timed ? "tastytrade: real-time DXLink quotes (operator-selected millisecond units)"
+                      : health.timed ? "tastytrade: no timed quote for a minute; DXLink timestamp units unconfirmed"
+                                     : "tastytrade: quotes received; DXLink timestamp units unconfirmed", name});
+      }
     }
   } else if (type == "Greeks") {
     // dxFeed defines vega/rho per percentage point and theta per day.
@@ -372,21 +383,27 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
     TastytradeApi api(options_.credentials);
     const auto client = options_.http ? options_.http() : std::make_unique<net::HttpClient>();
     auto& http = *client;
-    auto transport = net::make_websocket();
+    auto transport = options_.websocket ? options_.websocket() : net::make_websocket();
     DxlinkProtocol protocol(*transport);
     TastytradeMapper mapper(subscription, *sink, options_.timestamps_in_milliseconds);
+    // An underlying's nested chain and streamer symbol, mapped.
+    const auto load_chain = [&](const std::string& underlying) {
+      const auto path = symbol_path(underlying);
+      const auto chain = parse_tastytrade_chain(api.get(http, "/option-chains/" + path + "/nested", md::now(), &stopping_), underlying);
+      const auto streamer = parse_tastytrade_streamer(api.get(http, "/instruments/equities/" + path, md::now(), &stopping_));
+      mapper.chain(underlying, streamer, chain, md::new_york_time(md::now()).date);
+    };
+    const md::Timestamp refresh_every = std::chrono::duration_cast<std::chrono::nanoseconds>(options_.chain_refresh).count();
+    const auto& underlyings = subscription.underlyings;
     std::optional<TastytradeQuoteToken> token;
     unsigned attempts = 0;
     while (!stopping_) {
       try {
         status(md::FeedState::Connecting, "tastytrade: connecting; waiting for option quotes");
         mapper.reset_health();
-        for (const auto& underlying : subscription.underlyings) {
+        for (const auto& underlying : underlyings) {
           if (stopping_) break;
-          const auto path = symbol_path(underlying);
-          const auto chain = parse_tastytrade_chain(api.get(http, "/option-chains/" + path + "/nested", md::now(), &stopping_), underlying);
-          const auto streamer = parse_tastytrade_streamer(api.get(http, "/instruments/equities/" + path, md::now(), &stopping_));
-          mapper.chain(underlying, streamer, chain, md::new_york_time(md::now()).date);
+          load_chain(underlying);
         }
         if (stopping_) break;
         if (!token || md::now() >= token->refresh_at)
@@ -395,18 +412,28 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
         (void)mapper.take_subscription_change();
         auto subscriptions = mapper.subscriptions();
         protocol.begin(token->token, subscriptions, md::now());
-        const auto chain_refresh = md::now() + 3600 * md::kNanosPerSecond;
         const auto connected = md::now();
-        while (!stopping_ && md::now() < std::min(token->refresh_at, chain_refresh)) {
+        // Chains change through the day (strikes added, an expiry rolled). They are
+        // fetched again on the open stream, one underlying a pass so it keeps being read,
+        // and DXLink gets only the difference. Tearing the stream down for it stopped
+        // quotes and re-added every subscription, at most 10,000 a minute, every hour.
+        md::Timestamp chains_due = connected + refresh_every;
+        std::size_t refreshing = underlyings.size();  // none under way
+        while (!stopping_ && md::now() < token->refresh_at) {
+          if (refreshing == underlyings.size() && md::now() >= chains_due) refreshing = 0;
+          if (refreshing < underlyings.size()) {
+            load_chain(underlyings[refreshing]);
+            if (++refreshing == underlyings.size()) chains_due = md::now() + refresh_every;
+          }
           if (const auto message = transport->receive(std::chrono::milliseconds(100))) {
             for (const auto& event : protocol.on_message(*message, md::now())) mapper.event(event);
-            // Rebuilt only when an event changed what is mapped, not after every message.
-            if (mapper.take_subscription_change()) {
-              auto updated = mapper.subscriptions();
-              if (updated != subscriptions) {
-                protocol.replace(updated, md::now());
-                subscriptions = std::move(updated);
-              }
+          }
+          // Rebuilt only when an event or a chain changed what is mapped, not after every message.
+          if (mapper.take_subscription_change()) {
+            auto updated = mapper.subscriptions();
+            if (updated != subscriptions) {
+              protocol.replace(updated, md::now());
+              subscriptions = std::move(updated);
             }
           }
           protocol.tick(md::now());
@@ -414,7 +441,7 @@ void TastytradeProvider::run(md::Subscription subscription, md::EventSink* sink)
           if (protocol.ready() && md::now() - connected > md::kNanosPerMinute) attempts = 0;
         }
         transport->close();
-        // Refresh chains hourly, or credentials earlier if their explicit expiry requires it.
+        // The quote token is renewed on a new connection before it expires.
       } catch (const std::exception& error) {
         transport->close();
         if (stopping_) break;

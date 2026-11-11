@@ -7,6 +7,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <set>
+#include <thread>
 
 #include "openport/analytics/chain_book.hpp"
 #include "openport/providers/factory.hpp"
@@ -302,6 +307,116 @@ TEST(Tastytrade, AFailingFeedKeepsReconnectingUntilStopped) {
   EXPECT_EQ(statuses.back().message, "tastytrade: stopped");
 }
 
+/// DXLink in memory: answers the handshake and keeps what the client sends.
+struct DxlinkServer {
+  std::mutex mutex;
+  std::deque<std::string> replies;
+  std::vector<Json> subscriptions;  ///< FEED_SUBSCRIPTION messages, in order
+  int connections = 0;
+};
+
+class FakeDxlink final : public net::WebSocket {
+ public:
+  explicit FakeDxlink(std::shared_ptr<DxlinkServer> server) : server_(std::move(server)) {}
+  void connect(std::string_view, const std::atomic<bool>*) override {
+    const std::lock_guard lock(server_->mutex);
+    ++server_->connections;
+  }
+  void send(std::string_view frame) override {
+    const auto message = Json::parse(frame);
+    const auto type = message.value("type", std::string());
+    const std::lock_guard lock(server_->mutex);
+    auto& replies = server_->replies;
+    if (type == "SETUP") {
+      replies.emplace_back(R"({"type":"SETUP","channel":0,"keepaliveTimeout":60,"acceptKeepaliveTimeout":60,"version":"1.0"})");
+      replies.emplace_back(R"({"type":"AUTH_STATE","channel":0,"state":"UNAUTHORIZED"})");
+    } else if (type == "AUTH") {
+      replies.emplace_back(R"({"type":"AUTH_STATE","channel":0,"state":"AUTHORIZED"})");
+    } else if (type == "CHANNEL_REQUEST") {
+      replies.emplace_back(R"({"type":"CHANNEL_OPENED","channel":3,"service":"FEED"})");
+    } else if (type == "FEED_SETUP") {
+      replies.emplace_back(R"({"type":"FEED_CONFIG","channel":3,"dataFormat":"COMPACT","aggregationPeriod":0.1})");
+    } else if (type == "FEED_SUBSCRIPTION") {
+      server_->subscriptions.push_back(message);
+    }
+  }
+  std::optional<std::string> receive(std::chrono::milliseconds timeout) override {
+    {
+      const std::lock_guard lock(server_->mutex);
+      if (!server_->replies.empty()) {
+        auto reply = std::move(server_->replies.front());
+        server_->replies.pop_front();
+        return reply;
+      }
+    }
+    std::this_thread::sleep_for(std::min(timeout, std::chrono::milliseconds(5)));
+    return std::nullopt;
+  }
+  void close() noexcept override {}
+
+ private:
+  std::shared_ptr<DxlinkServer> server_;
+};
+
+/// A nested SPXW chain of one call at `strike`, expiring in 2099.
+std::string chain_with_call_at(int strike) {
+  const auto price = std::to_string(strike);
+  return R"({"data":{"items":[{"underlying-symbol":"SPX","root-symbol":"SPXW","option-chain-type":"Standard",
+    "shares-per-contract":100,"expirations":[{"expiration-type":"Weekly","expiration-date":"2099-10-16",
+    "settlement-type":"PM","strikes":[{"strike-price":")" + price + R"(","call":"SPXW  991016C0)" + price +
+         R"(000","call-streamer-symbol":".SPXW991016C)" + price + R"("}]}]}]}})";
+}
+
+TEST(Tastytrade, ChainRefreshesKeepTheStreamAndSendDxlinkOnlyTheChange) {
+  // Every hour the stream was closed, every underlying set Connecting, and DXLink
+  // handshaken and subscribed again from nothing, with no quotes in between.
+  std::atomic<int> chains{0};
+  auto server = std::make_shared<DxlinkServer>();
+  test::EventCollector sink;
+  providers::TastytradeProvider::Options options;
+  options.credentials = {"secret", "refresh", ""};
+  options.http = [&chains] {
+    auto http = std::make_unique<test::HttpStub>();
+    http->respond = [&chains](std::string_view url) -> net::HttpResponse {
+      if (url.ends_with("/oauth/token")) return {200, R"({"access_token":"token","expires_in":900})"};
+      if (url.ends_with("/api-quote-tokens")) return {200, R"({"data":{"token":"quote","dxlink-url":"wss://example.test/feed"}})"};
+      if (url.find("/instruments/equities/") != std::string_view::npos) return {200, R"({"data":{"streamer-symbol":"SPX"}})"};
+      // A strike is listed from the second fetch on, in place of the first one.
+      return {200, chain_with_call_at(chains++ == 0 ? 7400 : 7500)};
+    };
+    return http;
+  };
+  options.websocket = [server] { return std::make_unique<FakeDxlink>(server); };
+  options.retry_wait = [](unsigned) { return std::chrono::milliseconds(1); };
+  options.chain_refresh = std::chrono::milliseconds(20);
+  providers::TastytradeProvider provider(options);
+  provider.start({{"SPX"}}, sink);
+  ASSERT_TRUE(test::recording_eventually([&] { return chains.load() >= 4; }));
+  provider.stop();
+  std::vector<md::ProviderStatus> statuses;
+  for (const auto& event : sink.snapshot())
+    if (const auto* status = std::get_if<md::ProviderStatus>(&event)) statuses.push_back(*status);
+  const auto count = [&](md::FeedState state) {
+    return std::count_if(statuses.begin(), statuses.end(), [state](const auto& status) { return status.state == state; });
+  };
+  EXPECT_EQ(count(md::FeedState::Connecting), 1);
+  EXPECT_EQ(count(md::FeedState::Error), 0);
+  const std::lock_guard lock(server->mutex);
+  EXPECT_EQ(server->connections, 1);
+  // What the stream is subscribed to follows the refreshed chain.
+  std::set<std::pair<std::string, std::string>> active;
+  for (const auto& message : server->subscriptions) {
+    if (message.value("reset", false)) active.clear();
+    for (const auto& entry : message.value("remove", Json::array()))
+      active.erase({entry.value("type", std::string()), entry.value("symbol", std::string())});
+    for (const auto& entry : message.value("add", Json::array()))
+      active.insert({entry.value("type", std::string()), entry.value("symbol", std::string())});
+  }
+  std::set<std::pair<std::string, std::string>> expected{{"Quote", "SPX"}, {"Trade", "SPX"}};
+  for (const auto* type : {"Quote", "Greeks", "Summary", "Trade"}) expected.insert({type, ".SPXW991016C7500"});
+  EXPECT_EQ(active, expected);
+}
+
 TEST(Tastytrade, MapsDocumentedGreeksWithoutInventingClocksOrSnapshots) {
   test::BrokerSink sink;
   providers::TastytradeMapper mapper({{"SPX"}}, sink);
@@ -348,7 +463,8 @@ TEST(Tastytrade, CompleteChainRefreshUnsubscribesRemovedAndExpiredOptions) {
 
 TEST(Tastytrade, ExplicitClockUnitsPreserveSourceTimeAndReportLiveOnlyOnOptionQuotes) {
   test::BrokerSink sink;
-  providers::TastytradeMapper mapper({{"SPX"}}, sink, true);
+  md::Timestamp clock = kNow;
+  providers::TastytradeMapper mapper({{"SPX"}}, sink, true, [&] { return clock; });
   mapper.chain("SPX", "SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
   mapper.event(quote("SPX"));
   EXPECT_TRUE(sink.all<md::ProviderStatus>().empty());
@@ -369,8 +485,44 @@ TEST(Tastytrade, ExplicitClockUnitsPreserveSourceTimeAndReportLiveOnlyOnOptionQu
   EXPECT_EQ(sink.all<md::ProviderStatus>().size(), 2u);
   auto missing = quote(".SPX261016C7400");
   missing["bidTime"] = nullptr;
+  // An untimed quote among timed ones leaves the underlying Live; a minute without a
+  // timed quote makes it Stale, and the next timed one Live again.
   mapper.event(missing);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().size(), 2u);
+  clock += providers::TastytradeMapper::kUntimedGrace + md::kNanosPerSecond;
+  mapper.event(missing);
+  ASSERT_EQ(sink.all<md::ProviderStatus>().size(), 3u);
   EXPECT_EQ(sink.all<md::ProviderStatus>().back().state, md::FeedState::Stale);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().back().ts, clock);
+  mapper.event(quote(".SPX261016C7400"));
+  ASSERT_EQ(sink.all<md::ProviderStatus>().size(), 4u);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().back().state, md::FeedState::Live);
+  // Untimed from the start, an underlying is Stale at once.
+  test::BrokerSink untimed_sink;
+  providers::TastytradeMapper untimed({{"SPX"}}, untimed_sink, true, [&] { return clock; });
+  untimed.chain("SPX", "SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  untimed.event(missing);
+  ASSERT_EQ(untimed_sink.all<md::ProviderStatus>().size(), 1u);
+  EXPECT_EQ(untimed_sink.all<md::ProviderStatus>()[0].state, md::FeedState::Stale);
+}
+
+TEST(Tastytrade, MixedTimedAndUntimedQuotesKeepOneStatePerUnderlying) {
+  // One contract's quotes carried both times, another's a priced bid without one: each
+  // quote flipped the underlying Live and Stale, 1,000 status events for 1,000 quotes.
+  test::BrokerSink sink;
+  md::Timestamp clock = kNow;
+  providers::TastytradeMapper mapper({{"SPX"}}, sink, true, [&] { return clock; });
+  mapper.chain("SPX", "SPX", providers::parse_tastytrade_chain(kChain, "SPX"), {2026, 9, 24});
+  auto untimed = quote(".SPXW261016C7400");
+  untimed["bidTime"] = nullptr;
+  for (int i = 0; i < 500; ++i) {
+    mapper.event(quote(".SPX261016C7400"));
+    mapper.event(untimed);
+    clock += md::kNanosPerSecond / 10;
+  }
+  EXPECT_EQ(sink.all<md::OptionQuote>().size(), 1000u);
+  ASSERT_EQ(sink.all<md::ProviderStatus>().size(), 1u);
+  EXPECT_EQ(sink.all<md::ProviderStatus>()[0].state, md::FeedState::Live);
 }
 
 TEST(Tastytrade, TradeSnapshotsOnlySupplyUnderlyingLastWithItsOwnClock) {

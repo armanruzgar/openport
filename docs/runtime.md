@@ -296,9 +296,11 @@ certificate and host, and sends `openport/<version>` on HTTP and WebSocket reque
 OAuth access tokens refresh before `expires_in` (15 minutes if absent). Quote tokens
 refresh before their explicit expiry or after 23 hours when expiry is absent.
 Quote tokens are cached across reconnects and re-fetched if rejected.
-Chains refresh on an hourly reconnect; all subscriptions are restored after a
-connection failure. Missing or expired instruments are unsubscribed after a
-complete chain refresh, and their old quotes are cleared with an unknown timestamp.
+Chains are fetched again every hour on the open stream, one underlying at a time,
+and DXLink is sent only the subscriptions that changed; the stream reconnects only
+to renew its quote token or after a failure, when all subscriptions are restored.
+Missing or expired instruments are unsubscribed after a complete chain refresh, and
+their old quotes are cleared with an unknown timestamp.
 A failed connection is retried for as long as the feed runs, each failure reported
 as `error`; the waits between attempts grow to 60 seconds, and a minute of connected
 service shortens them again. Shutdown interrupts waits and I/O; system DNS remains the
@@ -323,7 +325,10 @@ DXLink event times follow dxFeed's event model, where a Quote's `bidTime` and
 `askTime` are milliseconds since the epoch, so they become market times.
 `--option dxlink_time_unit=unknown` leaves market times at zero instead (health then
 reports `Stale` and paper fills wait), for a feed whose units turn out otherwise; the
-adapter has not yet run against a live account. Greeks supplies decimal IV,
+adapter has not yet run against a live account. Each underlying's health is `Live`
+once a timed option quote arrives and `Stale` until one does; an untimed quote among
+timed ones leaves it `Live`, and only a minute without any timed quote makes it
+`Stale`. Greeks supplies decimal IV,
 vega/rho per percentage point and theta per day, with delta/gamma as price
 derivatives. These mappings are not yet validated live. Summary OI retains a
 supplied `eventTime` (vendor event creation time, not the OI effective date);
