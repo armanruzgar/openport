@@ -25,6 +25,11 @@ interface Live {
   source: DataSource
   replay: ReplayState | null
   switchSource: (source: DataSource, reason: DestinationChangeReason) => void
+  /**
+   * Sends `stop` (the request that stops the running replay), then forgets that run:
+   * the server sends no tick once a run is gone, so nothing else would.
+   */
+  stopReplay: (stop: () => Promise<unknown>) => Promise<void>
   status: Status | undefined
   tick: Tick | null
   connection: Connection
@@ -39,7 +44,8 @@ const LiveContext = createContext<Live | null>(null)
 
 export function liveState(status: Status | undefined, tick: Tick | null, connection: Connection, accountScope = 0,
   account = MAIN_ACCOUNT, switchAccount: (id: string, reason: DestinationChangeReason) => void = () => {},
-  source: DataSource = "live", replay: ReplayState | null = null, switchSource: (source: DataSource, reason: DestinationChangeReason) => void = () => {}): Live {
+  source: DataSource = "live", replay: ReplayState | null = null, switchSource: (source: DataSource, reason: DestinationChangeReason) => void = () => {},
+  stopReplay: (stop: () => Promise<unknown>) => Promise<void> = async (stop) => { await stop() }): Live {
   const connectedTick = connection === "open" ? tick : null
   const accounts = connectedTick?.accounts ?? status?.accounts ?? []
   const main = connectedTick?.trading === undefined ? status?.trading : connectedTick.trading
@@ -58,6 +64,7 @@ export function liveState(status: Status | undefined, tick: Tick | null, connect
     source,
     replay,
     switchSource,
+    stopReplay,
     status,
     tick: connectedTick,
     connection,
@@ -84,6 +91,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [notice, setNotice] = useState<string | null>(null)
   const replaySeen = useRef(Date.now())
   const replayRun = useRef<string | undefined>(undefined)
+  // The trader's own Stop is being answered: the run is ending here, not in another window.
+  const stopping = useRef(false)
   const [connection, setConnection] = useState<Connection>("connecting")
   const [accountScope, setAccountScope] = useState(0)
   const account = useActiveAccount()
@@ -149,10 +158,32 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         return listing
       },
       reconnecting: setReconnecting, leave: reason => {
+        if (stopping.current) return
+        setReplayTick(null)
         switchSource("live", "automatic")
         setNotice(`${reason} Orders now go to ${destinationLabel(captureDestination())}.`)
       } })
   }, [source, switchSource, queryClient])
+  const stopReplay = useCallback(async (stop: () => Promise<unknown>) => {
+    stopping.current = true
+    try { await stop() } finally { stopping.current = false }
+    // No tick says a run stopped: forget its last one, so no page keeps showing it as
+    // running, and leave it if it was being traded.
+    setReplayTick(null)
+    setReturnReplay(false)
+    void queryClient.invalidateQueries({ queryKey: ["replay-listing"] })
+    if (dataSource.get() !== "replay") return
+    switchSource("live", "user")
+    setNotice(`The replay stopped. Orders now go to ${destinationLabel(captureDestination())}.`)
+  }, [queryClient, switchSource])
+  // A run stopped in another window ends the same way. Once the listing no longer has it
+  // and its ticks have stopped, forget it, so the Replay page stops offering to trade it.
+  const listed = history.data
+  useEffect(() => {
+    const id = replayTick?.replay?.id
+    if (!id || !listed || listed.replay?.id === id || Date.now() - replaySeen.current < 3_000) return
+    setReplayTick(null)
+  }, [listed, replayTick])
   // Fall back to the main account when the active one is gone (or the server keeps only one).
   const known = useMemo(() => tick?.accounts ?? (source === "live" ? status.data?.accounts ?? (status.data ? [] : undefined) : undefined),
     [tick, source, status.data])
@@ -197,8 +228,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, [])
   const value = useMemo<Live>(
     () => liveState(status.data, source === "replay" ? replayTick : source === "live" ? tick : null, connection, accountScope,
-      source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource),
-    [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived],
+      source !== "live" ? MAIN_ACCOUNT : account, switchAccount, source, source.startsWith("history:") ? archived ?? null : replayTick?.replay ?? null, switchSource, stopReplay),
+    [status.data, tick, replayTick, connection, accountScope, account, switchAccount, source, switchSource, archived, stopReplay],
   )
   return <LiveContext value={value}>
     {reconnecting && source === "replay" && <div role="status" className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-xs">Reconnecting to the replay…</div>}

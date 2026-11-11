@@ -263,6 +263,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the same number, on another contract. The live journal also drew the replay's
   scenario events on its trades. Both now use a replay only on that replay's own
   journal.
+- **Stopping a replay from the Replay page.** The page kept a “Now replaying” panel
+  for the stopped run with its Pause, Stop and step buttons enabled (Pause then
+  failed with `NO_REPLAY`), and **Trade this replay** switched the terminal back to
+  the dead run. When the run was being traded, the terminal left it saying it had
+  stopped in another window. The run is now forgotten once the stop is answered, the
+  notice says the replay stopped, and a run stopped elsewhere leaves the page once the
+  server no longer lists it.
 
 ## 0.5.1 (2026-10-28)
 

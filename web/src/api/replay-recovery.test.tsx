@@ -145,6 +145,36 @@ it.each([false, true])("keeps Replay this seed silent when the new tick precedes
   await replayTick("elsewhere")
   expect(host.querySelector('[role="alert"]')?.textContent).toContain("run changed in another window")
 })
+it("forgets a run stopped on the Replay page and leaves it without blaming another window", async () => {
+  vi.spyOn(api, "plans").mockResolvedValue({ plans: [] })
+  vi.spyOn(api, "liveAccounts").mockResolvedValue({ accounts: [] })
+  const stop = vi.spyOn(api, "stopReplay").mockImplementation(async () => {
+    vi.mocked(api.replay).mockResolvedValue({ directory: "", recordings: [], replay: null })
+    return { replay: null }
+  })
+  await render(<ReplayView />); await advance(1); await replayTick()
+  expect(host.textContent).toContain("Now replaying")
+  await click("Stop"); await advance(1)
+  expect(stop).toHaveBeenCalledWith("open")
+  expect(dataSource.get()).toBe("live")
+  // No tick ever says the run stopped; the page must not keep it, nor Pause or Trade it.
+  await advance(20_000)
+  expect(host.textContent).not.toContain("Now replaying")
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("The replay stopped. Orders now go to live account Practice")
+  expect(host.textContent).not.toContain("another window")
+})
+it("drops a run another window stopped from the Replay page of a terminal on live", async () => {
+  dataSource.set("live")
+  vi.spyOn(api, "plans").mockResolvedValue({ plans: [] })
+  vi.spyOn(api, "liveAccounts").mockResolvedValue({ accounts: [] })
+  await render(<ReplayView />); await advance(1); await replayTick()
+  expect(host.textContent).toContain("Trade this replay")
+  vi.mocked(api.replay).mockResolvedValue({ directory: "", recordings: [], replay: null })
+  await advance(15_000)
+  expect(host.textContent).not.toContain("Now replaying")
+  expect(host.textContent).not.toContain("Trade this replay")
+  expect(dataSource.get()).toBe("live")
+})
 it("announces the two-minute unreachable fallback", async () => {
   vi.mocked(api.replay).mockRejectedValue(new Error("Offline"))
   await render(); await advance(126_000)

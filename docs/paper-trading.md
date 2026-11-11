@@ -5237,7 +5237,11 @@ silence alone does not trigger this change: the terminal verifies the run with
 replay…”. It returns to live if the run stopped or finished, or after two minutes
 of failed server checks. A persistent banner names the resulting order destination;
 **Back to replay** is available only while a run exists, and **OK** dismisses it.
-Sandbox expiry and automatic account fallback are also announced.
+Sandbox expiry and automatic account fallback are also announced. **Stop** on the
+Replay page ends the run there: the terminal forgets it once the stop is answered,
+returns to live if it was trading it and says “The replay stopped.” The server sends
+no tick when a run ends, so a run stopped in another window leaves the Replay page
+once `GET /api/replay` no longer lists it.
 
 An open ticket or write dialog keeps its original destination. A source, account,
 or replay-run change blocks submission until the user explicitly confirms the

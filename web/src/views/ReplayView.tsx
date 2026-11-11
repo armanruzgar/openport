@@ -55,7 +55,8 @@ const size = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` 
 /** Speed, pause, skip and stop for the running replay, from the page or the banner. */
 export function useReplayControls() {
   const api = useActionApi()
-  const { status } = useLive()
+  const live = useLive()
+  const { status } = live
   const writeStatus = useQuery({ queryKey: ["replay-listing"], queryFn: ({ signal }) => api.replay(signal), staleTime: 5_000 })
   const trading = status?.trading
   const token = useWriteToken()
@@ -93,7 +94,8 @@ export function useReplayControls() {
     }),
     playTo: (play_until: string, speed: number) => run(() => api.controlReplay({ play_until, speed }, mode)),
     abort: () => interrupt(() => api.controlReplay({ abort: true }, mode)),
-    stop: () => interrupt(() => api.stopReplay(mode)),
+    // A stopped run gets no closing tick: the terminal forgets it once the stop is answered.
+    stop: () => interrupt(() => live.stopReplay(() => api.stopReplay(mode))),
     start: (source: ReplaySource, speed: number, then: () => void, options?: ReplayStart) => run(async () => { await userReplayChange(() => api.startReplay(source, speed, mode, options)); then() }),
     resume: (id: string, speed: number, then: () => void) => run(async () => { await userReplayChange(() => api.resumeReplay(id, speed, mode)); then() }),
     fromTrade: (id: string, trade: string, then: () => void) => run(async () => { await userReplayChange(() => api.replayFromTrade(id, trade, mode)); then() }),
