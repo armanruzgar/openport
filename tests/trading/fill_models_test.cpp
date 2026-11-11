@@ -516,6 +516,71 @@ TEST(StopStress, AStressedStopLimitNeverPassesItsLimitAndLaterFillsUnstressed) {
   EXPECT_EQ(session.snapshot()->recent_fills.back().stress_ticks, 0);
 }
 
+TEST(StopStress, AStressedStopTheMarketLetsTradeFillsWithItsStressInsteadOfBeingCancelled) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket market;
+    auto session = stopped(market, 5);
+    session.set_revised_fills(revised);
+    // Reached on a wide spread: the bid, 3.40, is well inside the price band around the
+    // mid (3.65, a band of 0.73), and five stress ticks below it, 2.90, are not.
+    market.next();
+    session.on_quotes({market.quote("3.40", "3.90")}, {market.valuation()}, market.time);
+    if (revised) {
+      // The band measures the market's price; stress is the simulator's own slippage.
+      EXPECT_EQ(order(session, 2).status, OrderStatus::Filled);
+      EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("2.90"));
+      EXPECT_EQ(session.snapshot()->recent_fills.back().stress_ticks, 5);
+      EXPECT_TRUE(session.snapshot()->positions.empty());
+    } else {
+      // Replay drivers 1-7 cancelled the stop and left the position open.
+      EXPECT_EQ(order(session, 2).status, OrderStatus::Cancelled);
+      EXPECT_EQ(order(session, 2).reason.code, Reason::RISK_CHANGED);
+      EXPECT_FALSE(session.snapshot()->positions.empty());
+    }
+  }
+}
+
+TEST(StopStress, AStopExitReArmedAfterAFastMarketFillsUnstressedWhenAnOrdinaryQuoteReachesIt) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket market;
+    AccountRules rules;
+    rules.stop_stress_ticks = 2;
+    TradingSession session(config(rules), market.time);
+    session.set_revised_fills(revised);
+    market.seed(session);
+    auto entry = market.market("entry", 10);
+    entry.bracket = Bracket{ExitSpec{Trigger{TriggerSource::Option, TriggerDirection::AtOrBelow, m("3.50")}, {}}, {}};
+    ASSERT_TRUE(session.submit(entry, market.time).decision.ok());
+    const auto stop = order(session).stop_loss;
+    ASSERT_NE(stop, 0U);
+    for (int i = 0; i < 8; ++i) {
+      market.next();
+      session.on_quotes({market.quote()}, {market.valuation()}, market.time);
+    }
+    // Reached on a fast quote whose bid shows two: those sell stressed, and the stop re-arms for the rest.
+    market.next();
+    session.on_quotes({market.quote("3.40", "4.40", 2)}, {market.valuation()}, market.time);
+    ASSERT_EQ(order(session, stop).status, OrderStatus::Armed);
+    EXPECT_EQ(order(session, stop).filled_quantity, 2);
+    EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("3.20"));
+    EXPECT_EQ(session.snapshot()->recent_fills.back().stress_ticks, 2);
+    // The market calms down, and then an ordinary quote reaches the stop again.
+    for (int i = 0; i < 20; ++i) {
+      market.next();
+      session.on_quotes({market.quote("3.80", "4.00", 20)}, {market.valuation()}, market.time);
+    }
+    market.next();
+    session.on_quotes({market.quote("3.40", "3.60", 20)}, {market.valuation()}, market.time);
+    EXPECT_EQ(order(session, stop).status, OrderStatus::Filled);
+    const auto last = session.snapshot()->recent_fills.back();
+    EXPECT_EQ(last.quantity, 8);
+    // Replay drivers 1-7 kept the first trigger's stress and sold two ticks under the bid.
+    EXPECT_EQ(last.price, m(revised ? "3.40" : "3.20"));
+    EXPECT_EQ(last.stress_ticks, revised ? 0 : 2);
+    EXPECT_EQ(order(session, stop).stress_ticks, revised ? 0 : 2);
+  }
+}
+
 TEST(StopStress, AStopReachedInAnOrdinaryMarketDoesNot) {
   ScriptedMarket market;
   auto session = stopped(market, 2);

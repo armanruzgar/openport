@@ -298,6 +298,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   that should have fired. An order now leaves the queue while it cannot trade and joins
   again behind what is displayed when its session opens, and what a batch lets it fill
   but it cannot fill then is not kept for a later batch.
+- **Stop stress no longer cancels the stop.** With `stop_stress_ticks`, the price band
+  measured a plain stop's stressed price, so on the wide quote that made the market
+  fast, enough stress put it outside the band: the stop was cancelled (`RISK_CHANGED`,
+  `PRICE_BAND`) and the position left open. The band now measures the market's price,
+  and the stop fills with its stress.
+- **A re-armed stop drops its earlier stress.** A bracket stop that triggered in a
+  fast market, sold what a thin bid showed and re-armed kept that stress, so an
+  ordinary quote reaching it later sold the rest `stop_stress_ticks` ticks under the
+  bid. Each trigger now measures its own quote.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

@@ -777,6 +777,14 @@ moves a fill past it, and with impact the next block's unstressed price decides
 whether it may fill. A stop-limit still resting after that attempt drops its stress
 (`stress_ticks` returns to zero) and fills later like any other limit. Extended-hours stops, which send a limit at the touch, are unaffected.
 
+Stress is the simulator's own slippage, not a price the market showed, so the
+[price band](#risk-and-kill-switch) measures a stressed stop's price before its stress:
+a stop whose market is inside the band fills with its stress rather than being
+cancelled. Each trigger meets its own market: a stop exit that re-arms after a thin
+book and is reached again on an ordinary quote fills without the earlier stress.
+Runs recorded with replay driver 7 or earlier banded the stressed price and kept a
+re-armed stop's stress.
+
 Spread and quote rate stand in for what a live fast market does to stops; they are
 measured from the supplied quotes only, so a sparse or snapshot feed shows less of
 the rate signal than a streaming one.

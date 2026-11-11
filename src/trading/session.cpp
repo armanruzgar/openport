@@ -755,15 +755,23 @@ Money execution_price(const State& s, const std::string& symbol, Side side, std:
   const auto price = buy ? displayed + slip : std::max(Money{}, displayed - slip);
   return limit && s.config.rules.impact_ticks == 0 ? (buy ? std::min(*limit, price) : std::max(*limit, price)) : price;
 }
+/// `stressed` false leaves out a stressed stop's extra ticks, as the price band may
+/// (see stress_in_band).
 Money order_price(const State& s, const Order& o, const std::string& symbol, Side side,
-                  std::optional<Money> limit = {}, Quantity offset = 0) {
+                  std::optional<Money> limit = {}, Quantity offset = 0, bool stressed = true) {
   if (inside_single(s, o)) return *o.request.limit_price;
   if (touch_stop(s, o)) {
     const auto& q = s.books.at(symbol).quote;
     return side == Side::Buy ? *q.ask : *q.bid;
   }
-  return execution_price(s, symbol, side, limit, offset, o.stress_ticks);
+  return execution_price(s, symbol, side, limit, offset, stressed ? o.stress_ticks : 0);
 }
+/// Whether the price band measures a stressed stop's price with its stress. Stress
+/// is the simulator's own slippage in a fast market, not a price the market showed,
+/// so driver 8 bands the price before it and a stop that the market lets trade
+/// fills with its stress instead of being cancelled. Replay drivers 1-7 banded the
+/// stressed price.
+bool stress_in_band(const State& s) { return !s.revised_fills; }
 /// What a market order for `quantity` contracts would trade at now, as
 /// (price, contracts): an executable book's slipped far side, block by block
 /// with impact as the fills would walk it; with only the far side quoted, that
@@ -834,8 +842,8 @@ std::vector<ExecutionSlice> combo_slices(const State& s, const Order& o, Quantit
   }
   return slices;
 }
-/// A multi-leg order's next executable net debit per unit.
-std::optional<Money> executable_net(const State& s, const Order& o) {
+/// A multi-leg order's next executable net debit per unit; `stressed` as for order_price.
+std::optional<Money> executable_net(const State& s, const Order& o, bool stressed = true) {
   if (const auto prices = inside_combo(s, o)) {
     Money net;
     for (std::size_t i = 0; i < prices->size(); ++i) {
@@ -852,11 +860,11 @@ std::optional<Money> executable_net(const State& s, const Order& o) {
   for (const auto& leg : o.request.legs) {
     if (given_away(s, o, leg)) continue;
     if (s.config.rules.impact_ticks == 0) {
-      const auto price = order_price(s, o, leg.symbol, leg.side) * leg.ratio;
+      const auto price = order_price(s, o, leg.symbol, leg.side, {}, 0, stressed) * leg.ratio;
       net = leg.side == Side::Buy ? net + price : net - price;
     } else {
       for (Quantity offset = 0; offset < leg.ratio; ++offset) {
-        const auto price = order_price(s, o, leg.symbol, leg.side, {}, offset);
+        const auto price = order_price(s, o, leg.symbol, leg.side, {}, offset, stressed);
         net = leg.side == Side::Buy ? net + price : net - price;
       }
     }
@@ -2393,7 +2401,7 @@ Decision combo_check(const State& s, const Order& o, Stage stage) {
       return failure(Reason::EXPIRY_CUTOFF, "A leg is inside the pre-expiry cutoff; only closing orders are accepted");
     if (auto d = quote_check(s, leg.symbol); !d.ok()) { d.scope = leg.symbol; return d; }
   }
-  const auto net = *executable_net(s, o);
+  const auto net = *executable_net(s, o, stress_in_band(s));
   Money middle, gross;
   for (const auto& leg : r.legs) {
     const auto value = mid(s.books.at(leg.symbol).quote) * leg.ratio;
@@ -2660,7 +2668,8 @@ Decision order_check(const State& s, const Order& o, Stage stage = Stage::Accept
     if (const auto d = price_check(s, quote, request.walk->limit); !d.ok()) return d;
   }
   if (stage == Stage::Fill || !request.limit_price) {
-    if (const auto d = price_check(s, quote, order_price(s, o, request.symbol, request.side, request.limit_price)); !d.ok()) return d;
+    const auto price = order_price(s, o, request.symbol, request.side, request.limit_price, 0, stress_in_band(s));
+    if (const auto d = price_check(s, quote, price); !d.ok()) return d;
   } else if (stage == Stage::Accept) {
     if (const auto d = price_check(s, quote, *request.limit_price, stop_level(o)); !d.ok()) return d;
   }
@@ -3016,7 +3025,9 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   if (quantity <= 0) return;
   decision = reducing ? Decision{} : opening_fill_check(s, o, quantity, events);
   if (data_gap(decision.code)) return;
-  if (decision.ok() && !reducing) decision = price_check(s, book.quote, price);
+  if (decision.ok() && !reducing)
+    decision = price_check(s, book.quote, stress == 0 || stress_in_band(s) ? price
+                                              : order_price(s, o, symbol, side, o.request.limit_price, 0, false));
   const auto fees = fees_for(s, symbol, quantity, std::min(quantity, capacity), commission_paid(s, o, symbol));
   const Money fee = fees.total();
   if (decision.ok() && !reducing) {
@@ -3576,7 +3587,11 @@ void activate(State& s, OrderId id, Events& events) {
     auto& order = s.orders.mut(id - 1);
     order.status = OrderStatus::Working;
     order.triggered_at = s.time;
+    // Each activation meets its own market: a stop exit re-armed after a fast one
+    // and reached again on an ordinary quote drops its stress (driver 8; replay
+    // drivers 1-7 kept it).
     if (stressed) order.stress_ticks = s.config.rules.stop_stress_ticks;
+    else if (s.revised_fills) order.stress_ticks = 0;
     if (order.request.tif == TimeInForce::Day) order.day_end = day_deadline(s, order.request, s.time);
     event(events, "order_triggered", order);
   }
