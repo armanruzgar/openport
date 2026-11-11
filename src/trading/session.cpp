@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <set>
@@ -7344,9 +7345,26 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     // charges can consume loss room and interest changes marked equity.
     accrue_financing(s, impl_->state, days, events);
     assign_early(s, dividends, closing_time, events);
-    // Splits take effect before the day's dividends, which are quoted on the split shares.
-    apply_corporate_actions(s, actions, events);
-    pay_dividends(s, dividends, events);
+    // Splits take effect before the day's dividends, which are quoted on the split
+    // shares. A rollover that spans several ex-dates takes them date by date, so a
+    // dividend going ex before a split is paid on the shares before it (replay drivers
+    // 1-8 split first and paid every dividend on the split shares).
+    if (!s.revised_corporate_actions) {
+      apply_corporate_actions(s, actions, events);
+      pay_dividends(s, dividends, events);
+      return CommandResult{};
+    }
+    std::set<md::Date> dates;
+    for (const auto& a : actions) dates.insert(a.ex_date);
+    for (const auto& d : dividends) dates.insert(d.ex_date);
+    for (const auto& date : dates) {
+      std::vector<CorporateAction> splits;
+      std::vector<Dividend> paid;
+      std::copy_if(actions.begin(), actions.end(), std::back_inserter(splits), [&](const CorporateAction& a) { return a.ex_date == date; });
+      std::copy_if(dividends.begin(), dividends.end(), std::back_inserter(paid), [&](const Dividend& d) { return d.ex_date == date; });
+      apply_corporate_actions(s, splits, events);
+      pay_dividends(s, paid, events);
+    }
     return CommandResult{};
   });
 }

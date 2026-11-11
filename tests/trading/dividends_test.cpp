@@ -270,5 +270,31 @@ TEST(TradingDividends, ADividendThatRoundsToNothingPaysNothingAndTheDayRollsOn) 
   }
 }
 
+TEST(TradingDividends, ACatchUpRolloverPaysADividendOnTheSharesBeforeALaterSplit) {
+  // Down from Thursday's close to Monday: $1.50 went ex on Friday, on 100 shares, and a
+  // 2-for-1 on Monday. Replay drivers 1-8 split first and paid it on 200.
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    Held f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_corporate_actions(revised);
+    ASSERT_TRUE(s.define(f.call, f.time).decision.ok());
+    f.quote(s, 520);
+    ASSERT_TRUE(s.trade_stock("SPY", 100, f.time).decision.ok());
+    f.time = md::new_york_to_utc({2026, 12, 17}, 16, 0);
+    f.quote(s, 521);
+    const auto cash = s.snapshot()->account.cash;
+    const auto monday = md::new_york_to_utc({2026, 12, 21}, 9, 0);
+    ASSERT_TRUE(s.roll_day(monday, {{"SPY", {2026, 12, 18}, m("1.50")}}, {{"SPY", {2026, 12, 21}, 2, 1}}).decision.ok());
+    const auto snap = s.snapshot();
+    ASSERT_EQ(snap->dividends.size(), 1U);
+    EXPECT_EQ(snap->dividends[0].shares, revised ? 100 : 200);
+    EXPECT_EQ(snap->dividends[0].amount, m(revised ? "150" : "300"));
+    EXPECT_EQ(snap->account.cash, cash + m(revised ? "150" : "300"));
+    ASSERT_EQ(snap->stocks.size(), 1U);
+    EXPECT_EQ(snap->stocks[0].position.shares, 200);
+  }
+}
+
 }  // namespace
 }  // namespace openport::trading

@@ -292,8 +292,11 @@ ex-date receive `per_share * shares`, rounded to the nearest cent (ties away fro
 zero) as brokers pay it, in cash and realised P&L, and short shares pay it, once per
 symbol and date. A payment that rounds to nothing (under half a cent on the shares
 held) is not made or recorded, and the `EX_DIVIDEND` warning says so; runs recorded
-with replay driver 8 or earlier failed the rollover, and with it the account.
-The record moment is that rollover, not the ex-date's midnight:
+with replay driver 8 or earlier failed the rollover, and with it the account. A
+rollover that spans several ex-dates applies each date's splits and then its
+dividends, date by date, so a dividend going ex before a split is paid on the
+shares held before it (replay driver 8 or earlier split first and paid every
+dividend on the split shares). The record moment is that rollover, not the ex-date's midnight:
 17:00 ET the business day before the ex-date on a live feed (or the first batch after
 it), and the ex-date's 09:30 open on the demo feed. Shares held at the rollover are
 paid; shares an exercise delivers after it are not, although OCC's 17:30 exercise

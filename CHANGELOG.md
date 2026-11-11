@@ -426,6 +426,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   batch skipped it and every write, closing the shares and a reset included, answered
   `TRADING_UNAVAILABLE`, on every restart too. It now pays nothing, and the
   `EX_DIVIDEND` warning shows the amount in whole cents.
+- **A catch-up rollover across a dividend and a split.** A rollover covering several
+  trading dates (openportd down, say) applied every split before every dividend, so a
+  dividend going ex before a later split was paid on the split shares: twice the cash
+  for a 2:1. Each ex-date's splits and dividends now apply in date order.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
