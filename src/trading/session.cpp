@@ -7231,7 +7231,8 @@ CommandResult TradingSession::request_payout(Money amount, Timestamp time) {
       // The floor starts again below the reset balance, as at the attempt's start.
       e.peak = *quote.reset_balance;
       e.floor_locked = false;
-      e.floor = evaluation_floor(rules, e.peak, e.floor_locked, e.starting_balance);
+      e.floor = evaluation_floor(rules, e.peak, e.floor_locked,
+          e.revised_rules ? *quote.reset_balance : e.starting_balance);
     } else if (!e.floor_locked) {
       e.peak = e.peak - out;
       const auto floor = evaluation_floor(rules, e.peak, e.floor_locked, e.starting_balance);

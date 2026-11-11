@@ -31,7 +31,14 @@ std::int64_t scaling_limit(const AccountRules& rules, Money profit) {
 Money size_scaling_profit(const Evaluation& e, Money balance) {
   const auto& p = e.size_scaling.value();
   auto profit = balance - p.period_balance;
-  for (std::size_t i = p.payouts_at_start; i < e.payouts.size(); ++i) profit = profit + e.payouts[i].amount;
+  for (std::size_t i = p.payouts_at_start; i < e.payouts.size(); ++i) {
+    const auto& payout = e.payouts[i];
+    profit = profit + payout.amount;
+    if (e.revised_rules) {
+      profit = profit + payout.removed;
+      if (payout.review) profit = profit + payout.review->forfeited;
+    }
+  }
   return profit;
 }
 Money size_scaling_required(const Evaluation& e, const SizeScaling& rule) {
@@ -49,6 +56,11 @@ Money size_scaling_increase(const Evaluation& e, const SizeScaling& rule) {
 
 namespace {
 __extension__ using Wide = __int128;
+bool payout_floor_fixed(const Evaluation& e, const AccountRules& rules) {
+  return e.revised_rules && !e.payouts.empty() &&
+      (rules.payouts.after_payout == PayoutFloor::StartingBalance ||
+       (rules.payouts.after_payout == PayoutFloor::Reset && rules.drawdown_mode == DrawdownMode::Static));
+}
 std::string dollars(Money value) { return (value < Money{} ? "-$" + (-value).str() : "$" + value.str()); }
 std::string days_text(std::uint64_t n) { return std::to_string(n) + (n == 1 ? " day" : " days"); }
 /// A peak that follows every high (intraday and static plans) moves with fully
@@ -56,6 +68,7 @@ std::string days_text(std::uint64_t n) { return std::to_string(n) + (n == 1 ? " 
 void ratchet(Evaluation& evaluation, const AccountRules& rules, Money equity) {
   if (rules.drawdown_mode != DrawdownMode::EndOfDay && equity > evaluation.peak) {
     evaluation.peak = equity;
+    if (payout_floor_fixed(evaluation, rules)) return;
     const auto floor = evaluation_floor(rules, evaluation.peak, evaluation.floor_locked, evaluation.starting_balance);
     evaluation.floor = evaluation.size_scaling ? std::max(evaluation.floor, floor) : floor;
   }
@@ -224,11 +237,13 @@ void evaluation_rollover(Evaluation& evaluation, const AccountRules& rules) {
   if (evaluation.status == EvaluationStatus::Active && rules.drawdown_mode == DrawdownMode::EndOfDay &&
       close > evaluation.peak) {
     evaluation.peak = close;
+    if (payout_floor_fixed(evaluation, rules)) return;
     const auto floor = evaluation_floor(rules, evaluation.peak, evaluation.floor_locked, evaluation.starting_balance);
     evaluation.floor = evaluation.size_scaling ? std::max(evaluation.floor, floor) : floor;
   }
 }
 Money evaluation_tomorrow_floor(const Evaluation& evaluation, const AccountRules& rules, Money equity) {
+  if (payout_floor_fixed(evaluation, rules)) return evaluation.floor;
   if (evaluation.status != EvaluationStatus::Active || rules.drawdown_mode != DrawdownMode::EndOfDay ||
       equity <= evaluation.peak)
     return evaluation.floor;

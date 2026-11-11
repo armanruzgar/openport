@@ -3004,7 +3004,9 @@ At `roll_day`, after recording the finished day, a review occurs when the period
 has lasted `days` finished days. It requires net realised profit of at least
 `profit_percent` of the account size at period start, and at least `payouts`
 completed payouts during the period. Profit is closed balance now minus closed
-balance at period start plus withdrawals made during the period. An active
+balance at period start plus withdrawals made during the period, including unpaid
+reset removals and review forfeits. These cash removals do not count as trading
+losses for size scaling. An active
 account below `max_balance` that meets both requirements grows. Every completed
 review starts a new period, including a review that fails a requirement; profit,
 payouts and days do not carry into the next period. Calendar gaps count as one
@@ -3111,9 +3113,12 @@ at payouts.
 (default) leaves the floor as above. `reset` restarts the account at `reset_percent`
 (1–100, default 100) of the starting balance: the payout's maximum leaves at least that
 balance, the rest of the equity above it is removed with the payout, unpaid
-(`payouts[].removed`), and the peak and floor restart from that balance, unlocked, as at
-the attempt's start. `starting_balance` raises the floor to the starting balance after the
-payout and locks it there; the maximum leaves equity at least a cent above it. The preview
+(`payouts[].removed`), and the peak and floor restart from that balance, as at
+the attempt's start: trailing floors restart unlocked; a static floor stays at the
+reset balance less max drawdown, including after later highs.
+`starting_balance` raises the floor to at least the starting balance after the
+payout and locks that level through later highs and rollovers, independently of
+`lock_balance`; the maximum leaves equity at least a cent above it. The preview
 reports `after_payout` and, for `reset`, `reset_balance`.
 
 The web terminal always offers verification with its prerequisite lock, but hides

@@ -70,6 +70,76 @@ AccountRules size_plan(std::int64_t days = 2, std::int64_t payouts = 1) {
   return r;
 }
 
+TEST(TradingFunded, StartingBalancePayoutKeepsItsFloorAcrossHighsAndRollover) {
+  for (const auto mode : {DrawdownMode::Intraday, DrawdownMode::EndOfDay}) {
+    for (const auto lock : {"0", "9800", "10000", "10500"}) {
+      ScriptedMarket f;
+      auto rules = funded(); rules.drawdown_mode = mode; rules.lock_balance = m(lock);
+      rules.payouts.after_payout = PayoutFloor::StartingBalance;
+      TradingSession s(config(rules), f.time); f.seed(s);
+      profit_day(s, f, "600");
+      next_day(s, f, {2026, 9, 23});
+      ASSERT_TRUE(s.request_payout(m("50"), f.time).decision.ok());
+      EXPECT_EQ(s.snapshot()->evaluation.floor, m("10000"));
+      profit_day(s, f, "100");
+      EXPECT_EQ(evaluation_tomorrow_floor(s.snapshot()->evaluation, rules, m("11000")), m("10000"));
+      next_day(s, f, {2026, 9, 24});
+      EXPECT_EQ(s.snapshot()->evaluation.floor, m("10000"));
+      EXPECT_TRUE(s.snapshot()->evaluation.floor_locked);
+      ASSERT_TRUE(s.submit(f.market("loss", 2), f.time).decision.ok());
+      quote(s, f, "0.50", "0.70");
+      EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Failed);
+      EXPECT_EQ(s.snapshot()->evaluation.decision_code, Reason::DRAWDOWN_FLOOR);
+    }
+  }
+}
+
+TEST(TradingFunded, StaticResetPayoutRestartsTheFullDrawdownRoom) {
+  for (const auto percent : {90, 95, 100}) {
+    ScriptedMarket f;
+    auto rules = funded(); rules.drawdown_mode = DrawdownMode::Static;
+    rules.payouts.after_payout = PayoutFloor::Reset; rules.payouts.reset_percent = percent;
+    TradingSession s(config(rules), f.time); f.seed(s);
+    profit_day(s, f, "600");
+    next_day(s, f, {2026, 9, 23});
+    ASSERT_TRUE(s.request_payout(m("50"), f.time).decision.ok());
+    const auto reset = m("10000").prorate(percent, 100);
+    EXPECT_EQ(s.snapshot()->equity, reset);
+    EXPECT_EQ(s.snapshot()->evaluation.floor, reset - m("1000"));
+    EXPECT_EQ(s.snapshot()->evaluation.status, EvaluationStatus::Active);
+    profit_day(s, f, "100");
+    next_day(s, f, {2026, 9, 24});
+    EXPECT_EQ(s.snapshot()->evaluation.floor, reset - m("1000"));
+  }
+}
+
+TEST(TradingFunded, SizeScalingCountsResetRemovalsAndReviewForfeitsAsWithdrawals) {
+  for (const bool review : {false, true}) {
+    ScriptedMarket f;
+    auto rules = size_plan(2); rules.payouts.buffer = {};
+    rules.payouts.after_payout = PayoutFloor::Reset;
+    if (review) {
+      rules.payouts.review = PayoutReview{};
+      rules.payouts.review->min_hold_seconds = 60;
+      rules.payouts.review->ladder = {ReviewStep::Forfeit};
+    }
+    TradingSession s(config(rules), f.time); f.seed(s);
+    profit_day(s, f, "200");
+    next_day(s, f, {2026, 9, 23});
+    // A long-held winner funds the payout even when the first trade is forfeited.
+    ASSERT_TRUE(s.submit(f.market("long-held"), f.time).decision.ok());
+    f.time += 60 * md::kNanosPerSecond;
+    quote(s, f, "6.213", "6.413");
+    ASSERT_TRUE(s.submit(f.market("long-close", 1, Side::Sell), f.time).decision.ok());
+    ASSERT_TRUE(s.request_payout(m("40"), f.time).decision.ok());
+    EXPECT_EQ(size_scaling_profit(s.snapshot()->evaluation, plan_inputs(*s.snapshot()).balance), m("400"));
+    if (review) EXPECT_EQ(s.snapshot()->evaluation.payouts.back().review->forfeited, m("200"));
+    next_day(s, f, {2026, 9, 24});
+    EXPECT_EQ(s.snapshot()->evaluation.starting_balance, m("12500"));
+    EXPECT_EQ(s.snapshot()->evaluation.size_scaling->history.size(), 1U);
+  }
+}
+
 TEST(TradingFunded, FillEquitySamplesKeepTheFloorSizeScalingRaised) {
   ScriptedMarket f;
   TradingSession s(config(size_plan()), f.time);

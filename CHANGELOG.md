@@ -132,6 +132,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Funded payout floors and scaling.** A starting-balance payout keeps its raised
+  floor through later highs and day closes, independently of the plan's lock level.
+  Static-floor reset payouts restore the full drawdown room below the reset balance.
+  Size reviews add back unpaid reset removals and review forfeits as withdrawals.
 - **Evaluation profit caps.** Equity targets now require a flat account when trade
   consistency or microscalping is enabled, so the winning trade cannot escape those
   checks by remaining open until automatic target liquidation. Replay drivers 1–6
