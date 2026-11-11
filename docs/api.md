@@ -36,17 +36,17 @@ halt reaches the regular close. See [stress scenarios](scenarios.md#events).
 | `GET /api/underlyings/{symbol}/exposure?expiries=8&convention=long_calls_short_puts&slice=all` | GEX, VEX, DEX, CEX and VOMEX by strike and expiry, totals, flips and signed walls |
 | `GET /api/underlyings/{symbol}/surface?expiries=12` | Smile points per expiry |
 | `GET /api/underlyings/{symbol}/volatility` | Current model-free IV, ATM/skew, realized vol, cones, implied moves, IV rank/percentile and ex-ante/ex-post VRP, with sources and history counts |
-| `GET /api/underlyings/{symbol}/series?fields=mfiv30,atm30,rr25&from=&to=&interval=1d` | Selected metric history at `1m` or `1d`; bounded date ranges, null gaps and per-value sources ([fields and limits](volatility.md#series-api)) |
+| `GET /api/underlyings/{symbol}/series?fields=mfiv30,atm30,rr25&interval=1d` | Selected metric history at `1m` or `1d`; optional `from` and `to` bound the dates; null gaps and per-value sources ([fields and limits](volatility.md#series-api)) |
 | `GET /api/underlyings/{symbol}/candles?interval=5m` | OHLC bars at 1m, 5m, 15m, 30m, 1h or 1d, oldest first |
-| `GET /api/underlyings/{symbol}/probability?days=0,1,7,30&prices=` | Probability cones (one and two standard deviations) from the at-the-money term structure, and each price's odds of finishing above or below it or touching it by each horizon ([model](paper-trading.md#risk-profile-and-probabilities)) |
-| `GET /api/underlyings/{symbol}/flow?limit=200&type=&side=&expiry=&min_size=&min_premium=&only=` | The option tape, newest first, with net premium by expiry and strike over the filtered prints; `source` is `feed`, `simulated` (demo only) or `none` with a `message` ([flow](flow.md)) |
+| `GET /api/underlyings/{symbol}/probability?days=0,1,7,30` | Probability cones (one and two standard deviations) from the at-the-money term structure, and, with optional `prices` (up to twenty, comma-separated), each price's odds of finishing above or below it or touching it by each horizon ([model](paper-trading.md#risk-profile-and-probabilities)) |
+| `GET /api/underlyings/{symbol}/flow?limit=200` | The option tape, newest first, with net premium by expiry and strike over the filtered prints; optional `type`, `side`, `expiry`, `min_size`, `min_premium` and `only` filter it ([filters](flow.md#filters)); `source` is `feed`, `simulated` (demo only) or `none` with a `message` ([flow](flow.md)) |
 | `GET /api/earnings?symbol=` | Earnings implied versus realized moves, recorded or imported, with the over-priced rate ([earnings](volatility.md#earnings-implied-versus-realized)) |
 | `POST /api/earnings/import` | Seed past moves from `{ "csv": "..." }`; requires admin; rows are labelled imported |
 | `DELETE /api/earnings/imported` | Remove every imported move; requires admin |
 | `GET /api/analysis/portfolios`, `GET /api/analysis/portfolios/{id}` | Analysis-only portfolios: holdings valued now, Greeks by underlying, the risk views available ([analysis](analysis.md)); require admin, like every analysis-portfolio route |
-| `POST /api/analysis/portfolios`, `DELETE /api/analysis/portfolios/{id}` | Import `{ "name", "csv", "format" }` or delete; require admin |
+| `POST /api/analysis/portfolios`, `DELETE /api/analysis/portfolios/{id}` | Import `{ "name", "csv", "format" }` or delete; require admin. The server keeps at most 32 analysis portfolios: another import is refused with 400 `INVALID_IMPORT` until one is deleted |
 | `GET /api/analysis/portfolios/{id}/risk/profile`, `.../risk/grid`, `.../risk/stress`, `.../risk/var` | Risk profile, scenario grid, historical stress tests and one-day historical VaR of an analysis portfolio; require admin |
-| `GET /api/underlyings/{symbol}/optimizer?target=&budget=&date=&expiry_ids=&structures=&rank=expected` | Candidate verticals, iron condors, butterflies, calendars, singles and covered calls within a loss budget, ranked under the market's and the user's distributions; runs on a two-worker search pool, 503 `SEARCH_BUSY` when full ([model](paper-trading.md#strategy-optimizer)) |
+| `GET /api/underlyings/{symbol}/optimizer?target=PRICE&budget=DOLLARS` | Candidate verticals, iron condors, butterflies, calendars, singles and covered calls within a loss budget, ranked under the market's and the user's distributions; `target` and `budget` are required, and `date`, `expiry_ids`, `structures`, `rank` and the rest are optional ([parameters](paper-trading.md#strategy-optimizer)); runs on a two-worker search pool, 503 `SEARCH_BUSY` when full |
 | `WS /ws` | A small tick each second with versions, so clients refetch only what changed; at most 256 open sessions, after which an upgrade gets 503 with `Retry-After: 5` |
 
 Exposure `convention` is `long_calls_short_puts` (the default), `short_all`, or
@@ -128,8 +128,10 @@ decimal money, zero disables), and `buffer_payouts` (0–100, zero means every p
 Custom rules and backtest custom plans accept optional `scaling`, for example
 `[{"profit":"0.00","contracts":2},{"profit":"1500.00","contracts":3},{"profit":"2000.00","contracts":5}]`.
 Empty disables; at most 16 steps, first profit zero, profits strictly increasing,
-contracts non-decreasing integers from 1 to 10,000. Invalid steps return 400
-`INVALID_RULES`, wrong types 400 `INVALID_REQUEST`. Both phases support it.
+contracts non-decreasing integers from 1 to 10,000. Invalid steps return
+`INVALID_RULES`, 400 on account create and reset and 422 on backtests and sweeps
+(which answer every `INVALID_RULES` with 422); wrong types return 400
+`INVALID_REQUEST`. Both phases support it.
 `evaluation.scaling` is null without the rule, else `{limit, held, profit, next}`;
 `next` is a `{profit, contracts}` step with a higher limit, or null. Profit is
 closed balance less starting balance. Rollover selects the next session's limit;
@@ -276,7 +278,7 @@ friction off. They also accept `queue_fills` (boolean), `queue_seed` (0–214748
 omitted at their defaults; `fill_model: "queue"` turns queue fills on with the other
 friction off. Orders report `queue` (null without an estimate) and `stress_ticks`;
 fills report `stress_ticks` and `queued`. See [queue fills](paper-trading.md#queue-fills)
-and [stop stress](paper-trading.md#stop-stress). See [fill models and walks](paper-trading.md#walking-limits-f46).
+and [stop stress](paper-trading.md#stop-stress). See [fill models and walks](paper-trading.md#walking-limits).
 
 `POST /api/positions/close` and `/api/positions/close/preview` take optional
 `type: "limit"` and `limit_ticks: 0` (0–10). Limits reprice from each leg's touch,
@@ -300,8 +302,10 @@ and 429 `SANDBOX_CAPACITY` when full, `SANDBOX_CLIENT_RATE` after 3 creations pe
 client in a rolling hour or while the client holds 3 unexpired sandboxes, or
 `SANDBOX_GLOBAL_RATE` after 30 globally. Sandbox
 order submissions, previews, what-if requests, modifications, share trades and
-their previews share 60 requests per account per rolling minute; excess requests
-return 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and its preview, share closes,
+working share orders with their previews, and the journaled writes that reduce no
+risk (creating or changing alerts, trade and day notes, grouping and ungrouping
+trades) share 60 requests per account per rolling minute, counted before the body
+is checked; excess requests return 429 `SANDBOX_ORDER_RATE`. Cancels, flatten and its preview, share closes,
 exercise, abandonment, exercise instructions and alert deletions share a second
 budget of 60 per rolling minute, so they remain available at the order cap; past it
 they get the same 429. The engine journals a command it refuses like any other, so
@@ -603,11 +607,15 @@ behind an HTTPS proxy. Use a unique dedupe ID per alert firing:
 
 ```text
 Webhook URL: https://openport.example/api/signals/morning?account=main
-Message:     {"action":"evaluate","nonce":"{{ticker}}-{{timenow}}","secret":"opsig_…"}
+Message:     {"action":"evaluate","nonce":"morning-{{timenow}}","secret":"opsig_…"}
 ```
 
 TradingView retries and duplicate firings with the same `{{timenow}}` are refused as
-replays.
+replays. Build the nonce from the alert's own name and `{{timenow}}`, as above, since
+a nonce allows only the characters listed below: `{{ticker}}` renders a continuous
+future as `ES1!` or `NQ1!`, and its `!` gets every firing refused with 400
+`INVALID_SIGNAL`. Add `{{ticker}}` only for an alert that fires for several symbols,
+all of whose tickers are letters, digits, `_`, `-`, `.` or `:`.
 
 ### Nonces, limits and outcome
 
