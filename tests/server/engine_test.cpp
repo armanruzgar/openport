@@ -663,8 +663,12 @@ TEST(Engine, RefusesLiveEventsStampedPastTheSystemClock) {
   std::size_t recorded = 0;
   while (const auto record = reader.next()) {
     ++recorded;
-    if (const auto* quote = std::get_if<md::OptionQuote>(&record->event)) EXPECT_EQ(quote->ts, skewed);
-    if (const auto* spot = std::get_if<md::UnderlyingQuote>(&record->event)) EXPECT_EQ(spot->ts, now - md::kNanosPerMinute);
+    if (const auto* quote = std::get_if<md::OptionQuote>(&record->event)) {
+      EXPECT_EQ(quote->ts, skewed);
+    }
+    if (const auto* spot = std::get_if<md::UnderlyingQuote>(&record->event)) {
+      EXPECT_EQ(spot->ts, now - md::kNanosPerMinute);
+    }
   }
   EXPECT_TRUE(reader.diagnostic().empty()) << reader.diagnostic();
   EXPECT_EQ(recorded, 3U) << "refused events are not recorded";
