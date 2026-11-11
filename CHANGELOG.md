@@ -976,6 +976,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   compile source paths relative to the checkout, so the binaries no longer name the
   build machine's directories, and `tools/record_site_demo.mjs` no longer names them
   in its instructions either.
+- **The Backtest page says why Start is disabled.** With writes disabled, a write token
+  still to enter, or the account disabled, Start, Keep and Delete were disabled with an
+  empty line where the reason belonged. The reason is now shown beside Start.
 
 ## 0.5.1 (2026-10-28)
 

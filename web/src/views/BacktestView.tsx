@@ -7,7 +7,7 @@ import { useLive } from "../api/live"
 import { Dialog } from "../components/Dialog"
 import { LineChart } from "../charts/LineChart"
 import { BarChart } from "../charts/BarChart"
-import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
+import { TradingError, WriteAccess } from "../components/TradingControls"
 import { Empty, Meter, PageHeader, Panel, Stat } from "../components/ui"
 import { formatMoney, signedMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
@@ -146,7 +146,11 @@ export function BacktestView() {
   const sources = useQuery({ queryKey: ["replay-listing"], queryFn: ({ signal }) => api.replay(signal) })
   const accountTrading = live.status?.trading ?? live.trading
   const trading = accountTrading && { ...accountTrading, write: sources.data?.write ?? accountTrading.write }
-  const blocked = trading ? writeBlocked(trading, token) : "Paper trading is unavailable."
+  // Why Start, Keep and Delete are disabled, shown beside Start; empty when they are not.
+  const blocked = !trading ? "Paper trading is unavailable."
+    : !trading.enabled ? trading.reason ?? "Paper trading is disabled for this account."
+    : trading.write === "disabled" ? "Trading writes are disabled by the server."
+    : trading.write === "token" && !token ? "Enter the write token to start or change backtests." : ""
   const listing = useQuery({ queryKey: ["backtests"], queryFn: ({ signal }) => api.backtests(signal),
     refetchInterval: (query) => backtestListingInterval(query.state.data) })
   const [selected, setSelected] = useState("")

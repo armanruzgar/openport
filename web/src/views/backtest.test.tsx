@@ -135,9 +135,19 @@ describe("Backtest page", { timeout: renderTimeout }, () => {
     await field("Starting seed", "0"); vi.mocked(api.startBacktest).mockRejectedValue(new Error("Days must have distinct, increasing trading dates"))
     await click("Start backtest"); expect(host.textContent).toContain("Days must have distinct, increasing trading dates")
   })
-  it("blocks writes on a read-only server", async () => {
-    vi.mocked(useLive).mockReturnValue(liveState({ ...status, trading: { ...status.trading!, write: "disabled" } }, null, "open"))
+  it.each([
+    ["a read-only server", { write: "disabled" as const }, "Trading writes are disabled by the server."],
+    ["a token server without a token", { write: "token" as const }, "Enter the write token to start or change backtests."],
+    ["a disabled account", { enabled: false, reason: "ACCOUNT_DAMAGED: journal checksum mismatch" }, "ACCOUNT_DAMAGED: journal checksum mismatch"],
+    ["a disabled account without a reason", { enabled: false, reason: null }, "Paper trading is disabled for this account."],
+  ])("blocks writes on %s and says why beside Start", async (_, trading, why) => {
+    vi.mocked(useLive).mockReturnValue(liveState({ ...status, trading: { ...status.trading!, ...trading } }, null, "open"))
     await render(); expect(button("Start backtest").disabled).toBe(true)
+    expect(button("Start backtest").previousElementSibling?.textContent).toBe(why)
+  })
+  it("shows no warning when writes are open", async () => {
+    await render()
+    expect(button("Start backtest").previousElementSibling?.className ?? "").not.toContain("text-warn")
   })
   it("renders charts, exact seed labels, missing statistics and journal paths", async () => {
     await render(<BacktestReportView report={report} />)
