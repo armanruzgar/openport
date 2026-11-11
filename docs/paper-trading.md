@@ -41,8 +41,8 @@ Reducer journal commands are `session_start`, `run_input`, `definition`, `submit
 `modify`, `cancel`, `cancel_all`, `cancel_orders`, `close_positions`, `market`,
 `limit_change`, `guardrail_change`, `kill_trip`, `kill_reset`, `settlement`,
 `closing_print`, `day_rollover`, `account_reset`, `payout`, `annotate`, `group`,
-`ungroup`, `day_note`, `exercise`, `abandon`, `exercise_instruction`, `stock_trade`
-and `alert`. Every completed command, including a business rejection, increments `account_version`. Business failures return a
+`ungroup`, `day_note`, `exercise`, `abandon`, `exercise_instruction`, `stock_trade`,
+`stock_order`, `stock_cancel`, `cash_transfer`, `market_halt` and `alert`. Every completed command, including a business rejection, increments `account_version`. Business failures return a
 `Decision` with code/message and numeric actual/limit/scope where applicable.
 Invalid command batches, arithmetic overflow, invalid configuration and persistence
 failures throw `TradingError` with an explicit code. They publish no partial state.
@@ -814,8 +814,10 @@ Amounts are exact decimal strings between $0 and $1,000 inclusive. The index map
 has at most 16 keys, each one to six uppercase letters or digits. Omitted amounts
 are zero and an omitted index map is empty. Absent or null `rules.fees` selects
 flat fees; `{}` selects a zero-cost itemized schedule. Malformed fields return
-400 `INVALID_REQUEST`; out-of-range amounts or invalid roots return 422
-`INVALID_RULES`, as other account rules do.
+400 `INVALID_REQUEST`; out-of-range amounts or invalid roots return 400
+`INVALID_RULES`. (Not every rule answers alike: invalid time and opening
+restrictions, such as `flat_time`, return 422 `INVALID_RULES`, and backtests
+answer any `INVALID_RULES` with 422.)
 
 Create or reset an account with `fee_model: "itemized"` for an illustrative
 schedule: $1.00 to open, $0 to close, $10 commission cap per leg per order,
@@ -919,7 +921,8 @@ market before it. The simulation clock stays at market time. Resting orders do n
 fill from stale data and are not cancelled merely because the feed stalls; they
 remain subject to normal market-time DAY/expiry, risk and explicit cancellation rules.
 
-Snapshot providers (Cboe, Massive, ThetaData and the demo market) send only the
+Snapshot providers (the polling adapters, Cboe, Massive, ThetaData, Tradier, Schwab,
+Alpaca and Interactive Brokers, and the demo market) send only the
 quotes that changed, and end each poll of an underlying with `md::SnapshotComplete`.
 While an underlying's last complete snapshot passes that stall check, the engine
 offers every account its quotes, valuations and share price as current: valuations
@@ -928,7 +931,8 @@ quote that sits unchanged, such as a quiet far wing's, stays current, and so doe
 underlying whose source runs a minute or two behind the others', as Cboe's quote pages
 do. Past the tolerance they are no longer offered, age, and new orders reject; after
 a gap, such as overnight, the account waits for the next complete snapshot.
-Streaming feeds mark no snapshots, so their quotes keep the time they last changed.
+Streaming feeds (Databento and tastytrade) mark no snapshots, so their quotes keep
+the time they last changed.
 
 With a [fallback feed](runtime.md#feed-failover), these checks apply to whichever feed
 supplies the underlying. The backup's quotes keep their own market times: a delayed
@@ -967,8 +971,10 @@ identify the scenario and give the resume time in New York time, for example
 "Trading is halted market-wide by the scenario; it resumes at 10:30 ET". A halt
 ending at or after the regular close (including an early close) says "for the rest
 of the day"; the terminal uses the same calendar-aware decision. SPY is named when it stands
-in for the index. `server::circuit_breaker` holds the rule. Halts of a single stock or
-ETF are not modelled.
+in for the index. `server::circuit_breaker` holds the rule. Regulatory halts of a
+single stock or ETF (limit up-limit down pauses, news halts) are not detected from
+market data; a replay or scenario can author one, as
+[Single-name halt drills](#single-name-halt-drills) describes.
 
 With a paper journal, the engine keeps the day's breaker state (the level tripped,
 the previous close and the halts) in `market-halts.json` beside the main journal,
@@ -1293,6 +1299,8 @@ matching reads them, never journaled):
 | `NEWER_QUOTE` | A quote newer than its acceptance: resting orders take only those |
 | `LIMIT` | The market: the far side (or a multi-leg order's net at the far sides) is worse than its limit, with both prices |
 | `DISPLAYED_SIZE` | A new quote: paper orders used the displayed size at this one |
+| `QUEUE` | Its turn in the estimated queue at its limit, on an account with [queue fills](#queue-fills): the contracts ahead, until trades use them up or the far side reaches the limit |
+| `MARKET_HALTED` | The end of its underlying's halt: it waits for reopening quotes |
 | `STALE_DATA` | Fresh marks on held positions and the valuations risk needs |
 
 An order with nothing visible holding it back has no entry.
@@ -1632,7 +1640,8 @@ marked equity before 17:00. A plan can end its day at another time
 follows the plan's date. Rollover first monitors the old daily baseline, then
 stores the new baseline. Repeated same-day rollover rejects. Manual and daily-loss kill latches survive rollover and recovery. Personal daily
 latches clear at rollover; cooldowns expire on market time.
-There are no deposits/withdrawals or cash interest. Without
+Practice accounts can deposit and withdraw cash, and a plan may set financing
+rates; see [Cash transfers and financing](#cash-transfers-and-financing). Without
 the `buying_power` rule, negative cash and short positions are permitted subject to
 the stated limits. With it, the selected margin requirement below applies; neither is a
 full brokerage margin model.
@@ -1820,7 +1829,8 @@ not an execution promise; real orders still take all checks when submitted and f
 
 `POST /api/orders/{id}/preview` previews a change to a resting order without making it.
 It takes the fields `PUT /api/orders/{id}` takes (`quantity`, `limit_price`,
-`trigger_level`, at least one of them) and `floor_share`, and answers with the same
+`trigger_level`, `time_in_force` (`day` or `gtc`) and `walk`, at least one of them)
+and `floor_share`, and answers with the same
 response. Its `decision` is the change's, from the checks a change takes with the
 order's own reservation released, and an unknown or finished order answers
 `UNKNOWN_ORDER` (404) or `ORDER_TERMINAL` (409) as the change would. A quantity below 1
@@ -2005,6 +2015,7 @@ in words, and `actual` and `limit` numbers whose meaning depends on the code:
 | `EARLY_ASSIGNMENT` | A short American equity or ETF option the rollover may assign (about half of it, as described under early assignment): marked below its exercise value, or a call with less time value than a dividend going ex within a week and before its expiry; `warning` for tonight's rollover | The mark and the exercise value, or the time value and the dividend |
 | `WARNINGS_UNAVAILABLE` | The account's warnings and breach estimate could not be computed (for example, a balance near the largest amount the account can hold overflows the expiry-delivery projection); it stands in for them, with the reason, while trading and the feed carry on | No numeric threshold |
 | `EX_DIVIDEND` | A held underlying (options or shares) goes ex-dividend within a week; `warning` when short shares will pay it | The dividend a share, and null |
+| `PIN_RISK` | Under a plan with `pin_risk`, a short American equity or ETF option expiring today, before its expiry, is within $0.10 of its strike, in or out of the money ([simulated expiry pin risk](#simulated-expiry-pin-risk)); always `warning` | The underlying price less the strike, in dollars, and 0.10 |
 
 Warnings use the account's marks, valuations, limits and the dividend calendar the
 rollover pays from. They are views, not rules: nothing is journaled and no order is
@@ -2139,7 +2150,9 @@ running plan decisions again. The terminal explains leftover positions on the
 Dashboard and Positions page and allows their closing tickets.
 `Evaluation::decision_code`
 names the rule that decided it: `PROFIT_TARGET`, `DRAWDOWN_FLOOR` or
-`DAILY_LOSS_LIMIT`, `TIME_LIMIT`, `INACTIVITY`, `OVERNIGHT_HOLD` or `HOLD_RESTRICTED`. Calendar and
+`DAILY_LOSS_LIMIT`, `TIME_LIMIT`, `INACTIVITY`, `OVERNIGHT_HOLD`, `HOLD_RESTRICTED` or
+`OPEN_LOSS_CAP` (an [open-loss cap](#prop-rules-open-loss-caps-a-balance-floor-best-position-and-minute-volume-caps)
+whose action is `fail`). Calendar and
 overnight-hold failures run before the
 command, without requiring marks.
 
@@ -2150,7 +2163,8 @@ command, without requiring marks.
 `system:news:N` (news flatten), `system:flat_time:N` (mandatory
 flat time),
 `system:daily_loss:N` (the plan's daily loss limit, locking the day or
-failing the attempt), `system:expiry:N` (the expiry cutoff) or `system:soft_floor:N` (a
+failing the attempt), `system:open_loss:N` (an open-loss cap that fails the attempt or
+flattens the trade), `system:expiry:N` (the expiry cutoff) or `system:soft_floor:N` (a
 personal soft floor while the attempt is still active; once the plan decides the
 attempt or locks the day, its own label wins, even when the soft floor latched in the
 same update).
@@ -3527,8 +3541,10 @@ When a fill opens a round trip, these annotate its opening fill ID in the same
 transaction. Each newly opened combo leg receives them, so its Journal strategy
 and tag reports use them too. Adds to an existing round trip keep its annotation;
 closing fills add nothing. Orders preserve the submitted metadata for inspection.
-Tickets accept optional tags and notes from their caller; this tree has no strategy
-template catalog yet. Older journal orders default to empty tags and notes.
+Tickets accept optional tags and notes from their caller; a strategy ticket built from
+the chain's **Templates** menu also adds the template's parameter tag (see
+[Commands and views](#commands-and-views)). Older journal orders default to empty tags
+and notes.
 
 `annotate(trade, note, tags, time)` records the trader's note and tags on a trade,
 named by the fill that opened it (the trades view's `id`); `annotate_shares` does the
@@ -4355,6 +4371,7 @@ opening orders and cancels working openings outside the plan window.
 | `MAX_CONTRACTS_HELD` | Projected held options plus working opening contracts exceed the plan cap; `actual` and `limit` are contract counts, `scope` is `account` |
 | `MAX_ORDER_CONTRACTS`, `PRICE_BAND` | Quantity or protected-price bound exceeded |
 | `DELTA_LIMIT`, `VEGA_LIMIT` | The order raises worst reachable exposure above an underlying/aggregate limit |
+| `GAMMA_LIMIT`, `THETA_LIMIT`, `GRID_LOSS_LIMIT`, `SHORT_VEGA_LIMIT` | The order raises dollar gamma per 1%, theta per day, the scenario grid's worst loss or gross short vega above an underlying, aggregate or scope cap ([additional exposure limits](#additional-exposure-limits)) |
 | `SOFT_FLOOR`, `TRADE_LIMIT`, `COOLDOWN`, `PROFIT_LOCK` | Personal guardrail is active; new opening orders and manual latch resets are refused while closing orders and exits remain available |
 | `DAILY_LOSS_LIMIT` | The plan's daily loss limit locked the day (opening orders refused and open orders cancelled until rollover) or failed the attempt |
 | `PROFIT_TARGET`, `DRAWDOWN_FLOOR` | Decision codes: the target passed the attempt, or the floor failed it |
@@ -4475,8 +4492,10 @@ stored name, starting cash and objective rules, including old journals; executio
 fee and margin overrides do not change it. Custom or unrecognized rules return
 null. When read-back rules are used in a custom request, `plan_id` is accepted
 as metadata and ignored; the server always derives it from the actual rules.
-Compact past-attempt summaries lack full rules and report null rather than
-guessing from the display name. Replay control's existing `plan` remains its starting
+A past attempt's own `plan_id` in `GET /api/account` `attempts[]` is always null:
+an attempt that recorded its rules carries its preset in `rules.plan_id`, and one
+from an older journal that recorded none has `rules: null`, rather than a guess from
+the display name. Replay control's existing `plan` remains its starting
 preset ID; history `plan_id` describes the recovered account's current rules.
 
 `POST /api/accounts` and replay starts (`POST /api/replay`) accept
@@ -4568,10 +4587,13 @@ other limits. Dropping redundant overrides needs no new replay driver: older run
 cannot contain overrides, so their journal bytes are unchanged and driver-6 runs
 remain resumable.
 
-For a new main account, `--paper-fill-model as_displayed|conservative|midpoint`
-selects the same execution preset as reset. `--paper-slippage-ticks` (0–10),
+For a new main account, `--paper-fill-model as_displayed|conservative|midpoint|queue`
+selects the same execution preset as reset; `queue` turns on [queue fills](#queue-fills),
+a program rule, so the account no longer follows its preset. `--paper-slippage-ticks` (0–10),
 `--paper-fill-latency-ms` (0–60000) and `--paper-impact-ticks` (0–10) override its
-values regardless of flag order. Existing journals retain their saved rules, as
+values regardless of flag order; `--paper-queue-seed`, `--paper-stop-stress-ticks`
+and `--paper-stop-stress-percent` are in the
+[runtime flag table](runtime.md#paper-execution-startup-flags). Existing journals retain their saved rules, as
 with `--plan`. Named accounts and resets use their request's rules/model; sandboxes
 keep displayed practice fills. The flags apply only to main, unlike `--paper-fee`.
 
@@ -4801,7 +4823,7 @@ focus at the top of the ticket.
 | `POST /api/stocks/close` | `symbol` of shares held (`SPY`) and optional positive `shares`, all of them when left out; closes at the underlying's price in the regular session and returns the portfolio |
 | `GET /api/portfolio` | `time`: the market time the publication is as of, the feed's latest even while the account is idle (as in `GET /api/risk` and `GET /api/account`). Account cash, equity, daily baseline/P&L, realised/unrealised, fees, completeness/quality flags, marked positions and Greeks, opened or delivered `stocks` (symbol, shares, average price, basis, mark and its time, market value, unrealised and realised P&L, fees, freshness and today's attribution), and today's `attribution` (`delta`, `gamma`, `vega`, `theta`, `other`, `costs`, `total` in dollars) for the account and each position (null until the position's next fill or rollover), and `liquidity_used`: the current quotes whose displayed size the account's orders have taken some of, with each side's size and what is left (`bid_left`, `ask_left`) until a new quote |
 | `GET /api/orders?status=all` | All orders, newest first; `status=open` restricts to working, partially filled and armed orders |
-| `POST /api/orders` | `client_order_id`, canonical `symbol`, `side` (`buy`/`sell`), `type` (`limit`/`market`), integer `quantity`, decimal-string `limit_price` for limits, `time_in_force` (`day`/`gtc`/`ioc`/`exto`/`gtc_exto`/`gtd`), `good_till` timestamp required only for GTD, optional `tags`, `note` and `walk` (see [walking limits](#walking-limits-f46)), optional `trigger` following the OpenAPI `Trigger` schema and the [conditional-orders](#conditional-and-bracket-orders) rules: `source` is `option`, `combo`, `underlying`, `study` or `time`; non-time triggers take `direction` and `level`; underlying and study triggers may name another underlying with `symbol`; study triggers add `study` (`iv30`, `iv7` or `term_ratio`); time triggers take `at` as `HH:MM` New York time; option and combo triggers may set `reference` (`bid_ask`, `mid` or `mark`); option, combo and own-underlying triggers may set `trail` (`amount`, `percent`, or `ticks` for option/combo only). `bracket` is `{stop_loss?, take_profit?}` and each exit takes a `trigger`, a `limit_price`, or both for a stop-limit. A multi-leg order replaces `symbol` and `side` with `legs` (two to four `{symbol, side, ratio?}`, ratio default 1, or up to eight for a roll), allows an entry bracket or a reducing trigger (combo or underlying), counts units in `quantity` and sets a signed net `limit_price` (negative for a credit); `exits_only: true` attaches a bracket to a held contract (with `symbol` and the closing `side`) or to held closing legs as described above; optional `group` joins what the order opens to a [whole trade](#whole-trades); optional `then` and `oco` chain further orders (see [order chains](#order-chains-one-cancels-other-and-one-triggers-other)); 201 returns version, order and its fills. Orders report `legs` (null for single-leg), with null `symbol` and `side` for multi-leg orders. Retrying with a `client_order_id` already used and the same terms is safe: it returns the first answer (200 with the order as it now stands, also after `PUT /api/orders/{id}` changed it, or the original rejection) and records nothing, while other terms under that ID, the changed ones included, are refused with 409 `DUPLICATE_CLIENT_ID` and record nothing. Client IDs are scoped to an attempt: after an account reset, earlier attempts' IDs name new orders |
+| `POST /api/orders` | `client_order_id`, canonical `symbol`, `side` (`buy`/`sell`), `type` (`limit`/`market`), integer `quantity`, decimal-string `limit_price` for limits, `time_in_force` (`day`/`gtc`/`ioc`/`exto`/`gtc_exto`/`gtd`), `good_till` timestamp required only for GTD, optional `tags`, `note` and `walk` (see [walking limits](#walking-limits)), optional `trigger` following the OpenAPI `Trigger` schema and the [conditional-orders](#conditional-and-bracket-orders) rules: `source` is `option`, `combo`, `underlying`, `study` or `time`; non-time triggers take `direction` and `level`; underlying and study triggers may name another underlying with `symbol`; study triggers add `study` (`iv30`, `iv7` or `term_ratio`); time triggers take `at` as `HH:MM` New York time; option and combo triggers may set `reference` (`bid_ask`, `mid` or `mark`); option, combo and own-underlying triggers may set `trail` (`amount`, `percent`, or `ticks` for option/combo only). `bracket` is `{stop_loss?, take_profit?}` and each exit takes a `trigger`, a `limit_price`, or both for a stop-limit. A multi-leg order replaces `symbol` and `side` with `legs` (two to four `{symbol, side, ratio?}`, ratio default 1, or up to eight for a roll), allows an entry bracket or a reducing trigger (combo or underlying), counts units in `quantity` and sets a signed net `limit_price` (negative for a credit); `exits_only: true` attaches a bracket to a held contract (with `symbol` and the closing `side`) or to held closing legs as described above; optional `group` joins what the order opens to a [whole trade](#whole-trades); optional `then` and `oco` chain further orders (see [order chains](#order-chains-one-cancels-other-and-one-triggers-other)); 201 returns version, order and its fills. Orders report `legs` (null for single-leg), with null `symbol` and `side` for multi-leg orders. Retrying with a `client_order_id` already used and the same terms is safe: it returns the first answer (200 with the order as it now stands, also after `PUT /api/orders/{id}` changed it, or the original rejection) and records nothing, while other terms under that ID, the changed ones included, are refused with 409 `DUPLICATE_CLIENT_ID` and record nothing. Client IDs are scoped to an attempt: after an account reset, earlier attempts' IDs name new orders |
 | `POST /api/orders/preview` | The order body plus optional `floor_share` (default 0.5); 200 returns the dry-run decision, buying power, exposure change, labelled maximum loss, floor warnings, `max_units` with its buying-power and floor parts (null when unavailable), projected `breach`, and `execution`: what submitting now would fill at once and the full size's fill schedule, each leg's quote `liquidity`, and `warnings` about stops, targets and triggers already reached, a stop given only a limit price, or slippage that pushes a market order outside the band |
 | `POST /api/orders/what-if` | `candidates`: one to six, each an optional `name` and one to four `orders` as submission takes them (client ID optional; `then`/`oco` use current-quote submission and contingent-child rules); 200 returns the account `current` and each candidate's `decision`, `reason`, per-order `orders` checks and the account `after` its orders fill in full (null when one cannot be projected): equity, buying power, exposure, grid max loss, floor flags, scenarios and breach ([what-if](#what-if)) |
 | `GET /api/account/equity?from=&to=` | Persisted equity samples with optional inclusive UTC ISO bounds, plus any storage error |
@@ -4825,7 +4847,7 @@ focus at the top of the ticket.
 | `GET /api/alerts` | Version and the account's `alerts`, oldest first: `id`, `label`, `scope`, `metric`, `symbol`, `legs`, `direction`, `level`, `repeat`, `created_at`, `actor`, `armed` (waiting for its condition), `fired` (times), `fired_at` and `value` (when and at what it last fired) |
 | `POST /api/alerts` | `scope`, `metric`, `direction` and decimal-string `level`, with `symbol` or `legs` as the scope needs and optional `label` (100 bytes) and `repeat`; 201 returns version and the alert (see [account alerts](#account-alerts)). Malformed terms are 400; an unregistered contract `UNKNOWN_CONTRACT` (404); a 101st alert `INVALID_ALERT` (422) |
 | `DELETE /api/alerts/{id}` | No body; returns version and `deleted`, or `UNKNOWN_ALERT` (404) |
-| `PUT /api/trades/{id}/note` | Optional `note` string and `tags` array replace the trade's (see [trade notes](#trade-notes-and-tags)); an empty note with no tags clears them. The `id` is a trade's, or a share trade's (`s` and its opening stock fill). Returns version, `trade`, `note` and `tags`; `UNKNOWN_TRADE` (404) if no trade opens with that fill, `INVALID_NOTE` (422) for text past the limits |
+| `PUT /api/trades/{id}/note` | Optional `note` string, `tags` array and `mistakes` array (at most seven of the fixed [mistake picks](#edge-reports-mistake-picks-and-coaching)) replace the trade's as a whole (see [trade notes](#trade-notes-and-tags)): a field left out is cleared, so send all three to change one. The `id` is a trade's, or a share trade's (`s` and its opening stock fill). Returns version, `trade`, `note`, `tags` and `mistakes`; `UNKNOWN_TRADE` (404) if no trade opens with that fill, `INVALID_NOTE` (422) for text past the limits or an unknown pick |
 | `GET /api/plans` | Presets: `practice` (buying power only), `intraday-25k/50k/100k` (buy-only, 10% target, 5% intraday trailing), `eod-25k/50k/100k` (any side, 12% target, 6% end-of-day trailing), their `funded-*` accounts (`unlocked_by` names the evaluation), `static-25k/50k/100k` and `locking-25k/50k/100k` (see [plan presets with objectives](#plan-presets-with-objectives)); `two-step-*`, `two-step-verify-*` and `two-step-funded-*` at the same sizes (see [two-step programs](#two-step-programs-f27)). Each includes `phase`, `unlocked_by` and `unlocks`. Evaluation, verification and funded presets auto-close five minutes before the last trade (15:55 ET for SPXW, 16:10 for SPY) |
 | `POST /api/account/reset` | Nonblank `reason` plus either a preset `plan` ID, or `initial_cash` and complete `rules` (optional `phase`, `lock_balance`, and `payouts` required exactly when funded); returns the new account view. Locked steps need a current passed matching prerequisite (`PLAN_LOCKED`); same-plan restarts charge `reset_fee` and obey `max_resets` (`RESET_LIMIT`, 409) |
 | `POST /api/account/cash-flows` | `client_id`, signed whole-cent decimal `amount`; practice only; returns Account with `cash_flows` history. Same ID/amount is idempotent |
@@ -4848,7 +4870,8 @@ in its query for an account other than the main one (see [accounts](#accounts)).
 `/api/replay` and the routes under it serve a replay of a recording or the simulated
 demo market; see [replaying in the terminal](runtime.md#replaying-in-the-terminal).
 
-Rules JSON is `{plan, profit_target, max_drawdown, drawdown_mode, buy_only,
+Rules JSON is `{plan, plan_id, phase, profit_target, max_drawdown, drawdown_mode, drawdown_basis,
+lock_balance, buy_only,
 defined_risk, slippage_ticks, fill_latency_ms, impact_ticks, inside_fill_percent, fees, margin, account_type, house_margin_percent,
 pm_vol_shock, buying_power, expiry_cutoff_seconds, lock_at_start, profit_basis, daily_loss_limit,
 daily_loss_basis, daily_loss_action, consistency_percent, consistency_basis, min_trading_days,
@@ -4856,8 +4879,19 @@ trade_consistency_percent, min_trades, min_hold_seconds, microscalp_seconds, mic
 min_profitable_days, profitable_day_profit, day_end, max_contracts_held, require_stop_loss,
 max_trade_risk, max_trade_risk_percent, time_limit_days, inactivity_days, flat_time, no_overnight,
 underlyings, trading_start, trading_end, scaling, size_scaling, events, news_before_minutes, news_after_minutes,
-news_action, hold_restrictions, hold_cutoff, no_hedging, no_counter_positions, max_volume_percent}`.
+news_action, hold_restrictions, hold_cutoff, no_hedging, no_counter_positions, max_volume_percent,
+minute_volume_percent, best_position_percent, open_loss_cap, evaluation_fee, reset_fee, activation_fee,
+max_resets, payouts}`, plus, only when they are set, `queue_fills`, `queue_seed`,
+`stop_stress_ticks` with `stop_stress_percent`, `cash_credit_rate_bps`, `margin_debit_rate_bps`,
+`stock_borrow_rate_bps`, `pin_risk` and `pin_risk_seed`.
 `fees` is the optional [fee schedule](#fees). `scaling` defaults to `[]` and uses decimal-string profit thresholds; see [Scaling plan](#funded-accounts-and-payouts).
+`plan_id` is derived, never set (see [Accounts](#accounts)); `phase` is `evaluation`,
+`verification` or `funded`, and `payouts` is null outside the funded phase.
+`drawdown_basis` defaults to `"equity"` (or `"balance"`), `lock_balance` and
+`open_loss_cap` to null, `minute_volume_percent` and `best_position_percent` to 0
+([prop rules](#prop-rules-open-loss-caps-a-balance-floor-best-position-and-minute-volume-caps)),
+the program costs `evaluation_fee`, `reset_fee` and `activation_fee` to `"0.00"`, and
+`max_resets` to 0, which is unlimited.
 `defined_risk`, `slippage_ticks`, `fill_latency_ms`, `impact_ticks`, `inside_fill_percent`, `margin`, `account_type`,
 `house_margin_percent`, `pm_vol_shock` and every field from `lock_at_start` on are optional when creating or
 resetting an account: `defined_risk` and `lock_at_start` default to false, the execution settings, house margin,
@@ -4882,8 +4916,10 @@ preset, for unlocks and restarts, only at that preset's balance. Recovery keeps 
 when absent and are omitted from account responses and journals at zero. Pending
 orders recover their acceptance/trigger clocks and consumed depth.
 `POST /api/account/reset` and `POST /api/accounts` accept optional
-`fill_model: "as_displayed" | "conservative" | "midpoint"` beside the plan or custom rules. It
-overrides only latency, impact, slippage and inside fills for that account's new attempt. Optional
+`fill_model: "as_displayed" | "conservative" | "midpoint" | "queue"` beside the plan or custom rules. It
+overrides only latency, impact, slippage and inside fills for that account's new attempt,
+except `queue`, which also turns on [queue fills](#queue-fills): a program rule, so that
+attempt no longer follows its preset (`plan_id` null) and counts as a new purchase. Optional
 `fee_model: "flat" | "itemized"` chooses its [fees](#fees). They also accept `margin`,
 `account_type`, `house_margin_percent` and `pm_vol_shock` beside the plan or custom
 rules, overriding the account's margin the same way (the attempt still counts as the
@@ -4945,9 +4981,11 @@ a name given with `--allowed-host`; others get 403 `HOST_REJECTED`. DNS rebindin
 a name its attacker controls at the server, which makes that name's pages same-origin
 with it, and that name is what their requests carry in Host.
 
-Every POST/PUT/DELETE under `/api/` uses the same protection. POST and PUT require
-`Content-Type: application/json` (an optional media-type parameter is accepted);
-DELETE has no body. The body limit remains 64 KiB, except 4 MiB for
+Every POST/PUT/PATCH/DELETE under `/api/` uses the same protection. POST, PUT and PATCH
+require `Content-Type: application/json` (an optional media-type parameter is accepted);
+DELETE has no body. Two POST routes compute from their body and change nothing,
+`POST /api/account/rules-compare` and `POST /api/rule-packs/validate`: they take read
+access and the Origin check, not the Content-Type one. The body limit remains 64 KiB, except 4 MiB for
 `POST /api/analysis/portfolios`, whose broker exports run larger. That route's Host,
 Origin, credentials and Content-Type are checked from its header, so a request the
 server would refuse is answered before its body is read, and its connection closes.
@@ -4978,7 +5016,9 @@ Without a token, only loopback binds allow writes. Non-loopback binds return 403
 Status reports the result as `write`: `open` when a write without credentials is
 accepted (a loopback bind with no legacy token, `--require-token` or `--sandboxes`;
 named tokens alone leave it open), `token` when writes need a token, and `disabled`
-when no credential can write (a non-loopback bind without tokens). A token sent to an
+when no credential can write (a non-loopback bind without tokens). It is also
+`disabled` whenever the account takes no writes at all: paper trading is off, or its
+journal is damaged, locked or failed (`enabled` false, with the `reason`). A token sent to an
 `open` server is still checked and names the actor.
 Named tokens come from `--token-file FILE`, one `NAME SCOPES SECRET` per line.
 Scopes are comma-separated. Blank lines are ignored and `#` starts a comment.
@@ -5005,7 +5045,7 @@ for the last successful load, without names. Protect the file as a credential.
 | Scope | Permission |
 | --- | --- |
 | `read` | Every API GET, CSV export and WebSocket ticks |
-| `trade:ACCOUNT` / `trade:*` | Orders and previews, cancels, flatten, exercise, stock closure, notes and sending or dismissing playbook stages on the named account / all live accounts; copied orders to account groups need `trade:*` |
+| `trade:ACCOUNT` / `trade:*` | On the named account / all live accounts: orders and previews, cancels, flatten, exercise, abandonment and exercise instructions, stock closure, share trades and working share orders with their previews, trade and day notes, trade grouping, account alerts (create and delete), and evaluating a playbook or sending or dismissing its staged orders; copied orders to account groups need `trade:*` |
 | `replay` | Start, control and stop replays; trade, reset, set limits/guardrails and operate the kill switch on their isolated accounts |
 | `admin` | Everything, including limits, guardrails, kill switch, resets, payouts, settlements, account creation/rename/archive/delete, account groups, playbook definitions and modes, replay history deletion and token reload |
 
@@ -5052,8 +5092,10 @@ Creation returns 429 `SANDBOX_CAPACITY` when all account slots are occupied,
 `SANDBOX_CLIENT_RATE` after 3 creations per client in a rolling hour or while the
 client holds 3 unexpired sandboxes, or
 `SANDBOX_GLOBAL_RATE` after 30 globally. Order submissions, previews, what-if
-requests, modifications, share trades and their previews share 60 requests per
-account per rolling minute; excess requests return 429 `SANDBOX_ORDER_RATE`.
+requests, modifications, share trades and working share orders with their previews,
+and the journaled writes that reduce no risk (creating or changing alerts, trade and
+day notes, grouping and ungrouping trades) share 60 requests per account per rolling
+minute, counted before the body is checked; excess requests return 429 `SANDBOX_ORDER_RATE`.
 Cancels, flatten, share closes, exercise, abandonment, exercise instructions and
 alert deletions share a second budget of 60 per rolling minute, so they remain
 available at the order cap; past it they get the same 429. Rate-limit
@@ -5102,9 +5144,12 @@ come from their plan.
 Existing files are verified, exclusively locked and resumed; an empty one holds no
 transaction and starts the main account afresh (see
 [Journal, recovery and failure handling](#journal-recovery-and-failure-handling)).
-A corrupt, torn, locked
-or unwritable journal disables its account's writes with 503 `TRADING_UNAVAILABLE`
-and a status reason; other accounts carry on. They are never overwritten or silently replaced by an ephemeral
+A corrupt or torn journal loads its account read-only at the last verified
+transaction, and its writes return 409 `ACCOUNT_DAMAGED` (see
+[Journal, recovery and failure handling](#journal-recovery-and-failure-handling)); a locked or
+unwritable journal disables its account's writes with 503 `TRADING_UNAVAILABLE`,
+as does a corrupt one under a reproducible `--run-input` run. Either way status
+gives the reason, and other accounts carry on. Journals are never overwritten or silently replaced by an ephemeral
 account. A runtime journal failure preserves the last committed account and
 requires operator recovery. The Docker image journals in `/var/lib/openport`,
 which is a declared volume; mount a persistent volume there.
@@ -5208,8 +5253,7 @@ assignment and delivered shares. The CLI tests compact journals from earlier bui
 Engine and HTTP tests reuse that fixture for resting fills, cancellation, kill/limits,
 JSON errors, write protection, restart recovery, AM/PM settlement, named accounts and
 replays. Socket tests cover asynchronous POST/DELETE responses and shutdown of pending
-commands. A dividend feed, trade-through matching and portfolio
-margin remain outside v1.
+commands. Trade-through matching remains outside v1.
 
 Damaged main and named journals load a frozen read-only account at the last
 verified transaction, without changing the journal or compacting its equity
