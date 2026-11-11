@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api } from "../api/client"
+import { api, ApiError } from "../api/client"
 import { useLive } from "../api/live"
 import type { AnalysisFormat, AnalysisHolding, AnalysisProfile } from "../api/types"
 import { LineChart, type Series } from "../charts/LineChart"
@@ -92,6 +92,23 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
   const mode = trading?.write ?? "disabled"
   const blocked = mode === "disabled" || (mode === "token" && !token)
   const [underlying, setUnderlying] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  async function remove(name: string) {
+    if (deleting || !window.confirm(`Delete the analysis portfolio ${name}?`)) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await api.deletePortfolio(id, mode)
+      onDeleted()
+    } catch (failure) {
+      // Deleted already, in another tab say: the list just has to catch up.
+      if (failure instanceof ApiError && failure.status === 404) onDeleted()
+      else setDeleteError(failure instanceof Error ? failure.message : String(failure))
+    } finally {
+      setDeleting(false)
+    }
+  }
   const detail = useQuery({ queryKey: ["analysis", id], queryFn: ({ signal }) => api.analysisPortfolio(id, signal), refetchInterval: 15_000 })
   const data = detail.data
   const held = [...new Set((data?.holdings ?? []).map((h) => h.underlying))]
@@ -119,8 +136,9 @@ function Portfolio({ id, onDeleted }: { id: string; onDeleted: () => void }) {
       </div>
       {!data.complete && <p className="text-xs text-warn">Not valued: {data.unpriced.join(", ")}. Risk views leave them out and say they are incomplete.</p>}
       <Panel title={`Holdings · ${data.name}`} actions={
-        <button type="button" disabled={blocked} className="text-xs text-muted underline decoration-dotted hover:text-bearish disabled:opacity-50"
-          onClick={async () => { if (window.confirm(`Delete the analysis portfolio ${data.name}?`)) { await api.deletePortfolio(id, mode); onDeleted() } }}>Delete</button>}>
+        <button type="button" disabled={blocked || deleting} className="text-xs text-muted underline decoration-dotted hover:text-bearish disabled:opacity-50"
+          onClick={() => void remove(data.name)}>{deleting ? "Deleting…" : "Delete"}</button>}>
+        {deleteError && <p role="alert" className="mb-2 text-xs text-bearish">Could not delete {data.name}: {deleteError}</p>}
         <div className="max-h-96 overflow-auto">
           <table className="w-full text-xs tabular">
             <thead className="sticky top-0 bg-panel text-muted"><tr>

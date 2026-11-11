@@ -954,6 +954,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   a replay of a simulated day, though the server was itself the demo market and
   tradable moments later. The demo is now offered only while every market is closed
   or its feed has stalled, and never on a simulated feed.
+- **Deleting an analysis portfolio reports a failure.** When the delete was refused (a
+  wrong or expired write token, the server out of reach), the Analysis page showed
+  nothing, kept the portfolio and left Delete clickable while the request was out. The
+  failure is now shown beside the portfolio, Delete waits for the request, and a
+  portfolio another tab already deleted leaves the list.
 
 ## 0.5.1 (2026-10-28)
 
