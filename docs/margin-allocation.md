@@ -136,18 +136,34 @@ deterministic journals, and verification/resumption of both driver choices. A te
 counts the work units of an irregular 15-leg book, which driver 12 certifies and
 driver 13 gives up on within its budget.
 
-Five Release benchmark repetitions on the development host measured these CPU
-medians. Timings are measurements, not wall-clock limits; every listed result was
-certified exact. `bench/bench_margin.cpp` publishes the `exact` counter.
+`bench/bench_margin.cpp` times these books, and the Margin benchmark workflow runs it
+on a GitHub runner on demand (`gh workflow run bench.yml`, `-f os=macos-15` for the
+macOS runner). The CPU medians below are five Release repetitions on GitHub's macOS
+15 runner (Apple Silicon, three shared cores) at commit `b1e233dc`, on 11 November
+2026, when the Ubuntu runners could not install packages. Timings are measurements,
+not limits: the budget counts work, never time. Each benchmark also publishes whether
+the book was certified (`exact`) and the work units it took (`units`). The regular
+books need far less than the budget: both drivers certify them with the same work,
+so they are timed under driver 13 alone.
 
-| Book | CPU median |
-| --- | ---: |
-| 14 mixed-expiry legs | 0.20 ms |
-| 80 mixed-expiry legs | 2.28 ms |
-| 80 legs, quantities multiplied by 10,000 | 2.40 ms |
-| 80 fragmented short legs | 0.32 ms |
-| Adversarial 13-leg seeded book | 3.70 ms |
+| Book | Driver 12 | Driver 13 |
+| --- | ---: | ---: |
+| 14 mixed-expiry legs | same work | 0.19 ms |
+| 80 mixed-expiry legs | same work | 2.50 ms |
+| 80 legs, quantities multiplied by 10,000 | same work | 2.76 ms |
+| 80 fragmented short legs | same work | 0.37 ms |
+| Adversarial 13-leg seeded book | 4.1–4.7 ms | 4.90 ms, bounded |
+| 16 irregular books, 15–30 legs over four expiries: median | 11.9 ms | 3.1 ms |
+| The same: slowest | 38.4 ms | 4.2 ms |
+| The same: certified | 9 of 16 | 7 of 16 |
+| A 15-leg book of unpaired shorts over four expiries | 29.3 ms | 4.2 ms, bounded |
 
-The prior pairing alone took 1.13 ms for the 80-leg mixed book and 0.39 ms for the
-fragmented book in the same run. The operation cap remains necessary for harder
-integer books; capped results are explicitly distinguished from certified ones.
+The adversarial book's certificate takes 10.7 million units, just over the budget, so
+driver 13 answers it with the bounded allocator; its driver 12 times come from two
+earlier runs on the same runner. The irregular books the old budget gave up on took
+24 ms at the median before they did; under driver 13 every one gives up or finishes
+within 4.2 ms. Of the seeded subadditivity sample's 78,477 solves, 24 need more than
+driver 13's budget, the costliest 109 million units. The prior pairing alone took
+1.05 ms for the 80-leg mixed book and 0.42 ms for the fragmented book in the same run.
+The operation cap remains necessary for harder integer books; capped results are
+explicitly distinguished from certified ones.
