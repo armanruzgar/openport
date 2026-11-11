@@ -543,4 +543,5 @@ stored meanwhile enters the ranks with the next publication.
 
 The Python client and MCP server expose `volatility_history`, `surface_history` and
 `volatility_scanner`. Both default `surface_history` to the comparisons only. Python's
-`series(symbol)` continues to mean listed expiry series for compatibility. Surface history storage and comparison details are in [SVI](svi.md#historical-surface-snapshots).
+`series(symbol, fields, interval, start, end)` and `volatility_history` both read this
+metric series; an underlying's listed expiries are in `summary()`. Surface history storage and comparison details are in [SVI](svi.md#historical-surface-snapshots).

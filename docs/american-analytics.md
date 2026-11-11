@@ -162,8 +162,8 @@ LR pricer and small symmetric spreads, then supply a flat 4.5% SPX curve:
 
 | T | D fixed, no correction: F error | Corrected F error | Max corrected OTM IV error |
 | ---: | ---: | ---: | ---: |
-| 0.25 | -0.050555% | +0.001102% | 0.016711 vol points |
-| 1.00 | -0.419232% | -0.027016% | 0.086979 vol points |
+| 0.25 | -0.050462% | +0.001202% | 0.016712 vol points |
+| 1.00 | -0.419144% | -0.026917% | 0.086981 vol points |
 
 Both forward residuals are inside 0.05% and both IV residuals inside 0.1 vol
 points. The regression also verifies that raw American parity misestimates the

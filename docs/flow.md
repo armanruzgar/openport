@@ -10,7 +10,7 @@ serves the same data ([API](api.md#status-and-market-data)).
 | --- | --- |
 | Databento | Every OPRA trade, with the printing exchange (publisher id) |
 | Recordings and imported days | The trades they hold; ThetaData imports carry the exchange code when its rows have one |
-| Cboe, Massive, ThetaData live, Tradier, tastytrade | None: these adapters deliver quotes, not option trades. The tab says so, and shows no tape |
+| Cboe, Massive, ThetaData live, Tradier, tastytrade, Charles Schwab, Alpaca, Interactive Brokers | None: these adapters deliver quotes, not option trades. The tab says so, and shows no tape |
 | Demo market | Simulated prints, labelled on every row and in the response |
 
 OpenPort never invents prints for a market-data feed. The demo market publishes

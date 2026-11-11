@@ -115,7 +115,8 @@ scale hints and errors. [Certification](providers.md#live-certification-reports)
   after closing the book. Positions groups held strategies with combined P&L and
   dollar delta, gamma per 1% spot move, vega per volatility point and daily theta.
 - Light and dark themes and keyboard shortcuts are available. Number keys follow
-  the sidebar; Brief is 7 with a paper account and 2 on analytics-only servers.
+  the sidebar; Brief is 8 with a paper account (7 is Playbooks) and 2 on
+  analytics-only servers.
   Arrow keys step through expiries on Trade.
 
 ## Orders and fills
@@ -636,6 +637,7 @@ bearer token or by a webhook secret scoped to one playbook and account. Bounded
 parameter sweeps preserve variant reports and rank historical simulated results.
 Signal secrets, evaluate-now and sweeps are API, Python and MCP features: the
 terminal has no controls for them ([playbooks](playbooks.md#signals-and-parameter-sweeps)).
-Optional Arrow/Parquet exports preserve decimal money strings, and a tag-triggered
-OIDC workflow prepares Python package releases without stored publishing tokens.
+Optional Arrow/Parquet exports preserve decimal money strings. The client is not
+published to PyPI: each version is a `python-v*` tag installed from GitHub
+([Python releases](../python/README.md#python-releases)).
 See [API programmability](api.md#paper-event-stream-v1).

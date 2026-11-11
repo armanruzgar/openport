@@ -168,9 +168,11 @@ Cboe's session-aware delayed timestamp mapping is in `publish_chain()` in
 [`cboe.cpp`](../src/providers/cboe.cpp). Databento's CBBO uses `ts_recv`, the vendor
 record's observation time, while CMBP-1 uses `ts_event`; these are not the local
 machine's receipt timestamp. ThetaData's `publish_chain()` uses the latest data
-clock and retains a per-underlying high-water mark. Its current all-clocks-missing
-fallback uses `md::now()`; do not copy that fallback into a new adapter. The
-timestamped path is covered by `ASnapshotIsStampedWithItsDataNotTheWallClock`.
+clock and retains a per-underlying high-water mark. A snapshot whose clocks are all
+missing keeps that mark (zero, unknown, before the first known clock); there is no
+`md::now()` fallback. Its `Options::clock` only judges whether the plan's data runs
+delayed, for health, and never stamps market data. The timestamped path is covered
+by `ASnapshotIsStampedWithItsDataNotTheWallClock`.
 
 ### Snapshots and streams
 

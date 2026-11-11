@@ -7,7 +7,7 @@ terminal it serves. This page is the map; the other documents hold the detail.
 ```mermaid
 flowchart LR
   subgraph feed["Market data (provider threads)"]
-    P["Cboe · Databento · Massive · ThetaData<br/>Tradier · tastytrade"]
+    P["Cboe · Databento · Massive · ThetaData<br/>Tradier · tastytrade · Schwab<br/>Alpaca · Interactive Brokers"]
   end
   P -- "md::Event" --> Q["EventQueue<br/>latest value per contract"]
   P -. "optional" .-> R[("Recording<br/>zstd frames")]
@@ -46,8 +46,10 @@ flowchart LR
 ## Threads and data flow
 
 - **Provider threads** publish events into the queue. Polling providers (Cboe, Massive,
-  ThetaData, Tradier) turn successive snapshots into only the changes; Databento
-  and tastytrade stream.
+  ThetaData, Tradier, Schwab, Alpaca and Interactive Brokers) turn successive
+  snapshots into only the changes; Databento and tastytrade stream. With
+  `--fallback-provider`, a `FailoverProvider` runs two adapters and passes on each
+  underlying's events from whichever feed is serving it ([failover](providers.md#failover)).
 - **One live engine thread** owns a Desk and its mutable state. It drains the queue into the chain
   book, recomputes analytics at most once a second for the underlyings whose data or
   rate curve or cash-dividend schedule changed, and publishes each result as an
