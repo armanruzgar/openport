@@ -53,7 +53,12 @@ expected well under 20 minutes, with a 35-minute timeout for cold-cache headroom
 The macOS build is the release archive's: `-DOPENPORT_STATIC_DEPS=ON`
 links OpenSSL and zstd statically, and CI checks it needs only macOS's own libraries.
 Changes only to `site/`, `docs/` (other than `docs/openapi.yaml`, which the tests
-read) or top-level Markdown files skip CI.
+read) or top-level Markdown files skip CI. Otherwise each job runs only when the
+push changes what it builds or checks: the C++ jobs for sources, tests, CMake,
+scenarios and data; the web job for `web/`; the Python job for `python/` and
+`tools/`; the Docker job for anything in the image. A change to the workflow or
+to `docs/openapi.yaml` runs every job. On `main` every push gets its own complete
+run; on other branches a newer push cancels the run before it.
 
 ## Python and API contract
 

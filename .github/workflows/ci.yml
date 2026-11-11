@@ -23,18 +23,60 @@ on:
 permissions:
   contents: read
 
-# A newer push supersedes a run still going on the same branch.
+# Several fix sessions push to main at once and each needs the result for its own
+# commit, so every push to main gets its own complete run. Elsewhere a newer push
+# supersedes a run still going on the same branch.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'latest' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Each job runs only when the push changes something it builds or checks. A
+  # change to this workflow or to the API contract, or a run with no earlier
+  # commit to compare (a new branch, a manual run, a force push), runs them all.
+  changes:
+    name: Changed areas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      cpp: ${{ steps.areas.outputs.cpp }}
+      web: ${{ steps.areas.outputs.web }}
+      python: ${{ steps.areas.outputs.python }}
+      docker: ${{ steps.areas.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Compare with the previous commit
+        id: areas
+        env:
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            git diff --name-only "$BEFORE" "$GITHUB_SHA" > changed.txt
+          else
+            echo .github/workflows/ci.yml > changed.txt
+          fi
+          cat changed.txt
+          every='^\.github/workflows/ci\.yml$|^docs/openapi\.yaml$'
+          area() {
+            if grep -qE "$every|$2" changed.txt; then echo "$1=true"; else echo "$1=false"; fi >> "$GITHUB_OUTPUT"
+          }
+          area cpp '^(src|include|apps|tests|cmake|bench|scenarios|data|packaging)/|^CMakeLists\.txt$'
+          area web '^(web|site)/'
+          area python '^(python|tools)/'
+          area docker '^(src|include|apps|cmake|scenarios|data|packaging|web|tools)/|^CMakeLists\.txt$|^Dockerfile$|^\.dockerignore$|^docker-compose\.yml$'
+          cat "$GITHUB_OUTPUT"
+
   # The Release build is cached with ccache, one cache per operating system, so a
   # commit recompiles only what it touched. The plain suite and the suite with
   # incremental reviews and journal changes checked against full rebuilds run
   # side by side on the same cached build instead of one after the other.
   cpp:
     name: ${{ matrix.verify && 'C++ (GCC 13, Ubuntu 24.04, reviews and journal checked against rebuilds)' || 'C++ (GCC 13, Ubuntu 24.04, warnings as errors)' }}
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -94,6 +136,8 @@ jobs:
 
   cpp-sanitize:
     name: C++ (GCC 13, ASan + UBSan, shard ${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-24.04
     # Cold runs take about 23 minutes; warm runs are expected well under 20.
     timeout-minutes: 35
@@ -156,6 +200,8 @@ jobs:
 
   cpp-macos:
     name: C++ (Apple Clang, macOS 15, warnings as errors)
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: macos-15
     timeout-minutes: 45
     env:
@@ -223,6 +269,8 @@ jobs:
 
   web:
     name: Web (TypeScript, Vitest, Vite)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -242,6 +290,8 @@ jobs:
 
   python:
     name: Python client and MCP
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -262,6 +312,8 @@ jobs:
 
   docker:
     name: Docker image
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
