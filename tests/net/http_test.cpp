@@ -177,6 +177,23 @@ TEST(Http, ResolvesRedirectTargets) {
 #include "openport/md/event_queue.hpp"
 #include "openport/providers/massive.hpp"
 
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
+#include <boost/asio/ssl.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/ssl.hpp>
+#include <boost/beast/websocket.hpp>
+#include <boost/beast/websocket/ssl.hpp>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+
+#include "support/recording.hpp"
+
 namespace {
 TEST(Http, PreCancelledRequestsFailBeforeDnsOrNetworkAccess) {
   openport::net::HttpClient client;
@@ -526,6 +543,114 @@ TEST(WebServer, HttpClientSendsAPostOnANewConnectionOnceTheKeptAliveOneHasIdled)
   EXPECT_EQ(body_of([&] { return client.post(base + "/hook", "2", {}, timeout); }), "second");
   server.join();
   EXPECT_TRUE(second.load());
+}
+
+/// A key and a self-signed certificate for 127.0.0.1, made for one test.
+struct LoopbackCertificate {
+  LoopbackCertificate() {
+    char curve[] = "P-256";
+    key = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", curve);
+    certificate = X509_new();
+    if (!key || !certificate) throw std::runtime_error("cannot make a test certificate");
+    X509_set_version(certificate, 2);
+    ASN1_INTEGER_set(X509_get_serialNumber(certificate), 1);
+    X509_gmtime_adj(X509_getm_notBefore(certificate), -3600);
+    X509_gmtime_adj(X509_getm_notAfter(certificate), 3600);
+    X509_set_pubkey(certificate, key);
+    X509_NAME* name = X509_get_subject_name(certificate);
+    const unsigned char common_name[] = "127.0.0.1";
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, common_name, -1, -1, 0);
+    X509_set_issuer_name(certificate, name);
+    X509V3_CTX context{};
+    X509V3_set_ctx(&context, certificate, certificate, nullptr, nullptr, 0);
+    X509_EXTENSION* addresses = X509V3_EXT_conf_nid(nullptr, &context, NID_subject_alt_name, "IP:127.0.0.1");
+    const bool signed_ok = addresses && X509_add_ext(certificate, addresses, -1) == 1 &&
+                           X509_sign(certificate, key, EVP_sha256()) > 0;
+    X509_EXTENSION_free(addresses);
+    if (!signed_ok) throw std::runtime_error("cannot sign a test certificate");
+  }
+  ~LoopbackCertificate() {
+    X509_free(certificate);
+    EVP_PKEY_free(key);
+  }
+  LoopbackCertificate(const LoopbackCertificate&) = delete;
+  LoopbackCertificate& operator=(const LoopbackCertificate&) = delete;
+
+  void write(const std::filesystem::path& path) const {
+    std::FILE* file = std::fopen(path.c_str(), "w");
+    if (!file) throw std::runtime_error("cannot write a test certificate");
+    const bool written = PEM_write_X509(file, certificate) == 1;
+    std::fclose(file);
+    if (!written) throw std::runtime_error("cannot write a test certificate");
+  }
+
+  EVP_PKEY* key = nullptr;
+  X509* certificate = nullptr;
+};
+
+TEST(WebServer, WebSocketCloseReturnsPromptlyAfterAReceive) {
+  namespace asio = boost::asio;
+  namespace beast = boost::beast;
+  using tcp = asio::ip::tcp;
+  const LoopbackCertificate loopback;
+  openport::test::RecordingFile directory;
+  const auto trusted = directory.directory / "loopback.pem";
+  loopback.write(trusted);
+  // The client trusts the system store, which OpenSSL lets SSL_CERT_FILE name.
+  struct TrustOnly {
+    std::optional<std::string> previous;
+    explicit TrustOnly(const std::filesystem::path& file) {
+      if (const char* value = std::getenv("SSL_CERT_FILE")) previous = value;
+      setenv("SSL_CERT_FILE", file.c_str(), 1);
+    }
+    ~TrustOnly() {
+      if (previous) setenv("SSL_CERT_FILE", previous->c_str(), 1);
+      else unsetenv("SSL_CERT_FILE");
+    }
+    TrustOnly(const TrustOnly&) = delete;
+    TrustOnly& operator=(const TrustOnly&) = delete;
+  } trust(trusted);
+
+  asio::ssl::context server_tls(asio::ssl::context::tls_server);
+  ASSERT_EQ(SSL_CTX_use_certificate(server_tls.native_handle(), loopback.certificate), 1);
+  ASSERT_EQ(SSL_CTX_use_PrivateKey(server_tls.native_handle(), loopback.key), 1);
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto url = "wss://127.0.0.1:" + std::to_string(listener.local_endpoint().port()) + "/feed";
+  // Each connection sends one message, then reads until the client goes away.
+  std::thread server([&] {
+    for (int i = 0; i < 2; ++i) {
+      boost::system::error_code ec;
+      tcp::socket peer(io);
+      listener.accept(peer, ec);
+      if (ec) return;
+      beast::websocket::stream<beast::ssl_stream<tcp::socket>> socket(std::move(peer), server_tls);
+      socket.next_layer().handshake(asio::ssl::stream_base::server, ec);
+      if (!ec) socket.accept(ec);
+      if (ec) continue;
+      socket.text(true);
+      socket.write(asio::buffer(std::string("hello")), ec);
+      beast::flat_buffer unread;
+      socket.read(unread, ec);
+    }
+  });
+  // Once a read has completed, and with a read still pending.
+  for (const bool pending : {false, true}) {
+    SCOPED_TRACE(pending ? "read pending" : "no read pending");
+    auto client = openport::net::make_websocket();
+    try {
+      client->connect(url, nullptr);
+      EXPECT_EQ(client->receive(std::chrono::seconds(10)).value_or("(nothing)"), "hello");
+      if (pending) EXPECT_FALSE(client->receive(std::chrono::milliseconds(50)));
+    } catch (const std::exception& error) {
+      ADD_FAILURE() << error.what();
+    }
+    // Beast's idle timer, armed by the read, used to hold close() for a minute.
+    const auto started = std::chrono::steady_clock::now();
+    client->close();
+    EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
+  }
+  server.join();
 }
 
 TEST(WebServer, PollingProviderStopInterruptsAnInFlightHttpRead) {

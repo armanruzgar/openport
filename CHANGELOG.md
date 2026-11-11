@@ -138,6 +138,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   rejections, though REST and ticks hide sandboxes. Its stream now opens only for
   the sandbox's own token or an authenticated admin; anyone else gets 404
   `UNKNOWN_ACCOUNT`, as from its REST routes.
+- **Closing a tastytrade stream.** Closing the DXLink connection waited out a
+  one-minute idle timer, so stopping the feed or `openportd` took a minute (as long as
+  systemd's stop timeout), and every hourly chain refresh, quote-token refresh and
+  reconnect after an error went a minute without data. It now closes at once.
 
 ## 0.5.1 (2026-10-28)
 

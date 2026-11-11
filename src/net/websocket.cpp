@@ -104,6 +104,12 @@ class TlsWebSocket final : public WebSocket {
 
   void close() noexcept override {
     if (!stream_) return;
+    try {
+      // Beast re-arms its idle timer on every read and leaves it armed when a read
+      // fails, so the drain below would wait it out (a minute) unless it is off.
+      stream_->set_option(ws::stream_base::timeout{ws::stream_base::none(), ws::stream_base::none(), false});
+    } catch (...) {
+    }
     boost::system::error_code ignored;
     auto& socket = beast::get_lowest_layer(*stream_).socket();
     socket.cancel(ignored);
