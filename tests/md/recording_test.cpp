@@ -612,15 +612,20 @@ TEST(RecordingDirectory, DstAndBackwardClocksDoNotSplitOrReopenDays) {
   options.recording.clock = [&] { return time; };
   test::DiscardEvents discard;
   md::RecordingDirectory recording(file.directory, header, discard, options);
+  // A date publishes only with something of its own.
+  const auto quote = [&] { recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5000}); };
+  quote();
   time = md::new_york_to_utc({2026, 11, 2}, 9, 30);
   recording.rollover();
   EXPECT_TRUE(published(file.directory).empty());
   time = md::new_york_to_utc({2026, 10, 30}, 16, 0);
   recording.rollover();
+  quote();
   EXPECT_TRUE(published(file.directory).empty());
   time = md::new_york_to_utc({2026, 11, 2}, 17, 0);
   recording.rollover();
   EXPECT_EQ(published(file.directory).size(), 1U);
+  quote();
   recording.close();
   EXPECT_EQ(published(file.directory).size(), 2U);
 }
@@ -745,6 +750,7 @@ TEST(RecordingDirectory, RetentionFailuresWarnAndNeverStopStartupOrRollover) {
   EXPECT_TRUE(std::filesystem::exists(old));
   EXPECT_NE(recording->warning().find("could not remove old.oprec"), std::string::npos) << recording->warning();
   EXPECT_TRUE(recording->error().empty());
+  recording->publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5000});
   time = md::new_york_to_utc({2026, 9, 24}, 17, 0);
   recording->rollover();
   recording->publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
@@ -755,7 +761,7 @@ TEST(RecordingDirectory, RetentionFailuresWarnAndNeverStopStartupOrRollover) {
   EXPECT_EQ(published(file.directory).size(), 3U) << "both days publish beside the undeletable file";
   EXPECT_TRUE(std::filesystem::exists(old));
   EXPECT_NE(recording->warning().find("ermission denied"), std::string::npos) << recording->warning();
-  EXPECT_EQ(sink.snapshot().size(), 1U) << "retention problems are not feed errors";
+  EXPECT_EQ(sink.snapshot().size(), 2U) << "retention problems are not feed errors";
 }
 TEST(RecordingDirectory, RolloverRetentionRunsOffThePublishingThread) {
   test::RecordingFile file;
@@ -1007,5 +1013,36 @@ TEST(RecordingDirectory, TheNewestCarriedQuoteLeadsANewDay) {
   for (const auto& event : recorded_events(files[1]))
     if (const auto* option = std::get_if<md::OptionQuote>(&event)) quoted.push_back(option->ts);
   EXPECT_EQ(quoted, (std::vector<md::Timestamp>{newer, older}));
+}
+}  // namespace
+
+namespace {
+// B-41: a date on which nothing arrived publishes no file, even though it would carry the
+// definitions and values over, so a run that recorded nothing adds no empty day to Replay.
+TEST(RecordingDirectory, ADateWithNothingOfItsOwnPublishesNoFile) {
+  test::RecordingFile file;
+  std::atomic<md::Timestamp> time{md::new_york_to_utc({2026, 11, 9}, 15, 0)};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  test::DiscardEvents discard;
+  {
+    md::RecordingDirectory idle(file.directory, test::recording_header(), discard, options);
+    idle.close();
+    EXPECT_TRUE(idle.error().empty()) << idle.error();
+  }
+  EXPECT_TRUE(std::filesystem::is_empty(file.directory)) << "a run that recorded nothing leaves nothing";
+  md::RecordingDirectory recording(file.directory, test::recording_header(), discard, options);
+  recording.publish(md::ContractDefinition{0, *md::parse_osi("SPXW261120C05000000")});
+  recording.publish(md::OptionQuote{0, time, 1, 1.1, 1, 1});
+  time = md::new_york_to_utc({2026, 11, 9}, 17, 0);
+  recording.rollover();
+  recording.close();
+  EXPECT_TRUE(recording.error().empty()) << recording.error();
+  const auto files = published(file.directory);
+  ASSERT_EQ(files.size(), 1U) << "the next date only carried the first one's values over";
+  EXPECT_NE(files[0].filename().string().find("2026-11-09"), std::string::npos);
+  EXPECT_EQ(recording.stats().events, 2U);
+  for (const auto& entry : std::filesystem::directory_iterator(file.directory))
+    EXPECT_FALSE(entry.path().filename().string().starts_with(".record-")) << entry.path();
 }
 }  // namespace

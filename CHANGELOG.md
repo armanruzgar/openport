@@ -44,6 +44,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   recording. A day now publishes by an exclusive rename where hard links fail, and a
   complete day that still cannot be published stays in its `.record-*` staging folder,
   named in the recording error.
+- **`--record-dir` with the demo.** The demo hands its batches straight to the engine,
+  so a directory recording got none of them and published an empty file into the
+  Replay list at every clean shutdown, one more with each restart. The demo is now
+  recorded like any other feed, and a trading date on which nothing arrived publishes
+  no file.
 - **Recorded days replay alone.** A `--record-dir` file for a new trading date
   repeated only the contract definitions. A snapshot feed such as Cboe sends a quote,
   open interest or close only when it changes, so a day replayed on its own showed

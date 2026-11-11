@@ -417,6 +417,38 @@ TEST(DemoFeed, NoRecoveredMarketTimeKeepsTheDefaultFirstDate) {
   engine.stop();
 }
 
+// B-41: the demo hands its batches to the engine's driver, never to the provider's sink,
+// so --record-dir recorded nothing and published an empty day at every shutdown.
+TEST(DemoFeed, RecordDirRecordsTheSimulatedMarket) {
+  providers::DemoProvider provider(settings(std::make_shared<DemoClock>()));
+  test::RecordingFile journals;
+  server::Engine::Options options;
+  options.paper_journal = journals.directory / "paper.jsonl";
+  options.journal_io.sync = [](int) { return true; };
+  options.record_dir = journals.directory / "recordings";
+  server::Engine engine(provider, {{"SPX"}}, options);
+  engine.start();
+  // The paused clock lets the first snapshot through and holds the next.
+  ASSERT_TRUE(eventually([&] { return engine.recording_stats().events > 0; }));
+  engine.stop();
+  EXPECT_TRUE(engine.recording_error().empty()) << engine.recording_error();
+  std::vector<std::filesystem::path> days;
+  for (const auto& entry : std::filesystem::directory_iterator(options.record_dir))
+    if (entry.path().extension() == ".oprec") days.push_back(entry.path());
+  ASSERT_EQ(days.size(), 1U);
+  md::RecordingReader reader(days.front());
+  EXPECT_EQ(reader.header().provider, "demo");
+  EXPECT_EQ(md::trading_date(reader.header().started), (md::Date{2026, 9, 18}));
+  std::size_t definitions = 0, quotes = 0;
+  while (const auto record = reader.next()) {
+    if (std::holds_alternative<md::ContractDefinition>(record->event)) ++definitions;
+    if (std::holds_alternative<md::OptionQuote>(record->event)) ++quotes;
+  }
+  EXPECT_TRUE(reader.diagnostic().empty()) << reader.diagnostic();
+  EXPECT_GT(definitions, 0U);
+  EXPECT_GT(quotes, 0U);
+}
+
 TEST(DemoFeed, RestartAfterLatestMainOrNamedJournalStillFills) {
   const test::SanitizerScenarioScale scale;
   for (const bool named_ahead : {false, true}) {

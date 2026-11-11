@@ -55,7 +55,10 @@ Engine::Engine(md::Provider& provider, md::Subscription subscription, Options op
   demo_ = dynamic_cast<providers::DemoProvider*>(&provider_) != nullptr;
   if (auto* demo = dynamic_cast<providers::DemoProvider*>(&provider_))
     demo->set_driver([this](providers::ReplayBatch batch) {
-      if (recorder_) for (const auto& event : batch.events) recorder_->publish(event);
+      // The demo hands its batches to the engine here, never to the provider's sink:
+      // whichever recorder is active records them here.
+      md::EventSink* recorder = daily_recorder_ ? static_cast<md::EventSink*>(daily_recorder_.get()) : recorder_.get();
+      if (recorder) for (const auto& event : batch.events) recorder->publish(event);
       return consume_replay(std::move(batch));
     });
   // Replays and the demo market never write the volatility history.

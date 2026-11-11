@@ -137,6 +137,7 @@ struct RecordingDirectory::Impl {
     const auto suffix = temporary.filename().string().substr(8);
     final = directory / (name + "-" + format_date(date) + "-" + std::to_string(time) + "-" + suffix + ".oprec");
     recording = std::make_unique<RecordingSink>(temporary / "day.oprec", header, discard, options.recording);
+    received = 0;
     carry();
   }
   /// A new day opens with what the feed has already sent, so it replays alone as the
@@ -196,6 +197,11 @@ struct RecordingDirectory::Impl {
     if (!recording) return;
     recording->close();
     if (!recording->error().empty()) throw std::runtime_error(recording->error());
+    // Nothing arrived on this date: what it carried over is no day of its own.
+    if (received == 0) {
+      cleanup();
+      return;
+    }
     const auto partial = temporary / "day.oprec";
     if (const auto ec = publish_exclusive(partial, final, options.link)) {
       // The day is complete and cleanly closed: keep it where it is rather than lose it.
@@ -390,6 +396,7 @@ struct RecordingDirectory::Impl {
   };
   std::map<InstrumentId, Known> contracts;
   std::map<std::string, Spot> spots;
+  std::uint64_t received = 0;  ///< events this day's file has from the feed, not carried
   std::string name, failure, warning;
   Date date;
   bool closed = false;
@@ -419,6 +426,7 @@ void RecordingDirectory::publish(Event event) {
       p.remember(event);
       p.recording->publish(event);
       if (!p.recording->error().empty()) throw std::runtime_error(p.recording->error());
+      ++p.received;
     } catch (const std::exception& error) { p.fail(error.what()); }
   }
   p.downstream.publish(std::move(event));

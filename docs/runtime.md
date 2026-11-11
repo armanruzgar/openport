@@ -646,6 +646,8 @@ A backward wall-clock adjustment does not reopen an earlier date.
 
 Directory recordings stay in private `.record-*` staging directories until clean
 close, then publish atomically. The Replay page sees them after rollover or shutdown.
+A trading date on which nothing arrived publishes no file. The demo's simulated
+market is recorded like any other feed.
 A day publishes as a hard link, or, on a filesystem without hard links (exFAT, FAT
 and some network mounts), by an exclusive rename; neither ever replaces an existing
 file. A complete day that still cannot be published stays in its staging directory,
