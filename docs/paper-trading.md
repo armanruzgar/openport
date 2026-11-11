@@ -425,7 +425,10 @@ orders that could open, as they cancel option orders: one that, with the working
 orders on its side accepted before it (of an OCO pair the larger), would trade past
 the shares held. Bracket exits and orders that only reduce keep working. Runs
 recorded with replay driver 10 or earlier left them working until an execution check
-rejected them.
+rejected them. A share trade, order, preview or close in a symbol the server does not
+carry (`AAPL` with only SPX and SPY subscribed) is 422 `UNKNOWN_UNDERLYING` before it
+reaches the account: no price for it will come, which `INVALID_QUOTE`'s "waiting for
+market data" did not say.
 
 `bracket: {stop_loss?, take_profit?}` places, once the entry fills, a GTC stop at
 `stop_loss` and a limit at `take_profit` for the shares it traded, each the other's

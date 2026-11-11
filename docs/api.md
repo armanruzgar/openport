@@ -74,7 +74,9 @@ underlying's first snapshot its views answer 503 `NOT_READY` with `Retry-After: 
 which the Python client waits out and retries; `GET /api/status` shows each
 underlying's `state`, `live` once its data flows, which is the check to wait on. An
 underlying the server does not carry (a typo, `spx` for `SPX`, or one never
-subscribed) is 404 `UNKNOWN_UNDERLYING`, which no wait changes.
+subscribed) is 404 `UNKNOWN_UNDERLYING`, which no wait changes. A share trade, order,
+preview or close in such a symbol is refused the same way, as 422
+`UNKNOWN_UNDERLYING`, before it reaches the account.
 
 ### Subscribing while running
 

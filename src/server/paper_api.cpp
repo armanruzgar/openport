@@ -4474,6 +4474,20 @@ std::optional<ApiResponse> name_taken(const EngineStatus& status, const TradingC
   return std::nullopt;
 }
 
+/// 422 UNKNOWN_UNDERLYING for a share trade, order or close in a symbol this server
+/// does not carry: no price for it will ever come, which the paper gate's "waiting
+/// for market data" did not say. Refused here, it never reaches the desk or a journal.
+std::optional<ApiResponse> uncarried_shares(const MetricsSource& source, const TradingCommand& command) {
+  using Kind = TradingCommand::Kind;
+  const bool shares = command.kind == Kind::TradeStock || command.kind == Kind::PreviewStock || command.kind == Kind::CloseStock ||
+      command.kind == Kind::SubmitStockOrder || command.kind == Kind::PreviewStockOrder;
+  if (!shares) return std::nullopt;
+  const auto symbols = source.symbols();
+  if (std::find(symbols.begin(), symbols.end(), command.symbol) != symbols.end()) return std::nullopt;
+  return api_error(422, "UNKNOWN_UNDERLYING",
+                   command.symbol + " is not an underlying of this server, so it has no share price; GET /api/status lists them");
+}
+
 /// One copied order's progress: each member's command and quantity, and its answer
 /// once its account has replied. The last reply completes the request.
 struct CopyFanOut {
@@ -4771,6 +4785,10 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     auto command = parse_command(request, path);
     if (auto taken = name_taken(status, command)) {
       complete(std::move(*taken));
+      return;
+    }
+    if (auto uncarried = uncarried_shares(source, command)) {
+      complete(std::move(*uncarried));
       return;
     }
     if (!path.starts_with(managed)) command.account = account;

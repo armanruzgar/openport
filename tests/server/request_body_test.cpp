@@ -186,7 +186,7 @@ TEST(RequestBodies, AShareOrderPreviewWhoseCostOverflowsIsAnswered) {
   QuietProvider provider;
   server::Engine engine(provider, md::Subscription{{"SPY"}}, options);
   engine.start();
-  for (const auto& order : {json{{"client_order_id", "a1"}, {"symbol", "ZZZZ"}, {"side", "buy"}, {"type", "limit"},
+  for (const auto& order : {json{{"client_order_id", "a1"}, {"symbol", "SPY"}, {"side", "buy"}, {"type", "limit"},
                                  {"shares", 10000000}, {"limit_price", "1000000"}},
                             json{{"client_order_id", "a2"}, {"symbol", "SPY"}, {"side", "sell"}, {"type", "stop"},
                                  {"shares", 10000000}, {"stop_price", "1000000"}}}) {

@@ -118,7 +118,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   snapshot now answers 503 `NOT_READY` with `Retry-After: 5`, which the Python client
   retries, and one the server does not carry 404 `UNKNOWN_UNDERLYING`; the terminal
   still shows the first as waiting for its snapshot. `GET /api/status`'s underlying
-  `state` is documented as the readiness check.
+  `state` is documented as the readiness check. A share trade, order or close in a
+  symbol the server does not carry answered 422 `INVALID_QUOTE` "AAPL is waiting for
+  market data", for data that would never come; it is now 422 `UNKNOWN_UNDERLYING`,
+  refused before it reaches the account.
 - **Misspelt market-data query parameters.** `/api/status` and the underlying's
   summary, chain, exposure, surface, Heston, volatility and candle views ignored a key
   they do not take, so `chain?windw=0.01` answered the full unwindowed chain and

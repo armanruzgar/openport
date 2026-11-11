@@ -5386,6 +5386,20 @@ TEST(PaperStocks, SharesOpenThroughTheApiAtTheUnderlyingsPrice) {
   EXPECT_EQ(write(engine, "POST", "/api/stocks/trade", {{"symbol", "SPY"}, {"side", "buy"}, {"shares", 0}}).status, 400);
   EXPECT_EQ(write(engine, "POST", "/api/stocks/trade", {{"symbol", "spy"}, {"side", "buy"}, {"shares", 1}}).status, 400);
   const auto before = read(engine, "/api/portfolio");
+  // A symbol the server does not carry never gets a price: it is refused by name, not
+  // left waiting for market data, and nothing reaches the account.
+  for (const auto& [verb, route, body] : {std::tuple{"POST", "/api/stocks/trade", json{{"symbol", "AAPL"}, {"side", "buy"}, {"shares", 1}}},
+                                          std::tuple{"POST", "/api/stocks/trade/preview", json{{"symbol", "AAPL"}, {"side", "buy"}, {"shares", 1}}},
+                                          std::tuple{"POST", "/api/stocks/close", json{{"symbol", "AAPL"}}},
+                                          std::tuple{"POST", "/api/stocks/orders", json{{"client_order_id", "a"}, {"symbol", "AAPL"}, {"side", "buy"},
+                                                                                        {"type", "limit"}, {"shares", 1}, {"limit_price", "200.00"}}}}) {
+    const auto refused = write(engine, verb, route, body);
+    EXPECT_EQ(refused.status, 422) << route << ": " << refused.body;
+    const auto error = json::parse(refused.body)["error"];
+    EXPECT_EQ(error["code"], "UNKNOWN_UNDERLYING") << route;
+    EXPECT_EQ(error["message"], "AAPL is not an underlying of this server, so it has no share price; GET /api/status lists them") << route;
+  }
+  EXPECT_EQ(read(engine, "/api/portfolio"), before);
   const auto preview = write(engine, "POST", "/api/stocks/trade/preview", {{"symbol", "SPY"}, {"side", "buy"}, {"shares", 100}});
   ASSERT_EQ(preview.status, 200) << preview.body;
   test::capture_contract("stocks", "POST", "/api/stocks/trade/preview", preview);
