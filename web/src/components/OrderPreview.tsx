@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 
 import { useLive } from "../api/live"
+import { marketGcTime } from "../api/query-client"
 import type { NewOrder, OrderChange, OrderPreview, PreviewExecution, PreviewFill, TradingStatus } from "../api/trading-types"
 import { osiLabel } from "../lib/journal"
 import { formatMoney } from "../lib/trading"
@@ -46,6 +47,8 @@ function usePreview<T>(kind: string, body: T | null, trading: TradingStatus, fet
     queryFn: () => fetch(JSON.parse(ready) as T),
     enabled: body != null && signature === ready && trading.enabled,
     retry: false,
+    // The market version supersedes a preview every few seconds, and nothing reads it again.
+    gcTime: marketGcTime,
     // Only the account and market versions (3 and 7) may differ: never other terms' answer.
     placeholderData: (previous, prior) => {
       const before = prior?.queryKey
