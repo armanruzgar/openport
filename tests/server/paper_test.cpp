@@ -2449,6 +2449,13 @@ TEST(PaperAvailability, DisabledFailedJournalFullInboxAndStoppingFailClosed) {
 // A command wakes the engine thread: on a quiet feed it is applied at once, not after
 // the engine's 50 ms wait for market events runs out.
 TEST_F(PaperEngine, CommandsOnAQuietFeedAreAppliedWithoutWaitingOutTheDrain) {
+#if defined(__SANITIZE_THREAD__)
+  GTEST_SKIP() << "ThreadSanitizer slows every thread about tenfold, past what a bound under 50 ms can measure";
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  GTEST_SKIP() << "ThreadSanitizer slows every thread about tenfold, past what a bound under 50 ms can measure";
+#endif
+#endif
   seed();
   auto fastest = std::chrono::steady_clock::duration::max();
   for (int i = 0; i < 10; ++i) {
