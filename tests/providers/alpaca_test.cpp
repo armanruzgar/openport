@@ -1,8 +1,15 @@
 #include "openport/providers/alpaca.hpp"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <map>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "openport/providers/factory.hpp"
 #include "support/broker_sink.hpp"
@@ -13,6 +20,32 @@ using namespace openport;
 using namespace std::chrono_literals;
 using Json = nlohmann::json;
 constexpr md::Timestamp kNow = 1790263800000LL * 1'000'000;  // 2026-09-24T15:30:00Z
+
+/// Sets an environment variable, or unsets it for nullptr, until the end of the scope.
+class ScopedEnvironment {
+ public:
+  ScopedEnvironment(const char* name, const char* value) : name_(name) {
+    if (const char* previous = std::getenv(name)) previous_ = previous;
+    if (value) {
+      setenv(name, value, 1);
+    } else {
+      unsetenv(name);
+    }
+  }
+  ~ScopedEnvironment() {
+    if (previous_) {
+      setenv(name_, previous_->c_str(), 1);
+    } else {
+      unsetenv(name_);
+    }
+  }
+  ScopedEnvironment(const ScopedEnvironment&) = delete;
+  ScopedEnvironment& operator=(const ScopedEnvironment&) = delete;
+
+ private:
+  const char* name_;
+  std::optional<std::string> previous_;
+};
 
 // Shaped after the option chain snapshot and stock snapshot examples in Alpaca's
 // market-data reference, with generated SPY values; not observed market data.
@@ -174,6 +207,130 @@ TEST(Alpaca, ThrottlingAndMissingEntitlementAreExplained) {
   EXPECT_NE(sink.all<md::ProviderStatus>().at(0).message.find("rate limited"), std::string::npos);
 }
 
+TEST(Alpaca, RateLimitHoldsRequestsUntilItsRetryAfter) {
+  // A Retry-After beyond the one-minute window holds the next request until it passes;
+  // dropped or misread, the minute alone would send it into the same limit again.
+  md::Timestamp reading = kNow;
+  bool advancing = false;
+  auto settings = options();
+  settings.clock = [&] { return advancing ? (reading += 1'000'000) : reading; };
+  providers::AlpacaProvider provider(settings);
+  std::vector<md::Timestamp> sent_at;
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) {
+    sent_at.push_back(reading);
+    if (sent_at.size() > 1u) return fixture(url);
+    net::HttpResponse throttled{429, "{}"};
+    throttled.headers = {{"Retry-After", "90"}};
+    return throttled;
+  };
+  test::BrokerSink sink;
+  provider.poll_once(http, "SPY", {{"SPY"}}, sink);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).message, "alpaca SPY: rate limited; backing off");
+  // The next poll starts 5 ms short of the 90 s, its clock moving 1 ms at every reading.
+  sink.events.clear();
+  reading = kNow + 90 * md::kNanosPerSecond - 6'000'000;
+  advancing = true;
+  provider.poll_once(http, "SPY", {{"SPY"}}, sink);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).state, md::FeedState::Delayed);
+  ASSERT_EQ(sent_at.size(), 4u);
+  for (std::size_t i = 1; i < sent_at.size(); ++i) EXPECT_GE(sent_at[i], kNow + 90 * md::kNanosPerSecond) << i;
+}
+
+TEST(Alpaca, PagesThatNeverEndStopAtOneHundred) {
+  providers::AlpacaProvider provider(options());
+  test::HttpStub http;
+  int served = 0;
+  http.respond = [&](std::string_view url) {
+    if (url.find("page_token=") == std::string_view::npos) return fixture(url);
+    // The same token again and again; it ends after 150 pages, so a missing limit fails instead of hanging.
+    return net::HttpResponse{200, ++served < 150 ? R"({"snapshots":{},"next_page_token":"U1BZMjYxMDA1UDAwNjAwMDAw"})"
+                                                 : R"({"snapshots":{},"next_page_token":null})"};
+  };
+  test::BrokerSink sink;
+  provider.poll_once(http, "SPY", {{"SPY"}}, sink);
+  // The stock snapshot, then the first page and 99 more.
+  EXPECT_EQ(http.urls.size(), 101u);
+  EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
+  EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
+  const auto status = sink.all<md::ProviderStatus>().at(0);
+  EXPECT_EQ(status.state, md::FeedState::Error);
+  EXPECT_EQ(status.message, "alpaca SPY: more than 100 pages; narrow --window");
+}
+
+TEST(Alpaca, PollIntervalKeepsEveryUnderlyingsRequestsInTheBudget) {
+  // SPY takes three requests (its stock snapshot and two pages), and QQQ, not polled
+  // yet, is counted as many: six a cycle at ten a minute is one cycle every 36 s.
+  auto settings = options();
+  settings.requests_per_minute = 10;
+  test::HttpStub http;
+  http.respond = fixture;
+  test::BrokerSink sink;
+  providers::AlpacaProvider budgeted(settings);
+  budgeted.poll_once(http, "SPY", {{"SPY", "QQQ"}}, sink);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).state, md::FeedState::Delayed);
+  EXPECT_EQ(budgeted.capabilities().poll_interval, 36s);
+  // A poll_seconds the budget cannot keep is refused; one it can is taken as given.
+  settings.poll_seconds = 1s;
+  providers::AlpacaProvider hurried(settings);
+  sink.events.clear();
+  hurried.poll_once(http, "SPY", {{"SPY", "QQQ"}}, sink);
+  EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
+  const auto refused = sink.all<md::ProviderStatus>().at(0);
+  EXPECT_EQ(refused.state, md::FeedState::Error);
+  EXPECT_EQ(refused.message, "alpaca SPY: poll_seconds is below the request budget; needs at least 36");
+  settings.poll_seconds = 40s;
+  providers::AlpacaProvider patient(settings);
+  sink.events.clear();
+  patient.poll_once(http, "SPY", {{"SPY", "QQQ"}}, sink);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).state, md::FeedState::Delayed);
+  EXPECT_EQ(patient.capabilities().poll_interval, 40s);
+}
+
+TEST(Alpaca, AQuoteMidpointCentersTheStrikeWindowWithoutATrade) {
+  auto stock = Json::parse(kStock);
+  stock.erase("latestTrade");
+  const auto quoted = stock.dump();
+  providers::AlpacaProvider provider(options());
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) {
+    if (url.find("/v2/stocks/") != std::string_view::npos) return net::HttpResponse{200, quoted};
+    return fixture(url);
+  };
+  test::BrokerSink sink;
+  provider.poll_once(http, "SPY", {{"SPY"}, 0, 0.1}, sink);
+  ASSERT_EQ(http.urls.size(), 3u);
+  // 10% around 600.22, halfway between the 600.19 bid and the 600.25 ask, rounded outward.
+  EXPECT_NE(http.urls[1].find("&strike_price_gte=540.19&strike_price_lte=660.25"), std::string::npos) << http.urls[1];
+  const auto spot = sink.all<md::UnderlyingQuote>().at(0);
+  EXPECT_DOUBLE_EQ(spot.bid, 600.19);
+  EXPECT_DOUBLE_EQ(spot.ask, 600.25);
+  EXPECT_EQ(sink.all<md::ContractDefinition>().size(), 2u);  // 700 is outside 10% of 600.22
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).state, md::FeedState::Delayed);
+}
+
+TEST(Alpaca, NoPriceForTheStrikeWindowOrNoMarketTimeFailsThePoll) {
+  providers::AlpacaProvider provider(options());
+  test::HttpStub http;
+  // A stock snapshot with neither a trade nor a quote, and an option quoted without a time.
+  http.respond = [](std::string_view url) {
+    if (url.find("/v2/stocks/") != std::string_view::npos) return net::HttpResponse{200, R"({"symbol":"SPY"})"};
+    return net::HttpResponse{
+        200, R"({"snapshots":{"SPY261005P00600000":{"latestQuote":{"ap":0,"as":0,"bp":0,"bs":0}}},"next_page_token":null})"};
+  };
+  test::BrokerSink sink;
+  provider.poll_once(http, "SPY", {{"SPY"}, 0, 0.1}, sink);
+  EXPECT_EQ(http.urls.size(), 1u);  // no chain without a price to center the window on
+  ASSERT_EQ(sink.events.size(), 1u);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).message, "alpaca SPY: strike filter needs an underlying price");
+  // Without a window the chain is fetched, but nothing in it has a market time to publish at.
+  sink.events.clear();
+  provider.poll_once(http, "SPY", {{"SPY"}}, sink);
+  EXPECT_EQ(http.urls.size(), 3u);
+  ASSERT_EQ(sink.events.size(), 1u);
+  EXPECT_EQ(sink.all<md::ProviderStatus>().at(0).message, "alpaca SPY: snapshot has no known market timestamp");
+}
+
 TEST(Alpaca, IndexUnderlyingsAreRejected) {
   providers::AlpacaProvider provider(options());
   test::HttpStub http;
@@ -187,12 +344,36 @@ TEST(Alpaca, IndexUnderlyingsAreRejected) {
 }
 
 TEST(BrokerFactory, AlpacaValidatesFeedsAndReadsKeysFromTheEnvironment) {
-  EXPECT_THROW((void)providers::make_provider({"alpaca", "", {{"feed", "sip"}}}), std::invalid_argument);
-  EXPECT_THROW((void)providers::make_provider({"alpaca", "", {{"base_url", "https://example.com"}}}), std::invalid_argument);
-  EXPECT_THROW((void)providers::make_provider({"alpaca", "", {{"requests_per_minute", "0"}}}), std::invalid_argument);
   EXPECT_THROW(providers::AlpacaProvider({.key_id = "a", .secret_key = "b", .stock_feed = "otc"}), std::invalid_argument);
   EXPECT_THROW(providers::AlpacaProvider({.key_id = "", .secret_key = "b"}), std::invalid_argument);
   const auto names = providers::provider_names();
   EXPECT_NE(std::find(names.begin(), names.end(), "alpaca"), names.end());
+  const ScopedEnvironment key_id("APCA_API_KEY_ID", "generated-test-key-id");
+  const ScopedEnvironment secret_key("APCA_API_SECRET_KEY", "generated-test-secret-key");
+  const auto provider = providers::make_provider({"alpaca", "", {}});
+  EXPECT_EQ(provider->name(), "alpaca");
+  EXPECT_NO_THROW((void)providers::make_provider({"alpaca", "", {{"feed", "opra"}, {"stock_feed", "delayed_sip"},
+                                                                 {"requests_per_minute", "10000"}, {"poll_seconds", "60"}}}));
+  // With both keys set, a refusal can only be the option's own: a missing key no longer
+  // passes for it.
+  const auto refuses = [](const std::map<std::string, std::string>& chosen, std::string_view reason) {
+    try {
+      (void)providers::make_provider({"alpaca", "", chosen});
+      ADD_FAILURE() << "accepted, expected: " << reason;
+    } catch (const std::invalid_argument& error) {
+      EXPECT_NE(std::string_view(error.what()).find(reason), std::string_view::npos) << error.what();
+    }
+  };
+  refuses({{"feed", "sip"}}, "alpaca: feed must be indicative or opra");
+  refuses({{"base_url", "https://example.com"}}, "unknown provider option base_url");
+  refuses({{"requests_per_minute", "0"}}, "requests_per_minute must be an integer");
+  refuses({{"stock_feed", "otc"}}, "stock_feed must be iex, sip or delayed_sip");
+  refuses({{"poll_seconds", "0"}}, "poll_seconds must be an integer");
+  // Each key is read: with either one unset, no provider is made.
+  for (const auto* variable : {"APCA_API_KEY_ID", "APCA_API_SECRET_KEY"}) {
+    SCOPED_TRACE(variable);
+    const ScopedEnvironment unset(variable, nullptr);
+    refuses({}, "set APCA_API_KEY_ID and APCA_API_SECRET_KEY");
+  }
 }
 }  // namespace
