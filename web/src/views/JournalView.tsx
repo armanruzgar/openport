@@ -12,7 +12,7 @@ import { TradingError, WriteAccess, writeBlocked } from "../components/TradingCo
 import { Empty, PageHeader, Panel, Segmented, Tile, toneOf, toneText } from "../components/ui"
 import { signedPercent } from "../lib/format"
 import { timestampET } from "../lib/freshness"
-import { dimensions, mistakePicks, mistakeCosts, contractLabel, dailyResults, exitLabel, formatDuration, journalLabel, journalStats, monthWeeks, newYorkDate, parseTags, shareSourceLabel, strategyResults, systemClose, tradeBuckets, tradeNet, tradeTags, wholeEntries, type Dimension, type JournalTrade, type Side } from "../lib/journal"
+import { dimensions, mistakePicks, mistakeCosts, contractLabel, dailyResults, exitLabel, formatDuration, journalLabel, journalStats, monthWeeks, newYorkDate, parseTags, shareSourceLabel, strategyResults, systemClose, tradeBuckets, tradeNet, tradeTags, wholeEntries, type Dimension, type JournalTrade, type ScenarioMark, type Side } from "../lib/journal"
 import { tradeGroups, type TradeGroup } from "../lib/positions"
 import { formatMoney, signedMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
@@ -21,6 +21,7 @@ import { netLabel } from "./OrdersView"
 import { FillQualityPanel } from "./FillQualityPanel"
 
 const usd = (value: number) => signedMoney(value.toFixed(2))
+const noWholes: WholeTrade[] = []
 const monthName = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" })
 const short = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
 
@@ -48,9 +49,12 @@ function Journal({ trading }: { trading: TradingStatus }) {
   // Every panel reads the trades with the chosen tag; shares from exercise and
   // assignment count beside the options.
   const playbooks = [...new Set(tags.filter((value) => value.startsWith("playbook:")).map((value) => value.slice(9).split("@v")[0]!))].sort()
-  const matches = (trade: { tags?: string[] }) => (!tag || trade.tags?.includes(tag)) && (!playbook || trade.tags?.some((value) => value.startsWith(`playbook:${playbook}@v`)))
-  const list = all.filter(matches)
-  const shareList = shares.filter(matches)
+  // Filtered once per change of the trades or the filters, not on every live tick: the
+  // memos below, the calendar's and the history's key on these arrays.
+  const [list, shareList] = useMemo(() => {
+    const matches = (trade: { tags?: string[] }) => (!tag || trade.tags?.includes(tag)) && (!playbook || trade.tags?.some((value) => value.startsWith(`playbook:${playbook}@v`)))
+    return [all.filter(matches), shares.filter(matches)] as const
+  }, [all, shares, tag, playbook])
   // Headline stats, the calendar and reports count round trips, or each strategy
   // and whole trade (rolls and adjustments included) once.
   const [count, setCount] = useState<"round_trips" | "whole">("round_trips")
@@ -98,7 +102,7 @@ function Journal({ trading }: { trading: TradingStatus }) {
       <Calendar trades={entries} notes={trades.data.day_notes ?? {}} trading={trading} />
       <Reports trades={entries} />
       <FillQualityPanel scope={scope} />
-      <History trades={list} wholes={wholes ?? []} trading={trading} />
+      <History trades={list} wholes={wholes ?? noWholes} trading={trading} />
       {shareList.length > 0 && <Shares trades={shareList} trading={trading} />}
       <Panel title="Settlements · all attempts">
         {settlements.error ? <TradingError error={settlements.error} />
@@ -212,13 +216,25 @@ export function Calendar({ trades, notes, trading }: { trades: JournalTrade[]; n
   )
 }
 
+/** The same array while its contents are the same: each replay tick carries the run's events anew. */
+function useSameEvents(events: ScenarioMark[] | undefined): ScenarioMark[] | undefined {
+  const text = JSON.stringify(events ?? null)
+  // Keyed on the contents alone, on purpose.
+  return useMemo(() => events, [text])
+}
+
 function Reports({ trades }: { trades: JournalTrade[] }) {
   const [side, setSide] = useState<Side>("all")
   const [dimension, setDimension] = useState<Dimension>("duration")
   const live = useLive()
   const playbooks = useQuery({ queryKey: ["review-playbooks", live.accountScope, live.trading?.account_version], queryFn: ({ signal }) => api.playbooks(signal) })
-  const brokenOrders = new Set(Object.values(playbooks.data?.reports ?? {}).flatMap(r => r.trades.filter(t => Object.values(t.rules).some(v => v === false)).map(t => t.order)))
-  const buckets = tradeBuckets(trades, dimension, side, { events: shownReplay(live)?.events, brokenOrders })
+  const reports = playbooks.data?.reports
+  const brokenOrders = useMemo(() => new Set(Object.values(reports ?? {}).flatMap(r => r.trades.filter(t => Object.values(t.rules).some(v => v === false)).map(t => t.order))),
+    [reports])
+  const events = useSameEvents(shownReplay(live)?.events)
+  // The coach flags compare every trade with its peers: recompute only when what they read changes.
+  const buckets = useMemo(() => tradeBuckets(trades, dimension, side, { events, brokenOrders }), [trades, dimension, side, events, brokenOrders])
+  const costs = useMemo(() => mistakeCosts(trades), [trades])
   const by = dimensions.find(d => d.value === dimension)!.label.toLowerCase()
   return (
     <Panel title="Trade reports" actions={<>
@@ -237,7 +253,7 @@ function Reports({ trades }: { trades: JournalTrade[] }) {
         <tbody>{buckets.map(b => <tr key={b.label}>{[b.label, b.trades, b.winRate == null ? "—" : `${(b.winRate * 100).toFixed(1)}%`, b.expectancy == null ? "—" : usd(b.expectancy), b.averageR?.toFixed(2) ?? "—", b.profitFactor === Infinity ? "∞" : b.profitFactor?.toFixed(2) ?? "—", b.giveBack == null ? "—" : usd(b.giveBack)].map((v, i) => <td key={i} className="p-2">{v}</td>)}</tr>)}</tbody></table></div>
       <h3 className="mt-4 text-xs font-medium">Mistake cost comparison</h3>
       <p className="text-xs text-muted">Observed net P&amp;L, not an estimate of what would have happened without the mistake. A+ setup is a positive pick.</p>
-      <table className="mt-2 w-full text-xs"><thead><tr><th className="text-left">Pick</th><th>With pick</th><th>Without pick</th></tr></thead><tbody>{mistakeCosts(trades).map(row => <tr key={row.label}><td>{row.label}</td><td className="text-center">{usd(row.with.net)} · {row.with.trades} trades</td><td className="text-center">{usd(row.without.net)} · {row.without.trades} trades</td></tr>)}</tbody></table>
+      <table className="mt-2 w-full text-xs"><thead><tr><th className="text-left">Pick</th><th>With pick</th><th>Without pick</th></tr></thead><tbody>{costs.map(row => <tr key={row.label}><td>{row.label}</td><td className="text-center">{usd(row.with.net)} · {row.with.trades} trades</td><td className="text-center">{usd(row.without.net)} · {row.without.trades} trades</td></tr>)}</tbody></table>
     </Panel>
   )
 }

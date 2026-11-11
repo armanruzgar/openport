@@ -766,6 +766,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   bracket and walk were left out. The order text now adds the trigger ("when bid ≤
   $4.20"), the walk's cap and the bracket's exits, and a default name is cut to the
   64 bytes the server takes.
+- **The Journal and Orders pages keep up with a long history.** Both recomputed what
+  they show from the whole history (trade grouping, statistics, calendar, reports, the
+  order and fill searches) on every live tick, and the Journal's "Coach flag" report
+  sorted every trade's peers once per trade, which took seconds per tick with a few
+  thousand closed trades. Each is now computed once per change of the data or filters,
+  and the coach report finds every peer group's median size in one pass.
 
 ## 0.5.1 (2026-10-28)
 

@@ -61,8 +61,9 @@ function OrdersAccount({ trading }: { trading: TradingStatus }) {
   const [side, setSide] = useState<"all" | "buy" | "sell">("all")
   const [status, setStatus] = useState<"all" | Order["status"]>("all")
   const [origin, setOrigin] = useState<"all" | "user" | "system">("all")
-  const all = orders.data?.orders ?? []
-  const working = all.filter(open)
+  // Derived once per change of the orders, so the filtered rows below are not rebuilt on every live tick.
+  const all = useMemo(() => orders.data?.orders ?? [], [orders.data])
+  const working = useMemo(() => all.filter(open), [all])
   const query = search.trim().toLowerCase()
   const visible = useMemo(() => (tab === "working" ? working : all).filter((o) =>
     (side === "all" || o.side === side) && (status === "all" || o.status === status) &&
@@ -72,8 +73,8 @@ function OrdersAccount({ trading }: { trading: TradingStatus }) {
   [tab, working, all, side, status, origin, query])
   const [cancelAll, setCancelAll] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  const fillRows = (fills.data?.fills ?? []).filter((f) => (side === "all" || f.side === side) &&
-    (!query || [f.symbol, f.order_id, osiLabel(f.symbol, f.underlying)].some((v) => v.toLowerCase().includes(query))))
+  const fillRows = useMemo(() => (fills.data?.fills ?? []).filter((f) => (side === "all" || f.side === side) &&
+    (!query || [f.symbol, f.order_id, osiLabel(f.symbol, f.underlying)].some((v) => v.toLowerCase().includes(query)))), [fills.data, side, query])
 
   return <div className="min-w-0 space-y-4">
     <PageHeader title="Orders" subtitle="Working orders, order history and fills">

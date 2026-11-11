@@ -165,7 +165,24 @@ export const dimensions: { value: Dimension; label: string }[] = [
 export const mistakePicks = ["chased", "oversized", "moved stop", "revenge", "broke plan", "early exit", "A+ setup"] as const
 export interface ScenarioMark { type: string; time: string; end?: string; symbols?: string[] }
 export interface CoachContext { events?: ScenarioMark[]; brokenOrders?: Set<string> }
-export function coachFlags(trade: JournalTrade, peers: readonly JournalTrade[], context: CoachContext = {}): string[] {
+const tradeSize = (t: JournalTrade) => isShares(t) ? t.max_shares : t.max_quantity
+const sizeCohort = (t: JournalTrade) => `${isShares(t) ? "shares" : "options"} ${tradeUnderlying(t)}`
+/** Each cohort's (options or shares, by underlying) median closed-trade size and how many closed trades it has, in one pass. */
+export function sizeMedians(trades: readonly JournalTrade[]): Map<string, { median: number; count: number }> {
+  const sizes = new Map<string, number[]>()
+  for (const t of trades) if (t.status === "closed") {
+    const cohort = sizes.get(sizeCohort(t))
+    if (cohort) cohort.push(tradeSize(t))
+    else sizes.set(sizeCohort(t), [tradeSize(t)])
+  }
+  return new Map([...sizes].map(([cohort, list]) => {
+    list.sort((a, b) => a - b)
+    return [cohort, { median: (list[Math.floor(list.length / 2)]! + list[Math.floor((list.length - 1) / 2)]!) / 2, count: list.length }]
+  }))
+}
+/** A closed trade's coach flags. Give `medians` (sizeMedians of the peers) when flagging many trades of the same peers. */
+export function coachFlags(trade: JournalTrade, peers: readonly JournalTrade[], context: CoachContext = {},
+                           medians?: ReadonlyMap<string, { median: number; count: number }>): string[] {
   if (trade.status !== "closed") return []
   const flags: string[] = []
   if (!isShares(trade)) {
@@ -176,11 +193,8 @@ export function coachFlags(trade: JournalTrade, peers: readonly JournalTrade[], 
   }
   if (context.events?.some(e => (!e.symbols?.length || e.symbols.includes(tradeUnderlying(trade))) &&
     Date.parse(e.time) <= Date.parse(trade.closed!) && Date.parse(e.end ?? e.time) >= Date.parse(trade.opened))) flags.push("Held through scenario event")
-  const size = (t: JournalTrade) => isShares(t) ? t.max_shares : t.max_quantity
-  const sizes = peers.filter(t => t.status === "closed" && isShares(t) === isShares(trade) && tradeUnderlying(t) === tradeUnderlying(trade)).map(size).sort((a, b) => a - b)
-  const middle = Math.floor(sizes.length / 2)
-  const median = sizes.length ? (sizes[middle]! + sizes[Math.floor((sizes.length - 1) / 2)]!) / 2 : 0
-  if (sizes.length >= 3 && median > 0 && size(trade) > 2 * median) flags.push("Size >2× median")
+  const cohort = (medians ?? sizeMedians(peers)).get(sizeCohort(trade))
+  if (cohort && cohort.count >= 3 && cohort.median > 0 && tradeSize(trade) > 2 * cohort.median) flags.push("Size >2× median")
   return flags
 }
 /** Descriptive association, not a counterfactual estimate of avoiding a mistake. */
@@ -218,6 +232,8 @@ function entryLabels(t: JournalTrade, dimension: Dimension): string[] {
 export function tradeBuckets(trades: readonly JournalTrade[], dimension: Dimension, side: Side = "all", context: CoachContext = {}): Bucket[] {
   const fixed = dimension === "duration" ? durationBuckets.map(b => b.label) : dimension === "weekday" ? weekdays : dimension === "month" ? months : dimension === "tag" ? [...tradeTags(trades), "untagged"] : []
   const groups = new Map<string, JournalTrade[]>(fixed.map(label => [label, []]))
+  // One pass for every trade's size cohort, not a sort of its peers per trade.
+  const medians = dimension === "coach" ? sizeMedians(trades) : undefined
   for (const t of trades) {
     if (t.status !== "closed" || !t.closed || (side !== "all" && (isShares(t) || (t.journalGroup?.side ?? t.type) !== side))) continue
     const day = closingDay(t)
@@ -225,7 +241,7 @@ export function tradeBuckets(trades: readonly JournalTrade[], dimension: Dimensi
       : dimension === "duration" ? [durationBuckets.find(b => (t.duration_seconds ?? 0) < b.max)!.label]
       : dimension === "weekday" ? [day ? weekdays[day.weekday - 1] : undefined]
       : dimension === "month" ? [day ? months[Number(day.date.slice(5, 7)) - 1] : undefined]
-      : dimension === "coach" ? coachFlags(t, trades, context) : entryLabels(t, dimension)
+      : dimension === "coach" ? coachFlags(t, trades, context, medians) : entryLabels(t, dimension)
     if (!labels.length) labels = [dimension === "coach" ? "No flags" : "Unknown"]
     for (const label of new Set(labels)) if (label) {
       const members = groups.get(label)
