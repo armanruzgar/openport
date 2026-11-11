@@ -13,6 +13,7 @@ import { liveState, useLive } from "../api/live"
 import { Positions } from "../views/PositionsView"
 import { portfolio, quote, status, summary } from "../test/trading-fixtures"
 import { defaultStudies } from "../lib/studies"
+import { barDay } from "../lib/candles"
 import { reviewTicketKey } from "../lib/keyboard"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
@@ -139,7 +140,8 @@ it("labels watchlist IV rank as a percentage and derives change from the prior d
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } })
   client.setQueryData(["summary", "SPX", 1], summary)
   client.setQueryData(["volatility", "SPX", 1], { symbol: "SPX", iv_rank: .25, proxy: { used: true, name: "VIX" } })
-  client.setQueryData(["watch-close", "SPX", 1], { symbol: "SPX", bars: [{ t: Date.parse("2026-09-22T20:00:00Z") / 1000, c: 6900 }] })
+  // The prior close is asked for once per New York trading day, not per data version.
+  client.setQueryData(["watch-close", "SPX", barDay(Date.parse(status.underlyings[0]!.as_of!) / 1000)], { symbol: "SPX", bars: [{ t: Date.parse("2026-09-22T20:00:00Z") / 1000, c: 6900 }] })
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><Watchlist onSymbol={() => {}} /></QueryClientProvider>))
     await act(async () => host.querySelector("button")!.click())

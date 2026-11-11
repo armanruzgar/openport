@@ -1296,6 +1296,17 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   like a server that was down. The terminal now says that openportd answers only with
   its token, or that it refused the saved one, and asks again only once the token
   changes.
+- **Watchlist cards no longer blank on each update.** Each new data version of a
+  symbol blanked its card's change, ATM IV, IV rank and expected move until three
+  fresh requests returned, and fetched the daily candles again although the prior
+  day's close does not move during the day. Cards now keep their figures while the
+  next ones load, and ask for the prior close once per trading day (each minute until
+  that bar has arrived).
+- **Jump to symbol follows the keyboard.** In **Jump to symbol**, the arrow keys
+  moved the highlight past the visible rows without scrolling to it, so Enter opened a
+  symbol out of view, and when the list shrank while open the highlight could fall
+  off the end, leaving Enter doing nothing. The highlighted row is now scrolled into
+  view and always stays on a listed symbol.
 
 ## 0.5.1 (2026-10-28)
 

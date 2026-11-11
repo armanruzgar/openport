@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { api } from "../api/client"
 import { marketTime, useLive } from "../api/live"
 import type { UnderlyingSnapshot } from "../api/types"
@@ -18,12 +18,19 @@ function WatchSymbol({ underlying, onSelect }: { underlying: UnderlyingSnapshot;
   const live = useLive()
   const { symbol, spot, as_of } = underlying
   const version = live.version(symbol)
-  const summary = useQuery({ queryKey: ["summary", symbol, version], queryFn: ({ signal }) => api.summary(symbol, signal) }).data
-  const volatility = useQuery({ queryKey: ["volatility", symbol, version], queryFn: ({ signal }) => api.volatility(symbol, signal) }).data
-  const candles = useQuery({ queryKey: ["watch-close", symbol, version], queryFn: ({ signal }) => api.candles(symbol, "1d", 10, signal) }).data
+  // Each version bump keeps the last figures on the card while the next ones load.
+  const summary = useQuery({ queryKey: ["summary", symbol, version], queryFn: ({ signal }) => api.summary(symbol, signal),
+    placeholderData: (previous) => matchingPayload(previous, symbol) }).data
+  const volatility = useQuery({ queryKey: ["volatility", symbol, version], queryFn: ({ signal }) => api.volatility(symbol, signal),
+    placeholderData: (previous) => matchingPayload(previous, symbol) }).data
+  const day = as_of && Number.isFinite(Date.parse(as_of)) ? barDay(Date.parse(as_of) / 1000) : null
+  // The prior day's close does not move during the day: ask once per New York trading day,
+  // and again each minute only until that bar has arrived (vendor history comes later).
+  const candles = useQuery({ queryKey: ["watch-close", symbol, day], queryFn: ({ signal }) => api.candles(symbol, "1d", 10, signal),
+    enabled: day != null, placeholderData: (previous) => previous?.symbol === symbol ? previous : undefined,
+    refetchInterval: (query) => day != null && query.state.data?.bars.some((bar) => barDay(bar.t) < day) ? false : 60_000 }).data
   const data = matchingPayload(summary, symbol)
   const expiry = data?.expiries.find((e) => e.id === defaultExpiry(data.expiries, marketTime(live, symbol, data.as_of)))
-  const day = as_of && Number.isFinite(Date.parse(as_of)) ? barDay(Date.parse(as_of) / 1000) : null
   const previous = day && candles?.symbol === symbol ? candles.bars.filter((bar) => barDay(bar.t) < day).at(-1)?.c : null
   const change = isNum(spot) && isNum(previous) && previous > 0 ? (spot / previous - 1) * 100 : null
   const rank = volatility?.symbol === symbol ? volatility.iv_rank : null
@@ -56,16 +63,23 @@ export function SymbolSearch({ onSymbol, onClose }: { onSymbol: (symbol: string)
   const [query, setQuery] = useState("")
   const [index, setIndex] = useState(0)
   const matches = searchSymbols(underlyings.map((u) => u.symbol), query)
+  // The list can shrink while open (a symbol unsubscribed): keep the highlight on a row.
+  const active = Math.min(index, matches.length - 1)
+  // aria-activedescendant scrolls nothing: bring the highlighted row into view.
+  useEffect(() => {
+    if (active >= 0) document.getElementById(`symbol-result-${active}`)?.scrollIntoView?.({ block: "nearest" })
+  }, [active])
   const choose = (symbol: string) => { onSymbol(symbol); onClose() }
   return <Dialog title="Jump to symbol" onClose={onClose}>
     <input autoFocus className="trade-input" role="combobox" aria-label="Search subscribed symbols" aria-controls="symbol-results" aria-expanded="true"
-      aria-activedescendant={matches[index] ? `symbol-result-${index}` : undefined} value={query}
+      aria-activedescendant={active >= 0 ? `symbol-result-${active}` : undefined} value={query}
       onChange={(e) => { setQuery(e.target.value); setIndex(0) }} onKeyDown={(event) => {
-        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setIndex((i) => Math.max(0, Math.min(matches.length - 1, i + (event.key === "ArrowDown" ? 1 : -1)))) }
-        if (event.key === "Enter" && matches[index]) { event.preventDefault(); choose(matches[index]) }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setIndex(Math.max(0, Math.min(matches.length - 1, active + (event.key === "ArrowDown" ? 1 : -1)))) }
+        const chosen = matches[active]
+        if (event.key === "Enter" && chosen) { event.preventDefault(); choose(chosen) }
       }} />
     <ul id="symbol-results" role="listbox" aria-label="Subscribed symbols" className="max-h-80 overflow-auto">{matches.map((symbol, i) =>
-      <li id={`symbol-result-${i}`} role="option" aria-selected={i === index} key={symbol} className={i === index ? "bg-raised" : ""}>
+      <li id={`symbol-result-${i}`} role="option" aria-selected={i === active} key={symbol} className={i === active ? "bg-raised" : ""}>
         <button className="w-full p-3 text-left" onClick={() => choose(symbol)}>{symbol} <span className="float-right tabular">{price(underlyings.find((u) => u.symbol === symbol)?.spot)}</span></button>
       </li>)}</ul>
     {!matches.length && <p className="text-sm text-muted">No subscribed symbol matches.</p>}
