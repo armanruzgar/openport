@@ -1,5 +1,6 @@
 #pragma once
 
+#include "margin_optimizer.hpp"
 #include "openport/trading/evaluation.hpp"
 
 namespace openport::trading::detail {
