@@ -1043,29 +1043,40 @@ TEST(WebServer, DaemonStopsOnHangupUnlessItReloadsTokensOrRunsUnderNohup) {
 }
 
 // I-18: paper trading that cannot start is named on the console with its journal, not
-// only in the terminal; startup otherwise goes on.
-TEST(Cli, DaemonSaysWhyPaperTradingIsOffBeforeWebStartupFails) {
+// only in the terminal, and the server still starts. It runs for real: a bad --address
+// or a busy port is now refused before the journal is opened.
+TEST(WebServer, DaemonSaysWhyPaperTradingIsOffAndStillServes) {
   openport::test::RecordingFile source;
   openport::test::record_events(source.path, {});
   const auto folder = source.directory / "folder.jsonl";
   std::filesystem::create_directories(folder);
   const auto damaged = source.directory / "damaged.jsonl";
   { std::ofstream out(damaged); out << "not a journal\n"; }
-  const auto start = [&](const std::string& paper) {
-    return run_daemon("--provider replay --symbols SPX,SPY --option file='" + source.path.string() +
-                      "' --option speed=max " + paper + " --address invalid-address");
-  };
-  const std::vector<std::pair<std::filesystem::path, std::string>> journals{
-      {folder, "JOURNAL_IO: "}, {damaged, "JOURNAL_CORRUPT: Invalid journal JSON at record 1"}};
-  for (const auto& [journal, reason] : journals) {
-    const auto result = start("--paper-journal '" + journal.string() + "'");
-    EXPECT_EQ(result.status, 2) << result.output;
-    EXPECT_NE(result.output.find("openportd: paper trading is off (" + journal.string() + "): " + reason),
-              std::string::npos) << result.output;
+  const auto daemon_path = std::string(OPENPORT_APPS_DIR) + "/openportd";
+  // The flags, and what openportd says about them: nothing with paper trading off.
+  const std::vector<std::pair<std::string, std::string>> runs{
+      {"--paper-journal '" + folder.string() + "'",
+       "openportd: paper trading is off (" + folder.string() + "): JOURNAL_IO: "},
+      {"--paper-journal '" + damaged.string() + "'",
+       "openportd: paper trading is off (" + damaged.string() + "): JOURNAL_CORRUPT: Invalid journal JSON at record 1"},
+      {"--no-paper", ""}};
+  for (const auto& [paper, said] : runs) {
+    SCOPED_TRACE(paper);
+    Background daemon("export " + isolated_home() + "; exec '" + daemon_path + "' --provider replay --symbols SPX,SPY"
+                      " --option file='" + source.path.string() + "' --option speed=max --option loop=off " + paper +
+                      " --port " + std::to_string(free_port()), source.directory);
+    // Said before the banner, which shows the server runs without paper trading.
+    ASSERT_TRUE(daemon.line("web terminal: ", 60s).has_value()) << daemon.output;
+    if (said.empty()) {
+      EXPECT_EQ(daemon.output.find("paper trading is off"), std::string::npos) << daemon.output;
+    } else {
+      EXPECT_NE(daemon.output.find(said), std::string::npos) << daemon.output;
+    }
+    daemon.send(SIGTERM);
+    const auto status = daemon.wait_exit(60s);
+    ASSERT_TRUE(status.has_value()) << daemon.output;
+    EXPECT_TRUE(WIFEXITED(*status)) << daemon.output;
   }
-  const auto off = start("--no-paper");
-  EXPECT_EQ(off.status, 2) << off.output;
-  EXPECT_EQ(off.output.find("paper trading is off"), std::string::npos) << off.output;
 }
 
 // I-89: a usage error is its reason and a pointer to --help, not the whole usage text
