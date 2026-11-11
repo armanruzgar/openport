@@ -1207,6 +1207,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   listed every underlying with a position, and picking one held as a single leg, more
   than four legs, or legs in a ratio above 10 silently did nothing. The list now holds
   only the underlyings whose legs make a spread alert, and says so when none do.
+- **Write tokens beyond ASCII work in the terminal.** The terminal put the token into
+  the Authorization header as it was typed. Browsers send header values as Latin-1, so
+  a token such as `tökén-secret` reached openportd as different bytes and every write
+  was refused, and a token with a character above U+00FF (Cyrillic, say) made every
+  request fail before it was sent, so the terminal never loaded. The token now goes as
+  its UTF-8 bytes, which is what openportd compares, and a `#token=` link holding a
+  control character is ignored.
 
 ## 0.5.1 (2026-10-28)
 

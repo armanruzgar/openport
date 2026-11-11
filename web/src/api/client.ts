@@ -46,6 +46,15 @@ export function mapApiError(status: number, body: unknown, fallback: string): Ap
   return new ApiError(status, fallback)
 }
 
+/**
+ * A write token's Authorization header. Header values travel as Latin-1 bytes, and fetch
+ * throws on any character above U+00FF: the token goes as its UTF-8 bytes, which is what
+ * openportd compares (and what the WebSocket subprotocol carries, in hex).
+ */
+export function bearer(token: string): string {
+  return `Bearer ${Array.from(new TextEncoder().encode(token), (byte) => String.fromCharCode(byte)).join("")}`
+}
+
 async function request<T>(path: string, init: RequestInit): Promise<T> {
   const response = await fetch(path, init)
   if (!response.ok) {
@@ -53,7 +62,7 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     const error = mapApiError(response.status, body, `${response.status} ${response.statusText}`)
     const sent = new Headers(init.headers).get("Authorization")
     const token = writeToken.get()
-    if (isSandboxToken(token) && sent === `Bearer ${token}` && response.status === 403 &&
+    if (isSandboxToken(token) && sent === bearer(token) && response.status === 403 &&
         (error.code === "SANDBOX_EXPIRED" || error.code === "WRITE_TOKEN_REQUIRED")) {
       activeAccount.set(MAIN_ACCOUNT, "automatic")
       dataSource.set("live", "automatic")
@@ -78,7 +87,7 @@ function routed(path: string): string {
 }
 export function readHeaders(): Record<string, string> {
   const token = writeToken.get()
-  return { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) }
+  return { Accept: "application/json", ...(token ? { Authorization: bearer(token) } : {}) }
 }
 const get = <T,>(path: string, signal?: AbortSignal) => request<T>(routed(path), { signal, headers: readHeaders() })
 /** A POST that computes from its body and changes nothing, so read access suffices. */
@@ -104,7 +113,7 @@ function write<T>(path: string, method: "POST" | "PUT" | "PATCH" | "DELETE", mod
   if (mode === "token") {
     const token = writeToken.get()
     if (!token) return Promise.reject(new ApiError(403, "Enter a write token to continue.", "WRITE_TOKEN_REQUIRED"))
-    headers.Authorization = `Bearer ${token}`
+    headers.Authorization = bearer(token)
   }
   return request<T>(path, { method, headers, ...(body === undefined ? {} : { body: rawJson ? String(body) : JSON.stringify(body) }) })
 }

@@ -51,6 +51,8 @@ export function adoptLinkedToken(location: Pick<Location, "hash" | "pathname" | 
   if (!match) return false
   let token = ""
   try { token = decodeURIComponent(match[1] ?? "").trim() } catch { /* a malformed link saves nothing */ }
+  // No header can carry a control character: such a link saves nothing either.
+  if (/[\u0000-\u001f\u007f]/.test(token)) token = ""
   history.replaceState(null, "", location.pathname + location.search)
   if (!token) return false
   store.set(token)
