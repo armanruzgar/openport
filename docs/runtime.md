@@ -1105,7 +1105,7 @@ be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
 their existing journal bytes; restart creates a byte-identical prefix on the current
-driver (11).
+driver (12).
 
 ### Verifying a run
 
@@ -1251,6 +1251,15 @@ the exact strike amount, a late settlement leaves a newer share price in place, 
 after the plan day ended clears that day's personal latches, and an order keeps its
 latest 50 changes ([paper trading](paper-trading.md)). Runs recorded with drivers 1–10
 verify as they were recorded; they can no longer be resumed or restarted.
+
+Driver 12 records, at every account reset, where the new attempt's stock fills start,
+and keeps each ended attempt's in its summary, so a share round trip bought before a
+reset at the reset's own market time stays with the attempt that bought it in the
+trades view, the portfolio's lifetimes and the rules comparison
+([paper trading](paper-trading.md)). Driver 11 and older recorded the boundary only for
+microscalping plans; their attempts keep placing share round trips by when they opened.
+Runs recorded with drivers 1–11 verify as they were recorded; they can no longer be
+resumed or restarted.
 
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).
@@ -2053,7 +2062,7 @@ F29 journals `trade_consistency_percent` only when nonzero and evaluation `best_
 
 F30 adds `min_trades` only when nonzero and evaluation `closed_trades` only when nonzero under that rule. Counts derive from current-attempt reducer history; plans without it add no state or journal fields.
 
-F61 omits `min_hold_seconds`, `microscalp_seconds` and `microscalp_percent` at zero. Active microscalping records nonzero evaluation `short_profit` and a nondefault `first_stock_fill` attempt boundary; these derive from fills/closures and share fills, and reset with the attempt. Hold age is reconstructed from first opening fills, adding no timing state. Only opted-in OCO acceptance links its sibling before the hold check. Off journals, transaction hashes and replay/scenario revisions remain unchanged.
+F61 omits `min_hold_seconds`, `microscalp_seconds` and `microscalp_percent` at zero. Active microscalping records nonzero evaluation `short_profit` and a nondefault `first_stock_fill` attempt boundary; these derive from fills/closures and share fills, and reset with the attempt. From replay driver 12 every reset records `first_stock_fill` whatever the plan, and each attempt summary keeps its own once it is past the first stock fill. Hold age is reconstructed from first opening fills, adding no timing state. Only opted-in OCO acceptance links its sibling before the hold check. Off journals, transaction hashes and replay/scenario revisions remain unchanged.
 
 ### Direction gates
 

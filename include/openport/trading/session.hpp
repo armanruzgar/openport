@@ -472,6 +472,10 @@ class TradingSession {
   /// marking the shares over a newer price; a reset after the day's end keeping the
   /// finished day's personal latches; and every change an order kept.
   void set_revised_lifecycle(bool revised);
+  /// Preserve attempt boundaries when verifying replay drivers 1–11: a reset records
+  /// where the new attempt's stock fills start only for a microscalping plan, and an
+  /// attempt's summary keeps none.
+  void set_revised_share_attempts(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

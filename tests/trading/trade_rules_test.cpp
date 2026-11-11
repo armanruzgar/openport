@@ -432,6 +432,41 @@ TEST_P(TradePhases, MicroscalpingSharesResetsAtSameTimestampAndRecoversBoundary)
   EXPECT_EQ(s.snapshot()->evaluation.short_profit, m("5"));
 }
 
+// B-43: from replay driver 12 every reset records where the new attempt's stock fills
+// start, whatever the plan, and the summary of the attempt it ends keeps that attempt's,
+// so the views can tell shares bought before a reset at its own market time from shares
+// bought after it. Both are journaled and recovered. Driver 11 kept the boundary only
+// for microscalping: its journals never name it here.
+TEST(TradeRules, EveryResetKeepsWhereItsAttemptsStockFillsStart) {
+  ScriptedMarket f;
+  const StockPrice spy{"SPY", f.time, m("500")};
+  for (const bool revised : {true, false}) {
+    SCOPED_TRACE(revised ? "driver 12" : "driver 11");
+    JournalFile file;
+    {
+      TradingSession s(config(), f.time, test::create_journal(file.path));
+      s.set_revised_share_attempts(revised);
+      ASSERT_TRUE(s.trade_stock("SPY", 1, f.time, spy).decision.ok());       // s1
+      ASSERT_TRUE(s.reset_account(m("10000"), {}, "second", f.time).decision.ok());  // s2 closes it
+      EXPECT_EQ(s.snapshot()->evaluation.first_stock_fill, revised ? 3U : 1U);
+      EXPECT_EQ(s.snapshot()->attempts.back().first_stock_fill, 1U);  // the first attempt's fills start at s1
+      ASSERT_TRUE(s.trade_stock("SPY", 2, f.time, spy).decision.ok());       // s3
+      ASSERT_TRUE(s.reset_account(m("10000"), {}, "third", f.time).decision.ok());   // s4 closes it
+      EXPECT_EQ(s.snapshot()->evaluation.first_stock_fill, revised ? 5U : 1U);
+      EXPECT_EQ(s.snapshot()->attempts.back().first_stock_fill, revised ? 3U : 1U);
+    }
+    const auto recovery = FileJournal::read(file.path);
+    bool named = false;
+    for (const auto& record : recovery.records) named = named || record.payload.find("first_stock_fill") != std::string::npos;
+    EXPECT_EQ(named, revised);
+    auto s = TradingSession::recover(recovery);
+    EXPECT_EQ(s.snapshot()->evaluation.first_stock_fill, revised ? 5U : 1U);
+    ASSERT_EQ(s.snapshot()->attempts.size(), 2U);
+    EXPECT_EQ(s.snapshot()->attempts[0].first_stock_fill, 1U);
+    EXPECT_EQ(s.snapshot()->attempts[1].first_stock_fill, revised ? 3U : 1U);
+  }
+}
+
 TEST(TradeRules, HoldingRulesValidatePairsAndRanges) {
   AccountRules r;
   r.min_hold_seconds = 3601; EXPECT_THROW(validate_rules(r), TradingError);

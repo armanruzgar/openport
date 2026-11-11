@@ -1699,7 +1699,10 @@ Evaluation fresh_evaluation(const State& s, std::uint64_t attempt) {
   e.first_order = static_cast<OrderId>(s.orders.size() + 1);
   e.first_fill = s.fills.size() + 1;
   if (s.revised_share_orders) e.first_stock_order = static_cast<OrderId>(s.stock_orders.size() + 1);
-  if (s.config.rules.phase != Phase::Funded && s.config.rules.microscalp_percent > 0)
+  // Where the attempt's stock fills start, so share round trips opened before a reset
+  // at its own market time stay with the attempt they opened in. Replay drivers 1-11
+  // kept it only for microscalping, which counts this attempt's share round trips.
+  if (s.revised_share_attempts || (s.config.rules.phase != Phase::Funded && s.config.rules.microscalp_percent > 0))
     e.first_stock_fill = s.stock_fills.size() + 1;
   e.day = s.day;
   e.day_open_equity = e.starting_balance;
@@ -6158,6 +6161,10 @@ void TradingSession::set_revised_lifecycle(bool revised) {
   impl_->state.revised_lifecycle = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
+void TradingSession::set_revised_share_attempts(bool revised) {
+  impl_->state.revised_share_attempts = revised;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {
   impl_->opening_rule_inputs = std::move(inputs);
   impl_->compact_opening_rule_inputs = compact;
@@ -7666,7 +7673,8 @@ CommandResult TradingSession::reset_account(Money initial_cash, AccountRules rul
                           e.status, e.decision, e.first_order, e.first_fill, e.decision_code, s.config.rules, e.decided_at,
                           e.status == EvaluationStatus::Active ? std::nullopt : std::optional(e.decided_equity), e.peak,
                           s.config.rules.max_drawdown > Money{} ? std::optional(e.floor) : std::nullopt, s.fee_charged, {},
-                          archive_payouts ? e.size_scaling : std::nullopt});
+                          archive_payouts ? e.size_scaling : std::nullopt,
+                          s.revised_share_attempts ? e.first_stock_fill : std::uint64_t{1}});
     if (archive_payouts)
       for (const auto& payout : e.payouts) s.attempts.back().payouts_received = s.attempts.back().payouts_received + payout.trader_share;
     s.fee_charged = {fee, fee == Money{} ? "" : same ? "reset" : activated ? "activation" : "evaluation"};

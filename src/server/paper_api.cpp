@@ -659,11 +659,19 @@ std::uint64_t fill_attempt(const TradingSnapshot& s, std::uint64_t fill) {
     if (fill >= it->first_fill) return it->attempt;
   return 1;
 }
-/// The attempt a share round trip belongs to, by the time it opened.
-std::uint64_t time_attempt(const TradingSnapshot& s, Timestamp time) {
-  if (time >= s.evaluation.started) return s.evaluation.attempt;
+/// Whether a stock fill belongs to an attempt or a later one: from the attempt's first
+/// stock fill where it kept one (every reset from replay driver 12 on), otherwise from
+/// its start, as runs before it placed them. With no stock fill before an attempt its
+/// boundary is 1, where the two agree, as market time never goes back.
+bool from_attempt(std::uint64_t first_stock_fill, Timestamp started, std::uint64_t fill, Timestamp time) {
+  return first_stock_fill > 1 ? fill >= first_stock_fill : time >= started;
+}
+/// The attempt a share round trip belongs to: the one its opening stock fill is in.
+std::uint64_t share_attempt(const TradingSnapshot& s, const ShareLifecycle& trip) {
+  const auto opening = trip.fills.front();
+  if (from_attempt(s.evaluation.first_stock_fill, s.evaluation.started, opening, trip.opened)) return s.evaluation.attempt;
   for (auto it = s.attempts.rbegin(); it != s.attempts.rend(); ++it)
-    if (time >= it->started) return it->attempt;
+    if (from_attempt(it->first_stock_fill, it->started, opening, trip.opened)) return it->attempt;
   return 1;
 }
 /// A round trip's P&L by Greek over its life; null for one open from before they were kept.
@@ -834,7 +842,7 @@ json portfolio_json(const TradingView& view) {
     if (!t.closed) { l.trade = std::to_string(t.first_fill); l.opened = t.opened; }
   }
   for (const auto& t : share_lifecycles(s.stock_fills, s.dividends)) {
-    if (time_attempt(s, t.opened) != s.evaluation.attempt) continue;
+    if (share_attempt(s, t) != s.evaluation.attempt) continue;
     auto& l = lifetimes[t.symbol];
     ++l.round_trips;
     l.realised = l.realised + t.gross + t.dividends;
@@ -1361,7 +1369,6 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
                          : json(md::format_timestamp(*review->second.since))}});
   }
   // Shares from exercise and assignment, round trip by round trip, newest first.
-  const auto attempt_at = [&](Timestamp time) { return time_attempt(s, time); };
   const auto source = [&](std::uint64_t id) -> json {
     if (id == 0 || id > s.stock_fills.size()) return nullptr;
     return share_source(s.stock_fills[id - 1]);
@@ -1377,7 +1384,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
     const bool open = !t.closed;
     if ((status == "open" && !open) || (status == "closed" && open)) continue;
     if (!within(t.closed.value_or(t.opened))) continue;
-    const auto attempt = attempt_at(t.opened);
+    const auto attempt = share_attempt(s, t);
     if (current_only && attempt != e.attempt) continue;
     json mark = nullptr, unrealised = nullptr;
     if (open) {
@@ -4011,10 +4018,11 @@ ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source
     activity.round_trips.push_back({std::to_string(life.first_fill), *life.closed, life.gross - life.fees, *life.closed - life.opened});
   }
   for (const auto& [id, trade] : whole) if (!open.contains(id)) activity.trades.push_back(trade);
-  // The attempt's share round trips: its own stock fills (first_stock_fill marks the
-  // boundary only where its rules have microscalping), opened from its start.
+  // The attempt's share round trips, placed as the trades view places them: by the
+  // stock fill that opened them, or by when they opened where the attempt kept no
+  // boundary (runs before replay driver 12, outside microscalping).
   for (const auto& life : share_lifecycles(s.stock_fills, s.dividends))
-    if (life.closed && life.fills.front() >= e.first_stock_fill && life.opened >= e.started)
+    if (life.closed && from_attempt(e.first_stock_fill, e.started, life.fills.front(), life.opened))
       activity.round_trips.push_back({"s" + std::to_string(life.fills.front()), *life.closed, life.gross + life.dividends,
                                       *life.closed - life.opened});
   // The attempt's own executions, for the inactivity rule, as the reducer counts them
@@ -4025,7 +4033,7 @@ ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source
         !s.recent_orders[fill.order_id - 1].system)
       activity.executions.push_back(fill.time);
   for (const auto& fill : s.stock_fills)
-    if (fill.source == StockSource::Trade && fill.id >= e.first_stock_fill && fill.time >= e.started)
+    if (fill.source == StockSource::Trade && from_attempt(e.first_stock_fill, e.started, fill.id, fill.time))
       activity.executions.push_back(fill.time);
   const auto inputs = plan_inputs(s);
   json days = json::array();

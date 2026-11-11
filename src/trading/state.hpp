@@ -739,6 +739,7 @@ inline void to_json(Json& j, const AttemptSummary& a) {
   if (a.fee_charged.amount != Money{}) j["fee_charged"] = a.fee_charged;
   if (a.payouts_received != Money{}) j["payouts_received"] = a.payouts_received;
   if (a.size_scaling) j["size_scaling"] = *a.size_scaling;
+  if (a.first_stock_fill != 1) j["first_stock_fill"] = a.first_stock_fill;
 }
 inline void from_json(const Json& j, AttemptSummary& a) {
   j.at("attempt").get_to(a.attempt); j.at("plan").get_to(a.plan); j.at("started").get_to(a.started);
@@ -752,6 +753,7 @@ inline void from_json(const Json& j, AttemptSummary& a) {
   added_field(j, "peak", a.peak); added_field(j, "floor", a.floor);
   added_field(j, "fee_charged", a.fee_charged); added_field(j, "payouts_received", a.payouts_received);
   added_field(j, "size_scaling", a.size_scaling);
+  added_field(j, "first_stock_fill", a.first_stock_fill);
 }
 inline void to_json(Json& j, const Closure& c) {
   j = Json{{"symbol", c.symbol}, {"quantity", c.quantity}, {"price", c.price}, {"time", c.time}, {"kind", c.kind},
@@ -1006,6 +1008,9 @@ struct State {
   /// Transient compatibility: false for replay drivers 1–10, which keep their original
   /// order and account upkeep (see set_revised_lifecycle).
   bool revised_lifecycle = true;
+  /// Transient compatibility: false for replay drivers 1–11, whose resets kept where an
+  /// attempt's stock fills start only for microscalping (see set_revised_share_attempts).
+  bool revised_share_attempts = true;
   std::set<std::string> walked; ///< Transient symbols to match after this transaction's market is in place.
   SessionConfig config;
   Timestamp time = 0;

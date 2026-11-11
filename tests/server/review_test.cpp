@@ -229,6 +229,41 @@ TEST(TradeReviewApi, ExportsNameTheirRunAttemptAndClosingTradingDay) {
   EXPECT_EQ(csv_record(live[0], live[1])["account"], "main");
   EXPECT_TRUE(json::parse(server::handle_api({"GET", "/api/trades"}, source).body)["run"].is_null());
 }
+// B-43: a reset starts the new attempt at the current market time, so shares bought and
+// then closed by a reset at that same time opened at the new attempt's start. From replay
+// driver 12 they stay with the attempt that bought them, as option round trips do: not
+// listed under the new attempt, labelled with the old one, and left out of the new
+// attempt's lifetime for the symbol. Driver 11 placed them by when they opened.
+TEST(TradeReviewApi, SharesBoughtBeforeAResetAtItsOwnTimeStayWithTheirAttempt) {
+  for (const bool revised : {true, false}) {
+    SCOPED_TRACE(revised ? "driver 12" : "driver 11");
+    test::ScriptedMarket f;
+    trading::TradingSession s({}, f.time);
+    s.set_revised_share_attempts(revised);
+    const trading::StockPrice spy{"SPY", f.time, Money::parse("500")};
+    ASSERT_TRUE(s.trade_stock("SPY", 100, f.time, spy).decision.ok());
+    ASSERT_TRUE(s.reset_account(Money::parse("100000"), {}, "again", f.time).decision.ok());
+    ReviewSource source; source.publish(s);
+    ASSERT_EQ(source.view->snapshot->evaluation.started, f.time);
+    const auto current = json::parse(server::handle_api({"GET", "/api/trades?attempt=current"}, source).body)["share_trades"];
+    const auto all = json::parse(server::handle_api({"GET", "/api/trades?attempt=all"}, source).body)["share_trades"];
+    ASSERT_EQ(all.size(), 1U);
+    EXPECT_EQ(all[0]["id"], "s1");
+    EXPECT_EQ(all[0]["closed_by"], "reset");
+    EXPECT_EQ(all[0]["attempt"], revised ? 1 : 2);
+    EXPECT_EQ(current.size(), revised ? 0U : 1U);
+    ASSERT_TRUE(s.trade_stock("SPY", 10, f.time, spy).decision.ok());
+    source.publish(s);
+    const auto stocks = json::parse(server::handle_api({"GET", "/api/portfolio"}, source).body)["stocks"];
+    ASSERT_EQ(stocks.size(), 1U);
+    EXPECT_EQ(stocks[0]["trade"], "s3");
+    EXPECT_EQ(stocks[0]["lifetime"]["round_trips"], revised ? 1 : 2);
+    const auto held = json::parse(server::handle_api({"GET", "/api/trades?attempt=current"}, source).body)["share_trades"];
+    ASSERT_EQ(held.size(), revised ? 1U : 2U);
+    EXPECT_EQ(held[0]["id"], "s3");
+    EXPECT_EQ(held[0]["attempt"], 2);
+  }
+}
 TEST(TradeReviewApi, ClosedTradesSayWhetherAStopAFlattenOrALiquidationClosedThem) {
   test::ScriptedMarket f, g; g.contract.strike += 10;
   trading::SessionConfig config;

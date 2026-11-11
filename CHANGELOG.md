@@ -41,6 +41,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   marks, a reset after the day's end and bounded order change histories. Runs recorded
   with drivers 1–10 still pass `--verify-run` as they were recorded; like driver 10's,
   they can no longer be resumed or restarted.
+- **Replay driver 12.** New reproducible runs record driver 12, which also records at
+  every account reset where the new attempt's stock fills start, so shares stay with
+  the attempt that bought them (below). Runs recorded with drivers 1–11 still pass
+  `--verify-run` as they were recorded; like driver 11's, they can no longer be resumed
+  or restarted.
 - **Kill-switch and reset reasons are short text.** `POST /api/risk/kill` and
   `POST /api/account/reset` now refuse a `reason` over 200 bytes or with control
   characters (400 `INVALID_REQUEST`); a script that sent long or multi-line reasons
@@ -559,6 +564,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   change journaled the whole order, so re-pricing one order many times grew the
   journal with the square of its changes. An order now keeps its latest 50 changes
   and reports how many earlier ones it dropped (`changes_dropped`).
+- **Shares bought just before an account reset.** Share round trips were placed in an
+  attempt by when they opened, and a reset starts the new attempt at the current market
+  time, so shares bought and then closed by a reset at that same time (within one demo
+  step, between polls of a delayed feed, or with a replay paused) were listed under
+  the new attempt by `GET /api/trades?attempt=current`, labelled with it under
+  `attempt=all`, and counted in its lifetime for the symbol on the Portfolio. Every
+  reset now records where the attempt's stock fills start, and a share round trip
+  belongs to the attempt of the fill that opened it, as an option round trip does.
+  Attempts made before this version, or in runs recorded with an older replay
+  driver, keep the old placement.
 - **Strategy margin and leg order.** When the exact allocator gave up on a large book,
   the fallback's requirement depended on the order the legs were listed in (by up to
   4% on one book), so `margin_requirement` and `margin_breakdown` could answer

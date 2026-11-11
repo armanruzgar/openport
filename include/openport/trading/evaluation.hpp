@@ -97,7 +97,10 @@ struct BestTrade {
 struct Evaluation {
   bool revised_rules = true;  ///< Transient compatibility: false for replay drivers 1–6.
   Money short_profit;  ///< Positive net closed short-round-trip P&L, only with microscalping on.
-  std::uint64_t first_stock_fill = 1;  ///< Attempt boundary for microscalping shares; otherwise left at 1.
+  /// Stock fills with smaller IDs belong to earlier attempts. Every reset sets it from
+  /// replay driver 12 on; before that only a microscalping plan's did, and the rest left
+  /// it at 1, which places share round trips by when they opened instead.
+  std::uint64_t first_stock_fill = 1;
   std::uint64_t closed_trades = 0;  ///< Only counted with min_trades enabled.
   std::optional<BestTrade> best_trade;  ///< Kept only with trade consistency enabled.
   std::uint64_t attempt = 1;
@@ -419,6 +422,9 @@ struct AttemptSummary {
   AttemptFee fee_charged{};
   Money payouts_received{};
   std::optional<SizeScalingProgress> size_scaling{}; ///< Original plan terms for reset counting after growth.
+  /// As Evaluation::first_stock_fill, kept from replay driver 12 on; 1 in older
+  /// summaries and where the attempt kept no boundary.
+  std::uint64_t first_stock_fill = 1;
 };
 
 /// Exercise: contracts exercised early into shares, at intrinsic value.

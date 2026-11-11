@@ -181,11 +181,12 @@ financing: prices from before a split's ex-date, option triggers on a split stoc
 dividends on adjusted series and across catch-up rollovers, financing from an
 account's first trading date and portfolio margin on adjusted series, driver 10
 working share orders: client IDs per attempt, OCO pairs counted once and stops
-reached only in their session, and driver 11 order and account upkeep: share orders
+reached only in their session, driver 11 order and account upkeep: share orders
 cancelled with the option orders a rule stops, re-armed exits waiting for new size,
 exact pin deliveries, settlement marks, a reset after the day's end and bounded order
-change histories. Older drivers
-retain their original reducer behavior. The start input records `"driver": 11`: batches of whole market instants, with each
+change histories, and driver 12 attempt boundaries for shares: every reset records
+where the new attempt's stock fills start. Older drivers
+retain their original reducer behavior. The start input records `"driver": 12`: batches of whole market instants, with each
 underlying's quotes offered at the market time its own snapshot arrived; a new
 trading date's first batch rolling each account over on the finished day's closing
 marks before that batch's quotes; and each command's input recorded before the
