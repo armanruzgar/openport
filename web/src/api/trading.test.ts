@@ -8,7 +8,7 @@ import { sameAccountPlaceholder, tradingQueries } from "./trading"
 import { activeAccount } from "../lib/active-account"
 import { dataSource } from "../lib/data-source"
 import { writeToken } from "../lib/write-token"
-import { fill, limits, order, portfolio, risk, status, trading } from "../test/trading-fixtures"
+import { account, fill, limits, order, portfolio, risk, status, trading } from "../test/trading-fixtures"
 
 const cleanups: (() => void)[] = []
 afterEach(() => { cleanups.splice(0).reverse().forEach((fn) => fn()); writeToken.set(""); dataSource.set("live"); activeAccount.set("main"); vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -43,6 +43,12 @@ describe("trading API", () => {
     const legs = [{ symbol, side: "sell", ratio: 1 }, { symbol: "SPXW  261016C07010000", side: "buy", ratio: 1 }] as const
     await api.submitOrder({ client_order_id: "spread", legs: [...legs], quantity: 2, type: "limit", limit_price: "-0.80", time_in_force: "day" }, "open")
     expect(fetcher).toHaveBeenLastCalledWith("/api/orders", expect.objectContaining({ body: JSON.stringify({ client_order_id: "spread", legs, quantity: 2, type: "limit", limit_price: "-0.80", time_in_force: "day" }) }))
+  })
+  it("requests a payout with its amount as the exact decimal text", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(account)))
+    vi.stubGlobal("fetch", fetcher)
+    await api.requestPayout("2500.50", "open")
+    expect(fetcher).toHaveBeenLastCalledWith("/api/account/payout", expect.objectContaining({ method: "POST", body: JSON.stringify({ amount: "2500.50" }) }))
   })
   it("blocks disabled writes and missing tokens before fetch; turns rejected HTTP responses into typed errors", async () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ error: { code: "LIMITS_REVISION", message: "Reload limits", actual: null, limit: null, scope: null } }), { status: 409 }))
