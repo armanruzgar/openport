@@ -18,6 +18,7 @@
 #include "openport/net/http.hpp"
 #include "openport/server/web_server.hpp"
 #include "support/american_chain.hpp"
+#include "support/recording.hpp"
 #include "support/synthetic_chain.hpp"
 
 namespace {
@@ -396,25 +397,36 @@ TEST(Api, HestonIsAResearchFitOverTheLeadingExpiries) {
 
 TEST(Api, SlowFitsRunOnTheFitWorkerOnePerSnapshot) {
   StubSource source(heston_metrics());
+  StubSource chain;
   const auto caller = std::this_thread::get_id();
-  std::promise<std::pair<server::ApiResponse, std::thread::id>> first;
-  std::atomic<bool> first_done = false;
+  // A SABR overlay is deferred the same way, to the process's one fit worker, which runs
+  // its jobs in order. Its completion holds that worker until released, so the Heston
+  // fit queued behind it is still pending when the second Heston read arrives.
+  std::promise<void> release;
+  std::promise<std::thread::id> sabr_thread;
+  std::string sabr_body;
+  server::handle_api_async({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.7"}, chain,
+                           [&, held = release.get_future().share()](server::ApiResponse r) {
+    sabr_body = r.body;
+    sabr_thread.set_value(std::this_thread::get_id());
+    if (std::this_thread::get_id() != caller) held.wait();
+  });
+  using Answer = std::pair<server::ApiResponse, std::thread::id>;
+  std::promise<Answer> first, second;
   server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source, [&](server::ApiResponse response) {
-    first_done = true;
     first.set_value({std::move(response), std::this_thread::get_id()});
   });
-  // The flag clears only after the first completes, so until then the snapshot is busy.
-  const bool finished = first_done;
-  std::optional<server::ApiResponse> second;
-  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source,
-                           [&](server::ApiResponse response) { second = std::move(response); });
-  ASSERT_TRUE(second) << "a busy or cached read completes on the calling thread";
-  if (!finished) {
-    EXPECT_EQ(second->status, 503);
-    EXPECT_EQ(second->retry_after, 2);
-    EXPECT_EQ(json::parse(second->body)["error"]["code"], "FIT_BUSY");
-  }
+  server::handle_api_async({"GET", "/api/underlyings/SPX/heston"}, source, [&](server::ApiResponse response) {
+    second.set_value({std::move(response), std::this_thread::get_id()});
+  });
+  release.set_value();
   auto [response, thread] = first.get_future().get();
+  const auto [busy, busy_thread] = second.get_future().get();
+  // One fit per snapshot: the second read was refused while the first was queued.
+  EXPECT_EQ(busy_thread, caller) << "a busy read completes on the calling thread";
+  EXPECT_EQ(busy.status, 503);
+  EXPECT_EQ(busy.retry_after, 2);
+  EXPECT_EQ(json::parse(busy.body)["error"]["code"], "FIT_BUSY");
   EXPECT_NE(thread, caller);
   ASSERT_EQ(response.status, 200);
   EXPECT_EQ(json::parse(response.body)["status"], "ok");
@@ -426,16 +438,9 @@ TEST(Api, SlowFitsRunOnTheFitWorkerOnePerSnapshot) {
   EXPECT_EQ(cached->body, response.body);
   EXPECT_EQ(server::handle_api({"GET", "/api/underlyings/SPX/heston"}, source).body, response.body);
 
-  // A SABR overlay is deferred the same way; the plain surface is not.
-  StubSource chain;
-  std::promise<std::thread::id> sabr_thread;
-  std::string sabr_body;
-  server::handle_api_async({"GET", "/api/underlyings/SPX/surface?sabr_beta=0.7"}, chain, [&](server::ApiResponse r) {
-    sabr_body = r.body;
-    sabr_thread.set_value(std::this_thread::get_id());
-  });
   EXPECT_NE(sabr_thread.get_future().get(), caller);
   EXPECT_EQ(json::parse(sabr_body)["sabr_beta"], 0.7);
+  // The plain surface is not deferred.
   bool plain_now = false;
   server::handle_api_async({"GET", "/api/underlyings/SPX/surface"}, chain, [&](server::ApiResponse) { plain_now = true; });
   EXPECT_TRUE(plain_now);
@@ -543,7 +548,9 @@ TEST(Api, OexAndXeoHaveDistinctPmExpiryIds) {
 }
 
 TEST(WebServer, ServesTheApiAndTheAppShellOverHttp) {
-  const auto root = std::filesystem::temp_directory_path() / "openport-web-test";
+  // A fresh private directory: a fixed name would be shared with any other run of this test.
+  const test::RecordingFile site;
+  const auto& root = site.directory;
   std::filesystem::create_directories(root / "assets");
   std::ofstream(root / "index.html") << "<!doctype html><title>OpenPort</title>";
   std::ofstream(root / "assets" / "app-1234.js") << "console.log('hi')";
@@ -573,7 +580,6 @@ TEST(WebServer, ServesTheApiAndTheAppShellOverHttp) {
   EXPECT_EQ(http.get(base + "/../etc/passwd").status, 400);
 
   web.stop();
-  std::filesystem::remove_all(root);
 }
 
 TEST(Api, PublishesMarketAndAnalyticsProvenance) {
