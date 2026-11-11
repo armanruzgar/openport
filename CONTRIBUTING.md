@@ -26,6 +26,11 @@ cd web && npm ci && npx tsc -p tsconfig.json && npx vitest run && npm run build
 
 `cd web && npm run dev` serves the terminal on :5173 against an `openportd` on :8080.
 
+Web tests wait for the page with `waitForRender` (`web/src/test/render.ts`), which
+retries its check for 20 seconds and then fails with the check's own message; every
+test and hook must finish within 5 minutes. On a heavily loaded machine, set
+`OPENPORT_RENDER_WAIT_MS` to let renders take longer.
+
 CI runs on every push and pull request: the C++ suite with GCC 13 on Ubuntu 24.04 and
 Apple Clang on macOS, both with `-DOPENPORT_WERROR=ON`, again under AddressSanitizer
 and UndefinedBehaviorSanitizer with GCC 13, the web checks, the Python client and a

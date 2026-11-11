@@ -35,6 +35,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   its stop was already reached when the entry filled and it closed at once for a loss.
   The example is now 15 points wide with a 3× stop, and a test runs it from the guide
   on the guide's own backtest days.
+- **A failing web test shows its assertion.** `waitForRender` retried a check for 15
+  minutes, as long as CI's whole web job, so a page that never showed what a test
+  expected ended as a cancelled job with no message. It now fails after 20 seconds
+  with the check's own message (`OPENPORT_RENDER_WAIT_MS` allows longer on a loaded
+  machine), and a test that hangs fails after 5 minutes.
 - **Covered calls in the strategy optimizer.** A covered call's share cost was charged
   twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
   `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the
