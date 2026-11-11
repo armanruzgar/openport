@@ -270,6 +270,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   stopped in another window. The run is now forgotten once the stop is answered, the
   notice says the replay stopped, and a run stopped elsewhere leaves the page once the
   server no longer lists it.
+- **Playbook reports with many trades.** `GET /api/playbooks`, which the terminal
+  reads every three seconds, rebuilt every round trip of the account and searched all
+  its fills again for each entry it scored, so its cost grew faster than the square of
+  a playbook's trades: three hundred round trips took over a second. A read now builds
+  the round trips, each order's fills and each playbook's counted entries once, and
+  scores the current attempt and the forward tests in one pass; the engine's playbook
+  checks and per-playbook pass odds no longer repeat that work either. Reports are
+  unchanged.
 
 ## 0.5.1 (2026-10-28)
 

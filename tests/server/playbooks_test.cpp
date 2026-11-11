@@ -1383,6 +1383,65 @@ TEST(Playbooks, AdherenceDetectsWindowSizeExitTimeAndLossCooldownDeviations) {
   const auto retained = server::playbook_report(store.catalogue(), view, false).at("morning");
   EXPECT_EQ(retained.at("trades")[1].at("rules").at("guardrails"), false);
   EXPECT_TRUE(server::playbook_report(store.catalogue(), view).at("morning").at("trades").empty());
+  // Read together, the current attempt's reports come from every attempt's rows.
+  const auto publication = store.publication("main", false);
+  const auto [reports, forward] = server::playbook_reports(publication, view);
+  EXPECT_EQ(reports, server::playbook_report(publication, view));
+  EXPECT_EQ(forward, server::playbook_forward_report(publication, view));
+  EXPECT_TRUE(reports.at("morning").at("trades").empty());
+}
+TEST(Playbooks, ReportScoresHundredsOfRoundTripsAsEachEntryWasChecked) {
+  // Scoring each entry's guardrail rebuilt every round trip and searched the fills
+  // for each one's opening fill, so a report's cost grew with the cube of its trades.
+  // Three hundred one-lot round trips, a loss every fiftieth and a one-minute loss
+  // cooldown, under a daily cap that never binds: each entry is scored as it stood.
+  test::ScriptedMarket market;
+  trading::SessionConfig config;
+  config.fee_per_contract = Money{};
+  config.limits.aggregate = {1e9, 1e9}; config.limits.per_underlying = {1e9, 1e9};
+  trading::TradingSession session(config, market.time);
+  auto setup = definition(); setup["management"] = {{"close_by", "11:30"}};
+  setup["guardrails"]["max_entries_per_day"] = 1000;
+  setup["guardrails"]["cooldown_minutes"] = 1;
+  server::Playbooks store;
+  store.change({{"action", "create"}, {"definition", setup}}, "main", false);
+  constexpr int kTrips = 300;
+  const auto loss = [](int trip) { return trip % 50 == 7; };
+  for (int trip = 0; trip < kTrips; ++trip) {
+    market.seed(session);
+    auto entry = market.market("entry" + std::to_string(trip));
+    entry.tags = {"playbook:morning@v1"};
+    ASSERT_TRUE(session.submit(entry, market.time).decision.ok()) << trip;
+    market.next();
+    session.on_quotes({market.quote(loss(trip) ? "3.20" : "5.20", loss(trip) ? "3.40" : "5.40")}, {market.valuation()}, market.time);
+    ASSERT_TRUE(session.submit(market.market("close" + std::to_string(trip), 1, trading::Side::Sell), market.time).decision.ok()) << trip;
+    market.next();
+  }
+  server::TradingView view; view.snapshot = session.snapshot(); view.contracts = session.contracts(); view.config = config;
+  const auto report = server::playbook_report(store.catalogue(), view).at("morning");
+  ASSERT_EQ(report.at("trades").size(), static_cast<std::size_t>(kTrips));
+  int followed = 0;
+  for (int trip = 0; trip < kTrips; ++trip) {
+    // A loss closes a second after its entry; the next thirty entries, two seconds
+    // apart, come within its minute's cooldown.
+    bool cooling = false;
+    for (int earlier = std::max(0, trip - 30); earlier < trip; ++earlier) cooling = cooling || loss(earlier);
+    const auto& row = report.at("trades")[static_cast<std::size_t>(trip)];
+    EXPECT_EQ(row.at("order"), std::to_string(2 * trip + 1)) << trip;
+    EXPECT_EQ(row.at("net"), loss(trip) ? "-100.00" : "100.00") << trip;
+    EXPECT_EQ(row.at("rules").at("guardrails"), !cooling) << trip;
+    EXPECT_EQ(row.at("followed"), !cooling) << trip;
+    if (!cooling) ++followed;
+  }
+  EXPECT_EQ(followed, 120);
+  EXPECT_EQ(report.at("all").at("trades"), kTrips);
+  EXPECT_EQ(report.at("followed").at("trades"), followed);
+  EXPECT_EQ(report.at("deviated").at("trades"), kTrips - followed);
+  // The terminal's read scores the forward tests from the same pass over the round trips.
+  const auto publication = store.publication("main", false);
+  const auto [reports, forward] = server::playbook_reports(publication, view);
+  EXPECT_EQ(reports.at("morning"), report);
+  EXPECT_EQ(forward, server::playbook_forward_report(publication, view));
 }
 TEST(Playbooks, OlderRunWithoutCatalogueStillVerifiesAndArchivesUseRecordedVersions) {
   ScenarioFixture fixture;

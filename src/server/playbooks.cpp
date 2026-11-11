@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <charconv>
+#include <cstddef>
 #include <fstream>
 #include <iomanip>
 #include <locale>
@@ -82,7 +83,15 @@ std::vector<Lifecycle> lives(const TradingView& view) {
   return lifecycles(view.snapshot->recent_fills, view.snapshot->closures, view.contracts);
 }
 bool tagged(const Order& order, const std::string& id) {
-  return std::any_of(order.request.tags.begin(), order.request.tags.end(), [&](const auto& tag) { return tag.starts_with("playbook:" + id + "@v"); });
+  const auto prefix = "playbook:" + id + "@v";
+  return std::any_of(order.request.tags.begin(), order.request.tags.end(), [&](const auto& tag) { return tag.starts_with(prefix); });
+}
+/// The fill with `id`, or null. An account numbers its fills from one in execution
+/// order, so the ID locates the fill; a search covers any other numbering.
+const Fill* fill_by_id(const SharedVector<Fill>& fills, std::uint64_t id) {
+  if (id >= 1 && id <= fills.size() && fills[id - 1].id == id) return &fills[id - 1];
+  const auto found = std::find_if(fills.begin(), fills.end(), [&](const auto& fill) { return fill.id == id; });
+  return found == fills.end() ? nullptr : &*found;
 }
 struct Trip {
   const Order* order = nullptr;
@@ -94,12 +103,14 @@ struct Trip {
   Money net;
 };
 std::vector<Trip> trips(const TradingView& view, const std::vector<Lifecycle>& history) {
+  const auto& fills = view.snapshot->recent_fills;
+  const auto& orders = view.snapshot->recent_orders;
   std::map<OrderId, Trip> grouped;
   for (const auto& life : history) {
-    const auto first = std::find_if(view.snapshot->recent_fills.begin(), view.snapshot->recent_fills.end(), [&](const auto& fill) { return fill.id == life.first_fill; });
-    if (first == view.snapshot->recent_fills.end() || first->order_id == 0 || first->order_id > view.snapshot->recent_orders.size()) continue;
+    const auto* first = fill_by_id(fills, life.first_fill);
+    if (!first || first->order_id == 0 || first->order_id > orders.size()) continue;
     auto& trip = grouped[first->order_id];
-    trip.order = &view.snapshot->recent_orders[first->order_id - 1];
+    trip.order = &orders[first->order_id - 1];
     trip.legs.push_back(&life);
     trip.net = trip.net + life.gross - life.fees;
   }
@@ -117,40 +128,62 @@ std::vector<Trip> trips(const TradingView& view, const std::vector<Lifecycle>& h
         if (life->closure || life->fills.empty()) settled = true;
         else last = std::max(last, life->fills.back());
       }
-      const auto fill = std::find_if(view.snapshot->recent_fills.begin(), view.snapshot->recent_fills.end(), [&](const auto& item) { return item.id == last; });
-      if (!settled && fill != view.snapshot->recent_fills.end()) trip.closed_by = fill->order_id;
+      if (!settled) {
+        if (const auto* fill = fill_by_id(fills, last)) trip.closed_by = fill->order_id;
+      }
     }
     result.push_back(std::move(trip));
   }
   return result;
 }
-bool guardrails_allow(const json& definition, const TradingView& view, md::Timestamp time, OrderId before = 0) {
-  const auto id = definition.at("id").get<std::string>();
+/// What one playbook's guardrails read of a publication, gathered once for every
+/// check against it: the entries they count, by the New York date each was accepted,
+/// in ascending order ID, and the playbook's round trips that closed at a loss.
+struct GuardrailHistory {
+  std::map<md::Date, std::vector<OrderId>> entries;
+  std::vector<const Trip*> losses;
+};
+GuardrailHistory guardrail_history(const TradingView& view, const std::string& id, const std::vector<Trip>& round_trips) {
+  GuardrailHistory result;
+  for (const auto& order : view.snapshot->recent_orders) {
+    if (order.parent || order.system || order.request.note.starts_with("Playbook automatic ") || !tagged(order, id)) continue;
+    if (order.status == OrderStatus::Rejected || (order.status == OrderStatus::Cancelled && order.filled_quantity == 0)) continue;
+    result.entries[md::new_york_time(order.accepted_at).date].push_back(order.id);
+  }
+  for (const auto& trip : round_trips)
+    if (trip.closed && trip.net < Money{} && tagged(*trip.order, id)) result.losses.push_back(&trip);
+  return result;
+}
+/// `history` is guardrail_history for the definition's ID, of `view` and its round trips.
+bool guardrails_allow(const json& definition, const TradingView& view, const GuardrailHistory& history, md::Timestamp time,
+                      OrderId before = 0) {
   auto first_order = view.snapshot->evaluation.first_order;
   if (before && before < first_order) {
     first_order = 1;
     for (const auto& attempt : view.snapshot->attempts)
       if (attempt.first_order <= before) first_order = std::max(first_order, attempt.first_order);
   }
-  int entries = 0;
-  for (const auto& order : view.snapshot->recent_orders) {
-    if (before != 0 && order.id >= before) break;
-    if (order.id < first_order || order.parent || order.system || order.request.note.starts_with("Playbook automatic ") || !tagged(order, id)) continue;
-    if (order.status == OrderStatus::Rejected || (order.status == OrderStatus::Cancelled && order.filled_quantity == 0)) continue;
-    if (md::new_york_time(order.accepted_at).date == md::new_york_time(time).date) ++entries;
+  // Orders are numbered as they arrive: the entries from first_order up to `before`.
+  std::ptrdiff_t entries = 0;
+  if (const auto day = history.entries.find(md::new_york_time(time).date); day != history.entries.end()) {
+    const auto low = std::lower_bound(day->second.begin(), day->second.end(), first_order);
+    entries = (before ? std::lower_bound(low, day->second.end(), before) : day->second.end()) - low;
   }
   if (entries >= definition.at("guardrails").at("max_entries_per_day").get<int>()) return false;
-  const auto history = lives(view);
   const auto cooldown = definition.at("guardrails").at("cooldown_minutes").get<int>() * md::kNanosPerMinute;
   // Scoring a past entry, a close in its own market second counts only if it came
   // first, as it did for the live check: orders are numbered as they arrive.
   const auto closed_first = [&](const Trip& trip) {
     return before ? *trip.closed < time || (*trip.closed == time && trip.closed_by < before) : *trip.closed <= time;
   };
-  for (const auto& trip : trips(view, history))
-    if (trip.order->id >= first_order && (!before || trip.order->id < before) && tagged(*trip.order, id) && trip.closed && closed_first(trip) &&
-        trip.net < Money{} && time < *trip.closed + cooldown) return false;
+  for (const auto* trip : history.losses)
+    if (trip->order->id >= first_order && (!before || trip->order->id < before) && closed_first(*trip) &&
+        time < *trip->closed + cooldown) return false;
   return true;
+}
+/// The live check: whether the definition may enter at `time`, given the round trips of `view`.
+bool guardrails_allow(const json& definition, const TradingView& view, const std::vector<Trip>& round_trips, md::Timestamp time) {
+  return guardrails_allow(definition, view, guardrail_history(view, definition.at("id").get<std::string>(), round_trips), time);
 }
 json report_rows(const json& rows) {
   const auto stats = [&](int filter) {
@@ -672,6 +705,20 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
   const auto modes = catalogue_.at("modes").value(account, json::object());
   const auto history = lives(*current);
   const auto round_trips = trips(*current, history);
+  // Guardrails read the account as it is now. An automatic order publishes it anew,
+  // whose round trips are built once, when a check first needs them.
+  std::shared_ptr<const TradingView> rebuilt;
+  std::vector<Lifecycle> rebuilt_history;
+  std::vector<Trip> rebuilt_trips;
+  const auto current_trips = [&]() -> const std::vector<Trip>& {
+    if (current == &view) return round_trips;
+    if (rebuilt != updated) {
+      rebuilt_history = lives(*updated);
+      rebuilt_trips = trips(*updated, rebuilt_history);
+      rebuilt = updated;
+    }
+    return rebuilt_trips;
+  };
   for (const auto& working : current->snapshot->open_orders) {
     const auto* definition = order_definition(catalogue_, working);
     if (definition && !only.empty() && definition->at("id") != only) continue;
@@ -754,7 +801,7 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
               invalid("Automatic entry refused for this day: " + previous.reason.message);
           }
         }
-        if (!guardrails_allow(definition, *current, now)) invalid("Playbook entry limit or loss cooldown");
+        if (!guardrails_allow(definition, *current, current_trips(), now)) invalid("Playbook entry limit or loss cooldown");
         if (!metrics.contains(symbol)) invalid("Waiting for underlying data");
         const auto& underlying = *metrics.at(symbol);
         const auto& structure = definition.at("structure");
@@ -850,6 +897,19 @@ void Playbooks::evaluate(const std::string& account, bool replay, md::Timestamp 
 nlohmann::json playbook_report(const json& catalogue, const TradingView& view, bool current_attempt) {
   const auto history = lives(view);
   const auto round_trips = trips(view, history);
+  // Each order's fills in execution order, and what each playbook's guardrails read,
+  // gathered once for every entry the report scores.
+  std::map<OrderId, std::vector<const Fill*>> order_fills;
+  for (const auto& fill : view.snapshot->recent_fills) order_fills[fill.order_id].push_back(&fill);
+  const std::vector<const Fill*> no_fills{};
+  std::map<std::string, GuardrailHistory> guardrail_histories;
+  const auto history_for = [&](const json& version) -> const GuardrailHistory& {
+    const auto playbook = version.at("id").get<std::string>();
+    auto found = guardrail_histories.find(playbook);
+    if (found == guardrail_histories.end())
+      found = guardrail_histories.emplace(playbook, guardrail_history(view, playbook, round_trips)).first;
+    return found->second;
+  };
   json reports = json::object();
   for (const auto& [id, record] : catalogue.at("definitions").items()) {
     (void)record;
@@ -860,8 +920,10 @@ nlohmann::json playbook_report(const json& catalogue, const TradingView& view, b
       if (!definition || trip.legs.empty()) continue;
       const auto& order = *trip.order;
       const auto opened = trip.legs.front()->opened;
+      const auto filled = order_fills.find(order.id);
+      const auto* entry_fills = filled == order_fills.end() ? &no_fills : &filled->second;
       bool window = true;
-      for (const auto& fill : view.snapshot->recent_fills) if (fill.order_id == order.id) window = window && playbook_window(*definition, fill.time);
+      for (const auto* fill : *entry_fills) window = window && playbook_window(*definition, fill->time);
       bool size = false;
       const auto risk = view.snapshot->strategy_reviews.find(std::to_string(order.id));
       const auto planned = risk == view.snapshot->strategy_reviews.end() ? std::optional<Money>{} : risk->second.planned_risk;
@@ -877,7 +939,7 @@ nlohmann::json playbook_report(const json& catalogue, const TradingView& view, b
       }
       else if (planned && trip.legs.front()->entry_context && trip.legs.front()->entry_context->floor_room) {
         Money fees;
-        for (const auto& fill : view.snapshot->recent_fills) if (fill.order_id == order.id) fees = fees + fill.fee;
+        for (const auto* fill : *entry_fills) fees = fees + fill->fee;
         const auto room = *trip.legs.front()->entry_context->floor_room;
         const auto share = static_cast<std::int64_t>(std::floor(sizing.at("floor_share").get<double>() * 1000000));
         size = *planned + fees < room && *planned + fees <= room.prorate(share, 1000000);
@@ -908,7 +970,7 @@ nlohmann::json playbook_report(const json& catalogue, const TradingView& view, b
       } catch (const std::exception&) {}
       const bool timely = trip.closed && *trip.closed <= playbook_deadline(*definition, opened);
       // As the live check did, when the entry arrived.
-      const bool guarded = guardrails_allow(*definition, view, order.accepted_at, order.id);
+      const bool guarded = guardrails_allow(*definition, view, history_for(*definition), order.accepted_at, order.id);
       json rules{{"entry_window", window}, {"size", size}, {"exits", exits},
           {"time_stop", trip.closed || view.snapshot->time >= playbook_deadline(*definition, opened) ? json(timely) : json(nullptr)},
           {"guardrails", guarded}};
@@ -944,10 +1006,10 @@ nlohmann::json playbook_report(const json& catalogue, const TradingView& view, b
   }
   return reports;
 }
-nlohmann::json playbook_forward_report(const json& publication, const TradingView& view) {
+namespace {
+/// The forward tests of `publication`, scored from `reports`: every attempt's.
+json forward_test_reports(const json& publication, const TradingView& view, const json& reports) {
   auto result = publication.value("forward_tests", json::object());
-  if (result.empty()) return result;
-  const auto reports = playbook_report(publication, view, false);
   for (auto& [id, forward] : result.items()) {
     json rows = json::array(), versions = json::object();
     std::set<OrderId> entries;
@@ -1011,5 +1073,25 @@ nlohmann::json playbook_forward_report(const json& publication, const TradingVie
     forward["versions"] = versions;
   }
   return result;
+}
+}  // namespace
+nlohmann::json playbook_forward_report(const json& publication, const TradingView& view) {
+  auto result = publication.value("forward_tests", json::object());
+  if (result.empty()) return result;
+  return forward_test_reports(publication, view, playbook_report(publication, view, false));
+}
+std::pair<nlohmann::json, nlohmann::json> playbook_reports(const json& catalogue, const TradingView& view) {
+  if (catalogue.value("forward_tests", json::object()).empty())
+    return {playbook_report(catalogue, view), playbook_forward_report(catalogue, view)};
+  // Every attempt's rows, scored once: the current attempt's are those from its first order on.
+  const auto every = playbook_report(catalogue, view, false);
+  json current = json::object();
+  for (const auto& [id, report] : every.items()) {
+    json rows = json::array();
+    for (const auto& row : report.at("trades"))
+      if (decimal_id(row.at("order"), "order") >= view.snapshot->evaluation.first_order) rows.push_back(row);
+    current[id] = report_rows(rows);
+  }
+  return {std::move(current), forward_test_reports(catalogue, view, every)};
 }
 }  // namespace openport::server

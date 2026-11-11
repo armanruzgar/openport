@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <utility>
 #include <nlohmann/json.hpp>
 #include "openport/server/paper.hpp"
 
@@ -31,6 +32,9 @@ md::Timestamp playbook_deadline(const nlohmann::json& definition, md::Timestamp 
 nlohmann::json playbook_report(const nlohmann::json& catalogue, const TradingView& view, bool current_attempt = true);
 
 nlohmann::json playbook_forward_report(const nlohmann::json& publication, const TradingView& view);
+/// playbook_report(catalogue, view) and playbook_forward_report(catalogue, view) together,
+/// scoring each round trip once for both.
+std::pair<nlohmann::json, nlohmann::json> playbook_reports(const nlohmann::json& catalogue, const TradingView& view);
 
 /// Definitions and transient staging are Desk-owned, outside the reducer. The
 /// callbacks always use its normal preview and submission paths.

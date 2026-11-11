@@ -7,7 +7,11 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdint>
+#include <optional>
 #include <set>
+#include <utility>
+#include <vector>
 
 namespace openport::server {
 namespace {
@@ -114,33 +118,66 @@ json economics_json(const TradingView& view, const std::vector<trading::Evaluati
           {"break_even_pass", result.break_even_pass ? json(*result.break_even_pass) : json(nullptr)},
           {"assumption", assumption}, {"label", "Illustrative estimate from past results, not a prediction"}};
 }
+/// The fill with `id`, or null. An account numbers its fills from one in execution
+/// order, so the ID locates the fill; a search covers any other numbering.
+const trading::Fill* fill_with_id(const trading::SharedVector<trading::Fill>& fills, std::uint64_t id) {
+  if (id >= 1 && id <= fills.size() && fills[id - 1].id == id) return &fills[id - 1];
+  const auto found = std::find_if(fills.begin(), fills.end(), [&](const auto& fill) { return fill.id == id; });
+  return found == fills.end() ? nullptr : &*found;
+}
 std::vector<trading::EvaluationDay> playbook_days(const TradingView& view, const std::string& id) {
   if (id.empty()) return view.snapshot->evaluation.days;
-  const auto history = trading::lifecycles(view.snapshot->recent_fills, view.snapshot->closures, view.contracts);
-  std::vector<trading::EvaluationDay> result;
-  for (const auto& day : view.snapshot->evaluation.days) {
-    bool own = false, mixed = false;
-    for (const auto& life : history) {
-      const auto opened = md::new_york_time(life.opened).date;
-      if (opened > day.day || (life.closed && md::new_york_time(*life.closed).date < day.day)) continue;
-      const auto first = std::find_if(view.snapshot->recent_fills.begin(), view.snapshot->recent_fills.end(), [&](const auto& fill) { return fill.id == life.first_fill; });
-      if (first == view.snapshot->recent_fills.end() || first->order_id == 0 || first->order_id > view.snapshot->recent_orders.size()) { mixed = true; continue; }
-      const auto& order = view.snapshot->recent_orders[first->order_id - 1];
-      const bool matches = std::any_of(order.request.tags.begin(), order.request.tags.end(), [&](const auto& tag) { return tag.starts_with("playbook:" + id + "@v"); });
-      own = own || matches;
-      mixed = mixed || !matches;
+  const auto& fills = view.snapshot->recent_fills;
+  const auto& orders = view.snapshot->recent_orders;
+  const auto prefix = "playbook:" + id + "@v";
+  const auto of_playbook = [&](const trading::Order& order) {
+    return std::any_of(order.request.tags.begin(), order.request.tags.end(), [&](const auto& tag) { return tag.starts_with(prefix); });
+  };
+  // Each contract round trip's New York dates and attribution, read once for every day.
+  struct RoundTripDays {
+    md::Date opened;
+    std::optional<md::Date> closed;
+    bool known = false;    ///< Its opening fill's order is in the account.
+    bool own = false;      ///< That order is this playbook's.
+    bool foreign = false;  ///< Another setup's opening fill added to it.
+  };
+  std::vector<RoundTripDays> trips;
+  for (const auto& life : trading::lifecycles(fills, view.snapshot->closures, view.contracts)) {
+    RoundTripDays trip;
+    trip.opened = md::new_york_time(life.opened).date;
+    if (life.closed) trip.closed = md::new_york_time(*life.closed).date;
+    const auto* first = fill_with_id(fills, life.first_fill);
+    if (first && first->order_id != 0 && first->order_id <= orders.size()) {
+      trip.known = true;
+      trip.own = of_playbook(orders[first->order_id - 1]);
       // A later opening fill can add another setup to the same contract lifecycle.
       for (const auto fill_id : life.fills) {
-        const auto added = std::find_if(view.snapshot->recent_fills.begin(), view.snapshot->recent_fills.end(), [&](const auto& fill) { return fill.id == fill_id; });
-        if (added == view.snapshot->recent_fills.end() || (added->side == trading::Side::Buy ? 1 : -1) != life.direction ||
-            added->order_id == 0 || added->order_id > view.snapshot->recent_orders.size()) continue;
-        const auto& tags = view.snapshot->recent_orders[added->order_id - 1].request.tags;
-        if (std::none_of(tags.begin(), tags.end(), [&](const auto& tag) { return tag.starts_with("playbook:" + id + "@v"); })) mixed = true;
+        const auto* added = fill_with_id(fills, fill_id);
+        if (!added || (added->side == trading::Side::Buy ? 1 : -1) != life.direction ||
+            added->order_id == 0 || added->order_id > orders.size()) continue;
+        if (!of_playbook(orders[added->order_id - 1])) trip.foreign = true;
       }
     }
-    // Delivered shares and withdrawals prevent attribution to option playbooks.
-    for (const auto& stock : trading::share_lifecycles(view.snapshot->stock_fills, view.snapshot->dividends))
-      if (md::new_york_time(stock.opened).date <= day.day && (!stock.closed || md::new_york_time(*stock.closed).date >= day.day)) mixed = true;
+    trips.push_back(trip);
+  }
+  std::vector<trading::EvaluationDay> result;
+  const auto& days = view.snapshot->evaluation.days;
+  if (days.empty()) return result;
+  // Delivered shares and withdrawals prevent attribution to option playbooks.
+  std::vector<std::pair<md::Date, std::optional<md::Date>>> shares;
+  for (const auto& stock : trading::share_lifecycles(view.snapshot->stock_fills, view.snapshot->dividends))
+    shares.emplace_back(md::new_york_time(stock.opened).date,
+                        stock.closed ? std::optional<md::Date>(md::new_york_time(*stock.closed).date) : std::optional<md::Date>());
+  for (const auto& day : days) {
+    bool own = false, mixed = false;
+    for (const auto& trip : trips) {
+      if (trip.opened > day.day || (trip.closed && *trip.closed < day.day)) continue;
+      if (!trip.known) { mixed = true; continue; }
+      own = own || trip.own;
+      mixed = mixed || !trip.own || trip.foreign;
+    }
+    for (const auto& [opened, closed] : shares)
+      if (opened <= day.day && (!closed || *closed >= day.day)) mixed = true;
     for (const auto& payout : view.snapshot->evaluation.payouts) if (payout.day == day.day) mixed = true;
     if (own && !mixed) result.push_back(day);
   }
@@ -247,8 +284,9 @@ std::optional<ApiResponse> playbook_read(const ApiRequest& request, const Metric
       return api_error(404, "UNKNOWN_VERSION", "Unknown playbook version");
     }
     auto result = catalogue;
-    result["reports"] = playbook_report(catalogue, *view);
-    result["forward_tests"] = playbook_forward_report(catalogue, *view);
+    auto [reports, forward] = playbook_reports(catalogue, *view);
+    result["reports"] = std::move(reports);
+    result["forward_tests"] = std::move(forward);
     return ApiResponse{200, result.dump()};
   } catch (const std::exception& error) { return api_error(400, "INVALID_PLAYBOOK", error.what()); }
 }
