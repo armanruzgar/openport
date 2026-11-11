@@ -5960,8 +5960,7 @@ struct TradingSession::Impl {
            !evaluate_time_rules(s.evaluation, s.config.rules, time).decided() &&
            s.config.rules.events.empty() && s.config.rules.hold_restrictions.empty() &&
            s.guardrails.cooldown_until <= s.time &&
-           open_ids(s).empty() && s.alerts.items.empty() &&
-           std::none_of(s.stock_orders.begin(), s.stock_orders.end(), [](const StockOrder& o) { return o.open(); });
+           open_ids(s).empty() && s.alerts.items.empty() && open_stock_ids(s).empty();
   }
 
   CommandResult transact(Timestamp time, std::string_view type,
@@ -6566,14 +6565,15 @@ CommandResult TradingSession::cancel_all(std::optional<std::string> underlying, 
           return CommandResult{failure(Reason::STOP_REQUIRED, "Close protected positions before cancelling their required stops"), id, 0};
       }
     if (s.config.rules.require_stop_loss)
-      for (const auto& o : s.stock_orders)
-        if (o.open() && o.role == OrderRole::StopLoss && (!underlying || o.request.symbol == *underlying) && shares_held(s, o.request.symbol) != 0)
+      for (const auto id : open_stock_ids(s))
+        if (const auto& o = s.stock_orders[id - 1];
+            o.role == OrderRole::StopLoss && (!underlying || o.request.symbol == *underlying) && shares_held(s, o.request.symbol) != 0)
           return CommandResult{failure(Reason::STOP_REQUIRED, "Close protected shares before cancelling their required stops"), {}, 0};
     for (const auto id : open_ids(s))
       if (const auto& o = s.orders[id - 1]; o.open() && (!underlying || underlying_of(s, o) == *underlying))
         cancel_order(s, id, failure(Reason::USER_CANCEL, "Cancelled by caller"), events);
-    for (std::size_t i = 0; i < s.stock_orders.size(); ++i)
-      if (const auto& o = s.stock_orders[i]; o.open() && (!underlying || o.request.symbol == *underlying))
+    for (const auto id : open_stock_ids(s))
+      if (const auto& o = s.stock_orders[id - 1]; o.open() && (!underlying || o.request.symbol == *underlying))
         end_stock_order(s, o.id, OrderStatus::Cancelled, failure(Reason::USER_CANCEL, "Cancelled by caller"), events);
     return CommandResult{};
   });
@@ -7233,9 +7233,9 @@ void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actio
       s.deliverables[symbol] = after;
       record.series[symbol] = after;
     }
-    for (std::size_t i = 0; i < s.stock_orders.size(); ++i)
-      if (s.stock_orders[i].open() && s.stock_orders[i].request.symbol == a.symbol)
-        end_stock_order(s, s.stock_orders[i].id, OrderStatus::Cancelled,
+    for (const auto id : open_stock_ids(s))
+      if (s.stock_orders[id - 1].open() && s.stock_orders[id - 1].request.symbol == a.symbol)
+        end_stock_order(s, id, OrderStatus::Cancelled,
                         failure(Reason::CORPORATE_ACTION, "A split went ex on the stock; place the order again on the split shares"), events);
     if (s.revised_corporate_actions)
       for (const auto id : open_ids(s)) {
@@ -7562,9 +7562,8 @@ CommandResult TradingSession::reset_account(Money initial_cash, AccountRules rul
     // Check aggregate overflow before changing anything, even though the fees never touch paper cash.
     static_cast<void>(costs.total() + fee);
     for (const auto id : open_ids(s)) cancel_order(s, id, failure(Reason::ACCOUNT_RESET, reason), events);
-    for (std::size_t i = 0; i < s.stock_orders.size(); ++i)
-      if (s.stock_orders[i].open())
-        end_stock_order(s, s.stock_orders[i].id, OrderStatus::Cancelled, failure(Reason::ACCOUNT_RESET, reason), events);
+    for (const auto id : open_stock_ids(s))
+      end_stock_order(s, id, OrderStatus::Cancelled, failure(Reason::ACCOUNT_RESET, reason), events);
     for (const auto& p : snapshot.positions) {
       const auto& position = p.position;
       s.closures.push_back({position.contract.osi_symbol(), position.quantity,
@@ -7955,8 +7954,9 @@ CommandResult TradingSession::submit_stock_order(StockOrderRequest request, Time
   // A retry finds the order its client ID first named in this attempt, partner
   // included, and gets its first answer: the order as it stands, or the rejection it
   // ended with. An earlier attempt's orders hold no IDs (first_stock_order).
-  for (const auto& o : current.stock_orders) {
-    if (o.exit() || o.id < current.evaluation.first_stock_order || o.request.client_order_id != request.client_order_id) continue;
+  if (const auto first = current.stock_clients.find(request.client_order_id);
+      first != current.stock_clients.end() && first->second >= current.evaluation.first_stock_order) {
+    const auto& o = current.stock_orders.at(static_cast<std::size_t>(first->second - 1));
     // The terms as the order took them: its partner under the name it was given.
     auto named = request;
     for (auto& partner : named.oco) partner.client_order_id = request.client_order_id + ":oco";

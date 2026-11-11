@@ -1079,6 +1079,13 @@ struct State {
   std::size_t indexed = 0;
   /// Derived, never journaled: the first order each client order ID named.
   SharedMap<std::string, OrderId> clients;
+  /// Derived, never journaled: as `working` and `indexed` for the share orders. A share
+  /// order that has ended never works again.
+  std::vector<OrderId> stock_working;
+  std::size_t stock_indexed = 0;
+  /// Derived, never journaled: the first share order each client order ID named from
+  /// evaluation.first_stock_order on, bracket exits aside; one before it names nothing.
+  SharedMap<std::string, OrderId> stock_clients;
   /// Derived, never journaled: see Reviewing.
   Reviewing reviewing;
   /// Transient, never journaled: the settlement reference of each contract settled
@@ -1097,9 +1104,20 @@ inline std::vector<OrderId> open_ids(const State& s) {
     if (s.orders[i].open()) ids.push_back(static_cast<OrderId>(i + 1));
   return ids;
 }
+/// The open share orders' IDs, in ID order.
+inline std::vector<OrderId> open_stock_ids(const State& s) {
+  std::vector<OrderId> ids;
+  for (const auto id : s.stock_working)
+    if (id <= s.stock_orders.size() && s.stock_orders[id - 1].open()) ids.push_back(id);
+  for (auto i = s.stock_indexed; i < s.stock_orders.size(); ++i)
+    if (s.stock_orders[i].open()) ids.push_back(static_cast<OrderId>(i + 1));
+  return ids;
+}
 inline void reindex(State& s) {
   s.working = open_ids(s);
   s.indexed = s.orders.size();
+  s.stock_working = open_stock_ids(s);
+  s.stock_indexed = s.stock_orders.size();
 }
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(QuoteActivity, samples, spread, gap, fast)
 inline void to_json(Json& j, const Book& b) {
@@ -1171,7 +1189,12 @@ inline void from_json(const Json& j, State& s) {
   added_field(j, "grouped", s.grouped);
   s.working.clear();
   s.indexed = 0;
+  s.stock_working.clear();
+  s.stock_indexed = 0;
   reindex(s);
+  s.stock_clients.clear();
+  for (const auto& order : s.stock_orders)
+    if (!order.exit() && order.id >= s.evaluation.first_stock_order) s.stock_clients.emplace(order.request.client_order_id, order.id);
   // Each client order ID names the first order that used it in the latest attempt
   // that did, as add_order kept it.
   s.clients.clear();

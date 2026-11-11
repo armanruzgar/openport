@@ -383,6 +383,41 @@ TEST(StockOrders, AClientIdNamesOneShareOrderPerAttempt) {
   }
 }
 
+TEST(StockOrders, ALongHistoryOfEndedOrdersLeavesRetriesAndWorkingOrdersAsTheyWere) {
+  test::RecordingFile file;
+  const auto path = (file.directory / "history.jsonl").string();
+  const auto open = ny(10);
+  TradingSession s(config(), open, test::create_journal(path));
+  // Sixty orders placed and cancelled, but for one left working among them.
+  for (int i = 0; i < 60; ++i) {
+    const auto placed = s.submit_stock_order(order("o" + std::to_string(i), Side::Buy, StockOrderType::Limit, 1, "400.00"), open,
+                                             StockPrice{"SPY", open, m("500")});
+    ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+    if (i != 30) {
+      ASSERT_TRUE(s.cancel_stock_order(*placed.order_id, open).decision.ok());
+    }
+  }
+  // A retry still finds its order, an ended one too, and other terms are refused.
+  const auto retry = s.submit_stock_order(order("o7", Side::Buy, StockOrderType::Limit, 1, "400.00"), open);
+  EXPECT_TRUE(retry.replayed);
+  EXPECT_EQ(retry.order_id, 8u);
+  EXPECT_EQ(s.submit_stock_order(order("o7", Side::Buy, StockOrderType::Limit, 2, "400.00"), open).decision.code,
+            Reason::DUPLICATE_CLIENT_ID);
+  // The one left working fills on a price under its limit; the cancelled ones stay ended.
+  ASSERT_TRUE(price(s, ny(10, 5), "399").decision.ok());
+  EXPECT_EQ(stock_order(s, 31).status, OrderStatus::Filled);
+  EXPECT_EQ(stock_order(s, 30).status, OrderStatus::Cancelled);
+  EXPECT_EQ(s.snapshot()->stock_fills.size(), 1u);
+  // Recovered, the account answers the same, and orders after them work as before.
+  auto recovered = TradingSession::recover(FileJournal::read(path));
+  EXPECT_EQ(recovered.snapshot_json(), s.snapshot_json());
+  EXPECT_EQ(recovered.submit_stock_order(order("o7", Side::Buy, StockOrderType::Limit, 1, "400.00"), ny(10, 6)).order_id, 8u);
+  const auto next = recovered.submit_stock_order(order("next", Side::Buy, StockOrderType::Limit, 1, "398.00"), ny(10, 6));
+  ASSERT_TRUE(next.decision.ok()) << next.decision.message;
+  EXPECT_EQ(next.order_id, 61u);
+  EXPECT_EQ(recovered.snapshot()->stock_orders.at(60).status, OrderStatus::Working);
+}
+
 TEST(StockOrders, ARetryGetsTheRejectionItsOrderOrPairFirstGot) {
   // An order the plan rejects as it works answers an identical retry with that rejection.
   auto c = config();

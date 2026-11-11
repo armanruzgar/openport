@@ -205,7 +205,8 @@ const StockOrder* open_partner(const State& s, const StockOrder& o) {
 Quantity pending_short_shares(const State& s, const std::string& symbol, OrderId except, Quantity extra) {
   Quantity position = shares_held(s, symbol);
   Quantity lowest = std::min<Quantity>(position, 0);
-  for (const auto& o : s.stock_orders) {
+  for (const auto id : open_stock_ids(s)) {
+    const auto& o = s.stock_orders[id - 1];
     if (!o.open() || o.exit() || o.id == except || o.request.symbol != symbol || o.request.side != Side::Sell) continue;
     if (const auto* partner = open_partner(s, o); partner && partner->id != except && partner->request.side == Side::Sell &&
         (partner->request.shares > o.request.shares || (partner->request.shares == o.request.shares && partner->id < o.id)))
@@ -239,13 +240,15 @@ std::optional<Money> stock_order_bound(const State& s, const StockOrder& o) {
 /// reduce, so they reserve nothing. An OCO pair fills one of its orders at most: it
 /// reserves once, at its first order, for whichever of the two would take more.
 Money stock_orders_reserved(const State& s) {
-  if (std::none_of(s.stock_orders.begin(), s.stock_orders.end(), [](const StockOrder& o) { return o.open() && !o.exit(); }))
+  const auto open = open_stock_ids(s);
+  if (std::none_of(open.begin(), open.end(), [&](OrderId id) { return !s.stock_orders[id - 1].exit(); }))
     return {};
   Money reserved;
   State after = s;
   const auto book = held_book(s);
   Money previous = after.ledger.account().cash - requirement(after, book);
-  for (const auto& o : s.stock_orders) {
+  for (const auto id : open) {
+    const auto& o = s.stock_orders[id - 1];
     if (!o.open() || o.exit()) continue;
     const auto* partner = open_partner(s, o);
     if (partner && partner->id < o.id) continue;  // reserved with its partner
@@ -347,6 +350,11 @@ std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest requ
   order.actor = s.actor;
   const auto id = order.id;
   s.stock_orders.push_back(std::move(order));
+  // Its client order ID names it unless an order before it in this attempt took it.
+  if (role == OrderRole::Normal)
+    if (const auto& key = s.stock_orders.back().request.client_order_id;
+        !s.stock_clients.contains(key) || s.stock_clients.find(key)->second < s.evaluation.first_stock_order)
+      s.stock_clients[key] = id;
   // An OCO partner is paired with its first order before its reservation is checked,
   // so the two reserve as one.
   if (pair != 0) {
@@ -361,6 +369,9 @@ std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest requ
       const auto short_by = -buying_power(s).total.available;
       const auto symbol = s.stock_orders.back().request.symbol;
       if (pair != 0) s.stock_orders.mut(static_cast<std::size_t>(pair - 1)).oco = 0;
+      // The refused order names nothing: no order before it in this attempt took its ID.
+      if (const auto key = s.stock_orders.back().request.client_order_id; s.stock_clients.contains(key) && s.stock_clients.find(key)->second == id)
+        s.stock_clients.erase(key);
       s.stock_orders.truncate(s.stock_orders.size() - 1);
       return {{Reason::BUYING_POWER, "This share order needs more buying power than the account has available",
                short_by.dollars(), 0.0, symbol}, 0};
@@ -427,9 +438,9 @@ bool share_data_gap(Reason code) {
 }
 
 void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
-  for (std::size_t i = 0; i < s.stock_orders.size(); ++i) {
+  const auto work = [&](std::size_t i) {
     const auto& o = s.stock_orders[i];
-    if (!o.open() || (only && o.id != *only)) continue;
+    if (!o.open() || (only && o.id != *only)) return;
     const auto& symbol = o.request.symbol;
     const auto mark = s.stock_marks.find(symbol);
     // An extended-hours order fills only on a price fresh within the session it
@@ -437,8 +448,8 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
     const auto price = stock_price(s, symbol, s.time, o.request.extended_hours);
     // A resting order takes a price printed after it was accepted; the one it was
     // accepted on executes it at once.
-    if (!price || mark == s.stock_marks.end() || (mark->second.time < o.accepted_at && !only)) continue;
-    if (s.time < halt_end(s, symbol)) continue;
+    if (!price || mark == s.stock_marks.end() || (mark->second.time < o.accepted_at && !only)) return;
+    if (s.time < halt_end(s, symbol)) return;
     const bool buy = o.request.side == Side::Buy;
     // A bracket exit protects what is still held: it closes no more than that, and
     // ends once nothing is left in its direction.
@@ -448,7 +459,7 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
       const auto available = buy ? std::max<Quantity>(-held, 0) : std::max<Quantity>(held, 0);
       if (available == 0) {
         end_stock_order(s, o.id, OrderStatus::Cancelled, failure(Reason::POSITION_CLOSED, "The shares it protected are closed"), events);
-        continue;
+        return;
       }
       shares = std::min(shares, available);
     }
@@ -456,16 +467,16 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
       // Stops are reached on the price itself, printed in a session the order works
       // in (its close included), and execute only while one is open.
       const auto level = *o.request.stop_price;
-      if (!(buy ? *price >= level : *price <= level)) continue;
-      if (s.revised_share_orders && !stock_order_print(o, mark->second.time)) continue;
+      if (!(buy ? *price >= level : *price <= level)) return;
+      if (s.revised_share_orders && !stock_order_print(o, mark->second.time)) return;
       auto& armed = s.stock_orders.mut(i);
       armed.status = OrderStatus::Working;
       armed.triggered_at = s.time;
       event(events, "stock_order_triggered", Json{{"id", armed.id}, {"symbol", symbol}, {"price", *price}});
     }
     const auto& working = s.stock_orders[i];
-    if (!stock_order_session(working, s.time)) continue;
-    if (working.request.limit_price && (buy ? *price > *working.request.limit_price : *price < *working.request.limit_price)) continue;
+    if (!stock_order_session(working, s.time)) return;
+    if (working.request.limit_price && (buy ? *price > *working.request.limit_price : *price < *working.request.limit_price)) return;
     const auto id = working.id;
     const auto role = working.role;
     ShareTerms terms;
@@ -479,9 +490,9 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
     auto& done = s.stock_orders.mut(i);
     if (!d.ok()) {
       done.status = OrderStatus::Working;
-      if (share_data_gap(d.code)) continue;
+      if (share_data_gap(d.code)) return;
       end_stock_order(s, id, OrderStatus::Rejected, d, events);
-      continue;
+      return;
     }
     done.filled_shares = shares;
     done.fill_price = *price;
@@ -493,14 +504,20 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
                       failure(Reason::OCO_FILLED, role == OrderRole::Normal ? "Its one-cancels-other partner filled" : "The bracket's other exit filled"),
                       events);
     if (role == OrderRole::Normal) place_stock_bracket(s, id, events);
-  }
+  };
+  // The orders that can be open, in ID order: those open when the share orders were
+  // last indexed, then each placed since, the brackets placed here as entries fill
+  // included. An order that has ended never works again.
+  const auto indexed = s.stock_working;
+  for (const auto id : indexed) work(static_cast<std::size_t>(id - 1));
+  for (auto i = s.stock_indexed; i < s.stock_orders.size(); ++i) work(i);
 }
 
 /// Day orders end with their session; every share order ends with a reset or when
 /// its attempt is decided and it would open.
 void expire_stock_orders(State& s, Events& events) {
-  for (std::size_t i = 0; i < s.stock_orders.size(); ++i) {
-    const auto& o = s.stock_orders[i];
+  for (const auto id : open_stock_ids(s)) {
+    const auto& o = s.stock_orders[id - 1];
     if (o.open() && s.time >= o.day_end)
       end_stock_order(s, o.id, OrderStatus::Cancelled, failure(Reason::DAY_END, "The order's session ended"), events);
   }
