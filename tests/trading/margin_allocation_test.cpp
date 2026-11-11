@@ -488,5 +488,155 @@ TEST(TradingMarginAllocation, TheFallbackAllocationDoesNotDependOnLegOrder) {
     }
   }
 }
+
+bool same_answers(const std::vector<MarginUnderlying>& a, const std::vector<MarginUnderlying>& b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (a[i].underlying != b[i].underlying || a[i].requirement != b[i].requirement ||
+        a[i].allocation != b[i].allocation || a[i].parts.size() != b[i].parts.size()) return false;
+    for (std::size_t j = 0; j < a[i].parts.size(); ++j)
+      if (a[i].parts[j].kind != b[i].parts[j].kind || a[i].parts[j].legs != b[i].parts[j].legs ||
+          a[i].parts[j].requirement != b[i].parts[j].requirement) return false;
+  }
+  return true;
+}
+
+// I-21: a cache keeps each underlying's strategy margin by every input the solver reads.
+// An unchanged underlying is not solved again, whether its parts are asked for or not;
+// a changed buy-back value (a mark), quantity, spot, expiry time (an early close moves
+// it under the same symbol) or policy is. Counted in solves, not timed. Every answer is
+// the one a solve without the cache gives.
+TEST(TradingMarginAllocation, ACacheSolvesEachUnderlyingOnceForItsInputs) {
+  detail::MarginCache cache;
+  MarginPolicy cached;
+  cached.cache = &cache;
+  const std::vector<MarginLeg> book{
+      option("QQQ261029C00480000", -1, "250"), option("QQQ261105C00490000", 1),
+      option("SPY261022P00490000", -2, "500"), option("SPY261022P00480000", 2), option("SPY261029C00510000", -1, "300")};
+  const auto solves = [] { return detail::margin_work().solves; };
+  // Solves `changed` with the cache, against a solve without it; the solves it took.
+  const auto solved = [&](const std::vector<MarginLeg>& changed, const MarginPolicy& policy) {
+    auto plain = policy;
+    plain.cache = nullptr;
+    const auto expected = margin_breakdown(changed, {}, plain);
+    const auto before = solves();
+    EXPECT_TRUE(same_answers(margin_breakdown(changed, {}, policy), expected));
+    Money total;
+    for (const auto& item : expected) total = total + item.requirement;
+    EXPECT_EQ(margin_requirement(changed, {}, policy), total);
+    return solves() - before;
+  };
+  EXPECT_EQ(solved(book, cached), 2U);  // QQQ and SPY, once each
+  EXPECT_EQ(solved(book, cached), 0U);
+  EXPECT_EQ(cache.size(), 2U);
+  // The same book listed in another order is the same input.
+  auto reversed = book;
+  std::reverse(reversed.begin(), reversed.end());
+  EXPECT_EQ(solved(reversed, cached), 0U);
+  auto marked = book;
+  marked[2].value = marked[2].value + dollars("1");
+  EXPECT_EQ(solved(marked, cached), 1U);
+  auto added = book;
+  added[3].quantity = 3;
+  EXPECT_EQ(solved(added, cached), 1U);
+  auto moved = book;
+  moved[0].spot = 501.0;
+  EXPECT_EQ(solved(moved, cached), 1U);
+  auto morning = book;
+  morning[4].contract.settlement = md::Settlement::AM;
+  ASSERT_EQ(morning[4].contract.osi_symbol(), book[4].contract.osi_symbol());
+  EXPECT_EQ(solved(morning, cached), 1U);
+  {
+    // An early close on 22 October ends SPY's first expiry three hours sooner.
+    const auto regular = book[2].contract.expiry_time();
+    md::ScheduledDaysScope early({{{2026, 10, 22}, "early close", false, 13, 0}});
+    ASSERT_NE(book[2].contract.expiry_time(), regular);
+    EXPECT_EQ(solved(book, cached), 1U);
+  }
+  EXPECT_EQ(solved(book, cached), 0U);  // the regular calendar again
+  auto house = cached;
+  house.house_percent = 25;
+  EXPECT_EQ(solved(book, house), 2U);
+  auto legacy = cached;
+  legacy.exact = false;
+  EXPECT_EQ(solved(book, legacy), 2U);
+  // The cache keeps what it has room for, the answer used least recently making room.
+  detail::MarginCache small(1);
+  cached.cache = &small;
+  const std::vector<MarginLeg> qqq(book.begin(), book.begin() + 2), spy(book.begin() + 2, book.end());
+  EXPECT_EQ(solved(spy, cached), 1U);
+  EXPECT_EQ(solved(spy, cached), 0U);
+  EXPECT_EQ(solved(qqq, cached), 1U);
+  EXPECT_EQ(small.size(), 1U);
+  EXPECT_EQ(solved(spy, cached), 1U);  // QQQ's answer took its place
+}
+
+// I-21: a session keeps its account's strategy margin across its transactions and the
+// copies its previews make. A batch that moves no position or mark solves nothing again;
+// a new mark on a short, or a new position, solves the underlying again; a preview
+// solves its own book and leaves the account's answer as it was.
+TEST(TradingMarginAllocation, ASessionSolvesAnUnchangedBookOnce) {
+  const auto time = md::new_york_to_utc({2026, 10, 21}, 10, 0);
+  SessionConfig config;
+  config.initial_cash = dollars("100000");
+  config.rules.buying_power = true;
+  config.limits.aggregate = {1e9, 1e9};
+  config.limits.per_underlying = {1e9, 1e9};
+  TradingSession session(config, time);
+  const std::vector<std::pair<std::string, Quantity>> book{
+      {"SPY261022P00490000", -2}, {"SPY261022P00480000", -2}, {"SPY261022P00510000", 2}, {"SPY261029P00490000", 1}};
+  OrderRequest request;
+  request.client_order_id = "book";
+  request.type = OrderType::Market;
+  request.tif = TimeInForce::Ioc;
+  request.quantity = 1;
+  std::vector<QuoteObservation> quotes;
+  std::vector<Valuation> values;
+  for (const auto& [symbol, quantity] : book) {
+    const auto contract = *md::parse_osi(symbol);
+    ASSERT_TRUE(session.define(contract, time).decision.ok());
+    quotes.push_back({contract.osi_symbol(), 1, time, dollars("1"), dollars("1.10"), 10, 10});
+    values.push_back({contract.osi_symbol(), time, -0.5, 0.001, 2, -0.1, 500, 501, 0.99,
+                      md::years_between(time, contract.expiry_time()), 0.2, true});
+    request.legs.push_back({contract.osi_symbol(), quantity < 0 ? Side::Sell : Side::Buy, std::abs(quantity)});
+  }
+  session.on_quotes(quotes, values, time);
+  const auto result = session.submit(request, time);
+  ASSERT_TRUE(result.decision.ok()) << result.decision.message;
+  ASSERT_EQ(session.snapshot()->positions.size(), 4U);
+  const auto requirement = session.snapshot()->buying_power.short_requirement;
+  ASSERT_GT(requirement, Money{});
+  const auto solves = [] { return detail::margin_work().solves; };
+  auto before = solves();
+  session.on_quotes(quotes, values, time);
+  EXPECT_EQ(solves(), before);
+  EXPECT_EQ(session.snapshot()->buying_power.short_requirement, requirement);
+  // A preview of another order solves the book it would leave, not the account's.
+  OrderRequest more;
+  more.client_order_id = "more";
+  more.symbol = quotes[3].symbol;
+  more.side = Side::Buy;
+  more.type = OrderType::Market;
+  more.tif = TimeInForce::Ioc;
+  more.quantity = 1;
+  ASSERT_TRUE(session.preview(more, time).decision.ok());
+  EXPECT_GT(solves(), before);
+  before = solves();
+  session.on_quotes(quotes, values, time);
+  EXPECT_EQ(solves(), before);
+  EXPECT_EQ(session.snapshot()->buying_power.short_requirement, requirement);
+  // A short's new mark is a new input.
+  quotes[0].observation = 2;
+  quotes[0].bid = dollars("1.20");
+  quotes[0].ask = dollars("1.30");
+  session.on_quotes(quotes, values, time);
+  EXPECT_GT(solves(), before);
+  before = solves();
+  session.on_quotes(quotes, values, time);
+  EXPECT_EQ(solves(), before);
+  // So is a new position.
+  ASSERT_TRUE(session.submit(more, time).decision.ok());
+  EXPECT_GT(solves(), before);
+}
 }  // namespace
 }  // namespace openport::trading

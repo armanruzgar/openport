@@ -4,6 +4,7 @@
 #include <limits>
 #include <functional>
 #include <map>
+#include <type_traits>
 #include <vector>
 
 #include "margin_detail.hpp"
@@ -879,7 +880,42 @@ Money underlying_requirement(const std::vector<const MarginLeg*>& all, const Mar
   if (parts) *parts = std::move(best_parts);
   return best;
 }
-/// Strategy margin by underlying, shares joining their own.
+/// Every input underlying_requirement reads, as bytes, for the margin cache: the
+/// policy, the underlying and its shares, and each leg in the order the solver meets
+/// it, with its whole contract, the instant it expires under the calendar in force
+/// (an early close moves it), its signed quantity, its buy-back value and the spot
+/// its naked rule reads.
+std::string solve_key(const std::string& underlying, const std::vector<const MarginLeg*>& legs, const MarginStock* stock,
+                      const MarginPolicy& policy) {
+  std::string key;
+  const auto put = [&key](const auto& value) {
+    static_assert(std::is_trivially_copyable_v<std::remove_cvref_t<decltype(value)>>);
+    key.append(reinterpret_cast<const char*>(&value), sizeof value);
+  };
+  const auto text = [&](const std::string& value) {
+    put(value.size());
+    key += value;
+  };
+  put(policy.account); put(policy.house_percent); put(policy.vol_shock); put(policy.exact);
+  text(underlying);
+  put(stock != nullptr);
+  if (stock) { text(stock->underlying); put(stock->shares); put(stock->value.micros()); }
+  put(legs.size());
+  for (const auto* leg : legs) {
+    const auto& c = leg->contract;
+    text(c.root); text(c.underlying);
+    put(c.expiry.year); put(c.expiry.month); put(c.expiry.day);
+    put(c.strike); put(c.type); put(c.style); put(c.settlement); put(c.multiplier); put(c.standard);
+    put(c.expiry_time());
+    put(leg->quantity); put(leg->value.micros());
+    put(leg->spot.has_value());
+    if (leg->spot) put(*leg->spot);
+  }
+  return key;
+}
+/// Strategy margin by underlying, shares joining their own. With a cache, each
+/// underlying's answer is solved once for its inputs; asking for its parts or not
+/// changes no requirement, so a solve keeps them for whoever asks next.
 std::vector<MarginUnderlying> strategy(const std::vector<MarginLeg>& legs, const std::vector<MarginStock>& stocks,
                                        const MarginPolicy& policy, bool explain, bool improve = true) {
   std::map<std::string, std::pair<std::vector<const MarginLeg*>, const MarginStock*>> underlyings;
@@ -900,7 +936,22 @@ std::vector<MarginUnderlying> strategy(const std::vector<MarginLeg>& legs, const
     for (std::size_t i = 0; i < named.size(); ++i) ordered[i] = named[i].second;
     MarginUnderlying item;
     item.underlying = underlying;
-    item.requirement = underlying_requirement(ordered, group.second, policy, explain ? &item.parts : nullptr, improve, &item.allocation);
+    const auto compute = [&](Parts* parts) {
+      if (improve) ++detail::margin_work().solves;
+      item.requirement = underlying_requirement(ordered, group.second, policy, parts, improve, &item.allocation);
+    };
+    if (improve && policy.cache) {
+      auto key = solve_key(underlying, ordered, group.second, policy);
+      if (auto cached = policy.cache->find(key, explain)) {
+        result.push_back(std::move(*cached));
+        continue;
+      }
+      compute(&item.parts);
+      policy.cache->insert(std::move(key), item);
+      if (!explain) item.parts.clear();
+    } else {
+      compute(explain ? &item.parts : nullptr);
+    }
     result.push_back(std::move(item));
   }
   return result;
@@ -955,6 +1006,37 @@ Quantity disallowed_shorts(const std::vector<MarginLeg>& legs, const std::vector
   for (const auto& [underlying, held] : shares)
     if (held < 0) count += (-held + kLot - 1) / kLot;
   return count;
+}
+
+std::optional<MarginUnderlying> detail::MarginCache::find(const std::string& key, bool parts) {
+  const std::lock_guard lock(mutex_);
+  const auto it = entries_.find(key);
+  if (it == entries_.end()) return std::nullopt;
+  it->second.used = ++clock_;
+  const auto& answer = it->second.answer;
+  if (parts) return answer;
+  MarginUnderlying out;
+  out.underlying = answer.underlying;
+  out.requirement = answer.requirement;
+  out.scan = answer.scan;
+  out.allocation = answer.allocation;
+  return out;
+}
+void detail::MarginCache::insert(std::string key, MarginUnderlying answer) {
+  const std::lock_guard lock(mutex_);
+  if (capacity_ == 0) return;
+  if (entries_.size() >= capacity_ && !entries_.contains(key)) {
+    const auto oldest = std::min_element(entries_.begin(), entries_.end(),
+                                         [](const auto& a, const auto& b) { return a.second.used < b.second.used; });
+    entries_.erase(oldest);
+  }
+  auto& entry = entries_[std::move(key)];
+  entry.answer = std::move(answer);
+  entry.used = ++clock_;
+}
+std::size_t detail::MarginCache::size() const {
+  const std::lock_guard lock(mutex_);
+  return entries_.size();
 }
 
 Money detail::pairing_margin_requirement(const std::vector<MarginLeg>& legs, const std::vector<MarginStock>& stocks,

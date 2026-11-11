@@ -11,11 +11,13 @@ namespace openport::trading::detail {
 // Arithmetic failure is a deterministic work limit, never permission to use an
 // uncertified relaxation. All published costs and all pruning use these rationals.
 struct MarginWorkLimit {};
-/// What exact allocations did on this thread, for tests and the benchmark: the
-/// simplex dictionary cells their pivots visited, the matrix cells the exact checks
+/// What strategy-margin allocations did on this thread, for tests and the benchmark:
+/// how many underlyings were solved (a cached answer is not), the simplex dictionary
+/// cells their exact allocations' pivots visited, the matrix cells the exact checks
 /// swept (dual bounds, basis equations and whole-contract validation), and the exact
 /// rational operations those checks and the basis eliminations did.
 struct MarginWork {
+  std::uint64_t solves = 0;
   std::uint64_t pivots = 0;
   std::uint64_t checks = 0;
   std::uint64_t rational = 0;

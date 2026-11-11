@@ -564,6 +564,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   change journaled the whole order, so re-pricing one order many times grew the
   journal with the square of its changes. An order now keeps its latest 50 changes
   and reports how many earlier ones it dropped (`changes_dropped`).
+- **Margin solved again on every transaction.** An account's strategy margin was
+  solved anew for every snapshot, working order's buying power and preview, several
+  times in each transaction, though the exact allocation of an irregular book of
+  15–30 legs over several expiries takes tens of milliseconds of the engine thread.
+  Each underlying's answer is now kept by every input it depends on (positions,
+  marks, spot, account policy, and expiry times under the calendar in force), so an
+  underlying whose inputs did not change is not solved again. No requirement
+  changes.
 - **Shares bought just before an account reset.** Share round trips were placed in an
   attempt by when they opened, and a reset starts the new attempt at the current market
   time, so shares bought and then closed by a reset at that same time (within one demo

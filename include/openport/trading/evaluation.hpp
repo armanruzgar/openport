@@ -530,12 +530,17 @@ struct MarginStock {
   Quantity shares = 0;  ///< Signed.
   Money value;          ///< What they are worth, positive: at their mark, or their basis without one.
 };
-/// What the account type and the broker add to margin (AccountRules).
+namespace detail { class MarginCache; }
+/// What the account type and the broker add to margin (AccountRules). Every field but
+/// the cache is part of what an allocation is cached by (margin.cpp, solve_key).
 struct MarginPolicy {
   AccountType account = AccountType::Margin;
   std::int64_t house_percent = 0;  ///< On top of the naked and short-sale requirements, or of the scan.
   std::int64_t vol_shock = 0;      ///< Portfolio margin's implied-volatility shock, in points.
   bool exact = true;             ///< False only when re-executing older run drivers.
+  /// Strategy margin already solved, per underlying, which a session keeps; null
+  /// solves every time. It changes no answer, only whether one is solved again.
+  detail::MarginCache* cache = nullptr;
 };
 [[nodiscard]] MarginPolicy margin_policy(const AccountRules& rules);
 /// Requirement for option positions and shares. Shorts pair with longs of the

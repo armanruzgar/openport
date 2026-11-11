@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <memory>
 #include <set>
 #include <nlohmann/json.hpp>
+#include "margin_detail.hpp"
 #include "openport/trading/history.hpp"
 #include "openport/trading/session.hpp"
 
@@ -995,6 +997,10 @@ struct State {
   std::optional<OpeningRuleInputs> opening_rule_inputs; ///< Transient explicit fill inputs; recorded as events.
   bool compact_opening_rule_inputs = true; ///< Transient wire compatibility for recorded runs.
   bool exact_margin = true; ///< Transient allocation compatibility for recorded run drivers.
+  /// Transient: strategy margin already solved for this account, shared by every copy
+  /// a transaction, a preview or a what-if makes. Its answers are kept by all of their
+  /// inputs, so a copy whose positions or marks differ solves its own; never journaled.
+  std::shared_ptr<detail::MarginCache> margin_cache = std::make_shared<detail::MarginCache>();
   /// Transient compatibility: false for replay drivers 1–7, which keep their
   /// original fills, stops, walks and flatten closes (see set_revised_fills).
   bool revised_fills = true;

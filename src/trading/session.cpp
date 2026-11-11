@@ -1016,6 +1016,7 @@ std::map<std::string, double> share_prices(const State& s) {
 MarginPolicy allocation_policy(const State& s) {
   auto policy = margin_policy(s.config.rules);
   policy.exact = s.exact_margin;
+  policy.cache = s.margin_cache.get();
   return policy;
 }
 /// Series of one underlying and one deliverable, margined together. An adjusted

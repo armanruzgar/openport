@@ -98,6 +98,22 @@ receive successive differences of the rounded cumulative rational cost, so their
 integer micro-dollar amounts sum to that total. Older recorded runs without the
 `exact_margin` driver flag keep their previous allocation and rounding behavior.
 
+## Solving each book once
+
+A paper account asks for its margin several times in every transaction: for the
+snapshot it publishes, for the buying power each working order reserves, and for
+every preview and what-if, each on a copy of the account. Each account keeps the
+answers it has solved, one underlying at a time, by every input the allocation reads:
+the account type, house percentage and allocator; the underlying's shares and their
+value; and each option's contract, signed quantity, buy-back value, the spot its
+naked rule reads and the instant it expires under the calendar in force (an
+announced early close moves it, under the same symbol). An underlying whose inputs
+are unchanged is not solved again; a new mark, fill, spot or calendar solves it
+again. The copies a transaction or a preview makes share the account's answers,
+which is safe because no two different inputs share an answer. The account keeps
+its 256 most recently used answers. They are never journaled and change no
+requirement: the same inputs always give the same answer.
+
 ## Validation and cost
 
 The tests compare 2,400 small books with an independent exhaustive partition
