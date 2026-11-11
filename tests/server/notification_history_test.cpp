@@ -219,7 +219,9 @@ TEST(NotificationHistory, AFeedStallIsKeptWithoutAnOutboundChannel) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::minutes(5);
   std::optional<json> stall;
   while (!stall && std::chrono::steady_clock::now() < deadline) {
-    for (const auto& item : json::parse(get(engine, "/api/notifications/history").body).at("events"))
+    // Kept in a variable: a range-for keeps no temporary of its range expression but the last.
+    const auto kept = json::parse(get(engine, "/api/notifications/history").body);
+    for (const auto& item : kept.at("events"))
       if (item.at("event") == "feed_stalled") stall = item;
     if (!stall) std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
