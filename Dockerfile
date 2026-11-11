@@ -31,11 +31,11 @@ COPY cmake cmake
 COPY include include
 COPY src src
 COPY apps apps
-# Configure embeds the stress shocks and the built-in scenarios and objectives.
+# Configure embeds the stress shocks and the built-in scenarios and objectives. The
+# tests and benchmarks are not built here, so their sources stay out: an edit to them
+# keeps the cached engine build.
 COPY data data
 COPY scenarios scenarios
-COPY tests tests
-COPY bench bench
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
       -DOPENPORT_BUILD_REVISION="$OPENPORT_BUILD_REVISION" \
       -DOPENPORT_BUILD_TESTS=OFF -DOPENPORT_BUILD_BENCHMARKS=OFF \
