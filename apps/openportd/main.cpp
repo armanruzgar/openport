@@ -808,10 +808,10 @@ int run(int argc, char** argv) {
     return usage(refusal.c_str());
   }
   if (!demo) providers::validate_subscription(settings.provider.name, settings.subscription);
-  // A bad --address, or a port another server holds, fails now: before the crash log,
-  // the journals, the provider and the engine start, not seconds later after them.
-  try { server::check_listen(settings.address, settings.port); }
-  catch (const std::invalid_argument& error) { return usage(error.what()); }
+  // A port another server holds fails now, naming the address and the port: before the
+  // crash log, the journals, the provider and the engine start, not seconds after them.
+  // An --address that is not an IP address is refused by the web server's own start.
+  server::check_port(settings.address, settings.port);
   if (settings.crash_log.empty() && !settings.paper_journal.empty())
     settings.crash_log = settings.paper_journal.parent_path() / "crash.log";
   if (!settings.crash_log.empty()) {

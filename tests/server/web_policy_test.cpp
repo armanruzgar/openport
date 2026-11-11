@@ -1902,15 +1902,16 @@ TEST(WebServer, UpgradesToAnUnknownPathOrAQueriedWsAreAnswered) {
   web.stop();
 }
 
-// I-41: a bad address or a port in use fails at once, naming the address and port.
+// I-41: a port in use is found before anything starts, and a bad address is refused
+// by the server's start; each names what is wrong.
 TEST(WebServer, ListenFailuresNameTheAddressAndPort) {
   server::WebServer first("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{}; });
   first.start();
   const auto port = first.port();
   const auto expected = "cannot listen on 127.0.0.1:" + std::to_string(port) + ": ";
-  EXPECT_NO_THROW(server::check_listen("127.0.0.1", 0));
+  EXPECT_NO_THROW(server::check_port("127.0.0.1", 0));
   try {
-    server::check_listen("127.0.0.1", port);
+    server::check_port("127.0.0.1", port);
     ADD_FAILURE() << "the port is in use";
   } catch (const std::runtime_error& error) {
     EXPECT_EQ(std::string(error.what()).rfind(expected, 0), 0u) << error.what();
@@ -1924,7 +1925,14 @@ TEST(WebServer, ListenFailuresNameTheAddressAndPort) {
     EXPECT_EQ(std::string(error.what()).rfind(expected, 0), 0u) << error.what();
   }
   for (const auto* address : {"localhost", "256.1.1.1", "nonsense", ""}) {
-    EXPECT_THROW(server::check_listen(address, 0), std::invalid_argument) << address;
+    EXPECT_NO_THROW(server::check_port(address, port)) << address;  // the start refuses it
+    server::WebServer named(address, 0, {}, [](const auto&) { return server::ApiResponse{}; });
+    try {
+      named.start();
+      ADD_FAILURE() << address;
+    } catch (const std::invalid_argument& error) {
+      EXPECT_NE(std::string(error.what()).find("--address"), std::string::npos) << error.what();
+    }
   }
   first.stop();
 }

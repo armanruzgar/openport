@@ -325,9 +325,12 @@ TEST(Notifications, ObservesNewAccountEventsOnceAndSkipsRecoveredHistory) {
     messages[body.at("event").get<std::string>()] = body.at("message").get<std::string>();
   }
   EXPECT_EQ(kinds, (std::multiset<std::string>{"fill", "order_rejected", "rule_trip", "rule_trip", "assignment", "exercise", "playbook_ready"}));
-  // A count of contracts, never the signed position (I-31).
-  EXPECT_EQ(messages["assignment"], "SPY: assigned on 1 short contract; intrinsic value $500.00 per unit.");
-  EXPECT_EQ(messages["exercise"], "QQQ: exercised 1 long contract; intrinsic value $400.00 per unit.");
+  // A count of contracts, never the signed position (I-31); the webhook text wraps it.
+  EXPECT_NE(messages["assignment"].find("\nSPY: assigned on 1 short contract; intrinsic value $500.00 per unit.\n"),
+            std::string::npos) << messages["assignment"];
+  EXPECT_NE(messages["exercise"].find("\nQQQ: exercised 1 long contract; intrinsic value $400.00 per unit.\n"),
+            std::string::npos) << messages["exercise"];
+  EXPECT_EQ(messages["assignment"].find(" -1 "), std::string::npos) << messages["assignment"];
 }
 TEST(Notifications, PlanDailyLossTripsNotifyOnceForLocksAndFailures) {
   for (const auto action : {trading::BreachAction::Lock, trading::BreachAction::Fail}) {

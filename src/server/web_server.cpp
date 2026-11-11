@@ -1487,8 +1487,11 @@ struct WebServer::Impl {
   std::optional<asio::executor_work_guard<asio::io_context::executor_type>> work;
 };
 
-void check_listen(const std::string& address, unsigned short port) {
-  const tcp::endpoint endpoint{listen_address(address), port};
+void check_port(const std::string& address, unsigned short port) {
+  boost::system::error_code parse_error;
+  const auto ip = asio::ip::make_address(address, parse_error);
+  if (parse_error) return;  // WebServer::start refuses it, naming --address
+  const tcp::endpoint endpoint{ip, port};
   asio::io_context io;
   tcp::acceptor acceptor(io);
   boost::system::error_code error;

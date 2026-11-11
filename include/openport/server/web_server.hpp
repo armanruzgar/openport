@@ -16,11 +16,12 @@ namespace openport::server {
 using AsyncApiHandler = std::function<void(const ApiRequest&, ApiCompletion)>;
 using ApiHandler = std::function<ApiResponse(const ApiRequest&)>;
 
-/// Fails as WebServer::start would on `address` and `port`, before anything else
-/// starts: std::invalid_argument when the address is not an IP address, and
-/// std::runtime_error naming the address and port when it cannot be bound now (a
-/// port another server holds, say). Binds nothing that outlives the call.
-void check_listen(const std::string& address, unsigned short port);
+/// Fails as WebServer::start would on a port it cannot bind now (one another server
+/// holds, say), so it can be found before anything else starts: std::runtime_error
+/// naming the address and the port. An address that is not an IP address is left to
+/// WebServer::start, which refuses it naming --address. Binds nothing that outlives
+/// the call.
+void check_port(const std::string& address, unsigned short port);
 
 /// HTTP and WebSocket server for the web terminal.
 ///
