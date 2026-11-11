@@ -681,9 +681,9 @@ void Desk::start_trading() {
       account.journal = journal;
       if (recovery && !options_.run_input.empty())
         throw TradingError(Reason::JOURNAL_CORRUPT, "A reproducible run needs a new journal; select an unused --paper-journal path");
-      if (account.damaged && recovery->records.empty()) account.session = std::make_unique<TradingSession>(options_.paper, 0);
+      if (account.damaged && recovery->records.empty()) account.session = std::make_unique<TradingSession>(options_.paper, 0, nullptr, "system", options_.revised_evaluation);
       else if (recovery) account.session = std::make_unique<TradingSession>(TradingSession::recover(*recovery, account.damaged ? nullptr : journal));
-      else if (seed) account.session = std::make_unique<TradingSession>(options_.paper, 0, journal, options_.initial_actor);
+      else if (seed) account.session = std::make_unique<TradingSession>(options_.paper, 0, journal, options_.initial_actor, options_.revised_evaluation);
       else {
         // Its create stopped before the first record. Removing the file while its
         // lock is held leaves nothing another writer could be using.
@@ -867,7 +867,7 @@ void Desk::create_account(const TradingCommand& c, TradingReply& reply) {
     created = journal;
     save_account_file(named, account.name + '\n');
     account.journal = journal;
-    account.session = std::make_unique<TradingSession>(config, market_time_, account.journal, c.actor);
+    account.session = std::make_unique<TradingSession>(config, market_time_, account.journal, c.actor, options_.revised_evaluation);
     account.session->set_exact_margin(options_.exact_margin);
     account.session->set_revised_evaluation(options_.revised_evaluation);
     account.session->set_actor("system");

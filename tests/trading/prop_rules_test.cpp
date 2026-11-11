@@ -285,6 +285,46 @@ TEST(PropRules, AFlattenPendingForAnOpenLossBlocksAddingToTheTrade) {
   EXPECT_EQ(s.submit(f.market("add"), f.time).decision.code, Reason::OPEN_LOSS_CAP);
 }
 
+TEST(PropRules, AnOpenLossFlattenRetriesAfterAPartialCloseAndPriceRecovery) {
+  ScriptedMarket f;
+  JournalFile file;
+  TradingSession s(config(open_loss(OpenLossAction::Flatten, "100")), f.time, FileJournal::create(file.path));
+  f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("open", 5), f.time).decision.ok());
+  f.next(); f.seed(s, "3.90", "4.10", 3);
+  ASSERT_EQ(s.snapshot()->positions.size(), 1U);
+  EXPECT_EQ(s.snapshot()->positions.front().position.quantity, 2);
+  EXPECT_EQ(s.snapshot()->evaluation.open_loss_symbols, std::vector<std::string>{f.symbol()});
+  EXPECT_EQ(s.submit(f.market("add"), f.time).decision.code, Reason::OPEN_LOSS_CAP);
+  auto recovered = TradingSession::recover(FileJournal::read(file.path));
+  f.next(); f.seed(recovered, "4.30", "4.50", 30);
+  EXPECT_TRUE(recovered.snapshot()->positions.empty());
+  EXPECT_TRUE(recovered.snapshot()->evaluation.open_loss_symbols.empty());
+  EXPECT_TRUE(recovered.submit(f.market("fresh-trade"), f.time).decision.ok());
+}
+
+TEST(PropRules, PercentageOpenLossRoomStaysAtTheDaysOpeningFloor) {
+  for (const auto basis : {OpenLossBasis::DrawdownRoom, OpenLossBasis::DayProfit}) {
+    ScriptedMarket f;
+    AccountRules rules; rules.max_drawdown = m("1000");
+    rules.open_loss_cap = OpenLossCap{basis, {}, 30, OpenLossAction::Flatten};
+    JournalFile file;
+    TradingSession s(config(rules), f.time, FileJournal::create(file.path)); f.seed(s);
+    EXPECT_EQ(open_loss_limit(s.snapshot()->evaluation, rules, plan_inputs(*s.snapshot())), m("300"));
+    profit_day(s, f, "1200");
+    EXPECT_GT(s.snapshot()->evaluation.floor, m("10000"));
+    EXPECT_EQ(open_loss_limit(s.snapshot()->evaluation, rules, plan_inputs(*s.snapshot())), m("300"));
+    auto recovered = TradingSession::recover(FileJournal::read(file.path));
+    EXPECT_EQ(open_loss_limit(recovered.snapshot()->evaluation, rules, plan_inputs(*recovered.snapshot())), m("300"));
+    quote(recovered, f, "2.00", "2.10");
+    ASSERT_TRUE(recovered.submit(f.market("next-entry"), f.time).decision.ok());
+    EXPECT_FALSE(recovered.snapshot()->positions.empty());
+    Evaluation e; e.day_open_equity = m("10000"); e.floor = m("10000");
+    e.day_open_floor = e.floor;
+    EXPECT_FALSE(open_loss_limit(e, rules, PlanInputs{}));
+  }
+}
+
 TEST(PropRules, BlockAddsRefusesAddingUntilThePositionRecovers) {
   ScriptedMarket f;
   TradingSession s(config(open_loss(OpenLossAction::BlockAdds)), f.time);

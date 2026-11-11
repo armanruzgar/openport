@@ -683,6 +683,7 @@ inline void to_json(Json& j, const Evaluation& e) {
   if (!e.event_actions.empty()) j["event_actions"] = e.event_actions;
   if (e.event_checked != 0) j["event_checked"] = e.event_checked;
   if (e.day_close_balance) j["day_close_balance"] = *e.day_close_balance;
+  if (e.day_open_floor) j["day_open_floor"] = *e.day_open_floor;
   if (!e.open_loss_symbols.empty()) j["open_loss_symbols"] = e.open_loss_symbols;
   if (!e.open_loss_trades.empty()) j["open_loss_trades"] = e.open_loss_trades;
   if (e.position_excess != Money{}) j["position_excess"] = e.position_excess;
@@ -715,6 +716,7 @@ inline void from_json(const Json& j, Evaluation& e) {
   added_field(j, "holding_violations", e.holding_violations);
   added_field(j, "event_actions", e.event_actions); added_field(j, "event_checked", e.event_checked);
   added_field(j, "day_close_balance", e.day_close_balance);
+  added_field(j, "day_open_floor", e.day_open_floor);
   added_field(j, "open_loss_symbols", e.open_loss_symbols); added_field(j, "open_loss_trades", e.open_loss_trades);
   added_field(j, "position_excess", e.position_excess); added_field(j, "best_position", e.best_position);
   added_field(j, "cycle_trades", e.cycle_trades);

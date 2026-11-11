@@ -2656,7 +2656,9 @@ to it); each underlying's shares are a trade of their own. The cap is `amount` w
 opening closed balance above the starting balance; while that is not above zero the same
 percentage of the drawdown room stands in, and without a drawdown rule there is no cap
 that day); or `percent` of the drawdown room with `drawdown_room` (the day's opening
-equity above the floor in force, which needs a drawdown rule). Percentages round down to
+equity above the floor in force at that day's open, which needs a drawdown rule).
+That room stays fixed during the day as an intraday floor trails gains; nonpositive
+opening room means no percentage cap for that day. Percentages round down to
 whole cents. A trade whose open loss reaches the cap is journaled once per breach as
 an `open_loss_cap` event (`trade`, `symbols`, `symbol` (the first of them), `loss`,
 `limit`, `action`), its round trips are remembered in `evaluation.open_loss_trades` for
@@ -2664,7 +2666,8 @@ payout reviews, and its `action` applies: `flatten` has the account close the wh
 trade (`system:open_loss:N`, retried on later quotes like any rule close; shares at their
 fresh price in the regular session) as Flatten closes positions, a short and the long
 that covers it as one two-leg order and other shorts before longs, so no leg is left
-naked, and refuses adding to its legs with `OPEN_LOSS_CAP` while that close is pending;
+naked, and refuses adding to its legs with `OPEN_LOSS_CAP` while that close is pending,
+even if a partial close or a price recovery brings the remainder below the cap;
 `block_adds` refuses orders and share trades that add to its legs with `OPEN_LOSS_CAP`
 until an observation finds it back within the cap (reductions always work); and `fail`
 fails the attempt with decision code `OPEN_LOSS_CAP` and liquidates as any decision

@@ -113,6 +113,7 @@ struct Evaluation {
   std::uint64_t first_fill = 1;   ///< Likewise for fills.
   md::Date day;                   ///< Trading day in progress.
   Money day_open_equity;
+  std::optional<Money> day_open_floor; ///< Fixed daily base for percentage open-loss caps.
   Money day_close_equity;         ///< Latest fully marked equity observed on `day`.
   std::vector<EvaluationDay> days;  ///< Finished days of this attempt, oldest first.
   bool floor_locked = false;      ///< The floor reached the lock balance and stopped trailing.

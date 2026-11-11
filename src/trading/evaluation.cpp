@@ -418,7 +418,9 @@ std::optional<Money> open_loss_limit(const Evaluation& e, const AccountRules& ru
   };
   const auto room = [&]() -> std::optional<Money> {
     if (rules.max_drawdown <= Money{}) return std::nullopt;
-    return share(e.day_open_equity - e.floor);
+    const auto base = e.day_open_equity - (e.revised_rules ? e.day_open_floor.value_or(e.floor) : e.floor);
+    if (e.revised_rules && base <= Money{}) return std::nullopt;
+    return share(base);
   };
   if (cap.basis == OpenLossBasis::DrawdownRoom) return room();
   // The start-of-day profit balance; without profit yet, the drawdown room stands in.

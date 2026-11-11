@@ -438,7 +438,8 @@ struct OrderChange {
 /// Snapshots are immutable owned values, valid after subsequent commands.
 class TradingSession {
  public:
-  TradingSession(SessionConfig config, Timestamp time, std::shared_ptr<Journal> journal = {}, std::string actor = "system");
+  TradingSession(SessionConfig config, Timestamp time, std::shared_ptr<Journal> journal = {}, std::string actor = "system",
+                 bool revised_evaluation = true);
   ~TradingSession();
   /// Owner-thread command context; reset to system after applying a command.
   void set_actor(std::string actor);

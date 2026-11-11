@@ -132,6 +132,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Open-loss caps.** Percentage drawdown room uses the day's opening floor, so
+  intraday gains cannot shrink it to zero and immediately flatten new entries.
+  A flatten stays pending through partial fills and price recovery until flat,
+  refusing adds and retrying on later quotes, including after journal recovery.
 - **Funded payout floors and scaling.** A starting-balance payout keeps its raised
   floor through later highs and day closes, independently of the plan's lock level.
   Static-floor reset payouts restore the full drawdown room below the reset balance.

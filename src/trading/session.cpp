@@ -1582,6 +1582,8 @@ Evaluation fresh_evaluation(const State& s, std::uint64_t attempt) {
   }
   e.peak = e.starting_balance;
   e.floor = evaluation_floor(s.config.rules, e.peak, e.floor_locked, e.starting_balance);
+  if (e.revised_rules && s.config.rules.open_loss_cap && s.config.rules.open_loss_cap->basis != OpenLossBasis::Amount)
+    e.day_open_floor = e.floor;
   e.day_open_realised = net_realised(s);
   e.cycle_started = s.time;
   e.first_order = static_cast<OrderId>(s.orders.size() + 1);
@@ -3942,6 +3944,9 @@ void check_open_loss(State& s, const PlanInputs& inputs, Events& events) {
     for (const auto& p : m.stocks) add(p.position.symbol, p.unrealised);
   }
   std::vector<std::string> symbols;
+  if (e.revised_rules && rules.open_loss_cap->action == OpenLossAction::Flatten)
+    for (const auto& symbol : e.open_loss_symbols)
+      if (held(s, symbol) != 0 || shares_held(s, symbol) != 0) symbols.push_back(symbol);
   std::optional<std::pair<std::string, Money>> first;
   constexpr const char* actions[] = {"flatten", "block_adds", "fail"};
   for (const auto& [id, trade] : trades) {
@@ -3951,7 +3956,8 @@ void check_open_loss(State& s, const PlanInputs& inputs, Events& events) {
     const bool known = std::any_of(trade.symbols.begin(), trade.symbols.end(), [&](const std::string& symbol) {
       return std::find(e.open_loss_symbols.begin(), e.open_loss_symbols.end(), symbol) != e.open_loss_symbols.end();
     });
-    symbols.insert(symbols.end(), trade.symbols.begin(), trade.symbols.end());
+    for (const auto& symbol : trade.symbols)
+      if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) symbols.push_back(symbol);
     if (known) continue;
     for (const auto& symbol : trade.symbols)
       if (const auto trip = s.trips.find(symbol); trip != s.trips.end() &&
@@ -3975,6 +3981,10 @@ void observe_equity(State& s, Events& events) {
   if (e.started == 0 && s.time > 0) e.started = s.time;
   // Likewise the first payout cycle; journals from before payouts start it here too.
   if (e.cycle_started == 0) e.cycle_started = e.started;
+  // Older live journals have no opening floor; freeze the first available level
+  // until the next rollover supplies an exact daily opening baseline.
+  if (e.revised_rules && !e.day_open_floor && rules.open_loss_cap && rules.open_loss_cap->basis != OpenLossBasis::Amount)
+    e.day_open_floor = e.floor;
   if (e.size_scaling && e.size_scaling->period_started < plan_trading_date(rules, e.started))
     e.size_scaling->period_started = plan_trading_date(rules, e.started);
   if (const auto equity = marked_equity(measure(s))) {
@@ -5846,7 +5856,8 @@ struct TradingSession::Impl {
     return result;
   }
 };
-TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared_ptr<Journal> journal, std::string actor)
+TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared_ptr<Journal> journal, std::string actor,
+                               bool revised_evaluation)
     : impl_(std::make_unique<Impl>()) {
   validate_limits(config.limits);
   validate_scenarios(config.scenarios);
@@ -5863,6 +5874,7 @@ TradingSession::TradingSession(SessionConfig config, Timestamp time, std::shared
     throw TradingError(Reason::INVALID_RULES, "Account size scaling maximum must be at least the starting balance");
   if (journal && journal->sequence() != 0) throw TradingError(Reason::JOURNAL_CORRUPT, "Use recover for a nonempty journal");
   impl_->actor = std::move(actor);
+  impl_->state.evaluation.revised_rules = revised_evaluation;
   impl_->state.config = std::move(config);
   impl_->state.time = time;
   impl_->state.day = plan_trading_date(impl_->state.config.rules, time);
@@ -7115,6 +7127,7 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     e.day_open_realised = net_realised(s);
     e.day = day;
     e.day_open_equity = opening_equity;
+    if (e.day_open_floor) e.day_open_floor = e.floor;
     e.day_close_equity = opening_equity;
     if (rules.drawdown_basis == DrawdownBasis::Balance) e.day_close_balance = plan_inputs(snapshot).balance;
     s.start_equity = opening_equity;
@@ -7186,6 +7199,7 @@ CommandResult TradingSession::transfer_cash(std::string client_id, Money amount,
     auto& e = s.evaluation;
     e.starting_balance = e.starting_balance + amount;
     e.day_open_equity = e.day_open_equity + amount;
+    if (e.day_open_floor) e.day_open_floor = *e.day_open_floor + amount;
     e.day_close_equity = e.day_close_equity + amount;
     e.peak = e.peak + amount;
     if (e.day_low_equity) e.day_low_equity = *e.day_low_equity + amount;
@@ -7221,6 +7235,7 @@ CommandResult TradingSession::request_payout(Money amount, Timestamp time) {
     // ends and before rollover, so its P&L and an end-of-day ratchet ignore it.
     s.start_equity = s.start_equity - out;
     e.day_open_equity = e.day_open_equity - out;
+    if (e.day_open_floor) e.day_open_floor = *e.day_open_floor - out;
     e.day_close_equity = e.day_close_equity - out;
     if (e.day_close_balance) e.day_close_balance = *e.day_close_balance - out;
     // The day's extremes too, so a daily loss limit trailing the day's high
