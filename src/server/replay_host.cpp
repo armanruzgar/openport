@@ -1229,6 +1229,16 @@ bool ReplayHost::handle(const ApiRequest& request, const ApiCompletion& complete
     history(request, complete);
     return true;
   }
+  // Account groups and copied orders are the live server's: a group names live
+  // accounts, and the replay's engine shares the live group store, so a mirror would
+  // read and edit the live configuration. Fill calibration searches the live
+  // recordings. The mirror answers them as routes it does not have.
+  if (const auto mirrored = rest.substr(0, rest.find('?'));
+      mirrored == "/account-groups" || mirrored.starts_with("/account-groups/") || mirrored == "/orders/copy" ||
+      mirrored == "/orders/copy/preview" || mirrored == "/fills/calibration") {
+    complete(api_error(404, "NOT_FOUND", "Account groups, copied orders and fill calibration are live routes; a replay has none"));
+    return true;
+  }
   const auto session = current();
   if (!session) {
     complete(api_error(404, "NO_REPLAY", "No replay is running; start one at /api/replay"));

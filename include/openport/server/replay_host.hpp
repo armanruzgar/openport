@@ -28,7 +28,8 @@ namespace openport::server {
 ///                        or {resume: a saved run's id, speed?, paused?}: continue it
 ///   PUT    /api/replay   {speed?, paused?, skip? | until}: control it
 ///   DELETE /api/replay   stop it
-///   *      /api/replay/X the live route /api/X, on the replay
+///   *      /api/replay/X the live route /api/X, on the replay; not account groups,
+///                        copied orders or fill calibration, which are live only (404)
 ///
 /// Starts, controls and history deletes run one at a time on the host's own thread
 /// and complete from there, so a lockstep step or a scenario's generation never

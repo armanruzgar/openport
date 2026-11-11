@@ -2588,6 +2588,32 @@ TEST(ReplayRun, AStepHoldsNoCallerAndRefusesWritesUntilItSettles) {
   host.stop();
 }
 
+// G-29: account groups, copied orders and fill calibration are the live server's. The
+// replay's engine shares the live group store, so the mirror of them read and edited
+// the live groups; it answers them as routes it does not have.
+TEST(ReplayRun, TheMirrorRefusesTheLiveGroupsCopiedOrdersAndCalibration) {
+  test::RecordingFile file;
+  write_stream(file.path, true);
+  server::Engine::Options options;
+  options.paper_journal = file.directory / "main.jsonl";
+  options.account_groups = std::make_shared<server::AccountGroups>();
+  server::ReplayHost host({file.directory, options, false});
+  ASSERT_EQ(replay_call(host, "POST", "/api/replay", {{"file", "session.oprec"}, {"paused", true}}).status, 201);
+  ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(host.tick()).at("replay").at("fast_forwarding").get<bool>(); }));
+  const std::vector<std::pair<std::string, std::string>> live_only{
+      {"GET", "/api/replay/account-groups"}, {"PUT", "/api/replay/account-groups/g2"},
+      {"DELETE", "/api/replay/account-groups/g1"}, {"POST", "/api/replay/orders/copy"},
+      {"POST", "/api/replay/orders/copy/preview"}, {"POST", "/api/replay/fills/calibration?x=1"}};
+  for (const auto& [verb, route] : live_only) {
+    const auto refused = replay_call(host, verb, route);
+    EXPECT_EQ(refused.status, 404) << verb << ' ' << route << ": " << refused.body;
+  }
+  // The replay's own routes still answer.
+  const auto orders = replay_call(host, "GET", "/api/replay/orders");
+  EXPECT_EQ(orders.status, 200) << orders.body;
+  host.stop();
+}
+
 TEST(ReplayRun, RelativeStepsSecondsAndQueuedSkipsAreExplicit) {
   test::RecordingFile file;
   write_stream(file.path, true);
