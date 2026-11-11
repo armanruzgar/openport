@@ -459,9 +459,15 @@ void Notifications::observe(std::string_view account, const TradingView& view, b
     for (std::size_t i = previous->closures.size(); i < current.closures.size(); ++i) {
       const auto& closure = current.closures[i];
       if (closure.kind == trading::ClosureKind::Settlement) expiry_assignments[closure.symbol] = closure.quantity < 0;
-      if (closure.kind == trading::ClosureKind::Exercise || closure.kind == trading::ClosureKind::Assignment)
-        emit(closure.kind == trading::ClosureKind::Assignment ? "assignment" : "exercise", closure.time,
-            closure.symbol + ": closed " + std::to_string(closure.quantity) + " contracts; intrinsic value $" + closure.price.str() + " per unit.");
+      if (closure.kind == trading::ClosureKind::Exercise || closure.kind == trading::ClosureKind::Assignment) {
+        // The closure holds the signed position it closed: an assignment's is short.
+        const bool assigned = closure.kind == trading::ClosureKind::Assignment;
+        const auto contracts = closure.quantity < 0 ? -closure.quantity : closure.quantity;
+        emit(assigned ? "assignment" : "exercise", closure.time,
+            closure.symbol + (assigned ? ": assigned on " : ": exercised ") + std::to_string(contracts) +
+            (closure.quantity < 0 ? " short" : " long") + (contracts == 1 ? " contract" : " contracts") +
+            "; intrinsic value $" + closure.price.str() + " per unit.");
+      }
     }
     // Each time an alert fires, wherever the terminal is.
     for (const auto& alert : current.alerts) {

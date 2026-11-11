@@ -1075,6 +1075,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   one that has gone. Such a client still read the answer: 200 with `evaluated` 0, an
   empty candidate list and `truncated` true, as if nothing fit the budget. A search its
   client cancelled now answers 503 `REQUEST_CANCELLED`.
+- **Early assignment notifications count contracts.** The webhook, Discord, Telegram
+  and ntfy text of an early assignment printed the closed position's sign, `closed -5
+  contracts`. It now reads `assigned on 5 short contracts` (an exercise, `exercised 5
+  long contracts`), and one contract is singular.
 
 ## 0.5.1 (2026-10-28)
 

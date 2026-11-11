@@ -318,8 +318,16 @@ TEST(Notifications, ObservesNewAccountEventsOnceAndSkipsRecoveredHistory) {
   h.notifications->observe("main", current);
   h.drain();
   std::multiset<std::string> kinds;
-  for (const auto& call : h.http->calls) kinds.insert(json::parse(call.body).at("event").get<std::string>());
+  std::map<std::string, std::string> messages;
+  for (const auto& call : h.http->calls) {
+    const auto body = json::parse(call.body);
+    kinds.insert(body.at("event").get<std::string>());
+    messages[body.at("event").get<std::string>()] = body.at("message").get<std::string>();
+  }
   EXPECT_EQ(kinds, (std::multiset<std::string>{"fill", "order_rejected", "rule_trip", "rule_trip", "assignment", "exercise", "playbook_ready"}));
+  // A count of contracts, never the signed position (I-31).
+  EXPECT_EQ(messages["assignment"], "SPY: assigned on 1 short contract; intrinsic value $500.00 per unit.");
+  EXPECT_EQ(messages["exercise"], "QQQ: exercised 1 long contract; intrinsic value $400.00 per unit.");
 }
 TEST(Notifications, PlanDailyLossTripsNotifyOnceForLocksAndFailures) {
   for (const auto action : {trading::BreachAction::Lock, trading::BreachAction::Fail}) {
