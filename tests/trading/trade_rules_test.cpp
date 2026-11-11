@@ -241,6 +241,47 @@ TEST(TradeRules, MinimumHoldRejectsAnyYoungComboLegAndShareReversal) {
   EXPECT_TRUE(s.close_positions({}, f.time).decision.ok());
 }
 
+TEST(TradeRules, MinimumHoldRejectsReachedTriggersAndMarketableOcoLegs) {
+  ScriptedMarket f;
+  AccountRules rules; rules.min_hold_seconds = 3600;
+  TradingSession s(config(rules), f.time); f.seed(s);
+  ASSERT_TRUE(s.submit(f.market("open"), f.time).decision.ok());
+  f.next(); f.seed(s);
+  for (const auto direction : {TriggerDirection::AtOrAbove, TriggerDirection::AtOrBelow}) {
+    auto close = f.market(direction == TriggerDirection::AtOrAbove ? "profit-trigger" : "reached-stop", 1, Side::Sell);
+    close.trigger = Trigger{TriggerSource::Option, direction, direction == TriggerDirection::AtOrAbove ? m("0.05") : m("5")};
+    EXPECT_EQ(s.preview(close, f.time).decision.code, Reason::MIN_HOLD);
+    EXPECT_EQ(s.submit(close, f.time).decision.code, Reason::MIN_HOLD);
+  }
+  auto oco = f.limit("marketable-oco", 1, "4.00", Side::Sell);
+  oco.oco = {f.limit("sibling", 1, "4.50", Side::Sell)};
+  EXPECT_EQ(s.preview(oco, f.time).decision.code, Reason::MIN_HOLD);
+  EXPECT_EQ(s.submit(oco, f.time).decision.code, Reason::MIN_HOLD);
+  EXPECT_EQ(s.snapshot()->positions.size(), 1U);
+  auto stop = f.market("protective", 1, Side::Sell);
+  stop.trigger = Trigger{TriggerSource::Option, TriggerDirection::AtOrBelow, m("3.50")};
+  ASSERT_TRUE(s.submit(stop, f.time).decision.ok());
+  f.next(); f.seed(s, "3.40", "3.60");
+  EXPECT_TRUE(s.snapshot()->positions.empty());
+}
+
+TEST(TradeRules, ARequiredStopCanTightenButCannotMoveAwayFromItsPosition) {
+  for (const bool require_stop : {false, true}) {
+    ScriptedMarket f;
+    AccountRules rules; rules.require_stop_loss = require_stop; rules.max_trade_risk = m("120");
+    TradingSession s(config(rules), f.time); f.seed(s);
+    const auto entry = s.submit(stopped(f.market("protected")), f.time);
+    ASSERT_TRUE(entry.decision.ok());
+    const auto stop = s.snapshot()->recent_orders.at(*entry.order_id - 1).stop_loss;
+    ASSERT_NE(stop, 0U);
+    OrderChange away; away.trigger_level = m("0.05");
+    EXPECT_EQ(s.modify(stop, away, f.time).decision.code, Reason::STOP_REQUIRED);
+    OrderChange tighter; tighter.trigger_level = m("3.50");
+    EXPECT_TRUE(s.modify(stop, tighter, f.time).decision.ok());
+    EXPECT_EQ(s.snapshot()->recent_orders.at(stop - 1).request.trigger->level, m("3.50"));
+  }
+}
+
 TEST(TradeRules, MinimumHoldAllowsBracketsOcoFlattenAndDailyLossLiquidation) {
   ScriptedMarket f;
   AccountRules rules; rules.min_hold_seconds = 3600; rules.min_trades = 10;

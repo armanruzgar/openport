@@ -2450,9 +2450,25 @@ Decision hold_age_check(const State& s, Timestamp opened, const std::string& sym
           std::to_string(required) + (required == 1 ? " second" : " seconds") + " before a user reduction",
           seconds, static_cast<double>(required), symbol};
 }
-Decision min_hold_check(const State& s, const Order& o) {
-  if (s.config.rules.min_hold_seconds == 0 || o.system || kept_within(o) || o.request.exits_only ||
-      o.request.trigger || o.oco != 0 || !o.request.oco.empty()) return {};
+bool reached(const State& s, const Order& o);
+bool marketable(const Order& o, const QuoteObservation& q);
+Decision min_hold_check(const State& s, const Order& o, Stage stage) {
+  if (s.config.rules.min_hold_seconds == 0 || o.system || kept_within(o) || o.request.exits_only) return {};
+  if (!s.evaluation.revised_rules && (o.request.trigger || o.oco != 0 || !o.request.oco.empty())) return {};
+  if (s.evaluation.revised_rules && o.request.trigger) {
+    Order protective = o;
+    protective.triggered_at = std::max<Timestamp>(1, s.time);
+    if (closing_stop(s, protective) && (stage != Stage::Accept || !reached(s, o))) return {};
+  }
+  if (s.evaluation.revised_rules && (o.oco != 0 || !o.request.oco.empty()) && !o.request.trigger) {
+    if (stage != Stage::Accept) return {};
+    if (o.request.type == OrderType::Limit && o.request.limit_price) {
+      if (multi_leg(o.request)) {
+        if (const auto net = executable_net(s, o); net && *net > *o.request.limit_price) return {};
+      } else if (const auto book = s.books.find(o.request.symbol); book != s.books.end() &&
+                 valid_quote(book->second.quote) && !marketable(o, book->second.quote)) return {};
+    }
+  }
   const auto closes = [&](const Lifecycle& life) {
     if (life.closed) return false;
     const auto opposite = [&](const std::string& symbol, Side side) {
@@ -2536,7 +2552,7 @@ Decision discipline_check(const State& s, const Order& o, Stage stage) {
   return {};
 }
 Decision order_check(const State& s, const Order& o, Stage stage = Stage::Accept) {
-  if (const auto d = min_hold_check(s, o); !d.ok()) return d;
+  if (const auto d = min_hold_check(s, o, stage); !d.ok()) return d;
   if (const auto d = account_check(s, closing_only(s, o), o.id); !d.ok()) return d;
   if (const auto d = entry_check(s, o); !d.ok()) return d;
   if (const auto d = open_loss_check(s, o); !d.ok()) return d;
@@ -5258,6 +5274,12 @@ CommandResult change_order(State& s, OrderId id, const OrderChange& change, cons
     return refuse(failure(Reason::INVALID_ORDER, "Only limit orders have a limit price"));
   if (change.trigger_level && (!r.trigger || order.status != OrderStatus::Armed))
     return refuse(failure(Reason::INVALID_ORDER, "Only armed orders with a trigger have a trigger level"));
+  if (s.evaluation.revised_rules && trade_rules_on(s.config.rules) && order.role == OrderRole::StopLoss &&
+      change.trigger_level && r.trigger && exit_capacity(s, r) > 0) {
+    const bool away = r.trigger->direction == TriggerDirection::AtOrBelow
+        ? *change.trigger_level < r.trigger->level : *change.trigger_level > r.trigger->level;
+    if (away) return refuse(failure(Reason::STOP_REQUIRED, "Close the protected position before loosening its required stop-loss level"));
+  }
   if (change.trigger_level && r.trigger->source == TriggerSource::Time)
     return refuse(failure(Reason::INVALID_ORDER, "A time trigger has no level; cancel the order and place it for the new time"));
   if (!rejection.ok()) return refuse(rejection);

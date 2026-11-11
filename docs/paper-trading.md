@@ -2592,10 +2592,17 @@ wall-clock time. Exactly `min_hold_seconds` is allowed. Every closing leg is che
 before accepting a combo. Preview returns the same refusal and seconds evidence.
 Messages show at most one decimal place without trailing zeros (for example,
 `Held 12.5 seconds`); numeric `actual` and `limit` retain full precision.
-Protective conditional triggers, bracket stops/targets, OCO and trailing stops,
+Protective conditional triggers that are unreached when accepted, bracket
+stops/targets, OCO limits that are not marketable when accepted, and trailing stops,
 flatten (including limit flatten), daily-loss exits, expiry cutoff, liquidation,
 exercise, assignment and settlement remain executable. Minimum hold applies in
 evaluation, verification and funded phases.
+An already-reached trigger or marketable OCO leg must satisfy minimum hold;
+attaching a condition or sibling does not exempt an immediate close.
+
+While a bracket stop protects an open position, required-stop and trade-risk rules
+also refuse moving its trigger farther away (`STOP_REQUIRED`): lower for an
+at-or-below stop, higher for an at-or-above stop. Tightening remains available.
 
 `MICROSCALPING` sums only positive net P&L of completed option and share round trips
 whose final close is strictly before `microscalp_seconds` from first opening fill.

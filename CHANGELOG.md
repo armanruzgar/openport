@@ -132,6 +132,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`JOURNAL_IO`, such as a directory or an unreadable file) or was damaged
   (`JOURNAL_CORRUPT`, `ACCOUNT_DAMAGED`) left paper trading off with nothing printed.
   Startup now prints the journal's path and the reason on stderr.
+- **Trade protection rules.** Already-reached triggers and marketable OCO legs no
+  longer bypass minimum hold. Under required-stop or trade-risk rules, an open
+  position's bracket stop can tighten but cannot be moved farther away.
 - **Open-loss caps.** Percentage drawdown room uses the day's opening floor, so
   intraday gains cannot shrink it to zero and immediately flatten new entries.
   A flatten stays pending through partial fills and price recovery until flat,
