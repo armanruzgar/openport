@@ -1,0 +1,100 @@
+name: Margin benchmark
+
+# Builds Release as CI does and runs the strategy-margin benchmarks
+# (bench/bench_margin.cpp) on a GitHub runner, for the timings in
+# docs/margin-allocation.md. CI compiles the benchmarks but never runs them. This
+# runs only on demand, from the Actions tab or with `gh workflow run bench.yml`
+# (optionally `-f filter=REGEX` for other benchmarks); never on pushes or pull
+# requests.
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: Google Benchmark filter (default every margin benchmark)
+        required: false
+        default: 'BM_Margin'
+      repetitions:
+        description: Repetitions; the summary reports their median
+        required: false
+        default: '5'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  margin:
+    name: Margin benchmark (GCC 13, Release, Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: 1G
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
+      FILTER: ${{ inputs.filter || 'BM_Margin' }}
+      REPETITIONS: ${{ inputs.repetitions || '5' }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build ccache libboost-dev libssl-dev zlib1g-dev libzstd-dev
+      # CI's Release cache, read only: configured as CI configures, the build
+      # recompiles only what changed since CI last saved it.
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-release-${{ runner.os }}-
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DOPENPORT_WERROR=ON
+      - name: Build
+        run: cmake --build build --target openport_bench_trading
+      - name: Runner
+        run: |
+          lscpu | grep -E '^(Model name|CPU\(s\)|Thread|Core|Socket|L2|L3)' || true
+          nproc
+      - name: Benchmark
+        run: >
+          ./build/bench/openport_bench_trading
+          --benchmark_filter="$FILTER"
+          --benchmark_repetitions="$REPETITIONS"
+          --benchmark_report_aggregates_only=true
+          --benchmark_counters_tabular=true
+          --benchmark_out=bench.json --benchmark_out_format=json
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f bench.json ]; then
+            python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          data = json.load(open("bench.json"))
+          print("| Benchmark | CPU median | Counters |")
+          print("| --- | ---: | --- |")
+          for b in data["benchmarks"]:
+              if b.get("aggregate_name") not in (None, "median"):
+                  continue
+              skip = {"name", "family_index", "per_family_instance_index", "run_name", "run_type", "repetitions",
+                      "repetition_index", "threads", "iterations", "real_time", "cpu_time", "time_unit",
+                      "aggregate_name", "aggregate_unit"}
+              counters = ", ".join(f"{k}={v:g}" for k, v in b.items() if k not in skip and isinstance(v, (int, float)))
+              print(f"| {b['run_name']} | {b['cpu_time']:.3f} {b['time_unit']} | {counters} |")
+          EOF
+          fi
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bench-margin
+          path: bench.json
+          if-no-files-found: ignore
