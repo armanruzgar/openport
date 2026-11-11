@@ -88,15 +88,17 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
     moves = store.moves();
     ASSERT_TRUE(moves[0].realized);
     EXPECT_DOUBLE_EQ(*moves[0].realized, 4960.0 / 5000.0 - 1);
-    EXPECT_EQ(*moves[0].priced(), *moves[0].implied > 0.008 ? "over" : "under");
+    // The straddle priced a move of more than 2%, as the test above finds; the reaction was a 0.8% drop.
+    EXPECT_EQ(*moves[0].priced(), "over");
 
     const auto result = store.import_csv(
         "# past quarters, from my notes\n"
         "symbol,date,session,implied_move,realized_move,label\r\n"
         "SPX,2026-09-22,after_close,4.0,-1.0,dup\n"
         "AAPL,2026-07-30,after_close,4.1%,-2.3,\"Q3, FY26\"\n"  // quoted, as analysis imports read them
-        "AAPL,2026-05-01,before_open,3.5,5.25,\n");
-    EXPECT_EQ(result.added, 2u);
+        "AAPL,2026-05-01,before_open,3.5,5.25,\n"
+        "AAPL,2026-01-29,after_close,3,-5\n");  // a drop larger than the move priced
+    EXPECT_EQ(result.added, 3u);
     ASSERT_EQ(result.skipped.size(), 1u);  // recorded here first
     EXPECT_THROW(store.import_csv("symbol,date,session,implied_move,realized_move\nAAPL,2026-13-01,after_close,4,1\n"), std::invalid_argument);
     EXPECT_THROW(store.import_csv("symbol,date\nAAPL,2026-07-30\n"), std::invalid_argument);
@@ -106,23 +108,30 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
   }
   server::EarningsStore store(file);
   EXPECT_TRUE(store.error().empty()) << store.error();
-  ASSERT_EQ(store.moves().size(), 3u);
+  ASSERT_EQ(store.moves().size(), 4u);
   const auto aapl = store.moves("AAPL");
-  ASSERT_EQ(aapl.size(), 2u);
+  ASSERT_EQ(aapl.size(), 3u);
   EXPECT_EQ(aapl[0].date, (md::Date{2026, 7, 30}));  // newest first
   EXPECT_EQ(aapl[0].source, "imported");
   EXPECT_EQ(aapl[0].label, "Q3, FY26");
   EXPECT_DOUBLE_EQ(*aapl[0].implied, 0.041);
   EXPECT_EQ(*aapl[0].priced(), "over");
   EXPECT_EQ(*aapl[1].priced(), "under");
+  // A move is compared by its size: a 5% drop came in above the 3% priced.
+  EXPECT_EQ(aapl[2].date, (md::Date{2026, 1, 29}));
+  EXPECT_EQ(*aapl[2].priced(), "under");
 
   auto response = server::earnings_request(server::ApiRequest("GET", "/api/earnings?symbol=AAPL"), store);
   ASSERT_TRUE(response);
   auto body = json::parse(response->body);
-  EXPECT_EQ(body["summary"]["events"], 2);
+  EXPECT_EQ(body["summary"]["events"], 3);
   EXPECT_EQ(body["summary"]["over"], 1);
-  EXPECT_EQ(body["summary"]["imported"], 2);
-  EXPECT_DOUBLE_EQ(body["summary"]["over_rate"].get<double>(), 0.5);
+  EXPECT_EQ(body["summary"]["under"], 2);
+  EXPECT_EQ(body["summary"]["imported"], 3);
+  EXPECT_DOUBLE_EQ(body["summary"]["over_rate"].get<double>(), 1.0 / 3);
+  // The means of 4.1%, 3.5% and 3% priced, and of the sizes of -2.3%, 5.25% and -5%.
+  EXPECT_NEAR(body["summary"]["mean_implied"].get<double>(), 0.106 / 3, 1e-12);
+  EXPECT_NEAR(body["summary"]["mean_realized"].get<double>(), 0.1255 / 3, 1e-12);
   EXPECT_EQ(body["moves"][0]["source"], "imported");
   EXPECT_EQ(body["moves"][0]["priced"], "over");
 
@@ -141,7 +150,7 @@ TEST(Earnings, RecordsSettlesImportsAndSurvivesARestart) {
   EXPECT_EQ(server::earnings_request(server::ApiRequest("POST", "/api/earnings/import", "{\"csv\":\"bad\"}"), store)->status, 400);
   EXPECT_EQ(server::earnings_request(server::ApiRequest("GET", "/api/earnings?from=1"), store)->status, 400);
   response = server::earnings_request(server::ApiRequest("DELETE", "/api/earnings/imported"), store);
-  EXPECT_EQ(json::parse(response->body)["removed"], 3);
+  EXPECT_EQ(json::parse(response->body)["removed"], 4);
   EXPECT_EQ(store.moves().size(), 1u);
   EXPECT_FALSE(server::earnings_request(server::ApiRequest("GET", "/api/calendar/events"), store));
   std::filesystem::remove(file);
