@@ -285,6 +285,29 @@ TEST(QueueFills, AGtcLimitIsInNoQueueOutsideTheRegularSessionAndJoinsAgainInIt) 
   }
 }
 
+TEST(QueueFills, AQueuedGtcLimitLeavesItsQueueAtTheCloseAndJoinsAgainAtTheOpen) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket market;
+    market.time = md::new_york_to_utc({2026, 9, 22}, 15, 59);
+    TradingSession session(config(queued()), market.time);
+    session.set_revised_fills(revised);
+    market.seed(session);
+    ASSERT_TRUE(session.submit(market.limit("gtc", 1, "4.00", Side::Buy, TimeInForce::Gtc), market.time).decision.ok());
+    ASSERT_TRUE(order(session).queue);
+    EXPECT_EQ(order(session).queue->ahead, 10);
+    const auto joined = order(session).queue->joined;
+    // After the regular close a GTC limit cannot trade, so it is in no queue.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 22}, 16, 20), "4.00", "4.20");
+    EXPECT_EQ(static_cast<bool>(order(session).queue), !revised);
+    // At the open it joins again behind what is displayed then; replay drivers 1-7 kept its place.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 23}, 9, 31), "4.00", "4.20");
+    ASSERT_TRUE(order(session).queue);
+    EXPECT_EQ(order(session).queue->joined, revised ? market.time : joined);
+    EXPECT_EQ(order(session).queue->ahead, 10);
+    EXPECT_EQ(order(session).filled_quantity, 0);
+  }
+}
+
 TEST(QueueFills, ABracketTargetEarnsNothingAfterTheCloseSoAGapStillFiresTheStop) {
   for (const bool revised : {true, false}) {
     ScriptedMarket market;
