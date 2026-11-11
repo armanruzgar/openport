@@ -1258,6 +1258,29 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   missed would have made every new run refuse to resume or fail `--verify-run`. It is
   now `kReplayDriver`, and one table maps each driver to its option for recording,
   verification, resume and archives.
+- **One damaged replay sidecar no longer hides the Replay page.** A run's `<id>.json`
+  that was valid JSON but had a `drill` that was not an object with a score, or a
+  scored drill under a `scenario` that was not text, made `GET /api/replay` answer 400
+  and `GET /api/replay/history` 500, hiding every saved run, the demo catalogue and
+  the running replay. Such a sidecar now lists its own run with an `error`.
+- **Verifying a run without its sidecar no longer makes it resumable.** The
+  verification result was saved into a new sidecar holding nothing else, and the
+  listing then showed the stopped run as interrupted: a resume ran it again and
+  appended to its archived journal, invalidating the verification just passed. A run
+  resumes only from a sidecar holding its start state.
+- **Replay history lists the newest run first.** It was sorted by run id in reverse,
+  which starts with the scenario or recording name, so runs were grouped by reverse
+  name and a run just finished could land anywhere. The run whose journal was
+  written last now leads.
+- **Scenario pack listings answer at once.** `GET /api/replay/packs` and
+  `/packs/{id}` waited behind a replay start or an `until` step on the control thread;
+  they are now read on the calling thread, as the other listings are, and
+  `GET /api/replay` reads the scenarios under the lock an import changes them with.
+- **Scenario and replay dates from 2022 to 2200.** A scenario file, a pack or a
+  `POST /api/replay` date override took any trading date: up to 2262 the demo ran a
+  session with no options, as its expiries do not fit the clock, and before 2022,
+  where the exchange calendar ends, holidays such as 1970-01-01 played as trading
+  days. Dates outside 2022-01-01 to 2200-12-31 are refused.
 
 ## 0.5.1 (2026-10-28)
 

@@ -45,7 +45,7 @@ versions are rejected. Files are limited to 64 KiB.
 | `title`, `description`, `goal` | Nonempty single lines; title at most 100 bytes, description and goal at most 500 |
 | `symbols` | Nonempty unique subset of SPX, SPY, QQQ, XSP, NDX, RUT and VIX; a single overnight session supports SPX, XSP, RUT and VIX |
 | `session` | `regular` or `overnight` |
-| `date` | A trading date in `YYYY-MM-DD` format |
+| `date` | A trading date in `YYYY-MM-DD` format, from 2022-01-01 (the first year the exchange calendar knows) to 2200-12-31 |
 | `seed` | Unsigned 64-bit integer; zero is a valid seed |
 | `generator` | `1`; other versions are refused |
 | `drift` | 1–100 `[fraction, cumulative log return]` pairs, with fractions strictly increasing above zero and ending at 1; returns between −0.2 and 0.2 |

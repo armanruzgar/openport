@@ -72,6 +72,7 @@ TEST(Scenarios, RejectsInvalidFieldsWithFileAndFieldNames) {
   const std::vector<std::pair<std::string, json>> invalid{
       {"generator", 2}, {"generator", 1.0}, {"id", "../x"}, {"seed", -1}, {"seed", 1.5},
       {"symbols", {"SPX", "SPX"}}, {"symbols", {"FAKE"}}, {"session", "day"}, {"date", "2026-09-19"},
+      {"date", "2021-12-31"}, {"date", "2201-01-02"},
       {"drift", {{0.5, 0.1}, {0.4, 0.1}}}, {"drift", {{0.5, 0.1}}}, {"volatility", -0.1},
       {"iv_shift", "high"}, {"spot_vol", 1}, {"typo", true},
       {"events", {{{"type", "pin"}, {"at", "25:00"}, {"strike", 6000}}}},

@@ -720,6 +720,64 @@ TEST(ReplayHost, AServerOfferingSandboxesStillStartsReplaysWithoutThem) {
   host.stop();
 }
 
+// I-37: the run whose journal was written last leads the history, whatever its name.
+// B-115: a sidecar with fields of the wrong type marks its own run, and the listing
+// still answers.
+TEST(ReplayHost, HistoryListsNewestFirstAndSurvivesMalformedSidecars) {
+  using nlohmann::json;
+  test::RecordingFile file;
+  drill_recording(file.path);
+  std::filesystem::copy_file(file.path, file.directory / "zeta.oprec");
+  server::Engine::Options base;
+  base.paper_journal = file.directory / "main.jsonl";
+  const auto replays = file.directory / "replays";
+  server::ReplayHost host({file.directory, base, false});
+  std::vector<std::string> ids;
+  for (const std::string recording : {"zeta.oprec", "session.oprec"}) {
+    const auto started = call(host, "POST", "/api/replay",
+        json{{"file", recording}, {"start_at", "10:00"}, {"paused", true}, {"speed", 0}}.dump());
+    ASSERT_EQ(started.status, 201) << started.body;
+    ids.push_back(json::parse(started.body)["replay"]["id"]);
+    ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(host.tick())["replay"]["fast_forwarding"].get<bool>(); }));
+    ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
+  }
+  const auto listed = [&] {
+    const auto response = call(host, "GET", "/api/replay/history");
+    EXPECT_EQ(response.status, 200) << response.body;
+    return json::parse(response.body).at("history");
+  };
+  const auto now = std::filesystem::file_time_type::clock::now();
+  std::filesystem::last_write_time(replays / (ids[0] + ".jsonl"), now - std::chrono::hours(2));
+  std::filesystem::last_write_time(replays / (ids[1] + ".jsonl"), now - std::chrono::hours(1));
+  auto history = listed();
+  ASSERT_EQ(history.size(), 2U);
+  EXPECT_EQ(history[0]["id"], ids[1]) << history;  // though zeta's id sorts after it
+  std::filesystem::last_write_time(replays / (ids[0] + ".jsonl"), now);
+  history = listed();
+  ASSERT_EQ(history.size(), 2U);
+  EXPECT_EQ(history[0]["id"], ids[0]) << history;
+  const auto sidecar = replays / (ids[1] + ".json");
+  json original;
+  { std::ifstream in(sidecar); original = json::parse(in); }
+  for (const json& drill : {json(5), json{{"score", "high"}}, json::array()}) {
+    auto edited = original;
+    edited["drill"] = drill;
+    { std::ofstream out(sidecar, std::ios::trunc); out << edited.dump(); }
+    history = listed();
+    ASSERT_EQ(history.size(), 2U) << drill;
+    for (const auto& run : history) EXPECT_EQ(run.contains("error"), run.at("id") == ids[1]) << run;
+    EXPECT_EQ(call(host, "GET", "/api/replay").status, 200) << drill;
+  }
+  // A scored drill under a scenario that is not text no longer fails the personal bests.
+  auto edited = original;
+  edited["drill"] = {{"score", 1.0}};
+  edited["scenario"] = 5;
+  { std::ofstream out(sidecar, std::ios::trunc); out << edited.dump(); }
+  EXPECT_EQ(call(host, "GET", "/api/replay").status, 200);
+  EXPECT_EQ(listed().size(), 2U);
+  host.stop();
+}
+
 // B52, B32, B54: a delete takes a run's sidecars with it and works on a damaged
 // journal; an unknown id is a 404 that names no file.
 TEST(ReplayHost, HistoryDeletesDamagedRunsWithTheirSidecarsAndAnswersUnknownIds) {
@@ -1670,6 +1728,15 @@ TEST(ReplayHost, ScenarioPacksPersistFixedChallengesAndExportVerificationInputs)
     server::ReplayHost host({file.directory, base});
     auto invalid_version = pack; invalid_version["version"] = 1.5;
     EXPECT_EQ(call(host, "POST", "/api/replay/packs", invalid_version.dump()).status, 400);
+    // B-118: a date the calendar does not know, or one whose expiries the clock cannot
+    // hold, is refused in a pack and in a start.
+    for (const auto* date : {"2021-12-31", "1970-01-01", "2201-01-02", "2262-04-11"}) {
+      auto outside = pack; outside["scenario"]["date"] = date; outside["scenario"]["id"] = "out-of-range";
+      EXPECT_EQ(call(host, "POST", "/api/replay/packs", outside.dump()).status, 400) << date;
+      const auto start = call(host, "POST", "/api/replay", json{{"scenario", "reversal"}, {"date", date}, {"paused", true}}.dump());
+      EXPECT_EQ(start.status, 400) << date << start.body;
+      EXPECT_NE(start.body.find("2200-12-31"), std::string::npos) << start.body;
+    }
     const auto imported = call(host, "POST", "/api/replay/packs", pack.dump());
     ASSERT_EQ(imported.status, 201) << imported.body;
     EXPECT_EQ(json::parse(imported.body), pack);

@@ -237,6 +237,35 @@ struct UnknownRun : std::runtime_error {
   explicit UnknownRun(const std::string& id) : std::runtime_error("No saved replay run " + id) {}
 };
 
+/// Whether a run's sidecar holds the state its start wrote, which a resume or restart
+/// starts from: not only the result a verification of a run without one added.
+bool start_state(const json& saved) {
+  return saved.is_object() && saved.contains("file") && saved.contains("plan");
+}
+/// Refuses a sidecar whose fields a listing reads have the wrong type: a drill not an
+/// object, or one whose score is neither a number nor null; a scenario, plan or plan
+/// name not text. An edited or damaged sidecar then marks only its own run.
+void check_sidecar(const json& saved) {
+  if (!saved.is_object()) throw std::runtime_error("The run's metadata is not a JSON object");
+  if (const auto drill = saved.find("drill"); drill != saved.end() &&
+      (!drill->is_object() || (drill->contains("score") && !drill->at("score").is_number() && !drill->at("score").is_null())))
+    throw std::runtime_error("The run's metadata has a drill that is not an object with a numeric score");
+  for (const auto* key : {"scenario", "plan", "plan_name"})
+    if (const auto value = saved.find(key); value != saved.end() && !value->is_string() && !value->is_null())
+      throw std::runtime_error(std::string("The run's metadata has a ") + key + " that is not text");
+}
+/// The value at `keys` under `root` when every step is an object holding the next key.
+const json* reach(const json& root, std::initializer_list<const char*> keys) {
+  const json* at = &root;
+  for (const auto* key : keys) {
+    if (!at->is_object()) return nullptr;
+    const auto found = at->find(key);
+    if (found == at->end()) return nullptr;
+    at = &*found;
+  }
+  return at;
+}
+
 /// A plan's id from its display name, for runs whose metadata sidecar is missing.
 std::string plan_id(const std::string& name) {
   for (const auto& plan : plan_presets()) if (plan.name == name) return plan.id;
@@ -625,11 +654,18 @@ class ReplayHost::History {
     json out = json::array();
     std::error_code ec;
     if (directory_.empty() || !std::filesystem::is_directory(directory_, ec)) return out;
-    std::vector<std::filesystem::path> files;
-    for (const auto& entry : std::filesystem::directory_iterator(directory_, ec))
-      if (entry.is_regular_file(ec) && entry.path().extension() == ".jsonl") files.push_back(entry.path());
+    // Newest first: the run whose journal was written last (started, played on or
+    // resumed) leads, whatever its scenario or recording is called.
+    std::vector<std::pair<std::filesystem::file_time_type, std::filesystem::path>> files;
+    for (const auto& entry : std::filesystem::directory_iterator(directory_, ec)) {
+      if (!entry.is_regular_file(ec) || entry.path().extension() != ".jsonl") continue;
+      std::error_code time_error;
+      const auto written = entry.last_write_time(time_error);
+      files.emplace_back(time_error ? std::filesystem::file_time_type::min() : written, entry.path());
+    }
     std::sort(files.begin(), files.end(), std::greater<>());
-    for (const auto& file : files) {
+    for (const auto& listed : files) {
+      const auto& file = listed.second;
       const auto id = file.stem().string();
       const bool current = active && active->id == id;
       if (current && !active->provider->finished()) continue;
@@ -643,7 +679,12 @@ class ReplayHost::History {
         json saved;
         {
           std::ifstream metadata(std::filesystem::path(file).replace_extension(".json"));
-          if (metadata) { saved = json::parse(metadata); item.update(saved); resumable = true; }
+          if (metadata) {
+            saved = json::parse(metadata);
+            check_sidecar(saved);
+            item.update(saved);
+            resumable = start_state(saved);
+          }
           finalized = item.value("finished", false);
         }
         if (!plain_name(id)) saved = nullptr;
@@ -659,12 +700,14 @@ class ReplayHost::History {
         if (!std::filesystem::exists(file, ec)) continue;  // deleted while listing
         item["error"] = error.what();
       }
-      if (item.contains("drill") && (item.contains("error") || item.value("torn", false) || item.value("truncated", false) || item.value("mismatch", false))) {
+      if (item.contains("drill") && item.at("drill").is_object() &&
+          (item.contains("error") || item.value("torn", false) || item.value("truncated", false) || item.value("mismatch", false))) {
         item["drill"]["score"] = nullptr;
         item["drill"]["complete_run"] = false;
       }
       item["id"] = id;  // A copied sidecar cannot redirect its journal's history routes.
-      if (!item.contains("plan") && item.contains("plan_name")) item["plan"] = plan_id(item.at("plan_name").get<std::string>());
+      if (!item.contains("plan") && item.contains("plan_name") && item.at("plan_name").is_string())
+        item["plan"] = plan_id(item.at("plan_name").get<std::string>());
       // Interrupted metadata still holds the start state: playback stopped and
       // settled through its last journaled time.
       if (!finalized && item.contains("fast_forwarding")) {
@@ -683,13 +726,18 @@ class ReplayHost::History {
     }
     // Scores come from editable sidecars. A best counts as verified only when a passed
     // verification of its run, against the current journal, recomputed that same score.
+    // Every field is checked before it is read: a sidecar is anyone's file.
     std::map<std::string, std::pair<double, bool>> best;
-    for (const auto& run : out) if (run.contains("drill") && run.at("drill").at("score").is_number()) {
-      const auto scenario = run.value("scenario", std::string());
-      const auto score = run.at("drill").at("score").get<double>();
-      const auto& verified = run.value("verification", json::object());
-      const bool rechecked = verified.value("status", "") == "passed" && verified.contains("run") && verified.at("run").contains("drill") &&
-          verified.at("run").at("drill").value("score", json(nullptr)) == score;
+    for (const auto& run : out) {
+      const auto* scored = reach(run, {"drill", "score"});
+      if (!scored || !scored->is_number()) continue;
+      const auto* named = reach(run, {"scenario"});
+      const auto scenario = named && named->is_string() ? named->get<std::string>() : std::string();
+      const auto score = scored->get<double>();
+      const auto* status = reach(run, {"verification", "status"});
+      const auto* rescored = reach(run, {"verification", "run", "drill", "score"});
+      const bool rechecked = status && *status == "passed" && rescored && rescored->is_number() &&
+          rescored->get<double>() == score;
       auto [entry, added] = best.try_emplace(scenario, score, rechecked);
       if (!added && score > entry->second.first) entry->second = {score, rechecked};
       else if (!added && score == entry->second.first) entry->second.second = entry->second.second || rechecked;
@@ -1135,10 +1183,19 @@ bool ReplayHost::handle(const ApiRequest& request, const ApiCompletion& complete
   const auto rest = target.substr(prefix.size());
   if (!rest.empty() && rest.front() != '?' && rest.front() != '/') return false;
   const bool controls = rest.empty() || rest.front() == '?';
-  if (rest == "/packs" || rest.starts_with("/packs/")) { enqueue(request, complete); return true; }
+  if (rest == "/packs" || rest.starts_with("/packs/")) {
+    // Reading the packs never waits for a start or a step; an import takes its turn.
+    if (request.method == "GET") packs(request, complete);
+    else enqueue(request, complete);
+    return true;
+  }
   if (rest == "/history" && request.method == "GET") {
-    const std::lock_guard handoff(handoff_mutex_);
-    complete(ok({{"history", history_->list(current())}}));
+    try {
+      const std::lock_guard handoff(handoff_mutex_);
+      complete(ok({{"history", history_->list(current())}}));
+    } catch (const std::exception& error) {
+      complete(api_error(422, "REPLAY_HISTORY_FAILED", error.what()));
+    }
     return true;
   }
   const bool saved = rest.starts_with("/history/");
@@ -1406,7 +1463,8 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
       }
     }
     const auto metadata = source ? source->state() : history_->metadata(id);
-    if (!metadata.is_object()) return refuse("The run's metadata is missing or unreadable");
+    // A sidecar a verification alone wrote holds no start state: such a run has ended.
+    if (!start_state(metadata)) return refuse("The run's metadata is missing or unreadable");
     if (!restart && metadata.value("finished", false)) return refuse("The run has ended: it played to its end or was stopped");
     auto recovery = trading::FileJournal::read(file.string());
     // A crash part way through a write leaves a torn last line; the repair keeps a copy.
@@ -1674,10 +1732,14 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
 void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete) {
   try {
     if (request.method == "GET") {
+      // On the calling thread, under the lock an import changes both with.
       json packs = json::array();
-      if (options_.demo) for (const auto& scenario : scenarios_) {
-        if (packs_.contains(scenario.id)) packs.push_back(json::parse(packs_.at(scenario.id)));
-        else packs.push_back({{"version", 1}, {"scenario", json::parse(scenario.source)}, {"seed", std::to_string(scenario.seed)}, {"plan", "practice"}});
+      {
+        const std::lock_guard handoff(handoff_mutex_);
+        if (options_.demo) for (const auto& scenario : scenarios_) {
+          if (packs_.contains(scenario.id)) packs.push_back(json::parse(packs_.at(scenario.id)));
+          else packs.push_back({{"version", 1}, {"scenario", json::parse(scenario.source)}, {"seed", std::to_string(scenario.seed)}, {"plan", "practice"}});
+        }
       }
       if (request.target != "/api/replay/packs") {
         const auto id = request.target.substr(std::string("/api/replay/packs/").size());
@@ -1736,9 +1798,11 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
   }
   try {
     if (request.method == "GET") {
+      // Under the lock a pack import changes the scenarios with: this runs on the
+      // calling thread, the import on the control thread.
+      const std::lock_guard handoff(handoff_mutex_);
       // Whoever lists the demo may start it next: have the default day ready.
       if (options_.demo) demos_->prepare(default_scenario(scenarios_));
-      const std::lock_guard handoff(handoff_mutex_);
       const auto session = current();
       complete(ok({{"write", options_.engine.write_mode}, {"directory", options_.recordings.string()}, {"recordings", recordings_json(options_.recordings)},
                    {"demo", options_.demo ? demo_json(default_scenario(scenarios_)) : json(nullptr)},
@@ -1848,6 +1912,8 @@ void ReplayHost::control(const ApiRequest& request, const ApiCompletion& complet
         if (value.size() != 10 || !parsed || md::trading_date(*parsed) != md::new_york_time(*parsed).date)
           throw std::invalid_argument("date must be a trading date, YYYY-MM-DD");
         date = md::new_york_time(*parsed).date;
+        if (date < providers::kFirstScenarioDate || date > providers::kLastScenarioDate)
+          throw std::invalid_argument("date must be from 2022-01-01, where the exchange calendar starts, to 2200-12-31");
       }
       const auto seed = demo ? (body.contains("seed") ? seed_field(body.at("seed"), *day) : fresh_seed()) : 0;
       auto session = std::make_shared<Session>();

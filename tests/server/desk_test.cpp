@@ -2429,6 +2429,22 @@ TEST(ReplayRun, ARunsSidecarIsOptionalForItsArchiveButNeededToResume) {
   const auto history = json::parse(replay_call(host, "GET", "/api/replay").body).at("history");
   ASSERT_EQ(history.size(), 1U);
   EXPECT_EQ(history[0].at("interrupted"), false) << history[0];
+  // B-116: verifying it writes a sidecar holding only the result. The run still ended:
+  // it is not offered for a resume, and one would not append to its journal.
+  const auto route = "/api/replay/history/" + id + "/verify";
+  ASSERT_EQ(replay_call(host, "POST", route).status, 202);
+  ASSERT_TRUE(test::recording_eventually([&] {
+    return json::parse(replay_call(host, "GET", route).body).at("status") != "running";
+  }));
+  ASSERT_TRUE(std::filesystem::exists(sidecar));
+  const auto verified = json::parse(replay_call(host, "GET", "/api/replay").body).at("history");
+  ASSERT_EQ(verified.size(), 1U);
+  EXPECT_EQ(verified[0].at("verification").at("status"), "passed") << verified[0];
+  EXPECT_EQ(verified[0].at("interrupted"), false) << verified[0];
+  const auto bytes = std::filesystem::file_size(file.directory / "replays" / (id + ".jsonl"));
+  const auto resumed = replay_call(host, "POST", "/api/replay", {{"resume", id}});
+  EXPECT_EQ(resumed.status, 409) << resumed.body;
+  EXPECT_EQ(std::filesystem::file_size(file.directory / "replays" / (id + ".jsonl")), bytes);
   host.stop();
 }
 

@@ -48,6 +48,12 @@ struct ScenarioObjective {
   std::size_t session = 1;  ///< One-based session index for a deadline.
 };
 
+/// The dates a scenario, or a replay of one, may play: from 2022, the first year the
+/// exchange calendar knows (before it every holiday reads as a trading day), to 2200,
+/// well before the nanosecond clock ends in 2262, so every expiry generated fits.
+inline constexpr md::Date kFirstScenarioDate{2022, 1, 1};
+inline constexpr md::Date kLastScenarioDate{2200, 12, 31};
+
 struct Scenario {
   std::string id, title, description, goal;
   std::vector<ScenarioObjective> objectives;

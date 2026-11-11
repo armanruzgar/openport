@@ -363,6 +363,7 @@ Scenario parse_scenario(std::string_view source, const std::filesystem::path& fi
     const auto parsed = md::parse_datetime(date + "T12:00:00", md::Zone::NewYork);
     require(date.size() == 10 && parsed.has_value(), "date", "expected YYYY-MM-DD");
     s.date = md::new_york_time(*parsed).date;
+    require(s.date >= kFirstScenarioDate && s.date <= kLastScenarioDate, "date", "must be from 2022-01-01 to 2200-12-31");
     require(md::trading_date(*parsed) == s.date, "date", "must be a trading day");
     for (const auto& window : scenario_windows(s, s.date)) {
       if (window.session == "regular") continue;

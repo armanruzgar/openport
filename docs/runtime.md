@@ -1067,7 +1067,11 @@ head/count/size, including records removed at a complete line boundary; the mess
 names expected and found counts, heads and bytes for the fields that differ.
 Summaries are cached by journal size and
 modification time. Repairing a torn line does not restore missing records or replace
-the saved final checkpoint.
+the saved final checkpoint. Runs are listed newest first: the run whose journal was
+written last (started, played on or resumed) leads, whatever its scenario or recording
+is called. A sidecar is an ordinary file: one whose `drill` is not an object with a
+numeric or null `score`, or whose `scenario`, `plan` or `plan_name` is not text, lists
+its own run with an `error` and leaves the listing, and every other run, readable.
 
 ### Restarting with the same commands
 
@@ -1099,7 +1103,9 @@ the worker (an in-progress input read or scenario generation completes first).
 Terminal results include `transactions`, decimal-string `equity`, `head`, verifying
 `build`, final market `time`, wall-clock `finished_at`, and `run` identity/inputs.
 Equity/head may be null on failure. The latest result is saved in the metadata
-sidecar and included as `verification` in history/account reads. Changing journal
+sidecar and included as `verification` in history/account reads. A run without a
+sidecar (a journal copied from another machine, say) gets one holding only that
+result; it has no start state, so the run still reads as ended and cannot resume. Changing journal
 size or modification time invalidates it to `idle`; a verification interrupted by
 server shutdown/restart can be started again.
 

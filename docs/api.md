@@ -658,7 +658,8 @@ status/report and cancel operations. See [playbooks](playbooks.md).
   `REPLAY_NOT_RESTARTABLE`; invalid trade IDs return 400. The previous replay is
   retired only after the new one starts successfully.
 - `GET /api/replay/packs` returns `{"packs":[...]}`; `GET /api/replay/packs/{id}`
-  downloads a single pack without converting its JSON integers in the browser. `POST` imports one version-1
+  downloads a single pack without converting its JSON integers in the browser. Both
+  answer at once, while a replay starts or steps. `POST` imports one version-1
   pack containing complete `scenario` JSON, decimal-string `seed`, `plan`, and
   optional `challenge: {id,title}`. Writes require replay/admin scope and writable
   demo replay storage. Same-ID different source content is rejected. Start with
