@@ -37,6 +37,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Blank and duplicate account names.** `POST /api/accounts` and
+  `PATCH /api/accounts/{id}` accepted a name of only spaces or invisible characters (a
+  zero-width space), and one equal to another account's, `Main` included, so the
+  account switcher, which shows names and not IDs, listed blank or indistinguishable
+  accounts. Names are now trimmed of surrounding spaces and need a visible character
+  (400 `INVALID_REQUEST` otherwise), and another live account's name, ignoring case,
+  is 409 `ACCOUNT_NAME_TAKEN`.
 - **Risk profile betas with hypothetical legs.** `GET /api/risk/profile` with `legs`
   took each beta row's dollar delta from the account's own risk, so `betas[].dollar_delta`,
   `weighted_dollar_delta` and `weighted_delta` reported the held book even with

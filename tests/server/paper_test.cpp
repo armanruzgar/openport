@@ -1845,7 +1845,15 @@ TEST(PaperAccounts, NamedAccountsTradeApartAndRecoverFromTheirOwnJournals) {
     ASSERT_EQ(created.status, 201) << created.body;
     EXPECT_EQ(json::parse(created.body)["account"]["id"], "swing-50k");
     EXPECT_EQ(json::parse(created.body)["account"]["equity"], "50000.00");
-    EXPECT_EQ(json::parse(write(engine, "POST", "/api/accounts", {{"name", "Swing 50k"}, {"plan", "practice"}}).body)["account"]["id"], "swing-50k-2");
+    // Another live account's name, in any case and with spaces around it, is refused,
+    // since the switcher shows names; a different name whose ID would collide takes
+    // the next free ID.
+    for (const auto* taken : {"Swing 50k", " swing 50K ", "MAIN"}) {
+      const auto refused = write(engine, "POST", "/api/accounts", {{"name", taken}, {"plan", "practice"}});
+      EXPECT_EQ(refused.status, 409) << taken << refused.body;
+      EXPECT_EQ(json::parse(refused.body)["error"]["code"], "ACCOUNT_NAME_TAKEN") << taken;
+    }
+    EXPECT_EQ(json::parse(write(engine, "POST", "/api/accounts", {{"name", "Swing-50k"}, {"plan", "practice"}}).body)["account"]["id"], "swing-50k-2");
     EXPECT_EQ(write(engine, "POST", "/api/accounts", {{"name", "Funded"}, {"plan", "funded-eod-50k"}}).status, 400);
     EXPECT_EQ(write(engine, "POST", "/api/accounts", {{"name", ""}, {"plan", "practice"}}).status, 400);
     const auto accounts = read(engine, "/api/accounts")["accounts"];
@@ -1876,9 +1884,12 @@ TEST(PaperAccounts, NamedAccountsTradeApartAndRecoverFromTheirOwnJournals) {
     EXPECT_EQ(write(engine, "POST", "/api/orders?account=swing-50k&x=1", order(market, "extra")).status, 400);
     EXPECT_EQ(write(engine, "PATCH", "/api/accounts/main", {{"name", "No"}}).status, 403);
     EXPECT_EQ(write(engine, "PATCH", "/api/accounts/missing", {{"archived", true}}).status, 404);
-    for (const auto& body : {json::object(), json{{"name", ""}}, json{{"archived", "yes"}}, json{{"unknown", true}}}) {
+    for (const auto& body : {json::object(), json{{"name", ""}}, json{{"name", "   "}}, json{{"name", "\u200b"}}, json{{"archived", "yes"}}, json{{"unknown", true}}}) {
       EXPECT_EQ(write(engine, "PATCH", "/api/accounts/swing-50k", body).status, 400);
     }
+    const auto renamed = write(engine, "PATCH", "/api/accounts/swing-50k", {{"name", "swing-50K"}});
+    EXPECT_EQ(renamed.status, 409) << renamed.body;
+    EXPECT_EQ(json::parse(renamed.body)["error"]["code"], "ACCOUNT_NAME_TAKEN");
     EXPECT_EQ(write(engine, "PATCH", "/api/accounts/swing-50k", {{"archived", true}}).status, 200);
     EXPECT_EQ(read(engine, "/api/accounts")["accounts"].size(), 2);
     EXPECT_EQ(read(engine, "/api/accounts?archived=true")["accounts"].size(), 3);
@@ -1920,7 +1931,10 @@ TEST(PaperAccounts, AccountNamesCountCharactersNotBytes) {
     ASSERT_EQ(created.status, 201) << created.body;
     EXPECT_EQ(write(engine, "POST", "/api/accounts", {{"name", std::string(64, 'n')}, {"plan", "practice"}}).status, 201);
     EXPECT_EQ(write(engine, "POST", "/api/accounts", {{"name", "\U0001F4C8 Swing"}, {"plan", "practice"}}).status, 201);
-    for (const auto& name : {accented + "\u00e9", std::string(65, 'n'), std::string("tab\there"), std::string("next\u0085line"), std::string()}) {
+    // Only spaces, or only invisible characters (a zero-width space, a joiner, an
+    // ideographic space), would show a blank name.
+    for (const auto& name : {accented + "\u00e9", std::string(65, 'n'), std::string("tab\there"), std::string("next\u0085line"), std::string(),
+                             std::string("   "), std::string("\u200b"), std::string("\u3000\u200d"), std::string(" \ufeff ")}) {
       const auto refused = write(engine, "POST", "/api/accounts", {{"name", name}, {"plan", "practice"}});
       EXPECT_EQ(refused.status, 400) << name;
       EXPECT_NE(refused.body.find("1 to 64 characters"), std::string::npos) << refused.body;

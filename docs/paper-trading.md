@@ -4375,6 +4375,7 @@ opening orders and cancels working openings outside the plan window.
 | `MARKET_HALTED` | A market-wide circuit breaker or authored scenario halt has stopped trading; the message identifies the halt and resume time |
 | `INVALID_REQUEST` | HTTP 400: a malformed body or query, including an order no market could make valid (see the HTTP errors below); nothing is recorded |
 | `UNKNOWN_ACCOUNT`, `ACCOUNTS_UNSUPPORTED` | HTTP 404 for an `account=` the server does not have; 409 when creating an account on a server that keeps one (a replay, or no accounts directory) |
+| `ACCOUNT_NAME_TAKEN` | HTTP 409: a new or renamed account would share another live account's name, ignoring case and the spaces around it |
 | `LIMITS_REVISION` | HTTP 409: `expected_revision` on `PUT /api/risk/limits` or `/api/risk/guardrails` is not the current `limits_revision`; refetch and retry |
 | `TRADING_UNAVAILABLE` | HTTP 503: the command inbox is full or the engine is stopping (with `Retry-After`), or the account's journal failed or is locked, or paper trading is turned off (`--no-paper`), which no retry clears (without it) |
 | `PASS_ODDS_UNAVAILABLE` | HTTP 422: pass odds need an evaluation rule, complete current marks and ten completed days with intraday extremes |
@@ -4423,9 +4424,13 @@ journal cannot open, or fails later, reports why in its status and refuses write
 the others carry on.
 
 `POST /api/accounts` takes a `name` (1 to 64 characters, counted as Unicode code
-points, none of them a control character) and either a
+points, after the spaces around it are dropped; at least one of them visible, not
+only spaces or invisible format characters, and none a control character) and either a
 preset `plan` or `initial_cash` and complete `rules`, and returns 201 with the new
-account's `id`, a slug of the name made unique (`swing-50k`, `swing-50k-2`). Funded
+account's `id`, a slug of the name made unique (`swing-50k`, `swing-50k-2`). A name
+another live account has, ignoring case and the spaces around it (`Main` included), is
+409 `ACCOUNT_NAME_TAKEN`, since the account switcher shows names, not IDs; archived
+accounts and visitors' sandboxes do not count. Funded
 plans are refused: they start by resetting an account that passed the evaluation.
 Every other trading route acts on the main account, or on another given as
 `account=<id>` in the query (reads and writes alike; a write takes no other query
@@ -4441,7 +4446,8 @@ which a retry cannot change.
 /api/accounts/{id}` deletes a named live account. Both require admin. Main, replay
 and sandbox accounts return 403 `ACCOUNT_PROTECTED`; an unknown ID returns 404
 `UNKNOWN_ACCOUNT`, malformed bodies 400 `INVALID_REQUEST`. Names use creation's
-validation; duplicate display names are allowed, and renaming never changes the ID.
+validation, including its 409 `ACCOUNT_NAME_TAKEN` for another live account's name (an
+account may change the case of its own), and renaming never changes the ID.
 
 Archiving freezes the account, including working orders, positions, rollover,
 alerts and playbooks. Writes return 409 `ACCOUNT_ARCHIVED`. Unarchiving resumes

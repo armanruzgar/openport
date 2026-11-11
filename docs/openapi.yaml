@@ -7809,7 +7809,7 @@
     },
     "responses": {
       "Error": {
-        "description": "Failure with a stable reason code and optional evidence. 400 invalid request or INVALID_RULES; 403 authentication/scope; 404 missing resource; 409 conflict (a client ID reused with other terms, a stale limits revision LIMITS_REVISION, a server that keeps a single account ACCOUNTS_UNSUPPORTED); 422 simulator rejection (including ACCOUNT_TYPE for cash/IRA restrictions); 503 inbox full or unavailable. Orders may retry using identical client_order_id and terms. Account lifecycle: 403 ACCOUNT_PROTECTED; 404 UNKNOWN_ACCOUNT; 409 ACCOUNT_ARCHIVED or ACCOUNT_NOT_EMPTY. Damaged account writes: 409 ACCOUNT_DAMAGED; stop the server and diagnose with --repair-journals --dry-run, or restore a verified backup for mid-file damage.",
+        "description": "Failure with a stable reason code and optional evidence. 400 invalid request or INVALID_RULES; 403 authentication/scope; 404 missing resource; 409 conflict (a client ID reused with other terms, a stale limits revision LIMITS_REVISION, a server that keeps a single account ACCOUNTS_UNSUPPORTED); 422 simulator rejection (including ACCOUNT_TYPE for cash/IRA restrictions); 503 inbox full or unavailable. Orders may retry using identical client_order_id and terms. Account lifecycle: 403 ACCOUNT_PROTECTED; 404 UNKNOWN_ACCOUNT; 409 ACCOUNT_ARCHIVED, ACCOUNT_NOT_EMPTY or ACCOUNT_NAME_TAKEN (another live account has the name, ignoring case). Damaged account writes: 409 ACCOUNT_DAMAGED; stop the server and diagnose with --repair-journals --dry-run, or restore a verified backup for mid-file damage.",
         "content": {
           "application/json": {
             "schema": {
@@ -19126,7 +19126,7 @@
                 "type": "string",
                 "minLength": 1,
                 "maxLength": 64,
-                "description": "Display name: 1 to 64 characters (Unicode code points), none of them a control character."
+                "description": "Display name: 1 to 64 characters (Unicode code points) once the spaces around it are dropped, at least one of them visible and none a control character. Another live account's name, ignoring case, is 409 ACCOUNT_NAME_TAKEN."
               },
               "fee_model": {
                 "type": "string",

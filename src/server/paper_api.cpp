@@ -2272,6 +2272,39 @@ bool valid_account(std::string_view id) {
   return !id.empty() && id.size() <= 40 && id.front() != '-' && id.back() != '-' && id.find("--") == std::string_view::npos &&
          std::all_of(id.begin(), id.end(), [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
 }
+/// A display name without the spaces around it.
+std::string trimmed_name(std::string_view name) {
+  const auto first = name.find_first_not_of(' ');
+  if (first == std::string_view::npos) return {};
+  return std::string(name.substr(first, name.find_last_not_of(' ') - first + 1));
+}
+/// Whether a name shows a character: not only spaces, other Unicode spaces or
+/// invisible format characters (zero-width spaces and joiners, bidi controls, fillers,
+/// variation selectors, tags, the BOM), which an account switcher would show blank.
+bool visible_name(std::string_view name) {
+  for (std::size_t at = 0; at < name.size();) {
+    const auto length = md::utf8_sequence(name, at);
+    if (length == 0) return false;
+    const auto lead = static_cast<unsigned char>(name[at]);
+    std::uint32_t code = length == 1 ? lead : lead & (0x7Fu >> length);
+    for (std::size_t k = 1; k < length; ++k) code = code << 6 | (static_cast<unsigned char>(name[at + k]) & 0x3Fu);
+    at += length;
+    const bool blank = code == 0x20 || code == 0xA0 || code == 0xAD || code == 0x34F || code == 0x115F || code == 0x1160 ||
+        code == 0x1680 || code == 0x180E || (code >= 0x2000 && code <= 0x200F) || (code >= 0x2028 && code <= 0x202F) ||
+        (code >= 0x205F && code <= 0x206F) || code == 0x3000 || code == 0x3164 || (code >= 0xFE00 && code <= 0xFE0F) ||
+        code == 0xFEFF || code == 0xFFA0 || (code >= 0xE0000 && code <= 0xE0FFF);
+    if (!blank) return true;
+  }
+  return false;
+}
+/// A new or changed account name, trimmed of surrounding spaces; 1 to 64 characters,
+/// at least one of them visible and none a control character.
+std::string account_name_field(const json& body) {
+  auto name = trimmed_name(string_field(body, "name"));
+  if (!valid_account_name(name) || !visible_name(name))
+    throw std::invalid_argument("name must be 1 to 64 characters, at least one of them visible and none a control character");
+  return name;
+}
 std::optional<Walk> parse_walk(const json& j) {
   if (j.is_null()) return std::nullopt;
   fields(j, {"step", "seconds", "limit"});
@@ -2448,10 +2481,7 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
       const auto body = strict_json(request.body);
       fields(body, {}, {"name", "archived"});
       if (body.empty()) throw std::invalid_argument("Provide name or archived");
-      if (body.contains("name")) {
-        command.name = string_field(body, "name");
-        if (!valid_account_name(command.name)) throw std::invalid_argument("name must be 1 to 64 characters, none of them a control character");
-      }
+      if (body.contains("name")) command.name = account_name_field(body);
       if (body.contains("archived")) {
         if (!body.at("archived").is_boolean()) throw std::invalid_argument("archived must be a boolean");
         command.archived = body.at("archived").get<bool>();
@@ -2730,13 +2760,11 @@ TradingCommand parse_command(const ApiRequest& request, std::string_view path) {
                             "house_margin_percent", "pm_vol_shock", "pin_risk", "pin_risk_seed", "cash_credit_rate_bps", "margin_debit_rate_bps", "stock_borrow_rate_bps", "copy_settings_from",
                             "queue_seed", "stop_stress_ticks", "stop_stress_percent", "evaluation_fee", "reset_fee", "activation_fee", "max_resets"});
     command.kind = TradingCommand::Kind::CreateAccount;
-    command.name = string_field(body, "name");
+    command.name = account_name_field(body);
     if (body.contains("copy_settings_from")) {
       command.copy_settings_from = string_field(body, "copy_settings_from");
       if (!valid_account(command.copy_settings_from)) throw std::invalid_argument("copy_settings_from must be an account id");
     }
-    if (!valid_account_name(command.name))
-      throw std::invalid_argument("name must be 1 to 64 characters, none of them a control character");
     if (body.contains("plan")) {
       if (body.contains("initial_cash") || body.contains("rules")) throw std::invalid_argument("plan excludes initial_cash and rules");
       const auto* plan = find_plan(string_field(body, "plan"));
@@ -4272,6 +4300,28 @@ std::optional<Quantity> submitted_quantity(const TradingSnapshot& s, const std::
   return std::nullopt;
 }
 
+/// 409 ACCOUNT_NAME_TAKEN when a new or renamed account would share another live
+/// account's name, ignoring case and surrounding spaces (Main included): the account
+/// switcher shows names, not IDs, so the two could not be told apart.
+std::optional<ApiResponse> name_taken(const EngineStatus& status, const TradingCommand& command) {
+  const bool naming = command.kind == TradingCommand::Kind::CreateAccount ||
+      (command.kind == TradingCommand::Kind::UpdateAccount && !command.name.empty());
+  if (!naming) return std::nullopt;
+  const auto folded = [](std::string_view name) {
+    auto text = trimmed_name(name);
+    for (auto& c : text) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return text;
+  };
+  const auto wanted = folded(command.name);
+  for (const auto& other : status.accounts) {
+    // Visitors' sandboxes are not in anyone's switcher; an account may change its own name's case.
+    if (other.archived || other.replay || other.sandbox_idle_seconds || other.id == command.account) continue;
+    if (folded(other.name) == wanted)
+      return api_error(409, "ACCOUNT_NAME_TAKEN", "Account " + other.id + " is already named " + other.name + "; choose another name");
+  }
+  return std::nullopt;
+}
+
 /// One copied order's progress: each member's command and quantity, and its answer
 /// once its account has replied. The last reply completes the request.
 struct CopyFanOut {
@@ -4560,6 +4610,10 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
   }
   try {
     auto command = parse_command(request, path);
+    if (auto taken = name_taken(status, command)) {
+      complete(std::move(*taken));
+      return;
+    }
     if (!path.starts_with(managed)) command.account = account;
     command.actor = request.actor;
     if (!source.post_trading(command, [command, complete](TradingReply reply) {
