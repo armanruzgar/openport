@@ -544,6 +544,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   90 at $110 as opened 30 at $300.00 and closed 90 at $110.00, a loss to the eye though
   it gained $900. A trip held through a split now counts its earlier shares in split
   shares: opened 90 at $100.00.
+- **Tag and playbook exposure limits on long-lived accounts.** With any tag or
+  playbook exposure override, every market batch, order check and preview rebuilt
+  every round trip the account had ever traded to find the open ones' tags: at 400
+  round trips a quote batch took about 12 ms and an order 60 ms. The open round trips
+  now come from the ones the account keeps up to date as it trades; the whole history
+  is read only for held shares an option delivered, or just after a restart.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

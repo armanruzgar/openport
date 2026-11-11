@@ -1429,7 +1429,13 @@ struct Measures {
 std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
   std::map<std::string, std::vector<std::string>> result;
   if (s.config.limits.tag_overrides.empty() && s.config.limits.playbook_overrides.empty()) return result;
-  const auto lives = lifecycles(s.fills, s.closures, s.contracts);
+  // Every round trip, rebuilt from the account's whole history only when needed: the
+  // review builder holds the open ones once it has applied every fill and closure.
+  std::optional<std::vector<Lifecycle>> all;
+  const auto lives = [&]() -> const std::vector<Lifecycle>& {
+    if (!all) all = lifecycles(s.fills, s.closures, s.contracts);
+    return *all;
+  };
   const auto tags = [&](const Lifecycle& life) {
     std::set<std::string> found;
     for (const auto id : life.fills) {
@@ -1443,9 +1449,16 @@ std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
         found.insert(note->second.tags.begin(), note->second.tags.end());
     return found;
   };
-  for (const auto& life : lives) if (!life.closed) {
-    const auto found = tags(life);
-    result[life.symbol] = {found.begin(), found.end()};
+  if (const auto& built = s.reviewing; built.ready && built.fills == s.fills.size() && built.closures == s.closures.size()) {
+    for (const auto& [symbol, open] : built.builder.open) {
+      const auto found = tags(open.life);
+      result[symbol] = {found.begin(), found.end()};
+    }
+  } else {
+    for (const auto& life : lives()) if (!life.closed) {
+      const auto found = tags(life);
+      result[life.symbol] = {found.begin(), found.end()};
+    }
   }
   // Delivered shares retain their originating option trade's scope. Fungible
   // positions shared by tags count in each scope; retagging does not erase entry tags.
@@ -1453,7 +1466,8 @@ std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
     std::set<std::string> found;
     for (const auto id : life.fills) {
       const auto& fill = s.stock_fills[id - 1];
-      for (const auto& option : lives)
+      if (fill.option.empty()) continue;  // Only delivered shares name an option trade.
+      for (const auto& option : lives())
         if (option.symbol == fill.option && option.opened <= fill.time && (!option.closed || *option.closed >= fill.time)) {
           const auto original = tags(option); found.insert(original.begin(), original.end());
         }

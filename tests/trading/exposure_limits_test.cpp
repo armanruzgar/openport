@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include "support/journal.hpp"
+#include "support/recording.hpp"
 #include "support/scripted_market.hpp"
 #include "trading/state.hpp"
 
@@ -66,6 +68,32 @@ TEST(ExposureLimits, ScopedTagsIncludeHeldAndPendingExposureAndPlaybookVersions)
   const auto more = session.submit(f.market("more", 1), f.time);
   EXPECT_EQ(more.decision.code, Reason::GAMMA_LIMIT); EXPECT_EQ(more.decision.scope, "tag:hedge");
   EXPECT_TRUE(session.submit(f.market("close", 1, Side::Sell), f.time).decision.ok());
+}
+TEST(ExposureLimits, ATagScopeHoldsOnlyOpenRoundTripsAndRecoversTheSame) {
+  test::ScriptedMarket f;
+  test::RecordingFile file;
+  const auto path = (file.directory / "tags.jsonl").string();
+  SessionConfig config; config.limits.aggregate = {1e9, 1e9}; config.limits.per_underlying = {1e9, 1e9};
+  ExposureLimits caps{1e9, 1e9}; caps.dollar_gamma_1pct = 1e9;
+  config.limits.tag_overrides["hedge"] = caps;
+  TradingSession session(config, f.time, test::create_journal(path)); f.seed(session);
+  // A tagged round trip opened and closed, then an untagged one in the same contract.
+  auto tagged = f.market("tagged", 1); tagged.tags = {"hedge"};
+  ASSERT_TRUE(session.submit(tagged, f.time).decision.ok());
+  ASSERT_TRUE(session.submit(f.market("close", 1, Side::Sell), f.time).decision.ok());
+  ASSERT_TRUE(session.submit(f.market("untagged", 1), f.time).decision.ok());
+  auto risk = session.snapshot()->risk;
+  ASSERT_TRUE(risk.scopes.contains("tag:hedge"));
+  EXPECT_EQ(risk.scopes.at("tag:hedge").position.dollar_delta, 0);
+  EXPECT_NE(risk.aggregate.position.dollar_delta, 0);
+  // Tagging the open round trip, opened by fill 3, puts it in the scope.
+  ASSERT_TRUE(session.annotate(3, "", {"hedge"}, f.time).decision.ok());
+  risk = session.snapshot()->risk;
+  EXPECT_EQ(risk.scopes.at("tag:hedge").position.dollar_delta, risk.aggregate.position.dollar_delta);
+  // Recovered, the account finds its round trips from every fill again: the same scope.
+  const auto recovered = TradingSession::recover(FileJournal::read(path));
+  EXPECT_EQ(recovered.snapshot()->risk.scopes.at("tag:hedge").position.dollar_delta,
+            risk.scopes.at("tag:hedge").position.dollar_delta);
 }
 TEST(ExposureLimits, AddingATagReservesTheExistingFungiblePositionBeforeTheFill) {
   test::ScriptedMarket f;
