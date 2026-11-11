@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <atomic>
+#include <cerrno>
 #include <charconv>
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -30,6 +31,9 @@
 #include <optional>
 #include <thread>
 #include <vector>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "openport/server/web_policy.hpp"
 
@@ -249,10 +253,22 @@ void TokenFile::refresh(bool force) {
     const auto stamp = std::make_pair(time, size);
     if (!force && stamp_ == stamp) return;
     stamp_ = stamp;
-    std::ifstream input(path_);
-    if (!input) throw std::invalid_argument("Cannot read token file");
-    const std::string text(std::istreambuf_iterator<char>(input), {});
-    if (input.bad()) throw std::invalid_argument("Cannot read token file");
+    // Named tokens carry admin and trade scopes: as with --notify-config, only a regular
+    // file that no one but its owner, the user openportd runs as, can read or write.
+    const int fd = ::open(path_.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 && errno != ELOOP) throw std::invalid_argument("Cannot read token file");
+    struct Close { int fd; ~Close() { if (fd >= 0) ::close(fd); } } close{fd};
+    struct stat info {};
+    if (fd < 0 || ::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_uid != ::geteuid() || (info.st_mode & 077) != 0)
+      throw std::invalid_argument("Token file must be an owner-only regular file (chmod 600)");
+    std::string text;
+    char buffer[4096];
+    for (;;) {
+      const auto count = ::read(fd, buffer, sizeof buffer);
+      if (count < 0) throw std::invalid_argument("Cannot read token file");
+      if (count == 0) break;
+      text.append(buffer, static_cast<std::size_t>(count));
+    }
     auto tokens = parse_token_file(text, bool(snapshot_));
     for (const auto& token : tokens)
       if (token.secret == legacy_token_) throw std::invalid_argument("Named and legacy tokens must have different secrets");

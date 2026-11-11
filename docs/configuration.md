@@ -133,7 +133,12 @@ restart. A malformed replacement keeps the last good set; an empty one revokes e
 named token ([API](api.md)). Without `--token-file`, `SIGHUP`, which a closing terminal
 or SSH session sends, stops openportd as `SIGINT` and `SIGTERM` do, unless it was
 started under `nohup`. Each secret is at least eight printable characters,
-and a `#` starts a comment only at the start of a field. Protect the file with owner-only permissions. Send Bearer credentials over
+and a `#` starts a comment only at the start of a field. The file must be a regular
+file, not a symlink, owned by the user openportd runs as and readable by no one else
+(`chmod 600`), as for `--notify-config`; otherwise startup fails and a reload keeps the
+last good set. A `--write-token-file` that holds a token must be readable by its owner
+alone too, and one openportd cannot read stops startup instead of being replaced with
+a new token. Send Bearer credentials over
 HTTPS behind a reverse proxy for remote access. Static
 files are confined to the web root, and WebSocket upgrades must come from the same
 origin; behind a proxy that rewrites the Host header, list your public origin with

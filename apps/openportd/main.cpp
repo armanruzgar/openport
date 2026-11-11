@@ -32,9 +32,11 @@
 
 #include <fcntl.h>
 #include <openssl/rand.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "openport/analytics/volatility_history.hpp"
+#include "openport/md/files.hpp"
 #include "openport/providers/cboe.hpp"
 #include "openport/providers/demo_feed.hpp"
 #include "openport/providers/factory.hpp"
@@ -346,13 +348,34 @@ int repair_journals(const std::filesystem::path& journal, const std::filesystem:
 }
 
 /// The write token kept in `path`: read when present, else created at random with
-/// owner-only permissions, so a container keeps its token in its volume.
+/// owner-only permissions, so a container keeps its token in its volume. A file that
+/// exists but cannot be read is an error, never a reason to replace the token that
+/// saved links and scripts use; one that holds a token must be its owner's alone.
 std::string load_write_token(const std::filesystem::path& path, bool create = true) {
   const auto read = [&] {
-    std::ifstream in(path);
-    std::string token;
-    std::getline(in, token);
+    const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+      if (errno == ENOENT) return std::string{};
+      if (errno == ELOOP) throw std::runtime_error(path.string() + " is a symlink; name the token file itself");
+      throw std::runtime_error("cannot read " + path.string() + ": " + std::strerror(errno) +
+                               "; it keeps its token: fix its permissions, or remove it to make a new one");
+    }
+    struct Close { int fd; ~Close() { ::close(fd); } } close_on_return{fd};
+    struct stat info {};
+    if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) throw std::runtime_error(path.string() + " is not a regular file");
+    std::string text;
+    char buffer[512];
+    while (text.size() < 4096) {
+      const auto count = ::read(fd, buffer, sizeof buffer);
+      if (count < 0) throw std::runtime_error("cannot read " + path.string() + ": " + std::strerror(errno));
+      if (count == 0) break;
+      text.append(buffer, static_cast<std::size_t>(count));
+    }
+    std::string token = text.substr(0, text.find('\n'));
     while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back()))) token.pop_back();
+    // Root may read the service user's file (sudo openportd --print-url ...).
+    if (!token.empty() && ((info.st_mode & 077) != 0 || (info.st_uid != ::geteuid() && ::geteuid() != 0)))
+      throw std::runtime_error(path.string() + " holds the write token, so only its owner may read it (chmod 600)");
     return token;
   };
   if (auto token = read(); !token.empty()) return token;
@@ -366,7 +389,7 @@ std::string load_write_token(const std::filesystem::path& path, bool create = tr
     token += kHex[b >> 4];
     token += kHex[b & 15];
   }
-  if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
+  if (path.has_parent_path()) md::create_private_directories(path.parent_path());
   // Written in full beside the file and then put in place, so a failed write never
   // leaves an empty token file behind. An empty one (touched, or emptied to rotate
   // the token) is replaced; a missing one is created only if no other start won.

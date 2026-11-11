@@ -362,6 +362,7 @@ TEST(Cli, PrintUrlReadsExistingSettingsWithoutStartingOrCreatingAnything) {
   EXPECT_EQ(missing.status, 2);
   EXPECT_FALSE(std::filesystem::exists(token));
   { std::ofstream out(token); out << "test a&b/#%\n"; }
+  std::filesystem::permissions(token, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
   const auto result = run_daemon(args, "OPENPORT_WRITE_TOKEN='' ");
   EXPECT_EQ(result.status, 0) << result.output;
   EXPECT_EQ(result.output, "http://[::1]:9090/#token=test%20a%26b%2F%23%25\n");
@@ -738,6 +739,30 @@ TEST(Cli, AnEmptyWriteTokenFileIsReplacedWithANewToken) {
   EXPECT_EQ(std::distance(std::filesystem::directory_iterator(directory.directory), std::filesystem::directory_iterator{}), 1);
 }
 
+// A write-token file openportd could not read was taken for an empty one and replaced,
+// and every saved link, script and MCP config lost its token; one others could read
+// handed them write access.
+TEST(Cli, AWriteTokenFileItCannotReadOrOthersCanReadIsRefusedNotReplaced) {
+  openport::test::RecordingFile directory;
+  const auto token = directory.directory / "write-token";
+  const auto args = "--write-token-file '" + token.string() + "' --provider missing";
+  { std::ofstream out(token); out << "original-token-0123456789\n"; }
+  namespace fs = std::filesystem;
+  if (::geteuid() != 0) {  // root reads it whatever its mode
+    fs::permissions(token, fs::perms::none);
+    rejects("openportd", args, "cannot read");
+  }
+  fs::permissions(token, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read | fs::perms::others_read);
+  rejects("openportd", args, "chmod 600");
+  fs::permissions(token, fs::perms::owner_read | fs::perms::owner_write);
+  std::ifstream in(token);
+  std::string line;
+  std::getline(in, line);
+  EXPECT_EQ(line, "original-token-0123456789");
+  EXPECT_EQ(std::distance(fs::directory_iterator(directory.directory), fs::directory_iterator{}), 1);
+  rejects("openportd", args, "unknown provider");  // owner-only, it is read and kept
+}
+
 TEST(Cli, RecordingRetentionRequiresDirectoryAndValidLimits) {
   for (const auto* value : {"-1", "nan", "inf", "1x", "1000001"})
     rejects("openportd", std::string("--record-max-gb ") + value, "--record-max-gb");
@@ -970,6 +995,7 @@ TEST(WebServer, DaemonStopsOnHangupUnlessItReloadsTokensOrRunsUnderNohup) {
   openport::test::record_events(source.path, {});
   const auto tokens = source.directory / "tokens";
   { std::ofstream file(tokens); file << "reader read fixture-reader-token\n"; }
+  std::filesystem::permissions(tokens, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
   const auto daemon_path = std::string(OPENPORT_APPS_DIR) + "/openportd";
   struct Case {
     std::string name, before, after;

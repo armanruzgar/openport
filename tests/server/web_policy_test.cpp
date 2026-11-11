@@ -880,7 +880,10 @@ TEST(WebPolicy, NamedTokenFilesAreStrictAndDiagnosticsHideSecrets) {
 
 TEST_F(StaticFiles, TokenReloadKeepsGoodCredentialsAndAtomicallyRevokesRemovedOnes) {
   const auto path = parent / "tokens";
-  const auto write = [&](std::string_view text) { std::ofstream(path) << text; };
+  const auto write = [&](std::string_view text) {
+    { std::ofstream(path) << text; }
+    fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
+  };
   write("owner admin owner-secret\nscript read,trade:main script-secret\n");
   const auto file = std::make_shared<server::TokenFile>(path, "legacy-secret");
   server::WritePolicy policy{"0.0.0.0", "legacy-secret", {}, {}, true, {}, {}, file};
@@ -920,9 +923,31 @@ TEST_F(StaticFiles, TokenReloadKeepsGoodCredentialsAndAtomicallyRevokesRemovedOn
   EXPECT_EQ(file->snapshot()->tokens.front().name, "new");
 }
 
+// A token file an editor left 0644 handed its admin and trade secrets to every local
+// user without a word. Like --notify-config, it must be its owner's alone.
+TEST_F(StaticFiles, TokenFilesOthersCanReadAreRefused) {
+  const auto path = parent / "tokens";
+  { std::ofstream(path) << "owner admin owner-secret\n"; }
+  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write | fs::perms::others_read);
+  try {
+    server::TokenFile refused(path);
+    FAIL() << "accepted a token file others can read";
+  } catch (const std::invalid_argument& error) {
+    EXPECT_NE(std::string(error.what()).find("chmod 600"), std::string::npos) << error.what();
+  }
+  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
+  const auto file = std::make_shared<server::TokenFile>(path);
+  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read);
+  const auto reload = file->reload();
+  EXPECT_EQ(reload.status, 400);
+  EXPECT_NE(reload.body.find("chmod 600"), std::string::npos) << reload.body;
+  EXPECT_EQ(file->snapshot()->tokens.size(), 1U);  // the last good set stays
+}
+
 TEST_F(StaticFiles, TokenReloadRouteChecksAdminAndRevokesExistingWebSockets) {
   const auto path = parent / "tokens";
-  std::ofstream(path) << "owner admin owner-secret\nreader read reader-secret\n";
+  { std::ofstream(path) << "owner admin owner-secret\nreader read reader-secret\n"; }
+  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write);
   const auto file = std::make_shared<server::TokenFile>(path);
   server::WebServer web("127.0.0.1", 0, {}, [](const auto&) { return server::ApiResponse{200, "{}"}; },
       {}, "legacy-secret", {}, {}, true, {}, {}, file);

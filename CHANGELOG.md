@@ -4,6 +4,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Upgrading
 
+- **`chmod 600` a named-token file.** `--token-file`, and a `--write-token-file` that
+  holds a token, must now be owner-only regular files; openportd refuses to start
+  with one that others can read. Files openportd created itself already are.
 - **Tighten a data directory made by an earlier version.** openportd now creates its
   directories owner-only and writes state files owner-only, but it leaves the
   permissions of directories that already exist alone, and files it does not rewrite
@@ -674,6 +677,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   **Start from** was chosen, and went out as explicit overrides: a cash plan chosen
   after editing house margin started as a margin account. The dialog now starts margin
   again from each plan chosen, as **New account** already did.
+- **Token files must be their owner's alone, and an unreadable one is not replaced.**
+  `--token-file` was read whatever its permissions, so a file an editor left 0644
+  handed its admin and trade secrets to every local user without a warning. It must
+  now be a regular file owned by the user openportd runs as, readable by no one else
+  (`chmod 600`), as `--notify-config` already had to be; otherwise startup fails and a
+  reload keeps the last good set. The same holds for a `--write-token-file` that holds
+  a token. One that existed but could not be read (a root-owned file left by
+  `sudo openportd`, or mode 000) was taken for an empty one and replaced with a new
+  random token, breaking every saved link, script and MCP configuration; openportd
+  now refuses to start and says why.
 
 ## 0.5.1 (2026-10-28)
 
