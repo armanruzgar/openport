@@ -48,6 +48,8 @@ jobs:
           docker cp "$container:/usr/share/openport/web" "$stage/share/openport/"
           docker rm "$container"
           cp README.md LICENSE "$stage/"
+          # Releases from before the notices were added have none to copy.
+          [ ! -f THIRD_PARTY_NOTICES.txt ] || cp THIRD_PARTY_NOTICES.txt "$stage/"
           cp docs/*.md "$stage/docs/"
           tar -C "$RUNNER_TEMP/stage" -czf "$RUNNER_TEMP/$name.tar.gz" "$name"
           echo "ARCHIVE=$RUNNER_TEMP/$name.tar.gz" >> "$GITHUB_ENV"

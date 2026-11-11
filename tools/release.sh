@@ -75,13 +75,14 @@ cmake -S . -B "$build" -DCMAKE_BUILD_TYPE=Release -DOPENPORT_BUILD_BENCHMARKS=OF
 cmake --build "$build" --parallel
 [ "$tests" = 1 ] && ctest --test-dir "$build" --output-on-failure --parallel 8
 
-# One archive: the binaries, the web terminal beside them, and the documentation.
+# One archive: the binaries, the web terminal beside them, the documentation, and the
+# licences of the third-party code they contain.
 package() {  # package NAME SOURCE-PREFIX
   local name="$1" prefix="$2" stage="$dist/stage/$1"
   mkdir -p "$stage"
   cp -R "$prefix/." "$stage/"
   mkdir -p "$stage/docs"
-  cp README.md LICENSE "$stage/"
+  cp README.md LICENSE THIRD_PARTY_NOTICES.txt "$stage/"
   cp docs/*.md "$stage/docs/"
   tar -C "$dist/stage" -czf "$dist/$name.tar.gz" "$name"
   echo "wrote dist/$name.tar.gz"

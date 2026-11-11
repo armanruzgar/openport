@@ -54,6 +54,8 @@ RUN for attempt in 1 2 3; do \
     && chown openport:openport /var/lib/openport
 COPY --from=build /src/build/apps/openportd /src/build/apps/openport-probe /usr/local/bin/
 COPY --from=web /web/dist /usr/share/openport/web
+# The web terminal carries its own notices; these cover openportd and openport-probe.
+COPY LICENSE THIRD_PARTY_NOTICES.txt /usr/share/doc/openport/
 COPY tools/docker-entrypoint.sh /usr/local/bin/openport-entrypoint
 VOLUME ["/var/lib/openport"]
 ENV HOME=/var/lib/openport

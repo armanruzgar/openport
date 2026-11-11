@@ -166,6 +166,17 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the server kept running unseen, holding its port and journal lock, and a
   `--backtest` run went on. Without `--token-file` it now stops the server, or cancels
   the backtest and writes its report, as Ctrl-C does; under `nohup` it stays ignored.
+- **Third-party licences ship with every release.** The archives, the `.deb` and
+  `.rpm` packages and the container image carried only OpenPort's own MIT licence
+  (the image not even that), though the programs contain databento-cpp, libdbn_c,
+  simdjson, JSON for Modern C++, cpp-httplib, date and unordered_dense, the macOS
+  archive also OpenSSL and zstd, and the web terminal React, TanStack Query, Tailwind
+  CSS and the Geist fonts, whose licences ask for their notices to go with every copy.
+  `THIRD_PARTY_NOTICES.txt` now lists them with their licence texts, beside the
+  README in each archive, in `share/doc/openport` of the packages and the image, and
+  in Homebrew's documentation once a release includes it; the web terminal has its
+  own beside its `index.html`. A CI check fails when a fetched library or a web
+  runtime package is missing from them.
 - **The order fuzzer's restart check.** `tools/order_fuzz.py --restart-check` required
   a restarted run's journal to be exactly the source's prefix, but a restart has
   journaled a restart input after that prefix since restarts could start mid-run, so

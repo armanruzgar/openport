@@ -23,7 +23,9 @@ class PackageTest(unittest.TestCase):
     def test_both_packages_include_terminal_and_systemd_unit(self):
         for listing in [run("dpkg-deb", "-c", DEB), run("rpm", "-qpl", RPM)]:
             for path in ["/usr/bin/openportd", "/usr/bin/openport-probe", "/usr/share/openport/web/index.html",
-                         "/usr/lib/systemd/system/openport.service", "/usr/share/doc/openport/LICENSE"]:
+                         "/usr/lib/systemd/system/openport.service", "/usr/share/doc/openport/LICENSE",
+                         "/usr/share/doc/openport/THIRD_PARTY_NOTICES.txt",
+                         "/usr/share/openport/web/THIRD_PARTY_NOTICES.txt"]:
                 self.assertIn(path, listing)
 
     def test_extracted_binary_and_private_service_defaults(self):

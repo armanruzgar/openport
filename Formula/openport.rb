@@ -35,6 +35,7 @@ class Openport < Formula
       (share/"openport").install "share/openport/web"
     end
     doc.install Dir["docs/*"], "README.md"
+    doc.install "THIRD_PARTY_NOTICES.txt" if File.exist?("THIRD_PARTY_NOTICES.txt")
   end
 
   def post_install

@@ -181,4 +181,6 @@ Ask setup questions, share practice workflows and discuss ideas in
 
 ## License
 
-MIT. Not investment advice.
+MIT. Not investment advice. The third-party code and fonts that releases include,
+with their licences, are listed in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
+and, for the web terminal, in [web/public/THIRD_PARTY_NOTICES.txt](web/public/THIRD_PARTY_NOTICES.txt).
