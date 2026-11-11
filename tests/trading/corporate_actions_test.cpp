@@ -122,6 +122,40 @@ TEST(CorporateActions, AForwardSplitKeepsACoveredCallCoveredAndDeliversTheSplitS
   EXPECT_EQ(TradingSession::recover(FileJournal::read(path)).snapshot_json(), s.snapshot_json());
 }
 
+TEST(CorporateActions, AShareRoundTripHeldThroughASplitCountsItsSharesOnTheSplitBasis) {
+  // 30 bought at 300, split 3:1, 90 sold at 110: opened and closed 90, at 100 and 110.
+  SharedVector<StockFill> fills;
+  fills.push_back({1, "QQQ", 30, m("300"), at(kToday), StockSource::Trade, {}});
+  StockFill split{2, "QQQ", 60, {}, at(kExDate, 9), StockSource::Split, {}};
+  split.split_numerator = 3;
+  split.split_denominator = 1;
+  fills.push_back(split);
+  fills.push_back({3, "QQQ", -90, m("110"), at(kExDate, 11), StockSource::Trade, {}});
+  const auto trips = share_lifecycles(fills);
+  ASSERT_EQ(trips.size(), 1u);
+  const auto& trip = trips[0];
+  EXPECT_TRUE(trip.closed.has_value());
+  EXPECT_EQ(trip.opened_shares, 90);
+  EXPECT_EQ(trip.closed_shares, 90);
+  EXPECT_EQ(trip.max_shares, 90);
+  EXPECT_EQ(trip.open_notional.prorate(1, trip.opened_shares), m("100"));
+  EXPECT_EQ(trip.close_notional.prorate(1, trip.closed_shares), m("110"));
+  EXPECT_EQ(trip.gross, m("900"));
+  // One the split closes, leaving only a fraction paid in cash, keeps the counts it traded on.
+  SharedVector<StockFill> fraction;
+  fraction.push_back({1, "QQQ", 5, m("10"), at(kToday), StockSource::Trade, {}});
+  StockFill reverse{2, "QQQ", -5, {}, at(kExDate, 9), StockSource::Split, {}};
+  reverse.split_numerator = 1;
+  reverse.split_denominator = 10;
+  reverse.cash_in_lieu = m("50");
+  fraction.push_back(reverse);
+  const auto closed = share_lifecycles(fraction);
+  ASSERT_EQ(closed.size(), 1u);
+  EXPECT_TRUE(closed[0].closed.has_value());
+  EXPECT_EQ(closed[0].opened_shares, 5);
+  EXPECT_EQ(closed[0].max_shares, 5);
+}
+
 TEST(CorporateActions, FractionsArePaidInCashAndReverseSplitsDeliverCashInLieu) {
   const auto put = *md::parse_osi("SPY261016P00500000");
   Spy f;

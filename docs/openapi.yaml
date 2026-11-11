@@ -16280,13 +16280,16 @@
             "type": "number"
           },
           "max_shares": {
-            "type": "number"
+            "type": "number",
+            "description": "Largest holding; after a split the round trip held through, in split shares."
           },
           "opened_shares": {
-            "type": "number"
+            "type": "number",
+            "description": "Shares that opened or added; after a split the round trip held through, counted in split shares (toward zero), so average_open is on the shares it holds now."
           },
           "closed_shares": {
-            "type": "number"
+            "type": "number",
+            "description": "Shares that reduced; after a split the round trip held through, counted in split shares (toward zero), as later sales are."
           },
           "average_open": {
             "anyOf": [

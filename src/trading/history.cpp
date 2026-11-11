@@ -246,6 +246,18 @@ std::vector<ShareLifecycle> share_lifecycles(const SharedVector<StockFill>& fill
       if (it == open.end()) continue;
       auto& life = out[it->second.index];
       life.shares = it->second.ledger.split_stock(fill.symbol, fill.split_numerator, fill.split_denominator, fill.cash_in_lieu);
+      // One held on counts the shares it traded in split shares from here, toward zero
+      // as the ledger does, so its averages (notional over shares) compare with later
+      // fills; one the split closes keeps the counts it traded on.
+      if (life.shares != 0) {
+        __extension__ using Wide = __int128;
+        const auto on_split = [&](Quantity count) {
+          return static_cast<Quantity>(static_cast<Wide>(count) * fill.split_numerator / fill.split_denominator);
+        };
+        life.opened_shares = on_split(life.opened_shares);
+        life.closed_shares = on_split(life.closed_shares);
+        life.max_shares = on_split(life.max_shares);
+      }
       life.max_shares = std::max(life.max_shares, magnitude(life.shares));
       life.gross = it->second.ledger.account().realised;
       life.fills.push_back(fill.id);

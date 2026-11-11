@@ -538,6 +538,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   clearing the thread's business-day cache each time: about 1 ms a check at 256
   events. Only events whose window can fall in the time asked about are now worked
   out, and the calendar is entered only for them; the windows are the same.
+- **Share round trips held through a split.** A trip's opened and closed share counts
+  stayed on the pre-split basis while later fills counted split shares, so `GET
+  /api/trades` and the Journal showed a trip bought as 30 at $300, split 3:1 and sold as
+  90 at $110 as opened 30 at $300.00 and closed 90 at $110.00, a loss to the eye though
+  it gained $900. A trip held through a split now counts its earlier shares in split
+  shares: opened 90 at $100.00.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
