@@ -517,5 +517,83 @@ TEST(StockOrders, ARegularHoursStopIsReachedOnlyByPricesFromItsSession) {
   EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
   EXPECT_EQ(stock_order(s, 1).fill_price, m("500"));
 }
+
+TEST(StockOrders, AHaltRefusesNewOrdersAndAWorkingOneFillsOnTheFirstPrintAfterIt) {
+  const auto open = ny(10);
+  TradingSession s(config(), open);
+  ASSERT_TRUE(price(s, open, "500").decision.ok());
+  ASSERT_TRUE(s.submit_stock_order(order("dip", Side::Buy, StockOrderType::Limit, 10, "495.00"), open).decision.ok());
+  ASSERT_TRUE(s.halt_underlying("SPY", ny(10, 30), ny(10, 1)).decision.ok());
+  // While SPY is halted a new share order is refused, and none is recorded.
+  const auto refused = s.submit_stock_order(order("during", Side::Buy, StockOrderType::Limit, 10, "499.00"), ny(10, 5));
+  EXPECT_EQ(refused.decision.code, Reason::MARKET_HALTED);
+  EXPECT_EQ(s.snapshot()->stock_orders.size(), 1u);
+  // A print inside the halt is not taken, so the working buy does not fill on it.
+  ASSERT_TRUE(price(s, ny(10, 10), "490").decision.ok());
+  EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Working);
+  // The first print after the halt fills it, at that print.
+  ASSERT_TRUE(price(s, ny(10, 31), "494").decision.ok());
+  EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
+  EXPECT_EQ(stock_order(s, 1).fill_price, m("494"));
+}
+
+TEST(StockOrders, ADayOrderAcceptedAfterItsSessionOrOnAClosedDayWorksTheNextBusinessDays) {
+  const auto day_order = [](std::string id, bool extended = false) {
+    auto r = order(std::move(id), Side::Buy, StockOrderType::Limit, 1, "400.00");
+    r.extended_hours = extended;
+    return r;
+  };
+  // Accepted after Tuesday's close: Wednesday's regular session; with extended hours
+  // and after 20:00, Wednesday's sessions until 20:00.
+  const md::Date wednesday{2026, 9, 23};
+  TradingSession s(config(), ny(16, 30));
+  ASSERT_TRUE(s.submit_stock_order(day_order("evening"), ny(16, 30)).decision.ok());
+  EXPECT_EQ(stock_order(s, 1).day_end, ny(16, 0, wednesday));
+  ASSERT_TRUE(s.submit_stock_order(day_order("night", true), ny(20, 30)).decision.ok());
+  EXPECT_EQ(stock_order(s, 2).day_end, ny(20, 0, wednesday));
+  // Each works that session and ends with it.
+  ASSERT_TRUE(price(s, ny(9, 31, wednesday), "500").decision.ok());
+  EXPECT_TRUE(stock_order(s, 1).open());
+  ASSERT_TRUE(price(s, ny(16, 1, wednesday), "500").decision.ok());
+  EXPECT_EQ(stock_order(s, 1).reason.code, Reason::DAY_END);
+  EXPECT_TRUE(stock_order(s, 2).open());
+  // Accepted on Friday evening: Monday's session.
+  TradingSession weekend(config(), ny(17, 0, {2026, 9, 25}));
+  ASSERT_TRUE(weekend.submit_stock_order(day_order("friday"), ny(17, 0, {2026, 9, 25})).decision.ok());
+  EXPECT_EQ(stock_order(weekend, 1).day_end, ny(16, 0, {2026, 9, 28}));
+  // Accepted on Thanksgiving: the next day's session, which closes at 13:00.
+  TradingSession holiday(config(), ny(10, 0, {2026, 11, 26}));
+  ASSERT_TRUE(holiday.submit_stock_order(day_order("thanksgiving"), ny(10, 0, {2026, 11, 26})).decision.ok());
+  EXPECT_EQ(stock_order(holiday, 1).day_end, ny(13, 0, {2026, 11, 27}));
+}
+
+TEST(StockOrders, AShortEntrysBracketBuysBackOnlyTheSharesStillShort) {
+  const auto open = ny(10);
+  TradingSession s(config(), open);
+  auto entry = order("short", Side::Sell, StockOrderType::Market, 50);
+  entry.stop_loss = m("510");
+  entry.take_profit = m("480");
+  ASSERT_TRUE(s.submit_stock_order(entry, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+  ASSERT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
+  ASSERT_EQ(s.snapshot()->stocks.at(0).position.shares, -50);
+  // Its exits buy: a stop above the price and a target under it.
+  ASSERT_EQ(stock_order(s, 1).stop_loss, 2u);
+  ASSERT_EQ(stock_order(s, 1).take_profit, 3u);
+  EXPECT_EQ(stock_order(s, 2).request.side, Side::Buy);
+  EXPECT_EQ(stock_order(s, 2).request.stop_price, m("510"));
+  EXPECT_EQ(stock_order(s, 3).request.side, Side::Buy);
+  EXPECT_EQ(stock_order(s, 3).request.limit_price, m("480"));
+  EXPECT_EQ(stock_order(s, 3).request.shares, 50);
+  // Twenty are bought back another way: the target buys the thirty still short, and
+  // its fill cancels the stop.
+  ASSERT_TRUE(s.trade_stock("SPY", 20, ny(10, 1)).decision.ok());
+  ASSERT_TRUE(price(s, ny(10, 2), "479").decision.ok());
+  EXPECT_EQ(stock_order(s, 3).status, OrderStatus::Filled);
+  EXPECT_EQ(stock_order(s, 3).filled_shares, 30);
+  EXPECT_EQ(stock_order(s, 3).fill_price, m("479"));
+  EXPECT_EQ(stock_order(s, 2).status, OrderStatus::Cancelled);
+  EXPECT_EQ(stock_order(s, 2).reason.code, Reason::OCO_FILLED);
+  EXPECT_TRUE(s.snapshot()->stocks.empty());
+}
 }  // namespace
 }  // namespace openport::trading
