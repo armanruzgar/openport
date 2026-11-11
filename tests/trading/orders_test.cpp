@@ -479,8 +479,11 @@ TEST(TradingOrders, AFlattenSplitsAPositionLargerThanTheOrderLimit) {
 }
 
 TEST(TradingOrders, LimitFlattenClosesCoveredPairsOvernightWithLatency) {
-  // Five bull put spreads; the short put's ask then shows 2 contracts at a time.
-  // Custom rules without buying power or defined risk would allow a naked short.
+  // Five bull put spreads flattened at 21:00, in the overnight session, where only a
+  // limit flatten may trade: one combo limit that follows each leg's touch by two
+  // ticks, filled two spreads at a time as the short put's ask shows two, with no
+  // short ever left without its long (rules without buying power or defined risk
+  // would let one stay naked).
   for (const auto latency : {std::int64_t{0}, std::int64_t{1000}}) {
     ScriptedMarket f;
     f.contract = *md::parse_osi("SPXW261022P05000000");
@@ -503,11 +506,15 @@ TEST(TradingOrders, LimitFlattenClosesCoveredPairsOvernightWithLatency) {
     ASSERT_EQ(held(s, lower.symbol()), 5);
     f.time = md::new_york_to_utc({2026, 9, 22}, 21, 0); lower.time = f.time;
     next(2);
+    EXPECT_EQ(s.close_positions(std::nullopt, f.time).decision.code, Reason::LIMIT_ONLY);
     const auto result = s.close_positions(std::nullopt, f.time, {}, {true, 2});
     ASSERT_TRUE(result.decision.ok());
     const auto close = s.snapshot()->recent_orders.back().id;
     ASSERT_EQ(order(s, close).request.legs.size(), 2u) << "one order for the spread";
     EXPECT_EQ(order(s, close).request.quantity, 5);
+    EXPECT_EQ(order(s, close).request.type, OrderType::Limit);
+    EXPECT_EQ(order(s, close).request.tif, TimeInForce::Exto);
+    EXPECT_EQ(order(s, close).limit_ticks.value_or(0), 2);
     // Without latency two spreads close at once; the rest is worked on later quotes.
     const Quantity first = latency ? 0 : 2;
     EXPECT_EQ(held(s, f.symbol()), -5 + first);
@@ -540,7 +547,16 @@ TEST(TradingOrders, LimitFlattenSplitsLargePositions) {
   EXPECT_EQ(orders[before].request.quantity, 4);
   EXPECT_EQ(orders[before + 1].request.quantity, 4);
   EXPECT_EQ(orders[before + 2].request.quantity, 2);
-  for (auto i = before; i < orders.size(); ++i) EXPECT_EQ(orders[i].status, OrderStatus::Filled) << orders[i].reason.message;
+  // Every piece is priced, not only the first: a limit two ticks under the 4.00 bid
+  // that follows the touch and works the extended session, where a market flatten's
+  // pieces are market orders for the day.
+  for (auto i = before; i < orders.size(); ++i) {
+    EXPECT_EQ(orders[i].request.type, OrderType::Limit) << "piece " << i - before;
+    EXPECT_EQ(orders[i].request.tif, TimeInForce::Exto) << "piece " << i - before;
+    EXPECT_EQ(orders[i].request.limit_price, m("3.80")) << "piece " << i - before;
+    EXPECT_EQ(orders[i].limit_ticks.value_or(0), 2) << "piece " << i - before;
+    EXPECT_EQ(orders[i].status, OrderStatus::Filled) << orders[i].reason.message;
+  }
   EXPECT_TRUE(s.snapshot()->positions.empty());
 }
 
