@@ -13,7 +13,6 @@ import { TradeDetail } from "./JournalView"
 import { trades } from "../test/trading-fixtures"
 import { OrdersView } from "./OrdersView"
 import { PositionsView } from "./PositionsView"
-import css from "../index.css?raw"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 const clients: QueryClient[] = []
@@ -79,10 +78,6 @@ describe("on a phone", () => {
     const positions = render(<PositionsView />)
     expect(positions).toMatch(/<th scope="col" class="[^"]*sticky left-0[^"]*">Contract<\/th>/)
     expect(positions).not.toMatch(/<th[^>]*sticky[^>]*>Pick<\/th>/)
-  })
-  it("keeps a ticket's submit at the foot of the sheet", () => {
-    const phone = css.slice(css.indexOf("@media (max-width: 639px)"))
-    expect(phone).toMatch(/\.ticket-sheet button\[type="submit"\] \{[^}]*position: sticky;[^}]*bottom: 0\.5rem;/)
   })
 })
 

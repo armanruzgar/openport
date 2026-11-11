@@ -14,6 +14,7 @@ import { Positions } from "../views/PositionsView"
 import { portfolio, quote, status, summary } from "../test/trading-fixtures"
 import { defaultStudies } from "../lib/studies"
 import { barDay } from "../lib/candles"
+import { timestampET } from "../lib/freshness"
 import { reviewTicketKey } from "../lib/keyboard"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
@@ -149,7 +150,8 @@ it("labels watchlist IV rank as a percentage and derives change from the prior d
     expect(host.textContent).toContain("proxy")
     expect(host.textContent).toContain("+1.45%")
     expect(host.textContent).toContain("351.44")
-    expect(host.textContent).toContain(summary.as_of)
+    expect(host.textContent).toContain(`Market data: ${timestampET(summary.as_of)}`)
+    expect(host.textContent).not.toContain(summary.as_of)
   } finally { client.clear() }
 })
 

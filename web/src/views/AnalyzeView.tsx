@@ -198,7 +198,9 @@ export function AnalyzeView({ symbol }: { symbol: string }) {
   const holds = !!portfolio && (portfolio.positions.some((p) => p.underlying === symbol && !p.awaiting_settlement) || (portfolio.stocks ?? []).some((s) => s.symbol === symbol))
   const withHeld = held && holds
   const customDays = /^\d+(\.\d+)?$/.test(customText.trim()) && Number(customText) > 0 && Number(customText) <= 366 ? Number(customText) : null
-  const visible = candidates.filter((c) => c.visible && !expired(c) && c.legs.length && c.legs.every((leg) => leg.symbol))
+  // Drawn only once the summary says which expiries are listed: the settled query of the
+  // first render is asked at once, and an expired candidate's would only fail.
+  const visible = candidates.filter((c) => c.visible && !!data && !expired(c) && c.legs.length && c.legs.every((leg) => leg.symbol))
   const lines = visible.map((c) => dateLines(c, chains, now, customDays))
   const queries: RiskProfileQuery[] = visible.map((c, i) => ({ underlying: symbol, days: lines[i]!.map((line) => line.days), iv, range, steps: 81,
     legs: profileLegs(c.legs, c.units), held: withHeld }))

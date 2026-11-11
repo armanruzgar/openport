@@ -133,7 +133,8 @@ describe("simulator pages", () => {
     expect(failed).toContain("Start a new attempt")
     const practice = render(<DashboardView />, { ...account, rules: { ...account.rules, plan_id: "practice", plan: "Practice", profit_target: null, max_drawdown: null },
       evaluation: { ...account.evaluation, enabled: false, floor: null, target_equity: null, target_remaining: null, drawdown_buffer: null } })
-    expect(practice).toContain("Practice · Practice · attempt")
+    expect(practice).toContain("Practice · attempt")
+    expect(practice).not.toContain("Practice · Practice")
     expect(practice).not.toContain("Practice · Evaluation")
     expect(practice).toContain("No evaluation running")
     expect(practice).toContain("Start an evaluation")
