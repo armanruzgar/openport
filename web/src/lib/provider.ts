@@ -1,6 +1,12 @@
 import type { FeedState, ProviderInfo, UnderlyingSnapshot } from "../api/types"
 import { isNum } from "./format"
 
+/**
+ * Every provider openportd can run, as `provider_names()` in src/providers/factory.cpp
+ * lists them. A failover reports "primary+backup" and a replay "replay (provider)".
+ */
+export const providerNames = ["cboe", "databento", "massive", "thetadata", "tradier", "tastytrade", "schwab", "alpaca", "ibkr", "replay", "demo"] as const
+
 export function providerLabel(provider: ProviderInfo, state?: FeedState | null): string {
   if (provider.simulated) return "simulated prices"
   const delayed = isNum(provider.delay_seconds) && provider.delay_seconds > 0

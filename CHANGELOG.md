@@ -614,6 +614,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   Dashboard, titled the tab "undefined · OpenPort", and the next expiry change wrote
   the method's source into the address. Only the old `portfolio` link is an alias now;
   any other unknown page opens the Dashboard.
+- **Copy diagnostics names Schwab, Alpaca and IBKR.** The report and the prefilled
+  issue said `Provider: other` for those three feeds, and for any failover, because
+  only the other providers were on its list and a failover's `primary+backup` name
+  matched none. Every provider openportd can run is named now, and a failover reports
+  both of its providers.
 
 ## 0.5.1 (2026-10-28)
 

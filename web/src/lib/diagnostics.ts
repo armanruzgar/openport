@@ -1,5 +1,6 @@
 import type { Status } from "../api/types"
 import type { Connection } from "../api/connection"
+import { providerNames } from "./provider"
 
 // Provider errors can contain URLs, credentials and local paths. Export only
 // known error categories, never the original message or a whole status object.
@@ -11,8 +12,14 @@ function errorCategory(message: string): string {
   return "error reported (details omitted)"
 }
 
+const knownProvider = new RegExp(`^(${providerNames.join("|")})(?:\\b|$)`, "i")
+/** "schwab", "schwab+cboe" for a failover, "replay" for "replay (cboe)"; anything else is "other". */
+export function providerCategory(name: string): string {
+  return name.split("+").map((part) => knownProvider.exec(part.trim())?.[1]?.toLowerCase() ?? "other").join("+")
+}
+
 export function diagnostics(status: Status, feed: Pick<Status["feed"], "state" | "message">, connection: Connection): string {
-  const provider = /^(cboe|databento|massive|thetadata|tradier|tastytrade|demo|replay)(?:\b|$)/i.exec(status.provider.name)?.[1]?.toLowerCase() ?? "other"
+  const provider = providerCategory(status.provider.name)
   const errors: string[] = []
   const add = (source: string, message: string | null | undefined) => {
     if (message) errors.push(`${source}: ${errorCategory(message)}`)
