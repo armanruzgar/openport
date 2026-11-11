@@ -34,14 +34,25 @@
 
 namespace {
 /// A private HOME for launched binaries, so a daemon that gets far enough to start never
-/// touches the user's real ~/.openport paper journal.
+/// touches the user's real ~/.openport paper journal. It goes when the test process
+/// exits: CTest runs each test in a process of its own, and every one that launched a
+/// daemon used to leave a HOME with its journal, crash log and caches behind.
+struct TemporaryHome {
+  std::string path = (std::filesystem::temp_directory_path() / "openport-cli-home-XXXXXX").string();
+  TemporaryHome() {
+    if (!mkdtemp(path.data())) throw std::runtime_error("mkdtemp failed");
+  }
+  ~TemporaryHome() {
+    std::error_code ignored;
+    std::filesystem::remove_all(path, ignored);
+  }
+  TemporaryHome(const TemporaryHome&) = delete;
+  TemporaryHome& operator=(const TemporaryHome&) = delete;
+};
+
 std::string isolated_home() {
-  static const auto home = [] {
-    std::string pattern = (std::filesystem::temp_directory_path() / "openport-cli-home-XXXXXX").string();
-    if (!mkdtemp(pattern.data())) throw std::runtime_error("mkdtemp failed");
-    return pattern;
-  }();
-  return "HOME='" + home + "' ";
+  static const TemporaryHome home;
+  return "HOME='" + home.path + "' ";
 }
 
 void rejects(const std::string& application, const std::string& args, const std::string& reason,
@@ -92,9 +103,10 @@ TEST(Cli, DaemonRejectsMalformedRangesUnknownFlagsAndStartupFailures) {
   rejects("openportd", "--poll-seconds 1x", "poll_seconds");
   rejects("openportd", "--option unknown=1", "unknown provider option");
   rejects("openportd", "--unknown value", "unknown option");
-  rejects("openportd", "--address invalid-address", "openportd:");
+  // Both are refused before any provider is built, with their own reasons.
+  rejects("openportd", "--address invalid-address", "--address invalid-address is not an IP address");
   rejects("openportd", "--provider missing", "unknown provider");
-  rejects("openportd", "--allowed-origin https://host/path", "invalid allowed origin");
+  rejects("openportd", "--allowed-origin https://host/path", "invalid allowed origin https://host/path");
   rejects("openportd", "--provider databento --window 0.1", "whole chain upstream");
 }
 
