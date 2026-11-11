@@ -1,7 +1,14 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { expect, it } from "vitest"
-import type { Volatility } from "../api/types"
+import type { ConstantVol, Volatility } from "../api/types"
 import { VolatilityDetails, VolatilitySummary } from "./VolatilityMetrics"
+
+/** Each summary stat's value by its label. The footnote under the stats names both marks, so marks are read here. */
+function stats(html: string): Record<string, string> {
+  return Object.fromEntries([...html.matchAll(/<div[^>]*>([^<]*)<\/div><div[^>]*>([^<]*)<\/div><\/div>/g)].map((match) => [match[1]!, match[2]!]))
+}
+const constant = (days: number, vol: number, flags: Partial<ConstantVol> = {}): ConstantVol =>
+  ({ days, vol, variance: (vol / 100) ** 2, near: null, next: null, truncated: false, proxy: false, reason: null, ...flags })
 
 const estimate = { vol: null, fallback: false, reason: "insufficient_history" }
 const point = { vol: null, strike: null, reason: "delta_outside_smile" }
@@ -19,13 +26,36 @@ const data: Volatility = {
 }
 it("renders point units, missing markers and visible proxy/truncation explanations", () => {
   const html = renderToStaticMarkup(<VolatilitySummary data={data} />)
-  expect(html).toContain("20.00 †")
-  expect(html).toContain("Model-free IV")
+  // Skew is a proxy and the VRP and model-free strips truncated: each mark sits on its own stat.
+  expect(stats(html)).toEqual({
+    "Model-free IV · 30d": "20.00 †", "ATM IV · 30d": "—", "25Δ RR / BF · 30d": "— / — ≈", "Close RV · 21 sessions": "—",
+    "VRP · spread / ratio": "— / — †", "Model-free IV · 9d/30d": "— †", "Model-free IV · 30d/93d": "— †", "ATM IV · 30d − 7d": "—",
+  })
   expect(html).toContain("Truncated strike strip")
-  expect(html).toContain("≈")
-  expect(html).toContain("—")
   expect(html).not.toContain("2000.00")
   expect(html).not.toContain("NaN")
+})
+it("marks only the stats whose own inputs are truncated or proxies", () => {
+  const clean: Volatility = { ...data,
+    mfiv: { ...data.mfiv, constant: [constant(9, 18), constant(30, 20), constant(93, 22)] },
+    atm: { ...data.atm, constant: [constant(7, 17), constant(30, 19)] },
+    skew: { ...data.skew, proxy: false, reason: null, delta25: { ...skew, rr: -4, bf: 1 } },
+    term: { mfiv9_30: .9, mfiv30_93: .909, atm30_7: 2, truncated: false, proxy: false },
+    vrp: { spread: 3, ratio: 1.2, truncated: false, proxy: false, reason: null },
+  }
+  expect(stats(renderToStaticMarkup(<VolatilitySummary data={clean} />))).toEqual({
+    "Model-free IV · 30d": "20.00", "ATM IV · 30d": "19.00", "25Δ RR / BF · 30d": "-4.00 / 1.00", "Close RV · 21 sessions": "—",
+    "VRP · spread / ratio": "3.00 / 1.20", "Model-free IV · 9d/30d": "0.900", "Model-free IV · 30d/93d": "0.909", "ATM IV · 30d − 7d": "2.00",
+  })
+  // A term ratio carries the marks of either tenor it divides; the 30-day stats keep their own.
+  const legs: Volatility = { ...clean,
+    mfiv: { ...clean.mfiv, constant: [constant(9, 18, { proxy: true }), constant(30, 20), constant(93, 22, { truncated: true })] },
+    atm: { ...clean.atm, constant: [constant(7, 17, { proxy: true }), constant(30, 19)] },
+  }
+  expect(stats(renderToStaticMarkup(<VolatilitySummary data={legs} />))).toEqual({
+    "Model-free IV · 30d": "20.00", "ATM IV · 30d": "19.00", "25Δ RR / BF · 30d": "-4.00 / 1.00", "Close RV · 21 sessions": "—",
+    "VRP · spread / ratio": "3.00 / 1.20", "Model-free IV · 9d/30d": "0.900 ≈", "Model-free IV · 30d/93d": "0.909 †", "ATM IV · 30d − 7d": "2.00 ≈",
+  })
 })
 it("shows fallback reasons, arbitrage flags and escaped event labels in scrollable tables", () => {
   const html = renderToStaticMarkup(<VolatilityDetails data={data} />)
