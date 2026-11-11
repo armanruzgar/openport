@@ -38,7 +38,7 @@ never met.
 | --- | --- | --- |
 | `ask` | within half a cent of the ask | `buy` |
 | `bid` | within half a cent of the bid | `sell` |
-| `mid` | strictly between them | null |
+| `mid` | strictly between them, or within half a cent of both (a locked quote) | null |
 | `outside` | above the ask or below the bid | `buy` above, `sell` below |
 | `unquoted` | no two-sided quote, or only one stamped after the trade | null |
 

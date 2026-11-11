@@ -1311,6 +1311,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `after` in `GET /api/earnings` (and `earnings.json`) read `1970-01-01` for every
   imported move, where the API documents null. They are now null until known, and a
   file an earlier version wrote reads the same.
+- **A print at a locked quote is no longer a buy.** With bid equal to ask, a print at
+  that price was classified at the ask, so the flow tape counted it as bought premium
+  and toward sweeps. It is at both sides at once and now counts as `mid`, toward
+  neither.
 
 ## 0.5.1 (2026-10-28)
 

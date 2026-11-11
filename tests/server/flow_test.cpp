@@ -40,11 +40,14 @@ TEST(FlowTape, ClassifiesEachPrintAgainstTheStandingQuote) {
   tape.add(print(kOpen + 5, 4.20, 1), option("SPXW  261021C05800000", 0, 4.30));  // one-sided
   tape.add(print(kOpen + 6, 0, 1), call);    // no price: ignored
   tape.add(print(kOpen + 7, 4.2, -1), call);  // no size: ignored
+  // Locked: at the bid and the ask at once, so neither bought nor sold (B-104).
+  tape.add(print(kOpen + 8, 0.05, 1), option("SPXW  261021C05800000", 0.05, 0.05));
   const auto snapshot = tape.snapshot("SPX");
-  ASSERT_EQ(snapshot.prints.size(), 6u);
+  ASSERT_EQ(snapshot.prints.size(), 7u);
   const std::vector<std::pair<server::PrintSide, int>> expected{
       {server::PrintSide::Ask, 1}, {server::PrintSide::Bid, -1}, {server::PrintSide::Mid, 0},
-      {server::PrintSide::Outside, 1}, {server::PrintSide::Outside, -1}, {server::PrintSide::Unquoted, 0}};
+      {server::PrintSide::Outside, 1}, {server::PrintSide::Outside, -1}, {server::PrintSide::Unquoted, 0},
+      {server::PrintSide::Mid, 0}};
   for (std::size_t i = 0; i < expected.size(); ++i) {
     EXPECT_EQ(snapshot.prints[i].side, expected[i].first) << i;
     EXPECT_EQ(snapshot.prints[i].direction, expected[i].second) << i;

@@ -67,10 +67,16 @@ void FlowTape::add(const md::OptionTrade& trade, const analytics::OptionState& o
     print.bid = option.bid;
     print.ask = option.ask;
     print.quote_time = option.quote_ts;
-    if (std::abs(trade.price - option.ask) <= kAtQuote) {
+    const bool at_ask = std::abs(trade.price - option.ask) <= kAtQuote;
+    const bool at_bid = std::abs(trade.price - option.bid) <= kAtQuote;
+    if (at_ask && at_bid) {
+      // A locked quote: the print is at the bid and at the ask, so it says nothing of
+      // which side took it. It counts as mid, toward neither bought nor sold premium.
+      print.side = PrintSide::Mid;
+    } else if (at_ask) {
       print.side = PrintSide::Ask;
       print.direction = 1;
-    } else if (std::abs(trade.price - option.bid) <= kAtQuote) {
+    } else if (at_bid) {
       print.side = PrintSide::Bid;
       print.direction = -1;
     } else if (trade.price > option.bid && trade.price < option.ask) {
