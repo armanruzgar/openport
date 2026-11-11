@@ -293,6 +293,46 @@ TEST(ImpliedMoves, AtmProxyAndUnusableIntervalsRemainVisible) {
   EXPECT_EQ(moves.sessions[0].reason, "unusable_variance");
 }
 
+// An expiry without MFIV is differenced on ATM at both ends, marked proxy. MFIV sits
+// above ATM on a skewed smile, so an MFIV total less an ATM one read as a negative
+// forward variance, and the next interval took the whole gap between the two.
+TEST(ImpliedMoves, AnExpiryWithoutMfivIsDifferencedOnAtmAtBothEnds) {
+  UnderlyingMetrics m; VolatilityMetrics v;
+  m.as_of = md::new_york_to_utc({2026, 11, 9}, 10, 0);
+  for (const int date : {16, 17, 18, 19}) {
+    add_expiry(m, v, {2026, 11, date}, 0);
+    v.expiries.back().mfiv.variance = .17 * .17;
+    v.expiries.back().smile.atm = 14;
+  }
+  v.expiries[1].mfiv.variance = kNaN;
+  const auto moves = implied_moves(m, v);
+  ASSERT_EQ(moves.intervals.size(), 4u);
+  const double one_day = 1440 / kMinutesPerYear;
+  EXPECT_NEAR(moves.intervals[1].forward_variance, .14 * .14 * one_day, 1e-12);
+  EXPECT_NEAR(moves.intervals[2].forward_variance, .14 * .14 * one_day, 1e-12);
+  EXPECT_NEAR(moves.intervals[3].forward_variance, .17 * .17 * one_day, 1e-12);
+  for (std::size_t i = 0; i < moves.intervals.size(); ++i) {
+    EXPECT_FALSE(moves.intervals[i].calendar_arbitrage) << i;
+    EXPECT_EQ(moves.intervals[i].reason, "") << i;
+    EXPECT_EQ(moves.intervals[i].proxy, i == 1 || i == 2) << i;
+  }
+  const auto move_on = [&](int day) -> const ImpliedMove* {
+    for (const auto& move : moves.sessions) if (move.date == md::Date{2026, 11, day}) return &move;
+    return nullptr;
+  };
+  for (const int day : {17, 18}) {
+    const auto* move = move_on(day);
+    ASSERT_NE(move, nullptr) << day;
+    EXPECT_NEAR(move->percent, 14 * std::sqrt(one_day), 1e-9) << day;
+    EXPECT_TRUE(move->proxy) << day;
+    EXPECT_FALSE(move->calendar_arbitrage) << day;
+  }
+  const auto* last = move_on(19);
+  ASSERT_NE(last, nullptr);
+  EXPECT_NEAR(last->percent, 17 * std::sqrt(one_day), 1e-9);
+  EXPECT_FALSE(last->proxy);
+}
+
 
 TEST(EventVolatility, SolvesTwoExpiriesAndKeepsEventPremiumSeparateFromSessionMove) {
   UnderlyingMetrics m; VolatilityMetrics v;

@@ -24,6 +24,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Implied session moves around an expiry without MFIV.** Each expiry's total variance
+  used MFIV, or ATM when MFIV was missing, and consecutive totals were subtracted
+  whatever their basis. MFIV sits above ATM on a skewed smile, so an MFIV expiry
+  followed by an ATM one read as negative forward variance (a false calendar-arbitrage
+  flag and a null move), and the next interval took the whole gap between the two
+  levels, overstating that session's move. Each interval is now differenced on one
+  basis at both ends: MFIV where both expiries have it, otherwise ATM, marked proxy.
 - **The volatility page's skew reason.** `skew.reason` in
   `GET /api/underlyings/{symbol}/volatility` took the last reason of any 30-day skew
   input, 10-delta points included, so a chain whose 10-delta points did not

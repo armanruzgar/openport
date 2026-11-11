@@ -161,7 +161,11 @@ null. MFIV truncation and EEP proxy flags carry through.
 ## Implied session moves and events
 
 Use per-expiry MFIV total variance, or ATM total variance when MFIV is missing.
-Subtract consecutive expiries' totals, starting with zero at market time. Divide
+Subtract consecutive expiries' totals, starting with zero at market time, on one
+basis at both ends: MFIV when both expiries have it, otherwise ATM for both, marked
+`proxy`. The two levels are never mixed: MFIV sits above ATM on a skewed smile, so
+their difference is not forward variance. An expiry with neither leaves the
+intervals on both sides of it null. Divide
 an interval's variance equally among its business sessions; a full early-close
 session also counts as one. A partly elapsed regular session gets its remaining
 fraction of that day's scheduled regular hours. Weekends and holidays get none.

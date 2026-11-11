@@ -466,19 +466,26 @@ ImpliedMoves implied_moves(const UnderlyingMetrics& metrics, const VolatilityMet
     return metrics.slices[a].expiry_time < metrics.slices[b].expiry_time;
   });
   md::Timestamp previous_time = metrics.as_of;
-  double previous_variance = 0;
+  // The previous expiry's total variance on each basis, zero at market time. An
+  // interval is differenced on one basis at both ends, as event_volatility solves:
+  // MFIV where both have it, otherwise ATM for both, a proxy. MFIV sits above ATM
+  // on a skewed smile, so mixing them would read the gap as variance.
+  double previous_mfiv = 0, previous_atm = 0;
   bool previous_proxy = false, previous_truncated = false;
   std::map<md::Date, double> assigned;
   for (const auto i : order) {
     const auto& slice = metrics.slices[i];
     const auto& expiry = volatility.expiries[i];
-    const bool fallback = !std::isfinite(expiry.mfiv.variance);
-    const double variance = fallback ? variance_of(expiry.smile.atm) : expiry.mfiv.variance;
-    const double total = variance * expiry.minutes / kMinutesPerYear;
-    const double increment = total - previous_variance;
+    const double mfiv = expiry.mfiv.variance * expiry.minutes / kMinutesPerYear;
+    const double atm = variance_of(expiry.smile.atm) * expiry.minutes / kMinutesPerYear;
+    const bool both_mfiv = std::isfinite(mfiv) && std::isfinite(previous_mfiv);
+    const double increment = both_mfiv ? mfiv - previous_mfiv : atm - previous_atm;
     const bool negative = std::isfinite(increment) && increment < -1e-12;
-    const bool proxy = fallback || expiry.mfiv.proxy || previous_proxy;
-    const bool truncated = (!fallback && expiry.mfiv.truncated) || previous_truncated;
+    const bool proxy = !both_mfiv || expiry.mfiv.proxy || previous_proxy;
+    const bool truncated = both_mfiv && (expiry.mfiv.truncated || previous_truncated);
+    // Today's remaining move is one expiry's own total, on its own basis and flags.
+    const bool fallback = !std::isfinite(mfiv);
+    const double total = fallback ? atm : mfiv;
     const auto weights = session_weights(previous_time, slice.expiry_time);
     out.intervals.push_back({previous_time, slice.expiry_time, increment, weights.size(), negative, proxy, truncated,
         negative ? "negative_forward_variance" : !std::isfinite(increment) ? "unusable_variance"
@@ -504,17 +511,18 @@ ImpliedMoves implied_moves(const UnderlyingMetrics& metrics, const VolatilityMet
       }
     }
     if (slice.expiry == today) {
-      out.today_proxy = proxy;
-      out.today_truncated = truncated;
+      out.today_proxy = fallback || expiry.mfiv.proxy;
+      out.today_truncated = !fallback && expiry.mfiv.truncated;
       out.today_calendar_arbitrage = out.today_calendar_arbitrage || negative;
       out.today_percent = vol_of(total);
       out.today_points = positive(slice.forward.forward) ? slice.forward.forward * out.today_percent / 100 : kNaN;
       out.today_reason = std::isfinite(out.today_percent) ? "" : "unusable_variance";
     }
     previous_time = slice.expiry_time;
-    previous_variance = total;
-    previous_proxy = fallback || expiry.mfiv.proxy;
-    previous_truncated = !fallback && expiry.mfiv.truncated;
+    previous_mfiv = mfiv;
+    previous_atm = atm;
+    previous_proxy = expiry.mfiv.proxy;
+    previous_truncated = expiry.mfiv.truncated;
   }
   return out;
 }
