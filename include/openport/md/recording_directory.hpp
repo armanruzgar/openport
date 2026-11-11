@@ -15,6 +15,8 @@ class RecordingDirectory final : public EventSink {
     std::uint64_t max_bytes = 0;  ///< complete files plus this writer; zero disables
     /// Optional unlink replacement for testing retention failures.
     std::function<bool(const std::filesystem::path&, std::error_code&)> remove{};
+    /// Optional hard-link replacement for testing filesystems without hard links.
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&, std::error_code&)> link{};
   };
   RecordingDirectory(std::filesystem::path directory, RecordingHeader header,
                      EventSink& downstream, Options options);

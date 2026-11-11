@@ -20,6 +20,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Recording to exFAT, FAT and network drives.** `--record-dir` published each
+  finished day with a hard link, and on a filesystem without them it deleted the
+  complete, cleanly closed day instead, at every rollover and shutdown, and stopped
+  recording. A day now publishes by an exclusive rename where hard links fail, and a
+  complete day that still cannot be published stays in its `.record-*` staging folder,
+  named in the recording error.
 - **Analysis imports with lots on opposite sides.** A symbol's long and short lots were
   netted at their signed average cost, which could be negative: long 2 at $1 and short
   1 at $3 read as long 1 at −$1. The ledger refuses a negative cost, so the import

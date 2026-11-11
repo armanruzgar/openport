@@ -848,3 +848,81 @@ TEST(RecordingDirectory, OneReceiptTimeDecidesTheDayAndStampsTheEvent) {
   EXPECT_FALSE(reader.next());
 }
 }  // namespace
+
+namespace {
+std::vector<md::Event> recorded_events(const std::filesystem::path& path) {
+  md::RecordingReader reader(path);
+  std::vector<md::Event> events;
+  while (auto record = reader.next()) events.push_back(std::move(record->event));
+  EXPECT_TRUE(reader.diagnostic().empty()) << path << ": " << reader.diagnostic();
+  return events;
+}
+bool has_spot(const std::vector<md::Event>& events, double price) {
+  return std::any_of(events.begin(), events.end(), [&](const md::Event& event) {
+    const auto* spot = std::get_if<md::UnderlyingQuote>(&event);
+    return spot && spot->last == price;
+  });
+}
+// S-8: exFAT, FAT and some network mounts have no hard links. Each complete day and its
+// index then publish by an exclusive rename; the day was deleted with its staging folder.
+TEST(RecordingDirectory, DaysPublishByExclusiveRenameWhereHardLinksFail) {
+  test::RecordingFile file;
+  const auto header = test::recording_header();
+  std::atomic<md::Timestamp> time{md::new_york_to_utc({2026, 9, 22}, 10, 0)};
+  std::atomic<int> links{0};
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [&] { return time.load(); };
+  options.link = [&](const std::filesystem::path&, const std::filesystem::path&, std::error_code& ec) {
+    ++links;
+    ec = std::make_error_code(std::errc::operation_not_supported);
+  };
+  test::DiscardEvents discard;
+  md::RecordingDirectory recording(file.directory, header, discard, options);
+  recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5000});
+  time = md::new_york_to_utc({2026, 9, 22}, 17, 0);
+  recording.rollover();
+  EXPECT_TRUE(recording.error().empty()) << recording.error();
+  EXPECT_EQ(published(file.directory).size(), 1U) << "the rollover publishes the finished day";
+  recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
+  recording.close();
+  EXPECT_TRUE(recording.error().empty()) << recording.error();
+  const auto files = published(file.directory);
+  ASSERT_EQ(files.size(), 2U);
+  EXPECT_TRUE(has_spot(recorded_events(files[0]), 5000));
+  EXPECT_TRUE(has_spot(recorded_events(files[1]), 5001));
+  for (const auto& path : files) {
+    EXPECT_TRUE(std::filesystem::exists(path.string() + ".end")) << path;
+    EXPECT_TRUE(md::RecordingReader(path).indexed_snapshot_mode().has_value()) << "the moved index still describes " << path;
+  }
+  EXPECT_EQ(links.load(), 4) << "each day and its index try a hard link first";
+  for (const auto& entry : std::filesystem::directory_iterator(file.directory))
+    EXPECT_FALSE(entry.path().filename().string().starts_with(".record-")) << entry.path();
+}
+// When no exclusive publication is possible (here the name is taken), the complete day
+// stays in its staging folder and the recording error says where.
+TEST(RecordingDirectory, AnUnpublishableCompleteDayIsKeptAndNamedInTheError) {
+  test::RecordingFile file;
+  md::RecordingDirectory::Options options;
+  options.recording.clock = [] { return md::new_york_to_utc({2026, 9, 22}, 10, 0); };
+  options.link = [](const std::filesystem::path&, const std::filesystem::path&, std::error_code& ec) {
+    ec = std::make_error_code(std::errc::file_exists);
+  };
+  test::EventCollector sink;
+  md::RecordingDirectory recording(file.directory, test::recording_header(), sink, options);
+  recording.publish(md::UnderlyingQuote{"SPX", options.recording.clock(), 0, 0, 5000});
+  recording.close();
+  EXPECT_TRUE(published(file.directory).empty());
+  std::vector<std::filesystem::path> kept;
+  for (const auto& entry : std::filesystem::directory_iterator(file.directory))
+    if (entry.path().filename().string().starts_with(".record-")) kept.push_back(entry.path() / "day.oprec");
+  ASSERT_EQ(kept.size(), 1U);
+  const auto error = recording.error();
+  EXPECT_NE(error.find("the complete day is kept at " + kept[0].string()), std::string::npos) << error;
+  EXPECT_TRUE(has_spot(recorded_events(kept[0]), 5000)) << "the kept day is complete, with its clean end";
+  const auto delivered = sink.snapshot();
+  ASSERT_EQ(delivered.size(), 2U);
+  const auto* status = std::get_if<md::ProviderStatus>(&delivered.back());
+  ASSERT_NE(status, nullptr);
+  EXPECT_EQ(status->state, md::FeedState::Error);
+}
+}  // namespace

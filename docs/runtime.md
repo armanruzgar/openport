@@ -639,6 +639,10 @@ A backward wall-clock adjustment does not reopen an earlier date.
 
 Directory recordings stay in private `.record-*` staging directories until clean
 close, then publish atomically. The Replay page sees them after rollover or shutdown.
+A day publishes as a hard link, or, on a filesystem without hard links (exFAT, FAT
+and some network mounts), by an exclusive rename; neither ever replaces an existing
+file. A complete day that still cannot be published stays in its staging directory,
+and the recording error names its path; recording stops there.
 A failed write leaves no published partial day and live delivery continues with a
 recording error. A killed process can leave a hidden staging directory; remove it
 only after that writer has stopped. OpenPort never deletes one: at startup it warns

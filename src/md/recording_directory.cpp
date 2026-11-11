@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
 #include <map>
 #include <mutex>
 #include <stdexcept>
+#include <system_error>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -33,6 +37,39 @@ std::uint64_t folder_bytes(const std::filesystem::path& folder) {
     }
   }
   return bytes;
+}
+/// Renames without ever replacing `to`. Where the system cannot promise that (an older
+/// kernel, or a filesystem without the flag), it renames only while `to` is absent:
+/// a published name carries its writer's unique staging suffix.
+std::error_code rename_exclusive(const std::filesystem::path& from, const std::filesystem::path& to) {
+#if defined(__APPLE__) && defined(RENAME_EXCL)
+  if (::renamex_np(from.c_str(), to.c_str(), RENAME_EXCL) == 0) return {};
+  const std::error_code refused(errno, std::generic_category());
+#elif defined(__linux__) && defined(RENAME_NOREPLACE)
+  if (::renameat2(AT_FDCWD, from.c_str(), AT_FDCWD, to.c_str(), RENAME_NOREPLACE) == 0) return {};
+  const std::error_code refused(errno, std::generic_category());
+#else
+  const auto refused = std::make_error_code(std::errc::function_not_supported);
+#endif
+  if (refused != std::errc::invalid_argument && refused != std::errc::function_not_supported &&
+      refused != std::errc::not_supported && refused != std::errc::operation_not_supported)
+    return refused;
+  std::error_code ec;
+  if (std::filesystem::exists(std::filesystem::symlink_status(to, ec))) return std::make_error_code(std::errc::file_exists);
+  std::filesystem::rename(from, to, ec);
+  return ec;
+}
+/// Publishes a staged file as `to` without ever replacing a file there, so a competing
+/// writer can never replace a day: a hard link, or an exclusive rename on filesystems
+/// without hard links (exFAT, FAT and some network mounts).
+std::error_code publish_exclusive(const std::filesystem::path& from, const std::filesystem::path& to,
+                                  const std::function<void(const std::filesystem::path&, const std::filesystem::path&,
+                                                           std::error_code&)>& hook) {
+  std::error_code ec;
+  if (hook) hook(from, to, ec);
+  else std::filesystem::create_hard_link(from, to, ec);
+  if (!ec || ec == std::errc::file_exists) return ec;
+  return rename_exclusive(from, to);
 }
 }
 struct RecordingDirectory::Impl {
@@ -93,11 +130,16 @@ struct RecordingDirectory::Impl {
     recording->close();
     if (!recording->error().empty()) throw std::runtime_error(recording->error());
     const auto partial = temporary / "day.oprec";
-    // Exclusive publication: a competing writer can never replace this day.
-    std::filesystem::create_hard_link(partial, final);
+    if (const auto ec = publish_exclusive(partial, final, options.link)) {
+      // The day is complete and cleanly closed: keep it where it is rather than lose it.
+      temporary.clear();
+      throw std::runtime_error("cannot publish " + final.filename().string() + " (" + ec.message() +
+                               "); the complete day is kept at " + partial.string());
+    }
+    // Only an index: without it, the day is scanned once instead.
     std::error_code ignored;
     if (std::filesystem::exists(partial.string() + ".end", ignored))
-      std::filesystem::create_hard_link(partial.string() + ".end", final.string() + ".end", ignored);
+      (void)publish_exclusive(partial.string() + ".end", final.string() + ".end", options.link);
     add(completed, recording->stats());
     cleanup();
   }
