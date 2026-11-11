@@ -72,7 +72,10 @@ function Slices({ spot, candidates, profiles, lines, basis }: {
   const breakevens = candidates.flatMap((c, i) => {
     const profile = profiles[i]
     if (!profile) return []
-    const expiry = lines[i]!.length - 1
+    // The expiry line, wherever it sorts: a custom date can come after it. One at the
+    // expiry's own date replaces it, and is then the last line.
+    const at = lines[i]!.findIndex((line) => line.key === "expiry")
+    const expiry = at >= 0 ? at : lines[i]!.length - 1
     return zeroCrossings(profile.prices.map(Number), candidateCurve(profile, expiry, c, basis)).map((b) => ({ label: `BE ${c.name}`, price: b }))
   })
   const rows = sliceRows(spot, { percents: kinds.percent ? percents ?? [] : [], prices: kinds.price ? prices ?? [] : [],

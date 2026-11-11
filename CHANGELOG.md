@@ -253,6 +253,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   hours for SPX. Each is now requested in blocks of up to an hour (25 requests for
   that SPY day), a block too large for Theta's limits is split, and a request waits
   only when Theta Terminal answers 429.
+- **Analyze breakevens past a custom date.** With a custom date later than the
+  candidate's first expiry, the slice table's BE rows came from the custom date's
+  curve, not the expiry's, so they moved or vanished while the chart still drew the
+  expiry curve crossing zero. They now always come from the expiry line.
 
 ## 0.5.1 (2026-10-28)
 

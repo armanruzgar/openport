@@ -99,6 +99,27 @@ describe("Analyze tab", { timeout: renderTimeout }, () => {
     await act(async () => button("Send to ticket").click())
     await waitForRender(() => expect(host.textContent).toContain("Strategy order"))
   })
+  it("finds breakevens on the expiry line when a custom date comes after it", async () => {
+    // Past the first expiry the curve no longer crosses zero: only the expiry's does.
+    vi.mocked(api.riskProfile).mockImplementation(async (query) => {
+      const profile = profileFor(query)
+      return { ...profile, curves: profile.curves.map((curve) => curve.days > 25 ? { ...curve, pnl: [-500, -500, -500] } : curve) }
+    })
+    addAnalyzeCandidate("SPX", { name: "Bull call", units: 2, shares: 0, legs: [
+      { symbol: "SPXW  261016C07000000", underlying: "SPX", side: "buy", ratio: 1, type: "call", strike: 7000, expiry: expiry.id, quote: null },
+      { symbol: "SPXW  261016C07100000", underlying: "SPX", side: "sell", ratio: 1, type: "call", strike: 7100, expiry: expiry.id, quote: null }] })
+    await act(async () => root.render(<QueryClientProvider client={client}><AnalyzeView symbol="SPX" /></QueryClientProvider>))
+    await waitForRender(() => expect(host.textContent).toContain("BE Bull call"))
+    const custom = host.querySelector<HTMLInputElement>('input[aria-label="Custom date in days"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(custom, "30")
+      custom.dispatchEvent(new Event("input", { bubbles: true }))
+    })
+    await waitForRender(() => expect(lastProfile().days?.at(-1)).toBe(30))
+    await waitForRender(() => expect([...host.querySelectorAll('[aria-label="Price slices"] th')].map((th) => th.textContent))
+      .toEqual(["Slice", "Price", "Bull call · Today", "Bull call · Expiry", "Bull call · T+30"]))
+    await waitForRender(() => expect(host.textContent).toContain("BE Bull call"))
+  })
   it("searches the optimizer and analyzes a result", async () => {
     const optimizer = vi.spyOn(api, "optimizer").mockResolvedValue(search)
     await act(async () => root.render(<QueryClientProvider client={client}><AnalyzeView symbol="SPX" /></QueryClientProvider>))
