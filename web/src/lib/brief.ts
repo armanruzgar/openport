@@ -120,7 +120,9 @@ export function lossAllowance(account: Account | undefined, risk: Risk | undefin
   if (!account.evaluation.valuation_complete || !risk.complete) return { value: null, reason: "incomplete valuation", parts: [] }
   const parts: { label: string; value: Money | null }[] = []
   if (compareMoney(risk.limits.max_daily_loss, "0") === 1)
-    parts.push({ label: "Daily loss left", value: subtractMoney(risk.limits.max_daily_loss, risk.daily_loss) })
+    parts.push({ label: "Risk-limit daily loss left", value: subtractMoney(risk.limits.max_daily_loss, risk.daily_loss) })
+  // The plan's own daily loss limit fails the attempt or locks the day: often tighter than the floor.
+  if (account.evaluation.daily_loss) parts.push({ label: "Plan daily loss room", value: account.evaluation.daily_loss.room })
   if (account.evaluation.floor != null)
     parts.push({ label: "Floor room", value: subtractMoney(account.evaluation.equity, account.evaluation.floor) })
   const state = risk.guardrail_state ?? account.guardrail_state

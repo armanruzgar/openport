@@ -4542,8 +4542,10 @@ without the object show no banner.
 
 The Brief page shows the selected account's plan, attempt, floor and effective soft
 floor, closest recorded floor approach, guardrails, pending changes and open holdings
-and orders. Its loss allowance is the smallest of daily-loss limit minus current daily
-loss, equity minus the soft floor, and equity minus the plan floor. Disabled limits
+and orders. Its loss allowance is the smallest of the risk limit's daily loss left
+(`max_daily_loss` minus current daily loss), the plan's daily loss room
+(`evaluation.daily_loss.room`, the loss that fails the attempt or locks the day),
+equity minus the soft floor, and equity minus the plan floor. Disabled limits
 are excluded, exhausted allowance is zero, and incomplete or mixed-version valuations
 leave it unavailable. These are exact decimal-string calculations for display; the
 server still enforces all trading rules. Position deadlines use the contract's last

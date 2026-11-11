@@ -91,8 +91,19 @@ describe("brief market derivations", () => {
 describe("brief account derivations", () => {
   it("uses the smallest exact allowance with a different binding constraint each time", () => {
     expect(lossAllowance(briefAccount, briefRisk)).toMatchObject({ value: "4267.50", reason: "Soft floor room" })
-    expect(lossAllowance(briefAccount, { ...briefRisk, daily_loss: "4900.000001" })).toMatchObject({ value: "99.999999", reason: "Daily loss left" })
+    expect(lossAllowance(briefAccount, { ...briefRisk, daily_loss: "4900.000001" })).toMatchObject({ value: "99.999999", reason: "Risk-limit daily loss left" })
     expect(lossAllowance({ ...briefAccount, evaluation: { ...briefAccount.evaluation, floor: "100000" } }, briefRisk)).toMatchObject({ value: "267.50", reason: "Floor room" })
+  })
+  it("counts the plan's daily loss limit, the loss that fails or locks the attempt", () => {
+    // static-100k: a $4,000 daily loss fails the attempt while the floor is $8,000 away.
+    const daily = { limit: "4000.00", basis: "equity" as const, action: "fail" as const, reference: "100267.50", level: "96267.50", room: "4000.00" }
+    const planned = { ...briefAccount, evaluation: { ...briefAccount.evaluation, floor: "92267.50", daily_loss: daily } }
+    const allowance = lossAllowance(planned, { ...briefRisk, guardrail_state: { ...briefRisk.guardrail_state, soft_floor: null } })
+    expect(allowance).toMatchObject({ value: "4000.00", reason: "Plan daily loss room" })
+    expect(allowance.parts).toEqual([{ label: "Risk-limit daily loss left", value: "4988.70" },
+      { label: "Plan daily loss room", value: "4000.00" }, { label: "Floor room", value: "8000.00" }])
+    const exceeded = { ...planned, evaluation: { ...planned.evaluation, daily_loss: { ...daily, room: "-25.00" } } }
+    expect(lossAllowance(exceeded, briefRisk).value).toBe("0")
   })
   it("clamps an exhausted allowance and excludes disabled limits", () => {
     expect(lossAllowance(briefAccount, { ...briefRisk, daily_loss: "5001" }).value).toBe("0")

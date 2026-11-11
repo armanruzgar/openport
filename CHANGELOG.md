@@ -92,6 +92,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   kill switch. Every response now carries `X-Frame-Options: DENY` and
   `Content-Security-Policy: frame-ancestors 'none'`, plus
   `X-Content-Type-Options: nosniff`.
+- **The Brief counts the plan's daily loss limit.** Today's loss allowance used the
+  risk limit's daily loss, the floor and the soft floor, but not the plan's own daily
+  loss limit, the one that fails the attempt or locks the day. On `static-100k` it
+  showed $8,000 of floor room while a $4,000 loss ends the attempt. The plan's daily
+  loss room now counts, and the risk limit's part is labelled as such.
 
 ## 0.5.1 (2026-10-28)
 
