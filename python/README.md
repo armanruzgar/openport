@@ -245,12 +245,15 @@ read, once a newer observed bar exists, including bars a replay step in a hook
 closes before the first poll. Bars already closed at the start are not emitted. `on_tick`
 receives a status snapshot on each poll or event wakeup. They do not
 fabricate missing bars. Events wake fill reconciliation; REST polling also runs
-when WebSockets are unavailable or disconnected. `event_error` retains a streaming
+when WebSockets are unavailable or disconnected. A burst of events the runner has
+not yet drained drops wake-ups, not the stream. `event_error` retains a streaming
 failure. Create a new runner to reconnect; REST remains the source of full fill
 quote evidence. Slow hooks may delay callbacks. Keep a replay runner attached to
 one run; create a new runner after restarting the replay. History clients walk
-saved equity/fills in timestamp order and finish, without inventing unavailable
-historical market bars. `on_stop` runs on cancellation and hook errors too.
+saved equity/fills in timestamp order and finish, each fill just before the equity
+sample it produced (which names it in `fill`), as a live runner sees them, without
+inventing unavailable historical market bars. `on_stop` runs on cancellation and
+hook errors too.
 
 `openport.stream.events(url, token=..., account=..., source="live")` yields typed
 v1 `Event` instances, separately from coalescing `ticks()`. It closes on context

@@ -111,6 +111,55 @@ def test_runner_history_walks_recorded_rows_and_always_stops(stub):
     assert all(method == "GET" for method, *_ in stub.requests)
 
 
+def test_runner_history_delivers_each_fill_before_the_equity_sample_it_produced(stub):
+    # As /api/account/equity reports a fill: a mark before it, then the sample the fill
+    # produced, at the fill's own time and naming it. Its attempt tells reused ids apart.
+    later = TIME.replace("14:00:00", "14:05:00")
+    original = stub.respond
+    def respond(method, target, headers, body):
+        status, value = original(method, target, headers, body)
+        if "/fills" in target:
+            value["fills"] = [{"id": "2", "attempt": 1, "time": later}, {"id": "1", "attempt": 1, "time": TIME},
+                              {"id": "9", "time": TIME}]
+        if "/equity" in target:
+            value["samples"] = [{"time": TIME, "attempt": 1, "fill": None, "equity": "100000.00"},
+                                {"time": TIME, "attempt": 1, "fill": "1", "equity": "99990.00"},
+                                {"time": later, "attempt": 1, "fill": None, "equity": "99980.00"},
+                                {"time": later, "attempt": 1, "fill": "2", "equity": "99970.00"},
+                                {"time": later, "attempt": 2, "fill": "1", "equity": "99960.00"}]
+        return status, value
+    stub.respond = respond
+    strategy = Recorder()
+    asyncio.run(Runner(Client(stub.url).for_history("run-1"), strategy).run())
+    seen = [(row[0], row[1]["equity"]["equity"] if row[0] == "tick" else row[1]["id"])
+            for row in strategy.calls if row[0] in ("tick", "fill")]
+    # Fill 9 names no sample (an older server's), so it follows the samples at its time.
+    assert seen == [("tick", "100000.00"), ("fill", "1"), ("tick", "99990.00"), ("fill", "9"),
+                    ("tick", "99980.00"), ("fill", "2"), ("tick", "99970.00"), ("tick", "99960.00")]
+
+
+def test_a_burst_of_events_between_drains_does_not_end_the_stream(stub, monkeypatch):
+    consumed = 0
+    async def source(*args, **kwargs):
+        nonlocal consumed
+        # Far more than the wake-up queue holds, all before the loop next drains it.
+        for number in range(1000):
+            consumed += 1
+            yield {"type": "fill", "seq": number}
+    monkeypatch.setattr("openport.bot.events", source)
+    class Slow(Recorder):
+        async def on_tick(self, tick):
+            await asyncio.sleep(0.05)
+            self.calls.append(("tick", tick))
+    strategy = Slow()
+    runner = Runner(Client(stub.url), strategy, poll_interval=0.01)
+    asyncio.run(runner.run(max_ticks=3))
+    assert runner.event_error is None
+    assert consumed == 1000
+    assert len([c for c in strategy.calls if c[0] == "tick"]) == 3
+    assert strategy.calls[-1] == ("stop",)
+
+
 def test_hook_failure_still_runs_cleanup(stub):
     class Broken(Recorder):
         def on_start(self): raise RuntimeError("synthetic failure")

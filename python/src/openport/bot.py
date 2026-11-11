@@ -91,21 +91,41 @@ class Runner:
         source = "replay" if self.client._prefix == "/api/replay" else "live"
         try:
             async for event in events(url, token=self.client.token, account=self.client.account_id, source=source):
-                # Bounded independently from the socket queue. REST catches any gap.
-                self._events.put_nowait(event)
+                # An event only wakes reconciliation, which reads every fill over REST. A
+                # burst the loop has not drained yet drops wake-ups, never the stream.
+                if not self._events.full():
+                    self._events.put_nowait(event)
         except Exception as error:
             self.event_error = error
 
     async def _history(self):
         fills = (await self._read(self.client.fills))["fills"]
         equity = await self._read(self.client.equity)
-        timeline = [(fill.get("time"), 1, fill) for fill in fills]
-        timeline += [(point.get("time"), 0, point) for point in equity.get("samples", [])]
-        # Missing timestamps remain missing; do not assign wall time to saved data.
-        for _time, kind, row in sorted(timeline, key=lambda item: (item[0] or "", item[1])):
+        samples = equity.get("samples", [])
+        # The equity sample a fill produced carries the fill's time and names it in
+        # "fill", with its attempt. It already includes the fill, so the fill comes just
+        # before it, as live; other samples at that time are marks from before the fill.
+        marked: dict[tuple[str, object], int] = {}
+        for index, point in enumerate(samples):
+            if point.get("fill") is not None:
+                marked.setdefault((str(point["fill"]), point.get("attempt")), index)
+        # Sorted by (time, sample, fill before its sample, order read). Missing timestamps
+        # remain missing; do not assign wall time to saved data.
+        timeline = [((point.get("time") or "", index, 1, 0), False, point) for index, point in enumerate(samples)]
+        for order, fill in enumerate(fills):
+            index = marked.get((str(fill["id"]), fill.get("attempt")))
+            if index is None and fill.get("attempt") is None:
+                # Older servers send a fill without its attempt.
+                index = next((at for (name, _attempt), at in marked.items() if name == str(fill["id"])), None)
+            if index is None:
+                # No sample of its own: after the samples at its time.
+                timeline.append(((fill.get("time") or "", len(samples), 0, order), True, fill))
+            else:
+                timeline.append(((samples[index].get("time") or "", index, 0, order), True, fill))
+        for _key, is_fill, row in sorted(timeline, key=lambda entry: entry[0]):
             if self._stop.is_set():
                 break
-            if kind:
+            if is_fill:
                 await self._fill(row)
             else:
                 await self._hook("on_tick", {"type": "history_tick", "simulated": True, "equity": row})

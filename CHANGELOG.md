@@ -748,6 +748,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   still fast-forwarding to its start, so it always failed with `REPLAY_FAST_FORWARD`
   and left the replay running, which made the next run refuse to start; it now waits,
   as `last_hour.py` does, and stops a replay whose run failed.
+- **The Python bot runner keeps its event stream through a burst.** Events went into a
+  256-slot wake-up queue drained only between ticks, and the 257th undrained event (a
+  slow hook, or `on_start` stepping a replay through many fills) raised `QueueFull`,
+  which ended the stream for the rest of the run and was reported as a streaming
+  failure in `event_error`. A full queue now drops the wake-up, which carries nothing
+  REST does not reconcile. History runners also called `on_tick` with the equity
+  sample a fill produced before `on_fill` for that fill; each fill now comes just
+  before the sample that names it, as a live runner sees them.
 
 ## 0.5.1 (2026-10-28)
 
