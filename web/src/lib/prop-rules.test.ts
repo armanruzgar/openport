@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest"
 import type { AccountRules, RulePack } from "../api/trading-types"
 import { customPlan, planForm } from "../components/PlanEditor"
 import { account, fundedAccount } from "../test/trading-fixtures"
-import { openLossFact, propForm, propRuleFacts, propRules, reviewFacts, tiltText } from "./prop-rules"
+import { openLossFact, propForm, propRuleFacts, propRules, reviewFacts, tiltText, wholeNumber } from "./prop-rules"
 import { isPackPlan, loadRulePacks, packFile, packPlans, saveRulePacks, withPack } from "./rule-packs"
 
 const rules: AccountRules = { ...account.rules, buy_only: false }
@@ -43,6 +43,13 @@ describe("prop rules in the plan editor", () => {
     // An evaluation keeps them off whatever the form says.
     expect(propRules(funded, "evaluation", "100", "5000", "intraday")).toHaveProperty("payouts", { review: null, after_payout: "keep", reset_percent: 100 })
   })
+  it.each(["1e2", "0x10", "0b11", "0o7", "5.", "5e1", "1.0", " 2 3", "+5", "-0", "Infinity"])("refuses %j where a whole number belongs", (text) => {
+    expect(wholeNumber(text)).toBeNaN()
+    const form = { ...propForm(rules), open_loss_basis: "day_profit" as const, open_loss_value: "30" }
+    expect(propRules(form, "evaluation", "10000", "5000", "intraday")).toHaveProperty("rules")
+    for (const field of ["minute_volume_percent", "best_position_percent", "open_loss_value"] as const)
+      expect(propRules({ ...form, [field]: text }, "evaluation", "10000", "5000", "intraday")).toHaveProperty("error")
+  })
   it("round-trips prop rules through the custom plan form", () => {
     const withRules: AccountRules = { ...fundedAccount.rules, open_loss_cap: { basis: "amount", amount: "400.00", percent: 0, action: "flatten" },
       payouts: { ...fundedAccount.rules.payouts!, review: { min_hold_seconds: 30, max_trade_percent: 50, open_loss: true, ladder: ["warning", "forfeit"], cap: null },
@@ -50,6 +57,11 @@ describe("prop rules in the plan editor", () => {
     const form = { ...planForm({ initial_cash: "100000", rules: withRules }), name: "Round trip" }
     const plan = customPlan(form, withRules)
     if ("error" in plan) throw new Error(plan.error)
+    // Whole-number fields take digits only; blank is zero and spaces around them are fine.
+    for (const field of ["max_resets", "inactivity_days", "news_before_minutes", "max_contracts_held", "qualifying_days"] as const)
+      for (const text of ["1e2", "0x10", "5.", "+5"]) expect(customPlan({ ...form, [field]: text }, withRules), `${field} ${text}`).toHaveProperty("error")
+    expect(wholeNumber("")).toBe(0)
+    expect(customPlan({ ...form, max_resets: " 12 " }, withRules)).toHaveProperty("rules.max_resets", 12)
     expect(plan.rules.open_loss_cap).toEqual(withRules.open_loss_cap)
     expect(plan.rules.payouts?.review).toEqual(withRules.payouts!.review)
     expect(plan.rules.payouts?.after_payout).toBe("starting_balance")

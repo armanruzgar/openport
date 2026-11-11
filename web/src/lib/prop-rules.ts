@@ -42,7 +42,16 @@ export function propForm(r: AccountRules): PropRulesForm {
   }
 }
 
-const whole = (text: string) => text.trim() === "" ? 0 : Number(text.trim())
+/**
+ * A whole number typed into a plan field: digits only, blank as 0, anything else NaN.
+ * Number() alone reads "1e2" as 100, "0x10" as 16 and "5." as 5, which the field would
+ * keep showing while another number went into the rule.
+ */
+export function wholeNumber(text: string): number {
+  const digits = text.trim()
+  return digits === "" ? 0 : /^\d+$/.test(digits) ? Number(digits) : Number.NaN
+}
+const whole = wholeNumber
 const steps: ReviewStep[] = ["warning", "forfeit", "cap"]
 
 /** The rules the prop fields set, checked as the server checks them; or the first problem. */

@@ -623,6 +623,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   page.** Today's practice took a drill's last completion without checking that its
   `completed_at` parsed, so one edited or damaged replay sidecar made the page fail to
   render. Such a completion is skipped, as the practice streak already did.
+- **The custom plan form takes whole numbers as digits only.** Its whole-number
+  fields (open-loss, minute-volume and best-position caps, review hold and trade
+  share, reset percent, maximum resets, news minutes, payout days and percents and
+  the like) read text as JavaScript numbers, so `1e2` saved 100, `0x10` 16, `0b11` 3
+  and `5.` 5 while the field kept showing what was typed. Anything but digits is now
+  refused with the field's message.
 
 ## 0.5.1 (2026-10-28)
 

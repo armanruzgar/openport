@@ -4,7 +4,7 @@ import { useLive } from "../api/live"
 import type { AccountRules, DailyLossBasis, Money, Plan, PlanEvent, HoldRestriction } from "../api/trading-types"
 import { dailyLossBasisText, dayEnd, sizeScalingRule, type SizeScalingForm } from "../lib/plan-rules"
 import { compareMoney, validMoney } from "../lib/trading"
-import { propForm, propRules, type PropRulesForm } from "../lib/prop-rules"
+import { propForm, propRules, wholeNumber, type PropRulesForm } from "../lib/prop-rules"
 
 /** The custom plan form: text fields as typed, choices as their API words. */
 export interface PlanForm extends SizeScalingForm, PropRulesForm {
@@ -117,7 +117,7 @@ export function planForm(plan: Pick<Plan, "initial_cash" | "rules">): PlanForm {
   }
 }
 
-const count = (text: string) => text.trim() === "" ? 0 : Number(text.trim())
+const count = wholeNumber
 const amount = (text: string): Money | null => text.trim() === "" || Number(text.trim()) === 0 ? null : text.trim()
 
 /**
