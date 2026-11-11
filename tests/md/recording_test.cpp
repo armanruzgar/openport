@@ -32,11 +32,13 @@ TEST(Recording, EveryEventAndHeaderFieldRoundTripsBitExactly) {
   const double huge = std::numeric_limits<double>::max();
   const double inf = std::numeric_limits<double>::infinity();
   auto contract = *md::parse_osi("SPXW261022P05000000");
-  contract.multiplier = nan;
+  // A definition's strike and multiplier must be positive and its expiry a date; the
+  // widest such values still round-trip.
+  contract.multiplier = tiny;
   contract.strike = huge;
   contract.standard = false;
   contract.root = std::string("root\0bytes", 10);
-  contract.expiry = {std::numeric_limits<int>::min(), std::numeric_limits<int>::max(), -1};
+  contract.expiry = {9999, 12, 31};
   const auto id = std::numeric_limits<md::InstrumentId>::max();
   std::vector<md::Event> events{
       // Definitions stop below the reader's contract ID limit; other events keep the widest ID.
@@ -155,6 +157,43 @@ TEST(Recording, ContractIdsAtOrPastTheLimitAreRefusedWhenRead) {
       EXPECT_EQ(std::get<md::ContractDefinition>(event->event).id, id);
     } else {
       EXPECT_THROW((void)reader.next(), std::exception);
+    }
+  }
+}
+
+TEST(Recording, DefinitionsWithoutAPositiveStrikeAndMultiplierOrADateAreRefusedWhenRead) {
+  // One NaN strike in a crafted or writer-bugged file turned GEX, VEX and the gamma
+  // flip into NaN, and the replay still exited 0.
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  const double inf = std::numeric_limits<double>::infinity();
+  struct Case {
+    const char* name;
+    double strike, multiplier;
+    md::Date expiry;
+  };
+  const Case cases[] = {{"NaN strike", nan, 100, {2026, 10, 16}},  {"infinite strike", inf, 100, {2026, 10, 16}},
+                        {"zero strike", 0, 100, {2026, 10, 16}},   {"negative strike", -5, 100, {2026, 10, 16}},
+                        {"zero multiplier", 500, 0, {2026, 10, 16}}, {"negative multiplier", 500, -100, {2026, 10, 16}},
+                        {"NaN multiplier", 500, nan, {2026, 10, 16}}, {"month 13", 500, 100, {2026, 13, 1}},
+                        {"February 30", 500, 100, {2026, 2, 30}},
+                        {"INT_MIN year", 500, 100, {std::numeric_limits<int>::min(), 10, 16}}};
+  for (const auto& bad : cases) {
+    SCOPED_TRACE(bad.name);
+    test::RecordingFile file;
+    auto contract = *md::parse_osi("SPY261016P00500000");
+    contract.strike = bad.strike;
+    contract.multiplier = bad.multiplier;
+    contract.expiry = bad.expiry;
+    test::record_events(file.path, {md::ContractDefinition{3, *md::parse_osi("SPY261016C00500000")},
+                                    md::ContractDefinition{4, contract}});
+    md::RecordingReader reader(file.path);
+    ASSERT_TRUE(reader.next());  // the valid definition before it
+    try {
+      (void)reader.next();
+      ADD_FAILURE() << "read an impossible definition";
+    } catch (const std::runtime_error& error) {
+      EXPECT_NE(std::string(error.what()).find("invalid contract definition for id 4"), std::string::npos)
+          << error.what();
     }
   }
 }

@@ -324,6 +324,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   with ID 4294967295 crashed `openportd` when replayed, and a very large ID made it
   allocate gigabytes. A definition's ID must now be below 500,000, the most
   contracts a recording holds; a file with a larger one is reported as malformed.
+- **Replay refuses impossible contract definitions.** A recording whose definition
+  carried a NaN strike replayed without a word, and that one contract made the whole
+  chain's GEX, VEX and gamma flip NaN; a zero or negative multiplier or an expiry such
+  as month 13 was taken too. A definition's strike and multiplier must now be positive
+  and its expiry a real date, or the file is reported as malformed at that record.
 - **A chart of nearly equal values.** A line chart whose values differed only in the
   last digit of a double (0.1 + 0.2 beside 0.3) never finished choosing its axis
   ticks and held the tab until it ran out of memory. The ticks are now counted

@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <fstream>
@@ -273,6 +274,11 @@ RecordedEvent decode_event(std::span<const char> bytes, std::uint32_t version) {
       c.settlement = static_cast<Settlement>(d.byte(1));
       c.multiplier = d.number<double>();
       c.standard = d.byte(1);
+      // One NaN strike made every exposure sum NaN; no listed contract has a strike or
+      // multiplier that is not positive, or an expiry that is no date.
+      if (!std::isfinite(c.strike) || !(c.strike > 0) || !std::isfinite(c.multiplier) || !(c.multiplier > 0) ||
+          !valid_date(c.expiry))
+        invalid("invalid contract definition for id " + std::to_string(v.id));
       out.event = std::move(v);
       break;
     }
