@@ -1,5 +1,6 @@
 """Offline tests for demo_soak.py against a scripted replay API; no server runs."""
 from contextlib import redirect_stderr, redirect_stdout
+import http.client
 import io
 import json
 from pathlib import Path
@@ -7,6 +8,7 @@ import tempfile
 from unittest.mock import patch
 import sys
 import unittest
+import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import demo_soak  # noqa: E402
@@ -23,20 +25,27 @@ class FakeReplay:
     probe's quote and what an order does can be scripted."""
 
     def __init__(self, snapshots=3, quote=(2.90, 3.10), fills=False, finish_before_probe=False,
-                 accepting=True, status=None, refuse=None):
+                 accepting=True, status=None, refuse=None, expiries=("2026-09-17PM", "2026-09-18PM"),
+                 deltas=True, speed=None):
         self.base, self.timeout = "http://fake-replay", 180
         self.snapshots, self.quote, self.fills = snapshots, quote, fills
         self.finish_before_probe = finish_before_probe
         self.accepting, self.status, self.refuse = accepting, status, refuse or {}
+        # What the summary lists, whether the chain has deltas yet, and a refusal of PUT speed.
+        self.expiries, self.deltas, self.speed = expiries, deltas, speed
         self.paused, self.polls, self.finished = False, 0, False
         self.started, self.orders, self.cancelled = None, [], []
         self.run_id = "run-123"
 
     def chain(self):
         bid, ask = self.quote
-        return {"strikes": [
+        rows = [
             {"strike": 5900, "put": leg(SHORT_PUT, -0.10, bid, ask), "call": leg("SPXW  260918C06200000", 0.10)},
-            {"strike": 5800, "put": leg("SPXW  260918P05800000", -0.03), "call": leg("SPXW  260918C06300000", 0.03)}]}
+            {"strike": 5800, "put": leg("SPXW  260918P05800000", -0.03), "call": leg("SPXW  260918C06300000", 0.03)}]
+        if not self.deltas:
+            for row in rows:
+                row["put"]["delta"] = row["call"]["delta"] = None
+        return {"strikes": rows}
 
     def call(self, method, path, body=None):
         if path == "/api/replay" and method == "DELETE":
@@ -45,6 +54,8 @@ class FakeReplay:
             self.started = body
             return 201, {"replay": {"id": self.run_id, "scenario": body["demo"], "seed": body.get("seed", "123")}}
         if path == "/api/replay" and method == "PUT":
+            if "speed" in body and self.speed:
+                return self.speed
             if "paused" in body:
                 self.paused = body["paused"]
                 if self.paused:
@@ -58,7 +69,7 @@ class FakeReplay:
                 return self.status
             return 200, {"underlyings": [{"symbol": "SPX", "options": 10, "paper": {"accepting": self.accepting}}]}
         if path == "/api/replay/underlyings/SPX/summary":
-            return 200, {"expiries": [{"id": "2026-09-17PM"}, {"id": "2026-09-18PM"}]}
+            return 200, {"expiries": [{"id": expiry} for expiry in self.expiries]}
         if path.startswith("/api/replay/underlyings/SPX/chain"):
             return 200, self.chain()
         if path == "/api/replay/risk":
@@ -150,6 +161,54 @@ class DemoSoakTest(unittest.TestCase):
             self.assertEqual(demo_soak.main(["http://fake-replay"]), 2)
         self.assertIn("GET /api/replay/status: HTTP 404", stderr.getvalue())
         self.assertIn("NO_REPLAY", stderr.getvalue())
+
+    def test_a_server_that_does_not_answer_stops_the_soak_with_status_2(self):
+        # Exit status 1 means a probe filled; a soak that never ran must not look like one.
+        failures = (urllib.error.URLError(ConnectionRefusedError(61, "Connection refused")),
+                    TimeoutError("timed out"), http.client.RemoteDisconnected("closed without a response"))
+        for failure in failures:
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with self.subTest(failure=failure), \
+                    patch.object(demo_soak.urllib.request, "urlopen", side_effect=failure) as urlopen, \
+                    redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(demo_soak.main(["http://127.0.0.1:9", "--timeout", "3"]), 2)
+            self.assertEqual(urlopen.call_count, 1)
+            self.assertIn("demo_soak: DELETE /api/replay: no answer from http://127.0.0.1:9", stderr.getvalue())
+            self.assertIn(str(failure), stderr.getvalue())
+            self.assertEqual(stdout.getvalue(), "")
+
+    def test_an_answer_that_is_not_json_stops_the_soak_with_status_2(self):
+        for status, text in ((200, b"<html>proxy</html>"), (502, b"Bad Gateway")):
+            stderr = io.StringIO()
+            with self.subTest(status=status), patch.object(demo_soak.urllib.request, "urlopen") as urlopen, \
+                    redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                if status == 200:
+                    response = urlopen.return_value.__enter__.return_value
+                    response.status, response.read.return_value = status, text
+                else:
+                    urlopen.side_effect = urllib.error.HTTPError("http://x/api/replay", status, "Bad Gateway",
+                                                                 {}, io.BytesIO(text))
+                self.assertEqual(demo_soak.main(["http://fake-replay"]), 2)
+            self.assertIn("DELETE /api/replay: the answer is not JSON", stderr.getvalue())
+
+    def test_a_json_error_answer_is_still_returned_to_the_caller(self):
+        refusal = urllib.error.HTTPError("http://x/api/replay", 404, "Not Found", {},
+                                         io.BytesIO(b'{"error": {"code": "NO_REPLAY"}}'))
+        with patch.object(demo_soak.urllib.request, "urlopen", side_effect=refusal):
+            self.assertEqual(demo_soak.Client("http://fake-replay").call("GET", "/api/replay/status"),
+                             (404, {"error": {"code": "NO_REPLAY"}}))
+
+    def test_a_market_the_condor_cannot_be_built_in_stops_with_status_2(self):
+        cases = ((FakeReplay(expiries=()), "SPX lists no expiries"),
+                 (FakeReplay(deltas=False), "no put in the SPX 2026-09-18PM chain has both a delta and an ask"),
+                 (FakeReplay(speed=(400, {"error": {"code": "INVALID_SPEED"}})), "PUT /api/replay speed 120: HTTP 400"))
+        for replay, reason in cases:
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with self.subTest(reason=reason), patch.object(demo_soak, "Client", return_value=replay), \
+                    patch.object(demo_soak.time, "sleep"), redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(demo_soak.main(["http://fake-replay"]), 2)
+            self.assertIn(reason, stderr.getvalue())
+            self.assertFalse(any(order["client_order_id"].startswith("probe-") for order in replay.orders))
 
     def test_a_condor_leg_that_does_not_fill_fails_the_soak_before_probing(self):
         replay = FakeReplay(refuse={"condor-short-put": "BUYING_POWER"})

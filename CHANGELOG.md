@@ -734,6 +734,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   simulator's  liquidation", with the reason left blank, and its row badge showed the
   server's raw label. Each reason now has its own words, a flatten is no longer called
   a liquidation, and a reason this build does not know is shown as sent.
+- **`tools/demo_soak.py` no longer reports a soak that never ran as a probe fill.** Exit
+  status 1 means a probe filled, but a server that refused the connection, timed out,
+  dropped it or answered with something other than JSON, a summary with no expiries,
+  a chain with no leg priced yet, or a refused `PUT /api/replay` speed ended the
+  script in a traceback, which Python reports as status 1 too. Each now stops the soak
+  with a one-line reason and exit status 2, as its documentation says.
 
 ## 0.5.1 (2026-10-28)
 

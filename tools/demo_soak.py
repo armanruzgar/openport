@@ -27,9 +27,12 @@ back, keeping the condor whole. The report counts refused probes by code, probe 
 and portfolio snapshots with incomplete marks; a healthy build refuses only by the
 account's own risk rules and fills no probe. The exit status is 1 when a probe filled.
 A soak that cannot start, cannot get SPX accepting orders or cannot fill every condor
-leg stops before probing, saying why, with exit status 2 and no summary.
+leg stops before probing, saying why, with exit status 2 and no summary. So does one
+that cannot reach the server or read its answers at any point: exit status 1 always
+means a probe filled.
 """
 import argparse
+import http.client
 import json
 import math
 import sys
@@ -49,16 +52,32 @@ class Client:
         self.token = token
 
     def call(self, method, path, body=None):
+        """(status, body) for any HTTP answer; SoakError when there is none to read."""
         data = None if body is None else json.dumps(body).encode()
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = "Bearer " + self.token
         request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+
+        def decoded(raw):
+            try:
+                return json.loads(raw or b"null")
+            except ValueError as error:  # JSONDecodeError and UnicodeDecodeError
+                raise SoakError(f"{method} {path}: the answer is not JSON: {error}") from error
+
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return response.status, json.loads(response.read() or b"null")
+                status, raw = response.status, response.read()
         except urllib.error.HTTPError as error:
-            return error.code, json.loads(error.read() or b"null")
+            # An HTTP error is still an answer; read it before the connection closes.
+            try:
+                status, raw = error.code, error.read()
+            except (OSError, http.client.HTTPException) as failure:
+                raise SoakError(f"{method} {path}: HTTP {error.code}, unreadable: {failure}") from failure
+        except (OSError, http.client.HTTPException) as error:
+            # Refused or reset connections, timeouts and malformed responses: no answer.
+            raise SoakError(f"{method} {path}: no answer from {self.base}: {error}") from error
+        return status, decoded(raw)
 
 
 def code(body):
@@ -142,11 +161,17 @@ def soak(client, speed=120, plan="practice", seed=None, out=print, pause=1.0):
     _, initial_portfolio = client.call("GET", "/api/replay/portfolio")
 
     # The condor: the second expiry, shorts near 10 delta, wings near 3 delta.
-    _, summary = client.call("GET", "/api/replay/underlyings/SPX/summary")
-    expiries = [e["id"] for e in summary["expiries"]]
+    status, summary = client.call("GET", "/api/replay/underlyings/SPX/summary")
+    if status != 200:
+        raise SoakError(f"GET /api/replay/underlyings/SPX/summary: HTTP {status} {summary}")
+    expiries = [e["id"] for e in (summary.get("expiries") if isinstance(summary, dict) else None) or []]
+    if not expiries:
+        raise SoakError("SPX lists no expiries to build the condor in")
     expiry = expiries[1] if len(expiries) > 1 else expiries[0]
-    _, chain = client.call("GET", f"/api/replay/underlyings/SPX/chain?expiry={expiry}")
-    rows = chain["strikes"]
+    status, chain = client.call("GET", f"/api/replay/underlyings/SPX/chain?expiry={expiry}")
+    if status != 200:
+        raise SoakError(f"GET /api/replay/underlyings/SPX/chain?expiry={expiry}: HTTP {status} {chain}")
+    rows = (chain.get("strikes") if isinstance(chain, dict) else None) or []
 
     def pick(kind, target):
         best = None
@@ -157,6 +182,8 @@ def soak(client, speed=120, plan="practice", seed=None, out=print, pause=1.0):
             distance = abs(abs(leg["delta"]) - target)
             if best is None or distance < best[0]:
                 best = (distance, leg)
+        if best is None:
+            raise SoakError(f"no {kind} in the SPX {expiry} chain has both a delta and an ask yet")
         return best[1]
 
     legs = {"short put": pick("put", 0.10), "long put": pick("put", 0.03),
@@ -180,14 +207,17 @@ def soak(client, speed=120, plan="practice", seed=None, out=print, pause=1.0):
 
     # Play the rest of the day, probing as it goes.
     status, body = client.call("PUT", "/api/replay", {"speed": speed})
-    assert status == 200, (status, body)
+    if status != 200:
+        raise SoakError(f"PUT /api/replay speed {speed}: HTTP {status} {body}")
     symbol = legs["short put"]["symbol"]
     result = {"probes": 0, "skipped": 0, "refused": {}, "probe_fills": 0, "restored": 0,
               "incomplete": 0, "samples": 0, "worst_age": 0.0, "ended": None}
     while True:
         # Paused, the book cannot move between reading the quote and the probe.
         client.call("PUT", "/api/replay", {"paused": True})
-        _, replay = client.call("GET", "/api/replay")
+        status, replay = client.call("GET", "/api/replay")
+        if status != 200 or not isinstance(replay, dict) or not isinstance(replay.get("replay"), dict):
+            raise SoakError(f"GET /api/replay: HTTP {status} {replay}")
         state = replay["replay"]
         _, portfolio = client.call("GET", "/api/replay/portfolio")
         result["samples"] += 1
