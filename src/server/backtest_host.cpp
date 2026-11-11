@@ -1,7 +1,9 @@
 #include "openport/server/backtest.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -41,6 +43,21 @@ bool finished(const json& state) {
   const auto status = state.at("status").get<std::string>();
   return status == "completed" || status == "cancelled" || status == "failed" || status == "interrupted";
 }
+// What a listing shows of a saved report: its summary, and the playbook it ran or a
+// joint run's members. Empty for a report without a summary.
+json listing_fields(const json& saved_report) {
+  json fields = json::object();
+  if (!saved_report.contains("summary")) return fields;
+  if (saved_report.value("mode", "") == "joint") {
+    fields["mode"] = "joint";
+    fields["playbooks"] = json::array();
+    for (const auto& definition : saved_report.at("playbooks"))
+      fields["playbooks"].push_back({{"id", definition.at("id")}, {"version", definition.at("version")}, {"name", definition.at("name")}});
+  } else if (saved_report.contains("playbook"))
+    fields["playbook"] = {{"id", saved_report.at("playbook").at("id")}, {"version", saved_report.at("playbook").at("version")}};
+  fields["summary"] = saved_report.at("summary");
+  return fields;
+}
 }
 struct BacktestHost::Impl {
   Options options;
@@ -50,22 +67,34 @@ struct BacktestHost::Impl {
   bool running = false;
   json current = nullptr;
   std::thread worker;
+  /// A run's listing_fields, kept while its report.json keeps the size and
+  /// modification time it was parsed at: the terminal polls the listing, and a long
+  /// run's report takes far longer to parse than the rest of its entry.
+  struct Listed {
+    std::filesystem::file_time_type modified;
+    std::uintmax_t bytes = 0;
+    json fields;
+  };
+  mutable std::map<std::string, Listed> listed;  // by run ID; guarded by mutex
   explicit Impl(Options value) : options(std::move(value)), scenarios(providers::load_scenarios(options.scenario_dir)) {}
   ~Impl() { cancel = true; if (worker.joinable()) worker.join(); }
+  json cached_listing_fields(const std::string& id, const std::filesystem::path& file) const {
+    // Stamped before the read: a report rewritten in between is parsed again next time.
+    std::error_code error;
+    const auto modified = std::filesystem::last_write_time(file, error);
+    const auto bytes = error ? std::uintmax_t{0} : std::filesystem::file_size(file, error);
+    if (error) return listing_fields(read_json(file));
+    const auto found = listed.find(id);
+    if (found != listed.end() && found->second.modified == modified && found->second.bytes == bytes) return found->second.fields;
+    auto fields = listing_fields(read_json(file));
+    listed[id] = {modified, bytes, fields};
+    return fields;
+  }
   json with_storage_fields(const std::filesystem::path& directory, json state, bool report, std::uintmax_t size) const {
-    if (std::filesystem::is_regular_file(directory / "report.json")) {
-      const auto saved_report = read_json(directory / "report.json");
-      if (report) state["report"] = saved_report;
-      else if (saved_report.contains("summary")) {
-        if (saved_report.value("mode", "") == "joint") {
-          state["mode"] = "joint";
-          state["playbooks"] = json::array();
-          for (const auto& definition : saved_report.at("playbooks"))
-            state["playbooks"].push_back({{"id", definition.at("id")}, {"version", definition.at("version")}, {"name", definition.at("name")}});
-        } else if (saved_report.contains("playbook"))
-          state["playbook"] = {{"id", saved_report.at("playbook").at("id")}, {"version", saved_report.at("playbook").at("version")}};
-        state["summary"] = saved_report.at("summary");
-      }
+    const auto file = directory / "report.json";
+    if (std::filesystem::is_regular_file(file)) {
+      if (report) state["report"] = read_json(file);
+      else state.update(cached_listing_fields(directory.filename().string(), file));
     }
     state["keep"] = state.value("keep", false);
     state["bytes"] = size;
@@ -99,6 +128,7 @@ struct BacktestHost::Impl {
   void purge(const std::string& id) {
     (void)tree_bytes(options.directory / id);
     std::filesystem::remove_all(options.directory / id);
+    listed.erase(id);
     if (!current.is_null() && current.at("id") == id) current = nullptr;
   }
   void retain() {
@@ -192,6 +222,8 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
       } else {
         json runs = json::array();
         auto ids = host.ids();
+        // Forget the cached reports of runs deleted outside the server.
+        std::erase_if(host.listed, [&](const auto& cached) { return !std::binary_search(ids.begin(), ids.end(), cached.first); });
         std::reverse(ids.begin(), ids.end());
         for (const auto& item : ids) {
           const auto state = host.saved(item, false);

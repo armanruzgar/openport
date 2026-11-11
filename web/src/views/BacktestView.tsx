@@ -2,7 +2,7 @@ import { useActionApi } from "../api/action-client"
 import { useQuery } from "@tanstack/react-query"
 import { useRef, useState } from "react"
 
-import type { BacktestComparison, BacktestDayInput, BacktestIdentity, BacktestPlaybookBreakdown, BacktestReport, BacktestResult, BacktestStart } from "../api/backtest-types"
+import type { BacktestComparison, BacktestDayInput, BacktestIdentity, BacktestListing, BacktestPlaybookBreakdown, BacktestReport, BacktestResult, BacktestStart } from "../api/backtest-types"
 import { useLive } from "../api/live"
 import { Dialog } from "../components/Dialog"
 import { LineChart } from "../charts/LineChart"
@@ -14,6 +14,9 @@ import { useWriteToken } from "../lib/write-token"
 
 const label = "Simulated trading on recorded or generated days. Not a prediction. Not investment advice."
 const percent = (value: number | null) => value == null ? "—" : `${(value * 100).toFixed(1)}%`
+/** How often the saved-run listing is polled: every second while a run is active, otherwise
+ * only often enough to notice a run started elsewhere. This page's own actions refresh it at once. */
+export const backtestListingInterval = (listing: BacktestListing | undefined) => listing?.active ? 1000 : 15_000
 export function backtestHistogram(values: string[]) {
   const numbers = values.map(Number).filter(Number.isFinite)
   if (!numbers.length) return []
@@ -144,7 +147,8 @@ export function BacktestView() {
   const accountTrading = live.status?.trading ?? live.trading
   const trading = accountTrading && { ...accountTrading, write: sources.data?.write ?? accountTrading.write }
   const blocked = trading ? writeBlocked(trading, token) : "Paper trading is unavailable."
-  const listing = useQuery({ queryKey: ["backtests"], queryFn: ({ signal }) => api.backtests(signal), refetchInterval: 1000 })
+  const listing = useQuery({ queryKey: ["backtests"], queryFn: ({ signal }) => api.backtests(signal),
+    refetchInterval: (query) => backtestListingInterval(query.state.data) })
   const [selected, setSelected] = useState("")
   const [compareIds, setCompareIds] = useState<string[]>([]), [deleting, setDeleting] = useState("")
   // A run the server has since deleted (retention on a new start, or another tab) leaves the comparison and the selection.

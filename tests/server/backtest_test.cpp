@@ -1040,6 +1040,36 @@ TEST(BacktestApi, ComparisonAcceptsLegacyReportsAndRejectsInvalidSelection) {
   saved_fixture(storage.directory, "000003");
   EXPECT_EQ(call(host, {"GET", "/api/backtests/compare?ids=000001,000003"}).status, 422);
 }
+TEST(BacktestApi, ListingParsesASavedReportAgainOnlyWhenItChanges) {
+  test::RecordingFile storage;
+  saved_fixture(storage.directory, "000001");
+  const auto file = storage.directory / "000001" / "report.json";
+  const json first{{"playbook", {{"id", "batch"}, {"version", 1}}}, {"summary", {{"marker", "first"}}}};
+  server::write_backtest_report(file, first);
+  server::BacktestHost host({storage.directory, {}, {}, {}, {}, true});
+  const auto listed = call(host, {"GET", "/api/backtests"}, false);
+  ASSERT_EQ(listed.status, 200) << listed.body;
+  const auto run = json::parse(listed.body).at("runs")[0];
+  EXPECT_EQ(run.at("summary"), first.at("summary"));
+  EXPECT_EQ(run.at("playbook"), first.at("playbook"));
+  // Rewritten at the same size and modification time, the report is not read again:
+  // polling the listing parses no unchanged report.
+  const auto modified = std::filesystem::last_write_time(file);
+  const auto size = std::filesystem::file_size(file);
+  auto second = json{{"summary", {{"marker", "second"}}}}.dump();
+  ASSERT_LT(second.size(), size);
+  second.resize(size, ' ');
+  std::ofstream(file, std::ios::binary | std::ios::trunc) << second;
+  std::filesystem::last_write_time(file, modified);
+  ASSERT_EQ(std::filesystem::file_size(file), size);
+  EXPECT_EQ(call(host, {"GET", "/api/backtests"}, false).body, listed.body);
+  // A newer report is, and a run's own report is always read in full.
+  std::filesystem::last_write_time(file, modified + std::chrono::seconds(1));
+  const auto changed = json::parse(call(host, {"GET", "/api/backtests"}, false).body).at("runs")[0];
+  EXPECT_EQ(changed.at("summary"), (json{{"marker", "second"}}));
+  EXPECT_FALSE(changed.contains("playbook"));
+  EXPECT_EQ(json::parse(call(host, {"GET", "/api/backtests/000001"}, false).body).at("report"), json::parse(second));
+}
 }  // namespace
 
 TEST(Backtest, CustomContractCap) {

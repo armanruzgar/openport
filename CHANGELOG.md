@@ -208,6 +208,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   bytes a request, on a volume every account shares. Exits now have a budget of
   their own, 60 per rolling minute, so a visitor who has spent the order budget can
   still close out; past it they get 429 `SANDBOX_ORDER_RATE` with `Retry-After`.
+- **The backtest list is cheap to poll.** Every `GET /api/backtests` parsed each
+  saved run's whole `report.json` (about a second with twenty long runs) while holding
+  the lock a running backtest reports its progress through, and the Backtest page asked
+  for it every second even with nothing running. The server now keeps what the list
+  shows of each report until the file changes, and the page polls every second only
+  while a run is active, otherwise every 15 seconds.
 
 ## 0.5.1 (2026-10-28)
 

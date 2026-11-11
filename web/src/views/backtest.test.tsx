@@ -8,7 +8,7 @@ import { liveState, useLive } from "../api/live"
 import type { BacktestComparison, BacktestReport, BacktestState } from "../api/backtest-types"
 import { plans, status } from "../test/trading-fixtures"
 import { newPlaybook } from "./PlaybooksView"
-import { BacktestView, BacktestReportView, BacktestCompareView, backtestHistogram } from "./BacktestView"
+import { BacktestView, BacktestReportView, BacktestCompareView, backtestHistogram, backtestListingInterval } from "./BacktestView"
 import { dataSource } from "../lib/data-source"
 import { renderTimeout, waitForRender } from "../test/render"
 
@@ -189,9 +189,10 @@ describe("Backtest page", { timeout: renderTimeout }, () => {
     await field("Saved report", "000002")
     await waitForRender(() => expect(host.textContent).toContain("Run 000002 · completed"))
     await waitForRender(() => expect(api.compareBacktests).toHaveBeenCalledWith(["000001", "000002", "000003"], expect.any(AbortSignal)))
-    // Retention removes 000002 when another backtest starts.
+    // Retention removes 000002 when another backtest starts; the next listing poll shows it.
     vi.mocked(api.backtests).mockResolvedValue({ active: null, label, runs: [runs[0]!, runs[2]!] })
     vi.mocked(api.compareBacktests).mockClear(); vi.mocked(api.backtest).mockClear()
+    await act(async () => { await client.invalidateQueries({ queryKey: ["backtests"] }) })
     await waitForRender(() => expect(host.querySelector('[aria-label="Compare run 000002"]')).toBeNull())
     await waitForRender(() => expect(api.compareBacktests).toHaveBeenCalledWith(["000001", "000003"], expect.any(AbortSignal)))
     expect(api.compareBacktests).not.toHaveBeenCalledWith(expect.arrayContaining(["000002"]), expect.anything())
@@ -222,6 +223,20 @@ describe("Backtest page", { timeout: renderTimeout }, () => {
     await act(async () => confirm.click())
     await waitForRender(() => expect(api.deleteBacktest).toHaveBeenCalledWith("000001", "open"))
     expect(document.body.textContent).not.toContain("Delete saved backtest?")
+  })
+  it("polls the saved-run listing every second only while a run is active", async () => {
+    expect(backtestListingInterval(undefined)).toBe(15_000)
+    expect(backtestListingInterval({ active: null, label, runs: [] })).toBe(15_000)
+    expect(backtestListingInterval({ active: state.id, label, runs: [state] })).toBe(1000)
+    await render()
+    const query = client.getQueryCache().find({ queryKey: ["backtests"] })!
+    const interval = () => {
+      const value = query.observers[0]!.options.refetchInterval
+      return typeof value === "function" ? value(query) : value
+    }
+    expect(interval()).toBe(15_000)
+    await act(async () => { client.setQueryData(["backtests"], { active: state.id, label, runs: [state] }) })
+    expect(interval()).toBe(1000)
   })
   it("disables deletion and comparison for active runs", async () => {
     vi.mocked(api.backtests).mockResolvedValue({ active: state.id, label, runs: [state] })
