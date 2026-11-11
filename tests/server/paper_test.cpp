@@ -6680,4 +6680,63 @@ TEST(PaperPublication, AWarningThatOverflowsIsReportedOnItsAccountAndLeavesTheFe
   EXPECT_TRUE(engine.trading_view()->snapshot->time >= later);
   engine.stop();
 }
+
+TEST(PaperCadence, ARestingOrderJournalsWhatItTradesOnNotEveryDrain) {
+  PaperProvider provider;
+  test::ScriptedMarket market;
+  auto options = paper_options();
+  // No analytics pass falls due here: only commands, synchronizations and market data
+  // the account trades on reach it at once.
+  options.analytics_interval = std::chrono::hours(1);
+  options.paper_journal = paper_path();
+  const auto path = options.paper_journal;
+  {
+    server::Engine engine(provider, {{"SPX"}}, options);
+    engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+    provider.sink->publish(md::ContractDefinition{0, market.contract});
+    provider.sink->publish(md::ContractDefinition{1, *md::parse_osi("SPXW261022C05100000")});
+    provider.sink->publish(md::UnderlyingQuote{"SPX", market.time, 5000, 5000, 5000});
+    provider.sink->publish(md::OptionQuote{0, market.time, 4.0, 4.2, 10, 10});
+    provider.sink->publish(md::OptionQuote{1, market.time, 1.0, 1.2, 10, 10});
+    engine.synchronize().get();
+    const auto placed = write(engine, "POST", "/api/orders", order(market, "resting", "4.00"));
+    ASSERT_EQ(placed.status, 201) << placed.body;
+    ASSERT_EQ(json::parse(placed.body)["order"]["status"], "working");
+    engine.synchronize().get();
+    const auto version = engine.trading_view()->snapshot->account_version;
+    const auto analysed = engine.metrics("SPX")->as_of;
+    // A streaming feed drains each quote alone, and none is of the worked contract.
+    constexpr int kBatches = 40;
+    const auto events = engine.status().events;
+    for (int batch = 1; batch <= kBatches; ++batch) {
+      market.next();
+      provider.sink->publish(md::OptionQuote{1, market.time, 1.0, 1.2 + 0.05 * batch, 10, 10});
+      ASSERT_TRUE(wait_for([&] { return engine.status().events == events + static_cast<std::uint64_t>(batch); }));
+    }
+    EXPECT_EQ(engine.trading_view()->snapshot->account_version, version) << "a market transaction per drain";
+    EXPECT_EQ(engine.metrics("SPX")->as_of, analysed) << "an analytics pass per drain";
+    // A synchronization hands the account every quote it has not seen, in one transaction.
+    engine.synchronize().get();
+    const auto synced = engine.trading_view()->snapshot;
+    EXPECT_LE(synced->account_version, version + 1);
+    EXPECT_EQ(synced->time, market.time);
+    EXPECT_EQ(synced->open_orders.size(), 1U);
+    // A quote of the worked contract reaches it at once, without waiting for a pass.
+    market.next();
+    provider.sink->publish(md::OptionQuote{0, market.time, 3.8, 3.9, 10, 10});
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->positions.size() == 1; }));
+    EXPECT_TRUE(engine.trading_view()->snapshot->open_orders.empty());
+    engine.stop();
+    // The journal recovers exactly what the engine published.
+    const auto journal = trading::FileJournal::read(path.string());
+    EXPECT_LT(journal.records.size(), static_cast<std::size_t>(kBatches));
+    const auto recovered = trading::TradingSession::recover(journal).snapshot();
+    EXPECT_EQ(recovered->account_version, engine.trading_view()->snapshot->account_version);
+    EXPECT_EQ(recovered->time, engine.trading_view()->snapshot->time);
+    EXPECT_EQ(recovered->positions.size(), 1U);
+    EXPECT_EQ(recovered->recent_fills.size(), 1U);
+  }
+  std::filesystem::remove_all(path.parent_path());
+}
 }  // namespace

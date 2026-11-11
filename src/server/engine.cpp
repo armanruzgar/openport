@@ -6,6 +6,7 @@
 #include "openport/providers/failover.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <stdexcept>
 #include <type_traits>
 
@@ -356,6 +357,8 @@ std::future<void> Engine::consume_replay(providers::ReplayBatch batch) {
 
 void Engine::run() {
   std::vector<md::Event> batch;
+  // Live market data drained since the accounts' last market transaction, in order.
+  std::vector<md::Event> unsettled;
   auto last_analytics = std::chrono::steady_clock::now();
   last_rate_time_ = last_analytics;
   auto last_health = options_.monotonic_clock();
@@ -364,7 +367,7 @@ void Engine::run() {
   const auto dividend_first = md::trading_date(desk_.market_time() > 0 ? desk_.market_time() : options_.clock());
 
   while (true) {
-    if (stopping_ && queue_.status().depth == 0) {
+    if (stopping_ && queue_.status().depth == 0 && unsettled.empty()) {
       const std::lock_guard lock(command_mutex_);
       if (replay_batches_.empty()) break;
     }
@@ -462,15 +465,26 @@ void Engine::run() {
       const auto* status = std::get_if<md::ProviderStatus>(&event);
       return status && status->state == md::FeedState::Stopped;
     });
-    if (ended || stopping_ || !synchronized.empty() || !commands.empty() ||
-        (!batch.empty() && desk_.active()) ||
-        now - last_analytics >= options_.analytics_interval) {
+    // Commands, synchronizations, the feed's end and shutdown act on the market as it
+    // stands, and so does market data an account trades on at once. The rest of a
+    // streaming market reaches the accounts with the next analytics pass: otherwise a
+    // resting order would journal, and sync, a market transaction on every drain.
+    const bool due = ended || stopping_ || !synchronized.empty() || !commands.empty() ||
+                     now - last_analytics >= options_.analytics_interval ||
+                     unsettled.size() + batch.size() >= md::kEventQueueCapacity ||
+                     (!batch.empty() && desk_.affects_trading(batch));
+    if (unsettled.empty()) unsettled.swap(batch);
+    else unsettled.insert(unsettled.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+    if (due) {
       last_analytics = now;
       refresh_analytics();
     }
     // Each account catches its own failures; nothing else here can fail the others.
     if (stopping_) desk_.halt();
-    desk_.update_trading(batch, commands, options_.clock());
+    if (due) {
+      desk_.update_trading(unsettled, commands, options_.clock());
+      unsettled.clear();
+    }
     for (auto& command : commands) {
       desk_.apply_command(command, desk_.market_time(), options_.clock());
     }

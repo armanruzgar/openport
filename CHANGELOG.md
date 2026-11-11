@@ -165,6 +165,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   sandbox. The import's Host, Origin, credentials and Content-Type are now checked
   from its header, and a request the server would refuse is answered before its
   body is read.
+- **A resting order no longer journals every drain of a streaming feed.** While any
+  account held a position or an order, the live engine re-ran the chain analytics and
+  wrote, and fully synced, a market transaction on every drain of its queue, even when
+  nothing the account trades had changed: about 90 records a second on a busy feed,
+  reaching the 100,000-record large-journal warning within half an hour. A quote of a
+  contract an account holds, works or has an alert on, a price of its shares, a halt,
+  an official close or a completed snapshot still reaches it at once; the rest of the
+  market reaches it with the next analytics pass, once a second. Demo and replay runs
+  are unchanged.
 
 ## 0.5.1 (2026-10-28)
 

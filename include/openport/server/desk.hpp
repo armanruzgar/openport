@@ -143,6 +143,13 @@ class Desk {
   void replay_batch(const std::vector<md::Event>& batch, md::Timestamp driver_time, md::Timestamp boundary_time = 0);
   void command(TradingCommand command, TradingCompletion completion, md::Timestamp time, md::Timestamp driver_time);
   [[nodiscard]] bool active() const;
+  /// Whether `batch` holds market data an account trades on at once: a quote of a contract
+  /// it holds, works or has an alert on (with queue fills, also a print or volume of one it
+  /// holds or works), a price of shares it holds, works or can be delivered, or, while any
+  /// account has one of those, a halt, an official close or a completed snapshot. Its marks,
+  /// valuations and clock otherwise move with the next analytics pass, which a live driver
+  /// need not run for each batch.
+  [[nodiscard]] bool affects_trading(const std::vector<md::Event>& batch) const;
   [[nodiscard]] md::Timestamp market_time() const { return market_time_; }
   [[nodiscard]] const analytics::ChainBook& book() const { return book_; }
   [[nodiscard]] const auto& publications() const { return metrics_; }

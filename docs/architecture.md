@@ -124,9 +124,17 @@ for feed-stall checks. Analytics can be computed by the Desk or supplied explici
 Equity samples can go to the existing store or an injected callback. Engine copies
 its immutable publications under the reader mutex; HTTP never reads mutable Desk state.
 
-The live driver keeps its 50 ms queue drain and latest-quote coalescing. Analytics
-uses the existing steady-clock cadence and refreshes on each batch while accounts
-hold positions or orders. This is the throughput-oriented path.
+The live driver drains its queue as events arrive, waiting up to 50 ms for one, and
+keeps latest-quote coalescing. Analytics, and with it each account's market
+transaction, runs on the existing steady-clock cadence (once a second). A command, a
+synchronization, the feed's end or shutdown runs both at once, and so does a drain
+that holds market data an account trades on: a quote of a contract it holds, works or
+has an alert on (with queue fills, also that contract's prints and volume), a price
+of shares it holds, works or can be delivered, a halt, an official close or a
+completed snapshot. Market data drained between passes is kept and reaches the
+accounts, in order, with the next one. So a resting order journals a market
+transaction when something it trades on changes, or once a second as its marks and
+clock move, not on every drain. This is the throughput-oriented path.
 
 The replay driver bypasses that queue, and so does the demo market's live feed, which
 plays each generated day through it. `ReplayBatches` reads every selected event in

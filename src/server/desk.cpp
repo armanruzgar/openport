@@ -2338,6 +2338,48 @@ bool Desk::active() const {
     return !account.archived && account.session && (!account.session->snapshot()->positions.empty() || !account.session->snapshot()->open_orders.empty());
   });
 }
+bool Desk::affects_trading(const std::vector<md::Event>& batch) const {
+  // As update_trading gathers them: the contracts each account quotes and the shares
+  // it prices. Anything it misses still reaches the account with the next pass.
+  std::set<md::InstrumentId> quoted;
+  std::set<md::InstrumentId> printed;
+  std::set<std::string> shares;
+  const auto contract = [&](const std::string& symbol, bool prints) {
+    const auto id = instruments_.find(symbol);
+    if (id == instruments_.end()) return;
+    quoted.insert(id->second);
+    if (prints) printed.insert(id->second);
+  };
+  for (const auto& account : accounts_) {
+    if (account.archived || !account.session || !account.failure.empty()) continue;
+    const auto snapshot = account.session->snapshot();
+    const bool queue_fills = account.session->config().rules.queue_fills;
+    for (const auto& p : snapshot->positions) {
+      const auto& c = p.position.contract;
+      contract(c.osi_symbol(), queue_fills);
+      if (c.style == pricing::ExerciseStyle::American && !md::is_index_underlying(c.underlying)) shares.insert(c.underlying);
+    }
+    for (const auto& order : snapshot->open_orders)
+      for (const auto& symbol : chain_symbols(order.request)) contract(symbol, queue_fills);
+    for (const auto& alert : snapshot->alerts) {
+      if (!alert.armed && !alert.spec.repeat) continue;
+      if (alert.spec.condition.scope == AlertScope::Contract) contract(alert.spec.condition.symbol, false);
+      for (const auto& leg : alert.spec.condition.legs) contract(leg.symbol, false);
+    }
+    for (const auto& stock : snapshot->stocks) shares.insert(stock.position.symbol);
+    for (const auto& order : snapshot->stock_orders)
+      if (order.open()) shares.insert(order.request.symbol);
+  }
+  if (quoted.empty() && shares.empty()) return false;
+  return std::any_of(batch.begin(), batch.end(), [&](const md::Event& event) {
+    if (const auto* quote = std::get_if<md::OptionQuote>(&event)) return quoted.contains(quote->id);
+    if (const auto* trade = std::get_if<md::OptionTrade>(&event)) return printed.contains(trade->id);
+    if (const auto* volume = std::get_if<md::OptionVolume>(&event)) return printed.contains(volume->id);
+    if (const auto* spot = std::get_if<md::UnderlyingQuote>(&event)) return shares.contains(spot->symbol);
+    return std::holds_alternative<md::TradingHalt>(event) || std::holds_alternative<md::UnderlyingClose>(event) ||
+           std::holds_alternative<md::SnapshotComplete>(event);
+  });
+}
 void Desk::observe_flow(const md::Event& event) {
   if (!options_.flow) return;
   if (const auto* trade = std::get_if<md::OptionTrade>(&event)) {
