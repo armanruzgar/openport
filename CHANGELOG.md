@@ -578,6 +578,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   row is now cut, after the file as it was is kept beside it as `FILE.torn-TIME`
   (as journal repair does), and recording goes on. A bad row anywhere else still
   refuses appends.
+- **Massive pages stay on Massive.** The chain and dividends polls fetched whatever
+  `next_url` a page named, with the API key in the request's `Authorization` header:
+  a page naming another host, or plain `http://`, would have been sent the key, since
+  each page is a request of its own and not a redirect the HTTP client strips it from.
+  A `next_url` naming the same page was fetched until the 2,000-page limit, every
+  poll. A next page must now use the same scheme, host, port and path as the one
+  before it and differ from it, as the historical importer already required; the
+  poll otherwise fails with an error and keeps the last chain.
 
 ## 0.5.1 (2026-10-28)
 

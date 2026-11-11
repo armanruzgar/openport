@@ -52,7 +52,7 @@ TEST(PollingProvider, CancellationStopsMassivePaginationBeforeTheNextPage) {
   Collector sink;
   http.respond = [&](auto) {
     provider.stop();
-    return net::HttpResponse{200, R"({"results":[],"next_url":"https://example.test/next"})"};
+    return net::HttpResponse{200, R"({"results":[],"next_url":"https://api.massive.com/v3/snapshot/options/SPY?cursor=2"})"};
   };
   provider.poll_once(http, "SPY", {{"SPY"}}, sink);
   EXPECT_EQ(http.urls.size(), 1u);

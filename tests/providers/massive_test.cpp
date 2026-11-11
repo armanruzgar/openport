@@ -203,7 +203,7 @@ TEST(Massive, FailedPaginationDoesNotRetireTheLastCompleteSnapshot) {
   int requests = 0;
   http.respond = [&](std::string_view) -> net::HttpResponse {
     if (++requests == 1)
-      return {200, R"({"results":[],"next_url":"https://api.massive.com/next"})"};
+      return {200, R"({"results":[],"next_url":"https://api.massive.com/v3/snapshot/options/I:SPX?cursor=2"})"};
     return {503, "offline"};
   };
   provider.poll_once(http, "SPX", {}, sink);
@@ -214,6 +214,49 @@ TEST(Massive, FailedPaginationDoesNotRetireTheLastCompleteSnapshot) {
   sink.events.clear();
   provider.publish_chain("SPX", page.contracts, 7777, 2, {}, sink);
   EXPECT_TRUE(sink.all<md::OptionQuote>().empty());  // the last prices were retained
+}
+
+// Each page is a request of its own, with the key in its Authorization header, so the
+// HTTP client's cross-origin stripping for redirects never applied: a next_url naming
+// another host or plain http got the key, and one naming the same page again was
+// fetched 2,001 times a poll.
+TEST(Massive, NextPagesStayOnTheApisHostAndPath) {
+  const std::string first = "https://api.massive.com/v3/snapshot/options/SPY?limit=250";
+  EXPECT_TRUE(providers::massive_next_url_allowed(first, "https://api.massive.com/v3/snapshot/options/SPY?cursor=YXA9"));
+  for (const auto* next : {"http://api.massive.com/v3/snapshot/options/SPY?cursor=YXA9",
+                           "https://evil.example/v3/snapshot/options/SPY?cursor=YXA9",
+                           "https://api.massive.com:8443/v3/snapshot/options/SPY?cursor=YXA9",
+                           "https://api.massive.com/collect?cursor=YXA9",
+                           "https://api.massive.com/v3/snapshot/options/SPY?limit=250", "/v3/snapshot/options/SPY?cursor=YXA9", ""})
+    EXPECT_FALSE(providers::massive_next_url_allowed(first, next)) << next;
+  // A configured http base (a local proxy) keeps its own scheme.
+  EXPECT_TRUE(providers::massive_next_url_allowed("http://127.0.0.1:9583/v3/snapshot/options/SPY", "http://127.0.0.1:9583/v3/snapshot/options/SPY?cursor=2"));
+
+  for (const std::string next : {"http://evil.example/collect", "https://api.massive.com/v3/snapshot/options/I:SPX?limit=250"}) {
+    SCOPED_TRACE(next);
+    providers::MassiveProvider provider({.api_key = "SECRET-KEY"});
+    test::HttpStub http;
+    http.respond = [&](std::string_view) -> net::HttpResponse {
+      return {200, R"({"results":[],"next_url":")" + next + R"("})"};
+    };
+    Collector sink;
+    provider.poll_once(http, "SPX", {}, sink);
+    EXPECT_EQ(http.urls.size(), 1u);
+    ASSERT_EQ(sink.all<md::ProviderStatus>().size(), 1u);
+    EXPECT_EQ(sink.all<md::ProviderStatus>()[0].state, md::FeedState::Error);
+  }
+  md::Timestamp clock = md::new_york_to_utc({2026, 9, 24}, 12, 0);
+  providers::MassiveDividends::Options options;
+  options.api_key = "SECRET-KEY";
+  options.clock = [&] { return clock; };
+  providers::MassiveDividends dividends({"SPY"}, [](auto) {}, options);
+  test::HttpStub http;
+  http.respond = [](std::string_view) {
+    return net::HttpResponse{200, R"({"status": "OK", "results": [], "next_url": "http://evil.example/collect"})"};
+  };
+  dividends.poll_once(http);
+  EXPECT_EQ(http.urls.size(), 1u);
+  EXPECT_NE(dividends.error().find("refused a next page"), std::string::npos) << dividends.error();
 }
 
 TEST(Massive, PublishedContractsSurviveFilterDriftAndRetireWhenMissing) {

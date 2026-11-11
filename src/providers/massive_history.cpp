@@ -173,13 +173,10 @@ class MassiveHistory final : public HistorySource {
       auto rows = body.value("results", json::array());
       if (!rows.is_array() || rows.size() > kMaxPage) throw std::runtime_error("Massive history: invalid results array");
       auto next = body.value("next_url", "");
-      if (!next.empty()) {
-        const auto url = net::parse_url(next);
-        const auto origin = net::parse_url(base_);
-        if (!url || !url->tls || url->host != origin->host || url->port != origin->port ||
-            url->target.substr(0, url->target.find('?')) != cursor.path || next == cursor.url)
-          throw std::runtime_error("Massive history: invalid pagination URL");
-      }
+      // The first page is base_ (https) plus the stream's path, so each next one stays
+      // on that scheme, host, port and path.
+      if (!next.empty() && !massive_next_url_allowed(cursor.url, next))
+        throw std::runtime_error("Massive history: invalid pagination URL");
       cursor.url = std::move(next);
       return rows;
     }

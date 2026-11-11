@@ -58,6 +58,13 @@ struct MassivePage {
 /// First-page URL for an underlying; indexes use Massive's "I:" prefix (I:SPX).
 [[nodiscard]] std::string massive_chain_url(std::string_view base_url, std::string_view underlying);
 
+/// Whether a page's `next` URL may be fetched after `current` with the API key in its
+/// Authorization header: the same scheme, host, port and path, and not `current` again.
+/// A request is not a redirect, so the HTTP client's cross-origin stripping does not
+/// apply: anything else would hand the key to another host, or over plain HTTP, or
+/// fetch one page until the page limit.
+[[nodiscard]] bool massive_next_url_allowed(std::string_view current, std::string_view next);
+
 /// Massive (formerly Polygon.io), using your own API key. Real-time or 15-minute
 /// delayed depending on your plan; the feed status says which. Polls the whole chain
 /// snapshot, so plans with per-minute request limits are too slow for large chains.

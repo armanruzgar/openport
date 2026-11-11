@@ -122,6 +122,14 @@ std::string massive_chain_url(std::string_view base_url, std::string_view underl
   return url;
 }
 
+bool massive_next_url_allowed(std::string_view current, std::string_view next) {
+  const auto from = net::parse_url(current);
+  const auto to = net::parse_url(next);
+  const auto path = [](const net::Url& url) { return std::string_view(url.target).substr(0, url.target.find('?')); };
+  return from && to && next != current && to->tls == from->tls && to->host == from->host && to->port == from->port &&
+         path(*to) == path(*from);
+}
+
 MassivePage parse_massive_chain_page(std::string_view json) {
   simdjson::ondemand::parser parser;
   const simdjson::padded_string padded(json);
@@ -200,6 +208,8 @@ std::string MassiveProvider::poll(net::HttpClient& http, const std::string& unde
       underlying_ts = page.underlying_ts;
     }
     for (MassiveContract& contract : page.contracts) contracts.push_back(std::move(contract));
+    if (!page.next_url.empty() && !massive_next_url_allowed(url, page.next_url))
+      throw std::runtime_error("refused a next page on another host, path or scheme, or the same page again");
     url = std::move(page.next_url);
     if (++pages > 2000) throw std::runtime_error("pagination did not end");
   }
@@ -359,6 +369,8 @@ md::Timestamp MassiveDividends::poll_once(net::HttpClient& http) {
         for (auto& dividend : parsed.dividends)
           if (dividend.ticker == ticker && (dividend.currency.empty() || dividend.currency == "USD"))
             found.push_back(std::move(dividend));
+        if (!parsed.next_url.empty() && !massive_next_url_allowed(url, parsed.next_url))
+          throw std::runtime_error("refused a next page on another host, path or scheme, or the same page again");
         url = std::move(parsed.next_url);
       }
       known_[ticker] = std::move(found);
