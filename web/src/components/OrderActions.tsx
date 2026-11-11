@@ -4,7 +4,7 @@ import { useRef, useState } from "react"
 
 import { useLive } from "../api/live"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
-import type { CancelAllResponse, ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, NewOrder, Order, Position, StockHolding, StockOrder, TradingStatus } from "../api/trading-types"
+import type { CancelAllResponse, ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, Order, Position, StockHolding, StockOrder, TradingStatus } from "../api/trading-types"
 import { contractLabel, orderLabel, osiLabel } from "../lib/journal"
 import { closingAction, editableFields, flattenPlan, isOpen, openOrdersIn, orderChange, orderDraft, outcome, underlyingsOf } from "../lib/orders"
 import { describeTrigger } from "../lib/ticket"
