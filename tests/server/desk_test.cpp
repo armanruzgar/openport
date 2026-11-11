@@ -3082,7 +3082,7 @@ TEST(ReproducibleRun, OverrideRemovalVerifiesWithDriverSix) {
     }
     const auto inputs = server::run_inputs(trading::FileJournal::read(journal.string()));
     ASSERT_FALSE(inputs.empty());
-    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 7);
+    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 8);
     const auto verified = server::verify_run(journal);
     EXPECT_TRUE(verified.matched) << verified.message;
   }
@@ -3552,7 +3552,7 @@ TEST(ReproducibleRun, CalendarRulesCaptureResetCalendarAndVerifyWithoutDriverCha
   }
   const auto recovery = trading::FileJournal::read(journal.string());
   const auto inputs = server::run_inputs(recovery);
-  ASSERT_FALSE(inputs.empty()); EXPECT_EQ(json::parse(inputs.front()).at("driver"), 7);
+  ASSERT_FALSE(inputs.empty()); EXPECT_EQ(json::parse(inputs.front()).at("driver"), 8);
   const auto verified = server::verify_run(journal);
   EXPECT_TRUE(verified.matched) << verified.message;
   auto recovered = trading::TradingSession::recover(recovery);

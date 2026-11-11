@@ -473,10 +473,11 @@ RunVerification verify_run(const std::filesystem::path& journal,
     // Driver 2 batches each market instant whole, driver 3 also rolls the day over on the
     // closing marks before a new date's quotes, and driver 4 also records each command's
     // input before its transactions. Driver 5 settles AM options on opening prints.
-    // Driver 6 also labels playbook time-stop cancellations.
+    // Driver 6 also labels playbook time-stop cancellations, driver 7 fixes evaluation
+    // and payout rules, and driver 8 fills, stops, walks and flatten closes.
     // Older runs replay as they were recorded.
     const auto driver = start.value("driver", 1);
-    if (driver < 1 || driver > 7) throw std::runtime_error("Unsupported run driver version");
+    if (driver < 1 || driver > 8) throw std::runtime_error("Unsupported run driver version");
     const bool instants = driver >= 2;
     auto batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, instants);
     // Every build that writes a driver version also attributes every record, so only a
@@ -491,6 +492,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
     options.opening_settlement = driver >= 5;
     options.playbook_cancel_labels = driver >= 6;
     options.revised_evaluation = driver >= 7;
+    options.revised_fills = driver >= 8;
     options.exact_margin = start.value("exact_margin", false);
     options.opening_rule_checks = start.value("opening_rule_checks", false);
     options.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);

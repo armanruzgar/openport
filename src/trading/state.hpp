@@ -989,6 +989,9 @@ struct State {
   std::optional<OpeningRuleInputs> opening_rule_inputs; ///< Transient explicit fill inputs; recorded as events.
   bool compact_opening_rule_inputs = true; ///< Transient wire compatibility for recorded runs.
   bool exact_margin = true; ///< Transient allocation compatibility for recorded run drivers.
+  /// Transient compatibility: false for replay drivers 1–7, which keep their
+  /// original fills, stops, walks and flatten closes (see set_revised_fills).
+  bool revised_fills = true;
   std::set<std::string> walked; ///< Transient symbols to match after this transaction's market is in place.
   SessionConfig config;
   Timestamp time = 0;

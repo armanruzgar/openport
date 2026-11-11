@@ -1061,7 +1061,7 @@ be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
 their existing journal bytes; restart creates a byte-identical prefix on the current
-driver (7).
+driver (8).
 
 ### Verifying a run
 
@@ -1169,6 +1169,15 @@ floors stay fixed, minimum hold covers triggered and OCO closes, a wide quote ke
 fresh mark, and the minute-volume cap is not read across a gap in the feed
 ([paper trading](paper-trading.md)). Runs recorded with drivers 1–6 verify with
 their original decisions; they can no longer be resumed or restarted.
+
+Driver 8 applies this build's fill and order fixes: a queued limit earns nothing
+outside the sessions it trades in and fills only in the batch that lets it, stop
+stress stays out of the price band and off a re-armed stop reached on an ordinary
+quote, an underlying trail leaves a stop-limit's option limit where it was set, a
+walking order filled ahead of another command places its `then` order, and a limit
+flatten gives a single long nobody bids for away
+([paper trading](paper-trading.md)). Runs recorded with drivers 1–7 verify with
+their original fills; they can no longer be resumed or restarted.
 
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).

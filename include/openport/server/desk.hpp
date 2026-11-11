@@ -80,6 +80,7 @@ class Desk {
     /// USER_CANCEL, including their journal bytes during offline verification.
     bool playbook_cancel_labels = true;
     bool revised_evaluation = true; ///< Driver 7 fixes evaluation and payout rules.
+    bool revised_fills = true; ///< Driver 8 fixes fills, stops, walks and flatten closes.
     /// Optional run-start capability. Absent on older runs, preserving their fills.
     bool opening_rule_checks = true;
     /// Optional run-start capability: older runs journal the entire input maps.

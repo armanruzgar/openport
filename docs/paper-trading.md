@@ -716,6 +716,16 @@ never exceeds what is displayed at the price (plus the account's own earlier
 orders), and it is zero once the level clears (the touch moves past the price
 without crossing it).
 
+An order is in **no queue while it cannot trade**: a GTC or GTD limit or a bracket
+exit outside the regular session, or an EXTO order between sessions. It leaves the
+queue it was in, nothing that trades meanwhile counts for it, and once its session
+opens it joins again behind what is displayed then, as an order entered at the open
+would. What a batch lets an order fill, it fills in that batch: contracts it could
+not fill there (a held position's stale mark holding fills back, say) are not kept
+for a later batch, where the market may be anywhere. Runs recorded with replay
+driver 7 or earlier kept queueing outside the session and kept what a batch could
+not fill.
+
 Fractions — half a volume increase, part of a turnover, a share of cancellations —
 are **rounded at random**, up with the probability of the fraction, from a hash of
 `queue_seed` (0–2,147,483,647, default 0), the attempt's start, the order and the

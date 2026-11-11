@@ -2776,6 +2776,21 @@ Touch touch_of(const QuoteObservation& q, Side side, Money limit) {
   if (own == limit) return Touch::At;
   return (side == Side::Buy ? own > limit : own < limit) ? Touch::Behind : Touch::Clear;
 }
+/// What the order's queue earned at this market instant. A queued fill trades at the
+/// limit while the market is there, so driver 8 never fills what an earlier instant
+/// earned and could not fill then (a data gap, a closed session) where the market
+/// has gone since; replay drivers 1-7 kept it.
+Quantity earned_now(const State& s, const QueueSpot& q) { return !s.revised_fills || q.updated == s.time ? q.earned : 0; }
+/// Driver 8: an order is in no queue while it cannot trade (a GTC/GTD limit or a
+/// bracket exit outside the regular session, an EXTO order between sessions). It
+/// leaves the one it was in and joins again, behind what is displayed then, once
+/// its session opens. Replay drivers 1-7 kept queueing, and earning, meanwhile.
+bool out_of_session(State& s, OrderId id) {
+  const auto& o = s.orders[id - 1];
+  if (!s.revised_fills || trades_now(o, s.contracts.at(o.request.symbol), s.time)) return false;
+  if (o.queue) s.orders.mut(id - 1).queue.reset();
+  return true;
+}
 /// When the order arrived at its current price as the queue sees it: its acceptance
 /// (or trigger) once the fill latency has passed, or the later change that sent it
 /// to the back (see send_to_back).
@@ -2796,7 +2811,7 @@ Quantity own_ahead(const State& s, const Order& o) {
     if (id == o.id || !queued_before(s, other, o)) continue;
     if (other.queue && other.request.symbol == o.request.symbol && other.request.side == o.request.side &&
         other.queue->price == *o.request.limit_price && other.request.limit_price == o.request.limit_price)
-      total += other.remaining() - other.queue->earned;
+      total += other.remaining() - earned_now(s, *other.queue);
   }
   return total;
 }
@@ -2828,8 +2843,9 @@ std::optional<QueueSpot> join_spot(const State& s, const Order& o, bool through)
 }
 /// Join an order that rests now, on its submission or once its price changed.
 void join_queue(State& s, OrderId id, std::optional<OrderId> incoming) {
+  if (!s.orders[id - 1].open() || !queue_eligible(s, s.orders[id - 1]) || out_of_session(s, id)) return;
   const auto& o = s.orders[id - 1];
-  if (!o.open() || !queue_eligible(s, o) || !latency_ready(s, o) || !s.books.contains(o.request.symbol)) return;
+  if (!latency_ready(s, o) || !s.books.contains(o.request.symbol)) return;
   const auto& book = s.books.at(o.request.symbol);
   if ((incoming != id && book.quote.time < o.accepted_at) || !quote_check(s, o.request.symbol).ok() ||
       marketable(o, book.quote) || (o.queue && o.queue->price == *o.request.limit_price))
@@ -2842,14 +2858,17 @@ void join_queue(State& s, OrderId id, std::optional<OrderId> incoming) {
 /// best price and oldest order first.
 void queue_step(State& s, OrderId id, const MarketActivity& activity, const std::vector<const TradePrint*>& prints,
                 std::map<const TradePrint*, Quantity>& unspent) {
+  if (!s.orders[id - 1].open() || !queue_eligible(s, s.orders[id - 1]) || out_of_session(s, id)) return;
   const auto& o = s.orders[id - 1];
-  if (!o.open() || !queue_eligible(s, o) || !latency_ready(s, o)) return;
+  if (!latency_ready(s, o)) return;
   const auto& symbol = o.request.symbol;
   const auto& book = s.books.at(symbol);
   if (book.quote.time < o.accepted_at || !quote_check(s, symbol).ok() || marketable(o, book.quote)) return;
   const auto limit = *o.request.limit_price;
   const auto side = o.request.side;
   auto spot = o.queue && o.queue->price == limit ? o.queue : std::nullopt;
+  // What earlier instants earned and did not fill is not this batch's (see earned_now).
+  if (spot) spot->earned = earned_now(s, *spot);
   // Prints count from when it reached this price: after its latency, or its last change.
   const auto since = spot ? spot->updated : queue_arrival(s, o);
   Quantity at = 0;
@@ -2955,7 +2974,7 @@ void match_one(State& s, OrderId id, Events& events, std::optional<OrderId> inco
   const bool inside = inside_single(s, o);
   // A resting limit the queue model lets fill: it trades at its limit, on its own side.
   const bool queued = !given && !inside && queue_eligible(s, o) && !marketable(o, s.books.at(o.request.symbol).quote) &&
-                      o.queue && o.queue->price == *o.request.limit_price && o.queue->earned > 0;
+                      o.queue && o.queue->price == *o.request.limit_price && earned_now(s, *o.queue) > 0;
   if (!given && !inside && !queued && !marketable(o, s.books.at(o.request.symbol).quote)) return;
   // Stop stress worsens the price a stop-limit fills at, never past its limit, so
   // the next block's unstressed price decides whether it may fill.
@@ -5949,6 +5968,10 @@ void TradingSession::set_exact_margin(bool exact) {
 }
 void TradingSession::set_revised_evaluation(bool revised) {
   impl_->state.evaluation.revised_rules = revised;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
+void TradingSession::set_revised_fills(bool revised) {
+  impl_->state.revised_fills = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {

@@ -49,6 +49,17 @@ void prints(TradingSession& session, ScriptedMarket& market, const Prints& trade
     activity.prints.push_back({market.symbol(), market.time, m(price), size_traded, "C"});
   session.on_quotes({market.quote(bid, ask, size)}, {market.valuation()}, market.time, {}, {}, activity);
 }
+/// A new quote at `time`, with this batch's trade prints.
+void batch_at(TradingSession& session, ScriptedMarket& market, Timestamp time, std::string_view bid, std::string_view ask,
+              const Prints& trades = {}) {
+  market.time = time;
+  ++market.observation;
+  MarketActivity activity;
+  activity.prints_supplied = true;
+  for (const auto& [price, size_traded] : trades)
+    activity.prints.push_back({market.symbol(), market.time, m(price), size_traded, "C"});
+  session.on_quotes({market.quote(bid, ask)}, {market.valuation()}, market.time, {}, {}, activity);
+}
 std::string wait_code(const TradingSession& session, OrderId id = 1) {
   const auto& waiting = session.snapshot()->waiting;
   const auto it = waiting.find(id);
@@ -240,6 +251,111 @@ TEST(QueueFills, WithoutTradesTheVolumeRateHeuristicTurnsTheTouchOverInFiveMinut
   minute();
   EXPECT_EQ(order(session).status, OrderStatus::Filled);
   EXPECT_EQ(session.snapshot()->recent_fills.back().price, m("4.00"));
+}
+
+TEST(QueueFills, AGtcLimitIsInNoQueueOutsideTheRegularSessionAndJoinsAgainInIt) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket market;
+    market.time = md::new_york_to_utc({2026, 9, 22}, 16, 21);
+    TradingSession session(config(queued()), market.time);
+    session.set_revised_fills(revised);
+    market.seed(session);
+    ASSERT_TRUE(session.submit(market.limit("gtc", 2, "4.00", Side::Buy, TimeInForce::Gtc), market.time).decision.ok());
+    // Forty print at its price in the curb session, where a GTC limit does not trade.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 22}, 16, 24), "4.00", "4.20", {{"4.00", 40}});
+    EXPECT_EQ(order(session).filled_quantity, 0);
+    // The next morning the market opens above it.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 23}, 9, 31), "4.50", "4.70");
+    if (!revised) {
+      // Replay drivers 1-7 queued it after the close and filled what that earned, below the bid.
+      EXPECT_EQ(order(session).filled_quantity, 2);
+      EXPECT_TRUE(session.snapshot()->recent_fills.back().queued);
+      continue;
+    }
+    EXPECT_EQ(order(session).filled_quantity, 0);
+    EXPECT_FALSE(order(session).queue);
+    EXPECT_EQ(wait_code(session), "LIMIT");
+    // It joins when the touch comes to its price, behind what is displayed then.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 23}, 9, 32), "4.00", "4.20");
+    ASSERT_TRUE(order(session).queue);
+    EXPECT_EQ(order(session).queue->ahead, 10);
+    EXPECT_EQ(order(session).queue->earned, 0);
+    EXPECT_EQ(wait_code(session), "QUEUE");
+  }
+}
+
+TEST(QueueFills, ABracketTargetEarnsNothingAfterTheCloseSoAGapStillFiresTheStop) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket market;
+    market.time = md::new_york_to_utc({2026, 9, 22}, 15, 51);
+    TradingSession session(config(queued()), market.time);
+    session.set_revised_fills(revised);
+    market.seed(session);
+    auto entry = market.market("entry", 2);
+    entry.bracket = Bracket{ExitSpec{Trigger{TriggerSource::Option, TriggerDirection::AtOrBelow, m("3.00")}, {}},
+                            ExitSpec{{}, m("4.30")}};
+    ASSERT_TRUE(session.submit(entry, market.time).decision.ok());
+    const auto stop = order(session).stop_loss, target = order(session).take_profit;
+    ASSERT_NE(stop, 0U);
+    ASSERT_NE(target, 0U);
+    // After the regular close the ask comes to the target and forty print there.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 22}, 16, 24), "4.10", "4.30");
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 22}, 16, 30), "4.10", "4.30", {{"4.30", 40}});
+    EXPECT_EQ(order(session, target).filled_quantity, 0);
+    // The next morning the market opens far below both exits.
+    batch_at(session, market, md::new_york_to_utc({2026, 9, 23}, 9, 31), "2.00", "2.20");
+    const auto last = session.snapshot()->recent_fills.back();
+    if (revised) {
+      EXPECT_EQ(order(session, stop).status, OrderStatus::Filled);
+      EXPECT_EQ(last.order_id, stop);
+      EXPECT_EQ(last.price, m("2.00"));
+      EXPECT_FALSE(last.queued);
+      EXPECT_EQ(order(session, target).reason.code, Reason::OCO_FILLED);
+    } else {
+      // Replay drivers 1-7 sold at the target, far above the market, and cancelled the stop.
+      EXPECT_EQ(order(session, target).status, OrderStatus::Filled);
+      EXPECT_EQ(last.price, m("4.30"));
+      EXPECT_TRUE(last.queued);
+      EXPECT_EQ(order(session, stop).reason.code, Reason::OCO_FILLED);
+    }
+    EXPECT_TRUE(session.snapshot()->positions.empty());
+  }
+}
+
+TEST(QueueFills, WhatABatchEarnsAndCannotFillThenIsNotFilledLaterWhereverTheMarketHasGone) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket market;
+    auto other = market;
+    other.contract = *md::parse_osi("SPXW261022C05100000");
+    TradingSession session(config(queued()), market.time);
+    session.set_revised_fills(revised);
+    market.seed(session);
+    other.seed(session, "2.00", "2.20");
+    ASSERT_TRUE(session.submit(other.market("held"), market.time).decision.ok());
+    ASSERT_TRUE(session.submit(market.limit("join", 2, "4.00"), market.time).decision.ok());
+    ASSERT_TRUE(order(session, 2).queue);
+    // A minute later twelve print at its price, but the held contract's quote is
+    // stale and fills wait for fresh marks: what the queue earned cannot fill now.
+    batch_at(session, market, market.time + 61 * md::kNanosPerSecond, "4.00", "4.20", {{"4.00", 12}});
+    EXPECT_EQ(order(session, 2).filled_quantity, 0);
+    ASSERT_TRUE(order(session, 2).queue);
+    EXPECT_EQ(order(session, 2).queue->earned, 2);
+    // By the time every mark is fresh again, the bid is above the order.
+    market.next();
+    other.time = market.time;
+    ++other.observation;
+    session.on_quotes({market.quote("4.50", "4.70"), other.quote("2.00", "2.20")}, {market.valuation(), other.valuation()},
+                      market.time);
+    if (revised) {
+      EXPECT_EQ(order(session, 2).filled_quantity, 0);
+      ASSERT_TRUE(order(session, 2).queue);
+      EXPECT_EQ(order(session, 2).queue->earned, 0);
+    } else {
+      // Replay drivers 1-7 filled the earlier batch's contracts at the limit, below the bid.
+      EXPECT_EQ(order(session, 2).filled_quantity, 2);
+      EXPECT_TRUE(session.snapshot()->recent_fills.back().queued);
+    }
+  }
 }
 
 TEST(QueueFills, TheSeedDecidesFractionsAndTheSameFeedAlwaysGivesTheSameAccount) {

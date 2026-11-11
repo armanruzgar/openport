@@ -447,6 +447,11 @@ class TradingSession {
   void set_exact_margin(bool exact);
   /// Preserve evaluation behavior when verifying replay drivers 1–6.
   void set_revised_evaluation(bool revised);
+  /// Preserve fill and order behavior when verifying replay drivers 1–7: queue
+  /// credit outside a session, stop stress in the price band and on a re-armed
+  /// stop, an underlying trail moving a stop-limit's limit, a walk's `then` and
+  /// a limit flatten's long nobody bids for.
+  void set_revised_fills(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

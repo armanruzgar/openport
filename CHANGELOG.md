@@ -21,6 +21,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   evaluation, payout and order-rule fixes below. Runs recorded earlier still pass
   `--verify-run` with their original decisions, but an interrupted one can no longer
   be resumed and none can be restarted from a time: start a new run instead.
+- **Replay driver 8.** New reproducible runs record driver 8, which also applies the
+  fill and order fixes below: queue fills, stop stress, trailing stop-limits on the
+  underlying, a walking order's `then` and limit flatten. Runs recorded with drivers
+  1–7 still pass `--verify-run` with their original fills; like driver 7's, they can
+  no longer be resumed or restarted.
 
 ### Providers
 
@@ -286,6 +291,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   next ordinary quote then failed, or fail it outright, while the bid had not moved.
   Such a quote now keeps the mark a narrower quote set within `max_quote_age`; a wide
   market that lasts longer marks at its midpoints again.
+- **Queued fills after the close.** With the queue fill model, a GTC or GTD limit or a
+  bracket target kept earning its place and fills after the regular close, when it
+  cannot trade, and filled them at its limit at the next open wherever the market had
+  gone: a buy below the new bid, or a target far above the ask that cancelled the stop
+  that should have fired. An order now leaves the queue while it cannot trade and joins
+  again behind what is displayed when its session opens, and what a batch lets it fill
+  but it cannot fill then is not kept for a later batch.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

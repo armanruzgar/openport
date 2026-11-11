@@ -958,7 +958,7 @@ TEST(ReplayHost, AnInterruptedDriverSixRunResumesWhereItStoppedWithTheSameJourna
     ASSERT_EQ(call(host, "PUT", "/api/replay", R"({"until":"10:30"})").status, 200);
     const auto inputs = server::run_inputs(trading::FileJournal::read((replays / (id + ".jsonl")).string()));
     ASSERT_FALSE(inputs.empty());
-    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 7);
+    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 8);
     // What a crash here leaves: the journal so far and the metadata written at the start.
     std::filesystem::copy_file(replays / (id + ".jsonl"), crashed / "replays" / (id + ".jsonl"));
     { std::ofstream out(crashed / "replays" / (id + ".json")); out << json::parse(started.body)["replay"].dump() << '\n'; }
