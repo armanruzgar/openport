@@ -1,4 +1,5 @@
 #include "openport/md/recording_directory.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -90,7 +91,7 @@ struct RecordingDirectory::Impl {
   Impl(std::filesystem::path path, RecordingHeader original, EventSink& sink, Options settings)
       : directory(std::move(path)), header(std::move(original)), downstream(sink), options(std::move(settings)) {
     if (directory.empty()) throw std::invalid_argument("recording: directory is empty");
-    std::filesystem::create_directories(directory);
+    md::create_private_directories(directory);
     // Provider names may contain spaces/parentheses (replay), but never paths.
     name = header.provider;
     for (auto& ch : name)

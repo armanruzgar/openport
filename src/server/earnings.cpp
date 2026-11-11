@@ -163,6 +163,7 @@ EarningsStore::EarningsStore(std::filesystem::path file) : file_(std::move(file)
   if (file_.empty()) return;
   try {
     if (!std::filesystem::exists(file_)) return;
+    md::restrict_file(file_);
     std::ifstream in(file_);
     const auto data = json::parse(in);
     for (const auto& item : data.at("moves")) {
@@ -179,7 +180,7 @@ void EarningsStore::save() {
   try {
     json moves = json::array();
     for (const auto& [key, move] : moves_) moves.push_back(move_json(move));
-    if (file_.has_parent_path()) std::filesystem::create_directories(file_.parent_path());
+    if (file_.has_parent_path()) md::create_private_directories(file_.parent_path());
     md::write_file_atomic(file_, json{{"version", 1}, {"moves", moves}}.dump(1) + '\n');
   } catch (const std::exception& e) {
     error_ = "earnings: " + std::string(e.what());

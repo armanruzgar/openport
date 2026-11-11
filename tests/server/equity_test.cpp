@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 #include "openport/server/equity.hpp"
 #include "support/scripted_market.hpp"
 
@@ -52,6 +53,30 @@ TEST(EquityStore, CompactsOldAttemptsButKeepsCurrentAndDoesNotThrowOnStorageFail
   EXPECT_NO_THROW(failed.append(sample));
   EXPECT_FALSE(failed.error().empty());
   EXPECT_EQ(EquityStore(file).samples().size(), 2U);
+}
+// An account's equity, floor and risk curve, beside its owner-only journal. Under a
+// shell's umask 022 appends used to create it 0644.
+TEST(EquityStore, HistoryIsOwnerOnlyAndAnOlderReadableOneIsTightened) {
+  Directory dir;
+  const auto previous = ::umask(022);
+  const auto mode_of = [](const std::filesystem::path& path) {
+    struct stat info {};
+    EXPECT_EQ(::stat(path.c_str(), &info), 0) << path;
+    return static_cast<unsigned>(info.st_mode) & 0777u;
+  };
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  const auto file = dir.path / "journal.jsonl.equity.csv";
+  { EquityStore store(file); store.append({time, 1, m("10000"), {}, m("10000"), {}, {}, 0}); }
+  EXPECT_EQ(mode_of(file), 0600u);
+  // A history with rows is compacted on open; an empty one is only tightened.
+  for (const auto& older : {file, dir.path / "empty.equity.csv"}) {
+    { std::ofstream touch(older, std::ios::app); }
+    ASSERT_EQ(::chmod(older.c_str(), 0644), 0);
+    EquityStore reopened(older);
+    EXPECT_TRUE(reopened.error().empty()) << reopened.error();
+    EXPECT_EQ(mode_of(older), 0600u) << older;
+  }
+  ::umask(previous);
 }
 TEST(EquityStore, TornRowsAreIgnoredWithoutLosingGoodSamples) {
   Directory dir; const auto file = dir.path / "history.csv";

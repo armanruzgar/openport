@@ -44,6 +44,10 @@ excluding raw messages, tokens, URLs, local paths and accounts. Reports stay loc
 until the user opens the prefilled GitHub link; submission is a separate action.
 Fatal signal logs stay on disk with
 owner-only permissions and contain no stack or memory dump. There is no telemetry.
+openportd creates its data directories owner-only (0700) and writes journals,
+equity histories, imported portfolios, playbooks and its other state files
+owner-only (0600) whatever the umask; it leaves directories that already exist as
+they are, so tighten one an earlier version made with `chmod -R go-rwx ~/.openport`.
 Ordinary startup logs can contain a token link: do not paste whole logs into
 public reports. Backups can contain credentials and should be protected like
 the running data directory.

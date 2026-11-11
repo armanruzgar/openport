@@ -480,6 +480,8 @@ AnalysisPortfolios::AnalysisPortfolios(std::filesystem::path directory) : direct
     if (!std::filesystem::exists(directory_)) return;
     for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
       if (entry.path().extension() != ".json") continue;
+      // Real holdings: a file an earlier version left readable to others is tightened.
+      md::restrict_file(entry.path());
       try {
         std::ifstream in(entry.path());
         const auto j = json::parse(in);
@@ -528,7 +530,7 @@ void AnalysisPortfolios::save(const AnalysisPortfolio& p) const {
   for (const auto& h : p.holdings) holdings.push_back(holding_json(h));
   const json body{{"id", p.id}, {"name", p.name}, {"format", p.format}, {"imported", p.imported},
                   {"analysis_only", true}, {"holdings", holdings}, {"skipped", p.skipped}};
-  std::filesystem::create_directories(directory_);
+  md::create_private_directories(directory_);
   md::write_file_atomic(directory_ / (p.id + ".json"), body.dump(2) + '\n');
 }
 

@@ -94,7 +94,7 @@ std::string_view to_string(BarInterval interval) noexcept {
 CandleStore::CandleStore(Options options) : options_(std::move(options)) {
   if (options_.directory.empty()) return;
   std::error_code ec;
-  std::filesystem::create_directories(options_.directory, ec);
+  md::create_private_directories(options_.directory, ec);
   if (ec) {
     error_ = "candles: cannot create " + options_.directory.string() + ": " + ec.message();
     return;
@@ -216,11 +216,10 @@ void CandleStore::persist(const std::string& symbol, Series& series, bool formin
     ++count;
   }
   if (count == 0) return;
-  std::ofstream out(file_for(symbol), std::ios::app | std::ios::binary);
-  out << text;
-  out.flush();
-  if (!out) {
-    error_ = "candles: cannot write " + file_for(symbol).string();
+  try {
+    md::append_file(file_for(symbol), text);
+  } catch (const std::exception& error) {
+    error_ = std::string("candles: ") + error.what();
     return;
   }
   for (auto it = series.minutes.begin(); it != series.minutes.end(); ++it)

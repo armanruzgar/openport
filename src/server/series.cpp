@@ -1,4 +1,5 @@
 #include "openport/server/series.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -40,7 +41,7 @@ SeriesStore::SeriesStore(std::filesystem::path directory)
     : directory_(std::move(directory)), calendar_(md::scheduled_days()) {
   if (directory_.empty()) return;
   try {
-    std::filesystem::create_directories(directory_);
+    md::create_private_directories(directory_);
     std::vector<std::filesystem::path> surfaces;
     for (const auto& entry : std::filesystem::directory_iterator(directory_)) {
       if (entry.path().extension() == ".csv") load(entry.path());
@@ -148,11 +149,9 @@ bool SeriesStore::insert(const std::string& symbol, const SeriesRow& row, bool f
       const auto path = directory_ / (symbol + '-' + month + ".csv");
       if (damaged_.contains(path)) throw std::runtime_error("refusing to append to damaged file " + path.string());
       const bool empty = !std::filesystem::exists(path) || std::filesystem::file_size(path) == 0;
-      std::ofstream output(path, std::ios::app);
-      if (empty) output << header();
-      output << line_of(row);
-      output.flush();
-      if (!output) {
+      try {
+        md::append_file(path, empty ? header() + line_of(row) : line_of(row));
+      } catch (const std::exception&) {
         damaged_.insert(path);
         throw std::runtime_error("cannot write " + path.string());
       }

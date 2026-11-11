@@ -204,6 +204,8 @@ EquityStore::EquityStore(std::filesystem::path file, bool read_only) : file_(std
   samples_ = read_equity_history(file_, error_);
   if (!error_.empty()) fail(error_);
   if (read_only) return;
+  // A history an earlier version left readable to others is tightened.
+  md::restrict_file(file_);
   try {
     if (!samples_.empty()) { compact(); if (!error_.empty()) error_recovered_ = true; }
   }
@@ -259,10 +261,7 @@ void EquityStore::append(const EquitySample& sample) noexcept {
     }
     const auto row = line(sample);
     trading::check_storage_space(file_, row.size());
-    std::ofstream out(file_, std::ios::app);
-    out << row;
-    out.flush();
-    if (!out) throw std::runtime_error("cannot append equity history");
+    md::append_file(file_, row);
     ++lines_;
     if (reset || lines_ % 4096 == 0) compact();
   } catch (const std::exception& e) { fail(e.what(), sample.time); }

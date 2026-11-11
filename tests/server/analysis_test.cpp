@@ -1,6 +1,7 @@
 #include "openport/server/analysis.hpp"
 
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <filesystem>
@@ -436,6 +437,37 @@ TEST(AnalysisApi, OppositeLotsImportAndAStoredNegativeCostStillReads) {
   for (const auto* view : {"profile?underlying=SPX", "grid", "stress", "var"})
     EXPECT_EQ(call(reopened, source, "GET", std::string("/api/analysis/portfolios/old/risk/") + view).status, 200) << view;
   std::filesystem::remove_all(directory);
+}
+
+// Imported holdings are a real brokerage account's. Under a shell's umask 022 they used
+// to land 0644 in a 0755 directory beside an owner-only journal.
+TEST(AnalysisApi, ImportedHoldingsAreOwnerOnlyOnDiskAndOlderFilesAreTightened) {
+  const auto home = std::filesystem::temp_directory_path() / ("openport-analysis-modes-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(home);
+  const auto previous = ::umask(022);
+  std::filesystem::create_directories(home);
+  const auto mode_of = [](const std::filesystem::path& path) {
+    struct stat info {};
+    EXPECT_EQ(::stat(path.c_str(), &info), 0) << path;
+    return static_cast<unsigned>(info.st_mode) & 0777u;
+  };
+  const auto directory = home / ".openport" / "analysis";
+  {
+    server::AnalysisPortfolios store(directory);
+    store.add(server::parse_analysis_csv("symbol,quantity\nSPY,100\n", "generic"), "Brokerage", 1);
+  }
+  EXPECT_EQ(mode_of(home), 0755u);
+  EXPECT_EQ(mode_of(home / ".openport"), 0700u);
+  EXPECT_EQ(mode_of(directory), 0700u);
+  EXPECT_EQ(mode_of(directory / "brokerage.json"), 0600u);
+  ASSERT_EQ(::chmod((directory / "brokerage.json").c_str(), 0644), 0);
+  {
+    server::AnalysisPortfolios reopened(directory);
+    EXPECT_EQ(reopened.list().size(), 1u);
+  }
+  EXPECT_EQ(mode_of(directory / "brokerage.json"), 0600u);
+  ::umask(previous);
+  std::filesystem::remove_all(home);
 }
 
 // The split-column layout names SPX; the chain lists that expiry under SPXW.

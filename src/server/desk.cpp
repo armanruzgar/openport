@@ -185,7 +185,8 @@ std::pair<std::shared_ptr<Journal>, std::optional<JournalRecovery>> open_journal
   const auto parent = std::filesystem::absolute(file).parent_path();
   auto existing = parent;
   while (!std::filesystem::exists(existing)) existing = existing.parent_path();
-  std::filesystem::create_directories(parent);
+  // Owner-only, like the journal: equity histories and playbooks live beside it.
+  md::create_private_directories(parent);
   for (auto path = parent; path != existing; path = path.parent_path()) sync_directory(path);
   sync_directory(existing);
   if (std::filesystem::exists(file)) {
@@ -922,7 +923,7 @@ void Desk::manage_account(const TradingCommand& c, TradingReply& reply) {
         return;
       }
       const auto deleted = options_.paper_accounts / "deleted";
-      std::filesystem::create_directories(deleted / id);
+      md::create_private_directories(deleted / id);
       sync_directory(deleted / id);
       sync_directory(deleted);
       sync_directory(options_.paper_accounts);

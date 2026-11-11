@@ -1,4 +1,5 @@
 #include "openport/server/backtest.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -307,7 +308,7 @@ bool BacktestHost::handle(const ApiRequest& request, const MetricsSource& source
         job.dividends = host.options.dividends;
         job.actor = request.actor;
         if (host.options.directory.empty()) throw std::invalid_argument("Backtest storage is unavailable");
-        std::filesystem::create_directories(host.options.directory);
+        md::create_private_directories(host.options.directory);
         const auto sequence = host.options.directory / "sequence.json";
         if (std::filesystem::is_symlink(std::filesystem::symlink_status(sequence)) ||
             std::filesystem::is_symlink(std::filesystem::symlink_status(sequence.string() + ".tmp"))) throw UnsafePath("Backtest sequence is a symlink");

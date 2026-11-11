@@ -194,9 +194,8 @@ bool SeriesStore::insert_surface(const std::string& symbol, const SurfaceSnapsho
       if (damaged_.contains(path)) throw std::runtime_error("refusing to append to damaged file " + path.string());
       j["schema"] = 1; j["market_ns"] = snapshot.time;
       if (found == values.end()) {
-        std::ofstream output(path, std::ios::app);
-        output << j.dump() << '\n'; output.flush();
-        if (!output) { damaged_.insert(path); throw std::runtime_error("cannot write " + path.string()); }
+        try { md::append_file(path, j.dump() + '\n'); }
+        catch (const std::exception&) { damaged_.insert(path); throw std::runtime_error("cannot write " + path.string()); }
       } else {
         // A replaced slot (the close, re-sampled until the bell, or a forced correction)
         // is rewritten in place so each session keeps one record per slot on disk.

@@ -4,6 +4,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Upgrading
 
+- **Tighten a data directory made by an earlier version.** openportd now creates its
+  directories owner-only and writes state files owner-only, but it leaves the
+  permissions of directories that already exist alone, and files it does not rewrite
+  keep theirs. Run `chmod -R go-rwx ~/.openport` once (for Homebrew,
+  `chmod -R go-rwx "$(brew --prefix)/var/openport"`).
 - **The Python client is not on PyPI.** 0.5.0 said it would publish there as
   `openport-client`; it never did, and the PyPI release workflow is gone. A PyPI
   package of that name is not from this project. Install a `python-v*` tag from
@@ -529,6 +534,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   (`F_FULLFSYNC` on macOS) before the rename and syncs the directory after it.
   Rebuildable caches (chart candles, replay summaries, recording indexes) skip the
   syncs.
+- **State files are owner-only.** Under a shell's umask 022 (Homebrew services and
+  runs from a terminal; the systemd unit sets 0077), the equity history beside each
+  journal, imported analysis portfolios (a real brokerage account's holdings, which
+  the API shows only to admins), `playbooks.json`, `earnings.json` and replay metadata
+  were written readable by every local user, in 0755 directories, beside an
+  owner-only journal. State files are now written 0600, appends included, and the
+  directories openportd creates 0700. Imported portfolios, `playbooks.json`,
+  `earnings.json` and equity histories an earlier version left readable are tightened
+  when they are next opened.
 
 ## 0.5.1 (2026-10-28)
 

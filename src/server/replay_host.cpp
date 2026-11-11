@@ -507,7 +507,7 @@ class ReplayHost::History {
   bool writable() const { return writable_; }
   std::filesystem::path create(const Session& session, const trading::SessionConfig&) {
     if (!writable_) return {};
-    std::filesystem::create_directories(directory_);
+    md::create_private_directories(directory_);
     const auto path = directory_ / (session.id + ".jsonl");
     // The journal's exclusive create also prevents overwriting an earlier run.
     if (std::filesystem::exists(path)) throw std::runtime_error("Replay journal already exists");
@@ -1702,7 +1702,7 @@ void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete)
     const std::lock_guard handoff(handoff_mutex_);
     const auto existing = std::find_if(scenarios_.begin(), scenarios_.end(), [&](const auto& s) { return s.id == scenario.id; });
     if (existing != scenarios_.end() && json::parse(existing->source) != pack.at("scenario")) throw std::invalid_argument("Scenario id already exists with different content; use a new id");
-    std::filesystem::create_directories(directory);
+    md::create_private_directories(directory);
     const auto source = directory / (scenario.id + ".json");
     const auto target = directory / (scenario.id + ".pack");
     const auto write = [](const std::filesystem::path& path, const std::string& data) {

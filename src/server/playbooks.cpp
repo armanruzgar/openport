@@ -472,6 +472,7 @@ Playbooks::Playbooks(std::filesystem::path file, Json initial) : file_(std::move
   if (!initial.is_null()) catalogue_ = std::move(initial);
   else if (!file_.empty() && std::filesystem::exists(file_)) {
     if (std::filesystem::file_size(file_) > 8 * 1024 * 1024) invalid("playbooks.json exceeds 8 MiB");
+    md::restrict_file(file_);
     std::ifstream input(file_);
     if (!input) invalid("Cannot read " + file_.string());
     try {

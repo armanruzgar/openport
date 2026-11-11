@@ -17,6 +17,7 @@
 
 #include <boost/asio/ip/address.hpp>
 #include "openport/server/web_policy.hpp"
+#include "openport/md/files.hpp"
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/stat.h>
@@ -208,7 +209,8 @@ inline void fatal_signal(int signal) {
 }
 
 inline void install_crash_log(const std::filesystem::path& path, std::string_view build) {
-  if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path());
+  // Often the first file in a new ~/.openport, which is then made owner-only.
+  if (path.has_parent_path()) md::create_private_directories(path.parent_path());
   const int fd = ::open(path.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600);
   if (fd < 0) throw std::runtime_error("cannot open local crash log");
   struct stat info {};
