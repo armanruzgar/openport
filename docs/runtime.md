@@ -57,7 +57,13 @@ updates reuse the published health map and strings. Every finished poll of a pol
 feed is a successful update, whatever state it reports: one that reports `stale`
 (Tradier's indexes, Schwab without `isDelayed`, Interactive Brokers' frozen or
 unreported values) cannot confirm its timing but did answer, so it shows
-`no successful update within N seconds` only once its polls stop.
+`no successful update within N seconds` only once its polls stop. A stream proves
+itself only with quotes, which stop when its market closes, so it is held to that
+timeout only while the market it shows is open (by the product's session calendar,
+at the time a delayed stream shows): after the close, over a weekend or on a holiday
+it keeps its state, and a session's first quote has the whole timeout from the open.
+A feed that reports `error` keeps that state and its own message, which says more
+than the timeout's.
 
 No feed sends an event from the future. A live feed's event stamped more than five
 minutes after the system clock (a unit or epoch error, an upstream glitch) is refused
@@ -1708,7 +1714,8 @@ It fires on entry to the distance and rearms after leaving it. A staged order fi
 when its stage ID becomes ready; price refreshes of the same stage stay quiet.
 Feed stalls use the status timeout, the greater of 60 seconds and three poll
 intervals, or a stopped feed; a feed that reports `stale` while its updates arrive is
-not stalled. Recovery rearms the feed warning.
+not stalled, and neither is a stream while its market is closed. Recovery rearms the
+feed warning.
 
 By default only accounts on the live engine send. Set `"include_simulated": true`
 in the notification file or `OPENPORT_NOTIFY_JSON` to also attach delivery to demo

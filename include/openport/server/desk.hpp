@@ -141,7 +141,9 @@ class Desk {
   void replay_source(const std::string& input, const md::RecordingHeader& header);
   /// Records that a restarted run continues from here; verification replays it in place.
   void replay_restart(const std::string& input);
-  void replay_batch(const std::vector<md::Event>& batch, md::Timestamp driver_time, md::Timestamp boundary_time = 0);
+  /// Applies one driven batch: its events, an analytics pass and the accounts' trading.
+  /// Returns whether the analytics pass recomputed anything.
+  bool replay_batch(const std::vector<md::Event>& batch, md::Timestamp driver_time, md::Timestamp boundary_time = 0);
   void command(TradingCommand command, TradingCompletion completion, md::Timestamp time, md::Timestamp driver_time);
   [[nodiscard]] bool active() const;
   /// Whether `batch` holds market data an account trades on at once: a quote of a contract

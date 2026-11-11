@@ -54,6 +54,9 @@ TEST(Engine, KeepsErrorsPerUnderlyingAndExpiresHealthUsingReceiptTime) {
   clock += md::kNanosPerSecond;
   EXPECT_EQ(engine.status().underlyings.at("SPY").state, md::FeedState::Stale);
   EXPECT_EQ(engine.status().feed_state, md::FeedState::Stale);
+  // An erroring feed keeps its own cause, not a generic age (I-30).
+  EXPECT_EQ(engine.status().underlyings.at("SPX").state, md::FeedState::Error);
+  EXPECT_EQ(engine.status().underlyings.at("SPX").message, "SPX: offline");
 
   const auto json = nlohmann::json::parse(server::handle_api({"GET", "/api/status"}, engine).body);
   ASSERT_EQ(json["underlyings"].size(), 2u);  // visible before any analytics exist
@@ -93,7 +96,8 @@ TEST(Engine, FeedMessageKeepsEachDistinctMessageOnceInUnderlyingOrder) {
 TEST(Engine, StreamingQuotesRefreshOnlyTheirUnderlyingWithASixtySecondMinimum) {
   ManualProvider provider;
   provider.caps.realtime = true;
-  std::atomic<md::Timestamp> clock{1000 * md::kNanosPerSecond};
+  // In a session: a stream is not held to the minute while its market is closed.
+  std::atomic<md::Timestamp> clock{md::new_york_to_utc({2026, 9, 22}, 10, 0)};
   server::Engine::Options options;
   options.analytics_interval = std::chrono::milliseconds(1);
   options.clock = [&] { return clock.load(); };
@@ -113,6 +117,46 @@ TEST(Engine, StreamingQuotesRefreshOnlyTheirUnderlyingWithASixtySecondMinimum) {
   EXPECT_EQ(engine.status().underlyings.at("SPY").state, md::FeedState::Stale);
   const auto json = nlohmann::json::parse(server::handle_api({"GET", "/api/status"}, engine).body);
   EXPECT_EQ(json["engine"]["nonstandard_contracts"], 1);
+  engine.stop();
+}
+
+// B-102: quotes stop at the close. A stream is not stale, and sends no feed_stalled,
+// until its market has been open for the minute without a quote.
+TEST(Engine, StreamsAreNotStaleWhileTheirMarketIsClosed) {
+  class SilentHttp final : public net::HttpClient {
+   public:
+    net::HttpResponse post(std::string_view, std::string_view, const net::Headers&, std::chrono::seconds,
+                           const std::atomic<bool>*) override { return {200, "{}"}; }
+  };
+  server::Notifications::Options delivery;
+  delivery.worker = false;
+  auto notifications = std::make_shared<server::Notifications>(server::parse_notification_config(
+      R"({"channels":[{"id":"phone","type":"webhook","url":"https://example.invalid/hook"}]})"),
+      std::make_unique<SilentHttp>(), delivery);
+  ManualProvider provider;
+  provider.caps.realtime = true;
+  std::atomic<md::Timestamp> clock{md::new_york_to_utc({2026, 9, 25}, 15, 59)};  // a Friday
+  server::Engine::Options options;
+  options.clock = [&] { return clock.load(); };
+  options.notifications = notifications;
+  server::Engine engine(provider, {{"SPY"}}, options);
+  engine.start();
+  const auto queued = [&] { return notifications->status().at("queue_depth").get<int>(); };
+  provider.sink->publish(md::UnderlyingQuote{"SPY", 0, 0, 0, 500});
+  ASSERT_TRUE(eventually([&] { return engine.status().underlyings.at("SPY").last_success == clock.load(); }));
+  // After the close, over the weekend, and in Monday's first minute.
+  for (const auto time : {md::new_york_to_utc({2026, 9, 25}, 16, 30), md::new_york_to_utc({2026, 9, 26}, 12, 0),
+                          md::new_york_to_utc({2026, 9, 28}, 9, 30, 59)}) {
+    clock = time;
+    engine.synchronize().get();
+    engine.synchronize().get();
+    EXPECT_EQ(engine.status().underlyings.at("SPY").state, md::FeedState::Live) << md::format_timestamp(time);
+    EXPECT_EQ(queued(), 0) << md::format_timestamp(time);
+  }
+  clock = md::new_york_to_utc({2026, 9, 28}, 9, 31, 1);
+  ASSERT_TRUE(eventually([&] { return queued() == 1; }));
+  EXPECT_EQ(engine.status().underlyings.at("SPY").state, md::FeedState::Stale);
+  EXPECT_EQ(engine.status().underlyings.at("SPY").message, "SPY: no successful update within 60 seconds");
   engine.stop();
 }
 

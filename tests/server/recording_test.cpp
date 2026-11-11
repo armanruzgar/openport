@@ -147,6 +147,9 @@ TEST(EngineRecording, SyntheticSessionReplaysIdenticalSpotForwardsAndEveryExpiry
     return replayed.status().feed_message.find("end of recording") != std::string::npos &&
            replayed.metrics("SPX");
   }));
+  // A driven batch is a replay's analytics pass, and its events count toward the rate.
+  EXPECT_GT(replayed.status().analytics_ms, 0.0);
+  ASSERT_TRUE(test::recording_eventually([&] { return replayed.status().events_per_second > 0; }));
   replayed.stop();
   EXPECT_TRUE(replayed.recording_error().empty());
   EXPECT_FALSE(md::RecordingReader(options.record_file).header().market_controls);

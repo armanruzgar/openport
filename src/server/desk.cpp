@@ -2469,7 +2469,7 @@ void Desk::replay_source(const std::string& input, const md::RecordingHeader& he
   record_input(nlohmann::json{{"kind", "source"}, {"input", nlohmann::json::parse(input)}}.dump());
   publish_trading();
 }
-void Desk::replay_batch(const std::vector<md::Event>& batch, md::Timestamp driver_time, md::Timestamp boundary_time) {
+bool Desk::replay_batch(const std::vector<md::Event>& batch, md::Timestamp driver_time, md::Timestamp boundary_time) {
   if (!resume_inputs_.empty()) {
     const auto input = nlohmann::json::parse(resume_inputs_.front());
     if (input.at("kind") != "boundary" || input.at("events").get<std::size_t>() != batch.size() ||
@@ -2479,13 +2479,14 @@ void Desk::replay_batch(const std::vector<md::Event>& batch, md::Timestamp drive
   }
   for (const auto& event : batch) observe(event);
   market_time_ = std::max(market_time_, boundary_time);
-  refresh_analytics();
+  const bool recomputed = refresh_analytics();
   std::deque<PendingCommand> commands;
   update_trading(batch, commands, driver_time);
   record_input(nlohmann::json{{"kind", "boundary"}, {"events", batch.size()}, {"time", market_time_},
       {"driver_time", driver_time}}.dump());
   replay_recorded();
   publish_trading();
+  return recomputed;
 }
 void Desk::replay_recorded() {
   while (!resume_inputs_.empty()) {

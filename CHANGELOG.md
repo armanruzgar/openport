@@ -644,6 +644,26 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   a stop-loss, an opening ticket with the default Day time in force said to add a
   protective stop, but in those sessions the stop control appears only for GTC, GTD,
   EXTO or GTC + EXTO. The notice now names those choices.
+- **Streaming feeds are no longer stale at every close.** A stream (Databento,
+  tastytrade) proves itself only with quotes, so a minute after each session's last
+  quote every underlying showed `stale` and sent a `feed_stalled` notification, after
+  every close, weekend and holiday, while the paper gate rightly saw a closed market.
+  A stream is now held to the timeout only while its market is open, and a session's
+  first quote has the whole timeout from the open.
+- **A feed's error keeps its message.** An underlying whose feed reported an error
+  (rejected credentials, a missing entitlement) turned `stale` a minute later with
+  `no successful update within 60 seconds`, in its state and in the feed headline;
+  the provider's cause survived only in `last_error`. It now keeps `error` and the
+  provider's message.
+- **The demo and replays report their engine rates.** `events_per_second` and
+  `analytics_ms` in `GET /api/status` stayed 0 for the demo market and every replay,
+  as their batches bypassed the live loop's analytics pass; each batch now counts as
+  one, and the rate falls to 0 while a replay is paused.
+- **A status read no longer stalls the engine behind a recording write.** With
+  `--record-dir`, reading the status held the engine's lock while it waited for the
+  recorder, which a provider thread holds through each frame write and a day's
+  rollover, so the engine paused its publication for the length of the disk write. The
+  recorder is now read first.
 
 ## 0.5.1 (2026-10-28)
 

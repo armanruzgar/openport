@@ -206,6 +206,9 @@ class Engine final : public MetricsSource {
   void run();
   void publish_desk();
   void refresh_analytics();
+  /// Publishes how long an analytics pass begun at `pass` took when it recomputed
+  /// anything, and the event rate once a second.
+  void publish_rates(std::chrono::steady_clock::time_point pass, bool recomputed);
   void update_health(const md::Event& event, md::Timestamp received);
   [[nodiscard]] std::string notification_account(std::string_view account) const;
 

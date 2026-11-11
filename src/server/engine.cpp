@@ -68,6 +68,20 @@ std::pair<const char*, std::string> described(const md::Event& event) {
     else return {"an event", {}};
   }, event);
 }
+/// Whether an underlying last updated at `since` has gone more than `stale_after`
+/// without an update at `now`. A polled feed answers every poll, open market or not. A
+/// stream proves itself only with quotes, which stop when its market closes: it is
+/// overdue only while the market it shows is open and has been for `stale_after`, so a
+/// close, a weekend or a holiday is not a stall, and the first quote of a session has
+/// `stale_after` from the open to arrive.
+bool overdue(std::string_view symbol, md::Timestamp since, md::Timestamp now, md::Timestamp stale_after,
+             const md::Capabilities& capabilities) {
+  if (since <= 0 || now - since <= stale_after) return false;
+  if (capabilities.poll_interval > std::chrono::seconds(0)) return true;
+  // A delayed stream shows the market as it was `delay` ago.
+  const md::Timestamp shown = now - std::chrono::duration_cast<std::chrono::nanoseconds>(capabilities.delay).count();
+  return md::trading_session(symbol, shown).open && md::trading_session(symbol, shown - stale_after).open;
+}
 }  // namespace
 
 void Engine::Ingress::publish(md::Event event) {
@@ -269,6 +283,10 @@ std::shared_ptr<const analytics::UnderlyingMetrics> Engine::metrics(const std::s
 }
 
 EngineStatus Engine::status() const {
+  // The recorder's own lock can be held through a frame write or a day's rollover on a
+  // provider thread. Read it before taking mutex_, which the engine thread needs to
+  // publish, so a status read never makes the engine wait on the disk.
+  const auto recording_failure = recording_error();
   const std::lock_guard lock(mutex_);
   EngineStatus out = status_;
   if (started_at_) out.uptime = options_.monotonic_clock() - *started_at_;
@@ -305,7 +323,10 @@ EngineStatus Engine::status() const {
   std::vector<std::string> messages;
   for (auto& [symbol, health] : out.underlyings) {
     const auto since = health.last_success > 0 ? health.last_success : out.started;
-    if (health.state != md::FeedState::Stopped && since > 0 && now - since > stale_after) {
+    // A feed that reports an error keeps its own cause (rejected credentials, a missing
+    // entitlement), which says more than how long it has gone without an update.
+    if (health.state != md::FeedState::Stopped && health.state != md::FeedState::Error &&
+        overdue(symbol, since, now, stale_after, out.capabilities)) {
       health.state = md::FeedState::Stale;
       health.message = symbol + ": no successful update within " +
                        std::to_string(stale_after / md::kNanosPerSecond) + " seconds";
@@ -333,13 +354,13 @@ EngineStatus Engine::status() const {
         }
   }
   // Persist storage failures even if subsequent market events report healthy.
-  if (const auto error = recording_error(); !error.empty()) {
+  if (!recording_failure.empty()) {
     out.feed_state = md::FeedState::Error;
-    out.feed_message = error;
+    out.feed_message = recording_failure;
     for (auto& [symbol, health] : out.underlyings) {
       health.state = md::FeedState::Error;
-      health.message = error;
-      health.last_error = error;
+      health.message = recording_failure;
+      health.last_error = recording_failure;
     }
   }
   return out;
@@ -483,10 +504,13 @@ void Engine::run() {
               dividend_date = date;
             }
           }
-          desk_.replay_batch(pending.batch.events, pending.batch.received, pending.batch.time);
+          // A driven batch is this engine's analytics pass.
+          const auto pass = std::chrono::steady_clock::now();
+          const bool recomputed = desk_.replay_batch(pending.batch.events, pending.batch.received, pending.batch.time);
           for (const auto& event : pending.batch.events) update_health(event, pending.batch.received);
           events_ += pending.batch.events.size();
           publish_desk();
+          publish_rates(pass, recomputed);
           pending.done.set_value();
         } catch (...) { pending.done.set_exception(std::current_exception()); }
       }
@@ -494,6 +518,8 @@ void Engine::run() {
       if (!synchronized.empty() || (replay_ && replay_->paused() && !replay_->fast_forwarding() && !replay_->stepping()))
         desk_.flush_journals();
       publish_desk();
+      // The event rate falls to zero while the replay is paused or has ended.
+      publish_rates(std::chrono::steady_clock::now(), false);
       for (auto& done : synchronized) done.set_value();
       continue;
     }
@@ -556,13 +582,16 @@ void Engine::run() {
     }
     publish_desk();
     if (options_.notifications && !stopping_ && !shutting_down_) {
+      const auto capabilities = provider_.capabilities();
       const auto stale_after = std::chrono::duration_cast<std::chrono::nanoseconds>(
-          std::max(3 * provider_.capabilities().poll_interval, std::chrono::seconds(60))).count();
+          std::max(3 * capabilities.poll_interval, std::chrono::seconds(60))).count();
       for (const auto& [symbol, health] : health_) {
         const auto since = health.last_success > 0 ? health.last_success : status_.started;
         // A Stale label is not a stall: a feed that says it while its updates arrive is
         // healthy, and one that stops updating is caught by the timeout like any other.
-        const bool stalled = health.state == md::FeedState::Stopped || (since > 0 && received - since > stale_after);
+        // A stream's market closing is not a stall either (see overdue).
+        const bool stalled = health.state == md::FeedState::Stopped ||
+                             overdue(symbol, since, received, stale_after, capabilities);
         if (stalled && stalled_.insert(symbol).second)
           options_.notifications->publish({"feed_stalled", "", desk_.market_time(),
               symbol + ": feed stalled; check the terminal's feed status.", {{"underlying", symbol}}});
@@ -608,10 +637,13 @@ void Engine::refresh_analytics() {
   const auto started = std::chrono::steady_clock::now();
   const bool recomputed = desk_.refresh_analytics();
   publish_desk();
+  publish_rates(started, recomputed);
+}
+void Engine::publish_rates(std::chrono::steady_clock::time_point pass, bool recomputed) {
   const auto now = std::chrono::steady_clock::now();
   const double elapsed = std::chrono::duration<double>(now - last_rate_time_).count();
   const std::lock_guard lock(mutex_);
-  if (recomputed) status_.analytics_ms = std::chrono::duration<double, std::milli>(now - started).count();
+  if (recomputed) status_.analytics_ms = std::chrono::duration<double, std::milli>(now - pass).count();
   if (elapsed >= 1.0) {
     status_.events_per_second = static_cast<double>(events_ - events_at_last_rate_) / elapsed;
     events_at_last_rate_ = events_;
