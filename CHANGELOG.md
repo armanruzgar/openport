@@ -570,6 +570,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   public demo after seven hours, and every other visitor got `SANDBOX_CAPACITY`. A
   client may now also hold at most 3 unexpired sandboxes at once, pending ones
   included; past that, creation returns `SANDBOX_CLIENT_RATE` without `Retry-After`.
+- **A torn surface-history or series row no longer stops the month's recording.** An
+  append cut short by a crash, a kill or a full disk left a final line without its
+  newline, and from the next start every later surface snapshot (or minute row) of
+  that symbol and month was refused, on disk and in memory, until the month ended or
+  someone cut the line by hand; only `last_error` said so. At the next start such a
+  row is now cut, after the file as it was is kept beside it as `FILE.torn-TIME`
+  (as journal repair does), and recording goes on. A bad row anywhere else still
+  refuses appends.
 
 ## 0.5.1 (2026-10-28)
 

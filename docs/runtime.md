@@ -1627,9 +1627,11 @@ Writes flush on each row. Storage errors do not stop the engine and appear in
 current New York date. `last_write` is the newest successfully stored market
 minute (also recovered from disk), not wall-clock file modification time. Failed
 minutes are not fabricated. The worker attempts a minute once; an offline
-backfill can recover it later. Unsupported headers and torn or malformed files
-are reported and block further appends to that file; valid preceding rows remain
-readable. Repair such a file offline from a backup or recording.
+backfill can recover it later. A final row an interrupted append left without its
+newline is cut when the server next starts, after the file as it was is kept beside
+it as `FILE.torn-TIME`, and the error reports it. Unsupported headers and other
+malformed rows are reported and block further appends to that file; valid preceding
+rows remain readable. Repair such a file offline from a backup or recording.
 
 To rebuild recordings without starting any network services:
 

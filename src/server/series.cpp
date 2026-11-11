@@ -54,6 +54,21 @@ SeriesStore::SeriesStore(std::filesystem::path directory)
 void SeriesStore::load(const std::filesystem::path& path) {
   const auto stem = path.stem().string();
   const auto symbol = stem.size() >= 9 ? stem.substr(0, stem.size() - 8) : std::string{};
+  // An append that a crash, a kill or a full disk interrupted leaves a final row without
+  // its newline: it is cut and the file as it was kept beside it, so the month records
+  // on. A cut inside the header leaves no row, and the month starts again.
+  try {
+    if (const auto kept = md::cut_torn_tail(path)) {
+      error_ = path.string() + ": cut a torn final series row; the file as it was is kept as " + kept->filename().string();
+      std::error_code ignored;
+      if (std::filesystem::file_size(path, ignored) < header().size()) {
+        std::filesystem::remove(path, ignored);
+        return;
+      }
+    }
+  } catch (const std::exception& e) {
+    error_ = path.string() + ": " + e.what();  // the torn row then refuses appends below
+  }
   if (storable(symbol)) files_[symbol][stem.substr(stem.size() - 7)] = path;
   read_file(path, [&](const SeriesRow& row) { remember(symbol, row); });
 }

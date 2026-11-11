@@ -144,6 +144,12 @@ void SeriesStore::load_surface_file(const std::filesystem::path& path) {
     if (stem.size() < 9) throw std::runtime_error("invalid surface filename");
     const auto symbol = stem.substr(0, stem.size() - 8);
     if (!valid_symbol(symbol)) throw std::runtime_error("invalid surface symbol");
+    // An append that a crash, a kill or a full disk interrupted leaves a final row
+    // without its newline: it is cut, the file as it was is kept beside it, and
+    // recording goes on. Damage before the final row still refuses appends.
+    std::string repaired;
+    if (const auto kept = md::cut_torn_tail(path))
+      repaired = path.string() + ": cut a torn final surface row; the file as it was is kept as " + kept->filename().string();
     std::ifstream input(path);
     if (!input) throw std::runtime_error("cannot read surfaces");
     for (std::string line; std::getline(input, line);) {
@@ -156,6 +162,7 @@ void SeriesStore::load_surface_file(const std::filesystem::path& path) {
       surfaces_[symbol][{date, snapshot.slot}] = std::move(snapshot);
     }
     if (input.bad()) throw std::runtime_error("cannot read surfaces");
+    if (!repaired.empty()) error_ = repaired;
   } catch (const std::exception& e) { damaged_.insert(path); error_ = path.string() + ": " + e.what(); }
 }
 

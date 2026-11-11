@@ -436,9 +436,13 @@ sample; the close slot keeps the latest eligible sample. New slots are appended;
 replaced slot (the close re-sampled until the bell, or a `--force` correction) rewrites
 that month file through a temporary file, so a session never stores more than one close. `--force` can correct the retained sample
 at its actual timestamp. Repeated identical backfills do not append fitting-time
-noise. Restart restores the same records and full parameter precision. Torn or
-invalid files report a series error and refuse further appends, preserving the
-readable prefix. Only month files within 13 months of a symbol's newest file are
+noise. Restart restores the same records and full parameter precision. A final
+row left without its newline by an interrupted append (a crash, a kill, a full disk)
+is cut at the next start, after the file as it was is kept beside it as
+`FILE.torn-TIME`, and recording goes on; the status reports it. Any other invalid
+row reports a series error and refuses further appends to that month, preserving
+the readable prefix: restore the file from a backup or cut the bad rows while the
+server is stopped. Only month files within 13 months of a symbol's newest file are
 loaded, and only snapshots within 400 days of its newest snapshot stay in memory;
 older files stay on disk untouched, and older snapshots are not accepted. Disk use
 still grows with recorded sessions and expiries. `--no-series`

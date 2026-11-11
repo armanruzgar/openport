@@ -1,6 +1,9 @@
 #include "openport/md/files.hpp"
+#include "openport/md/time.hpp"
 
+#include <array>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -109,6 +112,59 @@ void restrict_file(const std::filesystem::path& file) noexcept {
   if (::fstat(fd, &info) == 0 && S_ISREG(info.st_mode) && (info.st_mode & (S_IRWXG | S_IRWXO)) != 0)
     ::fchmod(fd, owner_only(info.st_mode));
   ::close(fd);
+}
+
+std::filesystem::path keep_copy(const std::filesystem::path& file, std::string_view tag) {
+  std::string suffix = "." + std::string(tag) + "-";
+  for (const char c : format_timestamp(now()).substr(0, 19))  // 2026-11-11T01:23:45
+    if (c != '-' && c != ':') suffix += c;
+  suffix += 'Z';
+  auto copy = file;
+  copy += suffix;
+  for (int n = 2; std::filesystem::exists(copy); ++n) {
+    copy = file;
+    copy += suffix + "-" + std::to_string(n);
+  }
+  std::filesystem::copy_file(file, copy);
+  restrict_file(copy);
+  return copy;
+}
+
+std::optional<std::filesystem::path> cut_torn_tail(const std::filesystem::path& file) {
+  const int fd = ::open(file.c_str(), O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+  if (fd < 0) {
+    if (errno == ENOENT) return std::nullopt;
+    fail("cannot open", file, errno);
+  }
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } closer{fd};
+  struct stat info {};
+  if (::fstat(fd, &info) != 0) fail("cannot read", file, errno);
+  if (!S_ISREG(info.st_mode)) fail("cannot repair", file, "not a regular file");
+  const auto size = static_cast<std::uint64_t>(info.st_size);
+  char last = '\n';
+  if (size == 0) return std::nullopt;
+  if (::pread(fd, &last, 1, static_cast<off_t>(size - 1)) != 1) fail("cannot read", file, errno);
+  if (last == '\n') return std::nullopt;
+  // Everything up to and including the last newline stays.
+  std::uint64_t keep = 0;
+  std::array<char, 4096> block{};
+  for (std::uint64_t end = size; end > 0 && keep == 0;) {
+    const std::uint64_t start = end > block.size() ? end - block.size() : 0;
+    const auto count = static_cast<std::size_t>(end - start);
+    if (::pread(fd, block.data(), count, static_cast<off_t>(start)) != static_cast<ssize_t>(count)) fail("cannot read", file, errno);
+    for (auto i = count; i > 0; --i)
+      if (block[i - 1] == '\n') {
+        keep = start + i;
+        break;
+      }
+    end = start;
+  }
+  auto copy = keep_copy(file, "torn");
+  if (::ftruncate(fd, static_cast<off_t>(keep)) != 0 || !full_sync(fd)) fail("cannot cut the torn line of", file, errno);
+  return copy;
 }
 
 void create_private_directories(const std::filesystem::path& directory, std::error_code& error) noexcept {

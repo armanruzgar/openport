@@ -51,7 +51,7 @@ TEST(SurfaceHistory, SamplesActualTimesAndEarlyClosesAndRejectsSimulatedFeeds) {
   source.publication = snapshot(at({2026, 9, 22}, 10, 3)); worker.sample();
   EXPECT_EQ(source.store.surfaces("SPX", 0, at({2026, 9, 23}, 0)).size(), 1u);
 }
-TEST(SurfaceHistory, ReloadsPreciseFitsAndLastCloseAndPreservesTornFiles) {
+TEST(SurfaceHistory, ReloadsPreciseFitsAndLastCloseAndRepairsTornFiles) {
   test::RecordingFile temp;
   const auto directory = temp.directory / "series";
   auto first = server::surface_snapshot(snapshot(at({2026, 9, 21}, 15, 57)));
@@ -81,10 +81,29 @@ TEST(SurfaceHistory, ReloadsPreciseFitsAndLastCloseAndPreservesTornFiles) {
       EXPECT_DOUBLE_EQ(fit.years, last.expiries[i].fit.years);
     }
   }
+  // An interrupted append's row, left without its newline, refused every later snapshot
+  // of the month. It is cut now, the file as it was kept beside it, and recording goes on.
   { std::ofstream out(directory / "SPX-2026-09.surfaces", std::ios::app); out << "{\"schema\":"; }
+  {
+    server::SeriesStore repaired(directory);
+    EXPECT_NE(repaired.status(last.time).last_error.find("torn"), std::string::npos);
+    EXPECT_EQ(repaired.surfaces("SPX", 0, at({2026, 9, 22}, 16)).size(), 1u);
+    last.time = at({2026, 9, 22}, 16);
+    EXPECT_TRUE(repaired.insert_surface("SPX", last));
+  }
+  std::vector<std::filesystem::path> kept;
+  for (const auto& entry : std::filesystem::directory_iterator(directory))
+    if (entry.path().filename().string().starts_with("SPX-2026-09.surfaces.torn-")) kept.push_back(entry.path());
+  ASSERT_EQ(kept.size(), 1u);
+  std::ifstream copy(kept[0]);
+  EXPECT_TRUE(std::string(std::istreambuf_iterator<char>(copy), {}).ends_with("{\"schema\":"));
+  EXPECT_EQ(server::SeriesStore(directory).surfaces("SPX", 0, at({2026, 9, 23}, 16)).size(), 2u);
+  // Damage before the final row still refuses appends, keeping the readable prefix.
+  { std::ofstream out(directory / "SPX-2026-09.surfaces", std::ios::app); out << "not json\n"; }
   server::SeriesStore damaged(directory);
-  EXPECT_NE(damaged.status(last.time).last_error.find("torn"), std::string::npos);
-  last.time = at({2026, 9, 22}, 16);
+  EXPECT_FALSE(damaged.status(last.time).last_error.empty());
+  EXPECT_EQ(damaged.surfaces("SPX", 0, at({2026, 9, 23}, 16)).size(), 2u);
+  last.time = at({2026, 9, 23}, 16);
   EXPECT_FALSE(damaged.insert_surface("SPX", last));
 }
 TEST(SurfaceHistory, ComparisonsUseExactTargetSessionsAndNeverFutureCloses) {

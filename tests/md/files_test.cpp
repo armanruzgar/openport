@@ -125,6 +125,39 @@ TEST(Files, RestrictTakesGroupAndOtherAccessOffRegularFilesOnly) {
   EXPECT_FALSE(std::filesystem::exists(dir.path / "missing"));
 }
 
+TEST(Files, ATornFinalLineIsKeptAsideThenCut) {
+  Directory dir;
+  const auto file = dir.path / "SPX-2026-09.surfaces";
+  put(file, "{\"a\":1}\n{\"b\":2}\n{\"c\":", 0644);
+  const auto kept = md::cut_torn_tail(file);
+  ASSERT_TRUE(kept);
+  EXPECT_EQ(kept->parent_path(), dir.path);
+  EXPECT_TRUE(kept->filename().string().starts_with("SPX-2026-09.surfaces.torn-")) << *kept;
+  EXPECT_EQ(contents(*kept), "{\"a\":1}\n{\"b\":2}\n{\"c\":");
+  EXPECT_EQ(mode_of(*kept), 0600U);
+  EXPECT_EQ(contents(file), "{\"a\":1}\n{\"b\":2}\n");
+  EXPECT_FALSE(md::cut_torn_tail(file));
+  EXPECT_FALSE(md::cut_torn_tail(dir.path / "missing"));
+  put(dir.path / "empty", "", 0600);
+  EXPECT_FALSE(md::cut_torn_tail(dir.path / "empty"));
+  // One torn line and nothing else is cut to nothing; the second copy gets its own name.
+  put(file, "{\"d\":", 0600);
+  const auto again = md::cut_torn_tail(file);
+  ASSERT_TRUE(again);
+  EXPECT_NE(*again, *kept);
+  EXPECT_EQ(contents(file), "");
+  // The last newline can lie several reads back.
+  const auto long_rows = std::string(10000, 'x') + "\n";
+  put(file, long_rows + std::string(5000, 'y'), 0600);
+  ASSERT_TRUE(md::cut_torn_tail(file));
+  EXPECT_EQ(contents(file), long_rows);
+  // Never through a symlink.
+  put(dir.path / "target", "torn", 0600);
+  std::filesystem::create_symlink(dir.path / "target", dir.path / "link");
+  EXPECT_THROW((void)md::cut_torn_tail(dir.path / "link"), std::runtime_error);
+  EXPECT_EQ(contents(dir.path / "target"), "torn");
+}
+
 TEST(Files, PrivateDirectoriesAreOwnerOnlyAndExistingOnesKeepTheirMode) {
   ShellUmask mask;
   Directory dir;

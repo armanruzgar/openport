@@ -309,12 +309,29 @@ TEST(Series, StorageFailuresAndTornFilesAreReportedWithoutThrowing) {
   const auto directory = temp.directory / "series";
   { server::SeriesStore store(directory); ASSERT_TRUE(store.insert("SPX", row(ny(10, 0)))); }
   const auto path = directory / "SPX-2026-09.csv";
+  const auto whole = read(path);
   { std::ofstream output(path, std::ios::app); output << "123,"; }
+  const auto torn = read(path);
+  {
+    // A torn final row is cut and the file as it was kept beside it; the month records on.
+    server::SeriesStore repaired(directory);
+    EXPECT_EQ(repaired.rows("SPX", 0, ny(17, 0)).size(), 1u);
+    EXPECT_NE(repaired.status(0).last_error.find("torn"), std::string::npos);
+    EXPECT_EQ(read(path), whole);
+    EXPECT_TRUE(repaired.insert("SPX", row(ny(10, 1))));
+  }
+  std::vector<std::filesystem::path> kept;
+  for (const auto& entry : std::filesystem::directory_iterator(directory))
+    if (entry.path().filename().string().starts_with("SPX-2026-09.csv.torn-")) kept.push_back(entry.path());
+  ASSERT_EQ(kept.size(), 1u);
+  EXPECT_EQ(read(kept[0]), torn);
+  // Damage before the final row still refuses appends, keeping the readable prefix.
+  { std::ofstream output(path, std::ios::app); output << "123,\n"; }
   const auto before = read(path);
   server::SeriesStore damaged(directory);
-  EXPECT_EQ(damaged.rows("SPX", 0, ny(17, 0)).size(), 1u);
-  EXPECT_NE(damaged.status(0).last_error.find("torn"), std::string::npos);
-  EXPECT_FALSE(damaged.insert("SPX", row(ny(10, 1))));
+  EXPECT_EQ(damaged.rows("SPX", 0, ny(17, 0)).size(), 2u);
+  EXPECT_FALSE(damaged.status(0).last_error.empty());
+  EXPECT_FALSE(damaged.insert("SPX", row(ny(10, 2))));
   EXPECT_EQ(read(path), before);
 }
 TEST(Series, WorkerThrottlesByMarketMinuteAndReusesSnapshotCache) {

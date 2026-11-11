@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string_view>
 #include <system_error>
 
@@ -42,6 +43,17 @@ void append_file(const std::filesystem::path& file, std::string_view bytes);
 /// Takes group and other permissions off `file` when it is a regular file, as files
 /// written before writes were owner-only need. A missing file or a symlink is left alone.
 void restrict_file(const std::filesystem::path& file) noexcept;
+
+/// Copies `file` as it is to FILE.TAG-YYYYMMDDTHHMMSSZ beside it (UTC; "-2" and on when
+/// that exists), owner-only, and returns the copy. Throws std::filesystem::filesystem_error.
+std::filesystem::path keep_copy(const std::filesystem::path& file, std::string_view tag);
+
+/// A final line without its newline, as an append that a crash, a kill or a full disk
+/// interrupted leaves: keeps the file as it is with keep_copy(file, "torn"), then cuts
+/// it after its last newline and syncs it. Returns the copy, or nothing when the file is
+/// missing, empty or ends with a newline. Throws, leaving the file as it was, when the
+/// copy or the cut fails. Never follows a symlink.
+std::optional<std::filesystem::path> cut_torn_tail(const std::filesystem::path& file);
 
 /// Creates `directory` and any missing parent, each new one owner-only (0700).
 /// Directories that already exist keep their permissions. Throws

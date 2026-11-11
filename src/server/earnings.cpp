@@ -194,17 +194,7 @@ void EarningsStore::save() {
   try {
     if (unread_ && std::filesystem::exists(file_)) {
       // What could not be read is never rewritten away: the file as it was goes beside it.
-      const auto stamp = md::format_timestamp(md::now()).substr(0, 19);
-      std::string suffix = ".unread-";
-      for (const char c : stamp) if (c != '-' && c != ':') suffix += c;
-      suffix += 'Z';
-      auto aside = file_;
-      aside += suffix;
-      for (int n = 2; std::filesystem::exists(aside); ++n) {
-        aside = file_;
-        aside += suffix + "-" + std::to_string(n);
-      }
-      std::filesystem::copy_file(file_, aside);
+      const auto aside = md::keep_copy(file_, "unread");
       kept_ = "earnings: " + file_.filename().string() + " held moves this version could not read; it is kept as it was in " +
               aside.filename().string();
     }
