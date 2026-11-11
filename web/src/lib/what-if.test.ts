@@ -27,10 +27,13 @@ it("reads another tab's candidates before adding to the same list", () => {
   let loaded: WhatIfState | undefined
   updateWhatIf("live:tabs", (state) => { loaded = state; return state })
   expect(loaded).toEqual({ candidates: [], target: null })
-  // A save of another kind leaves the cached lists alone.
+  // A save of another kind, or a plain storage event without a key that other modules
+  // send within a tab, leaves the cached lists alone (and an error in the listener
+  // would fail the run as an unhandled one).
   expect(addWhatIfOrder("live:tabs", order("SPXW  261016C07000000"), "Kept")).toBe(true)
   localStorage.setItem(key, JSON.stringify({ candidates: [], target: null }))
   savedElsewhere("openport.analyze.SPX", { candidates: [], target: null })
+  window.dispatchEvent(new Event("storage"))
   updateWhatIf("live:tabs", (state) => { loaded = state; return state })
   expect(loaded?.candidates.map((c) => c.name)).toEqual(["Kept"])
 })

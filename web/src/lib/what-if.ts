@@ -68,9 +68,12 @@ function subscribe(listener: () => void) {
  * used to drop what another tab had added. When another tab saves a list (or clears
  * storage), this tab forgets its copy and reads that tab's before it shows or changes it.
  */
-function forget(event: StorageEvent) {
-  if (event.key !== null && !event.key.startsWith("openport.what-if.")) return
-  for (const scope of [...states.keys()]) if (event.key === null || storageKey(scope) === event.key) states.delete(scope)
+function forget(event: Event) {
+  // Only the browser's own storage events: a plain Event("storage") that a module sends
+  // within this tab carries no key, and the cache may be all this tab has.
+  const { key } = event as StorageEvent
+  if (key !== null && (typeof key !== "string" || !key.startsWith("openport.what-if."))) return
+  for (const scope of [...states.keys()]) if (key === null || storageKey(scope) === key) states.delete(scope)
   listeners.forEach((listener) => listener())
 }
 if (typeof window !== "undefined") window.addEventListener("storage", forget)
