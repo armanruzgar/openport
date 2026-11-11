@@ -7,6 +7,7 @@
 #include <thread>
 
 #include "openport/server/api.hpp"
+#include "support/recording.hpp"
 
 namespace {
 
@@ -531,5 +532,48 @@ TEST(Engine, ChartsTheParitySpotOfAnUnderlyingWithoutPrints) {
   ASSERT_EQ(bars.size(), 1u);
   EXPECT_EQ(bars[0].start, md::new_york_to_utc({2026, 9, 22}, 16, 0));
   EXPECT_NEAR(bars[0].close, engine.metrics("SPX")->spot, 1e-9);
+}
+}  // namespace
+
+namespace {
+// S-3: one event stamped in the future moved the market clock, and with it every paper
+// account's clock and journal, past it for good. A live event stamped more than five
+// minutes after the system clock is refused before it is recorded, queued or applied.
+TEST(Engine, RefusesLiveEventsStampedPastTheSystemClock) {
+  ManualProvider provider;
+  provider.caps.realtime = true;
+  test::RecordingFile file;
+  server::Engine::Options options;
+  options.record_file = file.path;
+  server::Engine engine(provider, {{"SPY"}}, options);
+  engine.start();
+  const auto now = md::now();
+  const auto skewed = now + md::kNanosPerMinute;  // a feed whose clock runs a minute ahead
+  // 2100-01-01: an epoch-milliseconds value taken for the right unit, as in the audit.
+  const auto bogus = md::Timestamp{4'102'444'800'000} * 1'000'000;
+  provider.sink->publish(md::ContractDefinition{0, *md::parse_osi("SPY261218C00500000")});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", now - md::kNanosPerMinute, 499, 501, 500});
+  provider.sink->publish(md::OptionQuote{0, skewed, 5, 6, 1, 1});
+  provider.sink->publish(md::UnderlyingQuote{"SPY", now + 60 * md::kNanosPerMinute, 1, 1, 1});
+  provider.sink->publish(md::OptionQuote{0, bogus, 7, 8, 1, 1});
+  engine.synchronize().wait();
+  const auto status = engine.status();
+  EXPECT_EQ(status.events, 3U) << "the definition and two quotes; no future event reached the engine";
+  EXPECT_EQ(status.circuit_breaker.market_time, skewed) << "the market clock follows the accepted events";
+  const auto& health = status.underlyings.at("SPY");
+  EXPECT_NE(health.last_error.find("refused an option quote stamped 2100-01-01T00:00:00.000Z"), std::string::npos)
+      << health.last_error;
+  EXPECT_NE(health.last_error.find("2 events refused so far"), std::string::npos) << health.last_error;
+  EXPECT_EQ(health.state, md::FeedState::Live) << "the feed state stays the feed's own";
+  engine.stop();
+  md::RecordingReader reader(file.path);
+  std::size_t recorded = 0;
+  while (const auto record = reader.next()) {
+    ++recorded;
+    if (const auto* quote = std::get_if<md::OptionQuote>(&record->event)) EXPECT_EQ(quote->ts, skewed);
+    if (const auto* spot = std::get_if<md::UnderlyingQuote>(&record->event)) EXPECT_EQ(spot->ts, now - md::kNanosPerMinute);
+  }
+  EXPECT_TRUE(reader.diagnostic().empty()) << reader.diagnostic();
+  EXPECT_EQ(recorded, 3U) << "refused events are not recorded";
 }
 }  // namespace

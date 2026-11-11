@@ -148,6 +148,10 @@ class Engine final : public MetricsSource {
     };
   };
 
+  /// How far after the system clock a live feed's event may be stamped. A later one is
+  /// refused before it is recorded, queued or applied.
+  static constexpr md::Timestamp kMaxEventLead = 5 * md::kNanosPerMinute;
+
   Engine(md::Provider& provider, md::Subscription subscription, Options options);
   ~Engine() override;
   Engine(const Engine&) = delete;
@@ -212,6 +216,28 @@ class Engine final : public MetricsSource {
   md::EventQueue queue_;
   std::unique_ptr<md::RecordingSink> recorder_;
   std::unique_ptr<md::RecordingDirectory> daily_recorder_;
+  /// What a provider publishes into, ahead of the recorder and the queue. No feed sends
+  /// an event from the future: one stamped more than kMaxEventLead after the system
+  /// clock (a unit or epoch error, an upstream glitch) would move the market clock, and
+  /// every paper account's clock and journal, past it for good. It is refused and
+  /// reported as the underlying's last error.
+  class Ingress final : public md::EventSink {
+   public:
+    explicit Ingress(Engine& owner) : owner_(owner) {}
+    void publish(md::Event event) override;
+    md::EventSink* next = nullptr;  ///< set before the provider starts
+   private:
+    Engine& owner_;
+  };
+  struct Refusal {
+    std::uint64_t count = 0;
+    std::string message;
+    std::string underlying;  ///< empty when the event names none, as an option's
+    md::Timestamp time = 0;  ///< on the receipt clock, as health keeps its times
+  };
+  Ingress ingress_{*this};
+  mutable std::mutex refusal_mutex_;
+  Refusal refusal_;  // refusal_mutex_
   Desk desk_;  // engine thread only
   std::set<std::string> notification_accounts_;  // engine thread; forgotten after joining it
 

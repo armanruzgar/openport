@@ -52,6 +52,15 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   new order, so a retried 1-lot left 2 lots across the group. A member that holds an
   order under the ID is now sent that order's size again, which it answers as first
   submitted, and only what those orders leave of the quantity is split among the rest.
+- **A future timestamp no longer moves every paper account's clock.** One quote,
+  trade, heartbeat or halt from a live feed stamped in the future (a unit or epoch
+  error such as 2100-01-01 from milliseconds, or an upstream glitch) moved the market
+  clock, which only moves forward, and with it every account's clock and journal:
+  later orders on real contracts were refused as expired, and a restart restored the
+  bogus time. A live event stamped more than five minutes after the system clock is
+  now refused before it is recorded, queued or applied, and the underlying's
+  `last_error` names it. An account journal already moved forward still needs its
+  backup.
 - **Recording to exFAT, FAT and network drives.** `--record-dir` published each
   finished day with a hard link, and on a filesystem without them it deleted the
   complete, cleanly closed day instead, at every rollover and shutdown, and stopped

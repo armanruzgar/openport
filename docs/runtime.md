@@ -55,6 +55,15 @@ contains them. Otherwise it publishes receipt and error timestamps at most once
 every 100 ms, including pending updates when the feed becomes idle. Timestamp-only
 updates reuse the published health map and strings.
 
+No feed sends an event from the future. A live feed's event stamped more than five
+minutes after the system clock (a unit or epoch error, an upstream glitch) is refused
+before it is recorded, queued or applied: the market clock only moves forward, so one
+such event would move it, and every paper account's clock and journal, past that
+time for good. The underlying's `last_error` (every underlying's, for an option's
+event) names the latest refused event and how many there have been; its state stays
+the feed's own. Definitions and feed status carry no market time and always pass.
+Replays and the demo apply their recordings as they were made.
+
 The market-wide circuit breakers publish their own snapshot in status and ticks: the
 watched symbol, the previous close, the day's level and its halts (see
 [the paper API](paper-trading.md#engine-integration-and-http-api)). With paper trading,

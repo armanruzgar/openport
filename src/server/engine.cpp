@@ -42,7 +42,51 @@ Engine::Options driver_options(md::Provider& provider, const md::Subscription& s
     options.notifications.reset();
   return options;
 }
+/// An event's own market-data time; zero for a definition or a feed status, whose
+/// time is not market data.
+md::Timestamp stamped_at(const md::Event& event) {
+  return std::visit([](const auto& value) -> md::Timestamp {
+    using T = std::decay_t<decltype(value)>;
+    if constexpr (std::is_same_v<T, md::ContractDefinition> || std::is_same_v<T, md::ProviderStatus>) return 0;
+    else return value.ts;
+  }, event);
+}
+/// What an event is, for a feed error, and the underlying it names; none for an option's.
+std::pair<const char*, std::string> described(const md::Event& event) {
+  return std::visit([](const auto& value) -> std::pair<const char*, std::string> {
+    using T = std::decay_t<decltype(value)>;
+    if constexpr (std::is_same_v<T, md::OptionQuote>) return {"an option quote", {}};
+    else if constexpr (std::is_same_v<T, md::OptionTrade>) return {"an option trade", {}};
+    else if constexpr (std::is_same_v<T, md::OptionVolume>) return {"option volume", {}};
+    else if constexpr (std::is_same_v<T, md::OpenInterest>) return {"open interest", {}};
+    else if constexpr (std::is_same_v<T, md::VendorGreeks>) return {"vendor Greeks", {}};
+    else if constexpr (std::is_same_v<T, md::UnderlyingQuote>) return {"an underlying quote", value.symbol};
+    else if constexpr (std::is_same_v<T, md::UnderlyingClose>) return {"a close", value.symbol};
+    else if constexpr (std::is_same_v<T, md::SnapshotComplete>) return {"a snapshot", value.underlying};
+    else if constexpr (std::is_same_v<T, md::SnapshotHeartbeat>) return {"a heartbeat", value.underlying};
+    else if constexpr (std::is_same_v<T, md::TradingHalt>) return {"a halt", value.underlying};
+    else return {"an event", {}};
+  }, event);
+}
 }  // namespace
+
+void Engine::Ingress::publish(md::Event event) {
+  const auto stamped = stamped_at(event);
+  if (stamped <= md::now() + kMaxEventLead) {
+    next->publish(std::move(event));
+    return;
+  }
+  const auto [kind, underlying] = described(event);
+  const auto at = owner_.options_.clock();
+  const std::lock_guard lock(owner_.refusal_mutex_);
+  auto& refusal = owner_.refusal_;
+  ++refusal.count;
+  refusal.message = std::string(owner_.provider_.name()) + ": refused " + kind + " stamped " +
+                    md::format_timestamp(stamped) + ", more than 5 minutes after the system clock; " +
+                    std::to_string(refusal.count) + (refusal.count == 1 ? " event" : " events") + " refused so far";
+  refusal.underlying = underlying;
+  refusal.time = at;
+}
 
 Engine::Engine(md::Provider& provider, md::Subscription subscription, Options options)
     : provider_(provider), subscription_(std::move(subscription)), options_(driver_options(provider, subscription_, options)),
@@ -137,9 +181,12 @@ void Engine::start() {
                               status_.started, false, provider_.market_controls(), provider_.trade_venues()}, queue_,
           md::RecordingDirectory::Options{std::move(recording), options_.record_keep_days, options_.record_max_bytes});
     }
+    md::EventSink* destination = &queue_;
+    if (recorder_) destination = recorder_.get();
+    if (daily_recorder_) destination = daily_recorder_.get();
+    ingress_.next = destination;
     provider_started_ = true;
-    provider_.start(subscription_, daily_recorder_ ? static_cast<md::EventSink&>(*daily_recorder_) :
-        recorder_ ? static_cast<md::EventSink&>(*recorder_) : queue_);
+    provider_.start(subscription_, ingress_);
     // Complete journal startup before returning so the daemon can report failures
     // even if constructing or binding its web server subsequently fails.
     if (!demo_) desk_.start_trading();
@@ -273,6 +320,17 @@ EngineStatus Engine::status() const {
       if (!out.feed_message.empty()) out.feed_message += "; ";
       out.feed_message += message;
     }
+  }
+  // A refused event is the latest error of the underlying it names (of every one for an
+  // option's), while each feed state stays the feed's own.
+  {
+    const std::lock_guard refusals(refusal_mutex_);
+    if (refusal_.count > 0)
+      for (auto& [symbol, health] : out.underlyings)
+        if ((refusal_.underlying.empty() || refusal_.underlying == symbol) && refusal_.time >= health.last_error_time) {
+          health.last_error = refusal_.message;
+          health.last_error_time = refusal_.time;
+        }
   }
   // Persist storage failures even if subsequent market events report healthy.
   if (const auto error = recording_error(); !error.empty()) {
