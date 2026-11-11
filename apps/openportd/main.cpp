@@ -439,25 +439,29 @@ int import_command(int argc, char** argv) {
   }
   const auto selected = providers::import_dates(dates);
   const auto today = md::new_york_time(md::now()).date;
-  // A day the market was open is read from the provider, with its key: a missing key
-  // is not a usage error, and is said before any progress. Closed days need none.
+  // Databento and Massive need a key for a day they are asked for, once every date has
+  // been checked (closed and already imported days ask for nothing). A missing key is
+  // not a usage error: it is said alone, with status 1, before any progress.
   const char* key_variable = request.provider == "databento" ? "DATABENTO_API_KEY"
                            : request.provider == "massive" ? "MASSIVE_API_KEY" : nullptr;
-  const bool reads_provider = std::any_of(selected.begin(), selected.end(), [](md::Date date) {
-    return md::stock_session(md::new_york_to_utc(date, 12, 0)).open;
-  });
-  if (key_variable && reads_provider) {
-    const char* key = std::getenv(key_variable);
-    if (!key || !*key) {
-      std::fprintf(stderr, "openportd: import: set %s to import from %s\n", key_variable, request.provider.c_str());
-      return 1;
+  bool keyless = false;
+  const auto history_source = [&] {
+    if (key_variable) {
+      const char* key = std::getenv(key_variable);
+      if (!key || !*key) {
+        keyless = true;
+        throw std::runtime_error(std::string("import: set ") + key_variable);
+      }
     }
-  }
-  // Announced with the first day's progress, after every date has been checked.
+    return providers::make_history_source(request.provider);
+  };
+  // Announced with the first progress line. A day's first "importing" report comes
+  // before its source exists, so it is left out: the windows follow once it does.
   bool announced = false;
   try {
-    providers::import_days(request, selected, today, [&] { return providers::make_history_source(request.provider); },
+    providers::import_days(request, selected, today, history_source,
         [&](const providers::ImportDayProgress& update) {
+          if (update.state == "importing" && update.total_windows == 0) return;
           if (!announced) {
             std::fprintf(stderr, "Importing %s; data stays in %s\n", request.provider.c_str(), request.output.c_str());
             announced = true;
@@ -471,7 +475,8 @@ int import_command(int argc, char** argv) {
   } catch (const std::invalid_argument& error) {
     return usage(error.what());
   } catch (const std::exception& error) {
-    std::fprintf(stderr, "openportd: %s\n", error.what());
+    if (keyless) std::fprintf(stderr, "openportd: import: set %s to import from %s\n", key_variable, request.provider.c_str());
+    else std::fprintf(stderr, "openportd: %s\n", error.what());
     return 1;
   }
 }
