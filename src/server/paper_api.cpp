@@ -19,6 +19,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "openport/md/utf8.hpp"
 #include "openport/server/candles.hpp"
 #include "openport/server/series.hpp"
 #include "openport/trading/stress.hpp"
@@ -3019,6 +3020,9 @@ std::optional<std::map<std::string, std::string>> query_parameters(std::string_v
       decoded += static_cast<char>(byte);
       i += 2;
     }
+    // A route may echo a value in its JSON answer, which must be UTF-8: a value that
+    // is not is malformed here, a 400, rather than a 500 when the answer is printed.
+    if (!md::valid_utf8(decoded)) return std::nullopt;
     return decoded;
   };
   std::map<std::string, std::string> pairs;
@@ -3749,6 +3753,12 @@ json not_replayed(const AccountRules& r) {
 /// (rules_json's shape with a name and starting balance), with its own rules first
 /// unless include_current is false. See trading::replay_rules.
 ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source) {
+  // account=ID is the only query parameter, as on the other account routes: a
+  // misspelt one must not compare the main account instead.
+  const auto question = request.target.find('?');
+  const auto pairs = query_parameters(question == std::string::npos ? std::string_view{} : std::string_view(request.target).substr(question + 1));
+  if (!pairs || std::any_of(pairs->begin(), pairs->end(), [](const auto& pair) { return pair.first != "account"; }))
+    return api_error(400, "INVALID_REQUEST", "Unknown or invalid query parameter; this route takes only account=ID");
   const auto account = query_account(request.target, request.access.sandbox);
   if (!account) return api_error(400, "INVALID_REQUEST", "account must be an account ID");
   struct Set { std::string name, plan_id; Money initial_cash; AccountRules rules; };

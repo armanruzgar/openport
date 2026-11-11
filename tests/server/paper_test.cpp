@@ -5953,6 +5953,11 @@ TEST_F(PaperEngine, RulesCompareReplaysTheAttemptAgainstPresetsAndCustomRules) {
   expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"plans", {"nope"}}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"include_current", false}}), 400, "INVALID_REQUEST");
   expect_error(write(*engine, "POST", "/api/account/rules-compare?account=nobody", json::object()), 404, "UNKNOWN_ACCOUNT");
+  // A misspelt or unknown query parameter is refused, never read as the main account.
+  for (const auto* query : {"?acount=main", "?foo=bar&account=main", "?account=main&account=main"}) {
+    expect_error(write(*engine, "POST", std::string("/api/account/rules-compare") + query, json::object()), 400, "INVALID_REQUEST");
+  }
+  EXPECT_EQ(write(*engine, "POST", "/api/account/rules-compare?account=main", json::object()).status, 200);
   json many = json::array();
   for (int i = 0; i < 8; ++i) many.push_back("eod-50k");
   expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"plans", many}}), 400, "INVALID_REQUEST");

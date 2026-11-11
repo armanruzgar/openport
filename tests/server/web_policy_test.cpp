@@ -1163,6 +1163,14 @@ TEST(WebPolicy, EverySpellingOfTheAccountIsScopedAsTheRoutesReadIt) {
   EXPECT_EQ(form->at("flag"), "");
   EXPECT_EQ(server::query_parameters("from=2026-09-28T09:30:00+00:00")->at("from"), "2026-09-28T09:30:00+00:00");
   EXPECT_EQ(server::query_parameters("from=2026-09-28T13%3A30%3A00Z")->at("from"), "2026-09-28T13:30:00Z");
+  // Routes echo values in JSON, which must be UTF-8: a key or value that does not
+  // decode to UTF-8 is malformed, a 400 on every route, never a 500 when printed.
+  EXPECT_FALSE(server::query_parameters("symbol=%ff"));
+  EXPECT_FALSE(server::query_parameters("symbol=%c3"));
+  EXPECT_FALSE(server::query_parameters("%ff=1"));
+  EXPECT_FALSE(server::query_parameters("symbol=\xff"));
+  EXPECT_FALSE(server::query_account("/api/orders?account=%ff"));
+  EXPECT_EQ(server::query_parameters("symbol=%c3%a9")->at("symbol"), "\xc3\xa9");
 }
 
 TEST(WebPolicy, WriteModeSaysWhetherAWriteWithoutCredentialsIsAccepted) {

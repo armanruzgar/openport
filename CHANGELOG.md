@@ -32,6 +32,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Query values that are not UTF-8, and rules-compare's query.** A percent-decoded
+  query key or value that was not UTF-8 reached the routes, and one a route echoed in
+  its JSON answer (`chain?expiry=%ff`, `/api/earnings?symbol=%ff`) made printing the
+  answer throw: the client's mistake came back as 500 `INTERNAL_ERROR`. Every route
+  now refuses it with 400 `INVALID_REQUEST`. `POST /api/account/rules-compare` read
+  only `account` from its query and ignored the rest, so a misspelt `?acount=second`
+  compared the main account; like the other account routes it now answers 400 for
+  anything but `account=ID`.
 - **Copied orders and account-group bodies.** A ratio group sized each member as the
   order's quantity times its ratio and narrowed the result to 64 bits, so an absurd
   quantity (one whose share at a ratio up to 100 passes 2^63 - 1) wrapped to a small

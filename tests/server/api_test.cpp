@@ -446,6 +446,14 @@ TEST(Api, ErrorsAreJson) {
   EXPECT_EQ(post.status, 405);
 }
 
+// A route may echo a query value in its JSON answer; a value that is not UTF-8 is the
+// request's fault, a 400, not a 500 when the answer is printed.
+TEST(Api, QueryValuesThatAreNotUtf8AreMalformed) {
+  StubSource source;
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/chain?expiry=%ff", 400)["error"]["code"], "INVALID_REQUEST");
+  EXPECT_EQ(get(source, "/api/underlyings/SPX/chain?expiry=%c3%a9", 404)["error"]["message"], "no expiry \xc3\xa9");
+}
+
 TEST(Api, RejectsMalformedAndOutOfRangeNumbers) {
   StubSource source;
   for (const std::string value : {"", "0", "501", "-1", "1.5", "1e2", "nan", "inf",

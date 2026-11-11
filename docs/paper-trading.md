@@ -2730,7 +2730,8 @@ volume.
 
 #### Comparing rule sets on the recorded attempt
 
-`POST /api/account/rules-compare` (read access, live accounts) replays the account's
+`POST /api/account/rules-compare` (read access, live accounts; the only query
+parameter is `account=ID`, anything else is 400) replays the account's
 recorded attempt against its own rules and up to seven more: presets by ID in `plans`,
 and custom rule sets in `rules` (`{name, initial_cash, rules}` in the rules shape;
 `include_current: false` leaves the account's own out). `trading::replay_rules` walks each
@@ -4395,7 +4396,7 @@ Every other trading route acts on the main account, or on another given as
 parameter). An unknown account is 404 `UNKNOWN_ACCOUNT`; a malformed one is 400.
 Every route and the token check read query keys and values percent-decoded, so
 `%61ccount=beta` is `account=beta` and needs beta's scope. A key given twice in any
-spelling, or a malformed escape, is 400.
+spelling, a malformed escape, or a key or value that does not decode to UTF-8, is 400.
 Without an accounts directory (`--paper-journal` empty in tests) the server keeps
 one account, as a replay does, and account creation returns 409 `ACCOUNTS_UNSUPPORTED`,
 which a retry cannot change.
