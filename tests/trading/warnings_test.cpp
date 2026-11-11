@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
+#include "support/journal.hpp"
 #include "support/scripted_market.hpp"
+#include "support/temporary_directory.hpp"
 
 namespace openport::trading {
 namespace {
@@ -107,6 +110,52 @@ TEST(TradingWarnings, TonightsRatchetAndASoftFloorAboveEquityAreWarned) {
   const auto* soft = find(warnings, "SOFT_FLOOR");
   ASSERT_NE(soft, nullptr);
   EXPECT_DOUBLE_EQ(*soft->limit, (equity + m("100")).dollars());
+  EXPECT_EQ(find(warnings, "SOFT_FLOOR_ROLLOVER"), nullptr);
+}
+
+TEST(TradingWarnings, AStoredHundredPercentSoftFloorWarnsThatRolloverBringsItToEquity) {
+  // A soft floor percent of 100 is refused on writes but recovers from journals
+  // written while it was accepted. On an end-of-day plan above its high-water mark,
+  // tonight's floor ratchets to a full drawdown under equity, so the soft floor a
+  // drawdown above it reaches equity itself.
+  const test::TemporaryDirectory directory("openport-warnings");
+  const auto source = directory.file("source.jsonl");
+  const auto stored = directory.file("stored.jsonl");
+  ScriptedMarket f; auto c = config(); c.rules.drawdown_mode = DrawdownMode::EndOfDay;
+  {
+    TradingSession s(c, f.time, test::create_journal(source)); f.seed(s);
+    ASSERT_TRUE(s.submit(f.market("long", 2), f.time).decision.ok());
+    f.next(); s.on_quotes({f.quote("7.00", "7.20")}, {f.valuation()}, f.time);
+  }
+  {
+    auto out = test::create_journal(stored);
+    for (const auto& record : FileJournal::read(source).records) {
+      auto payload = nlohmann::json::parse(record.payload);
+      if (payload.contains("state")) payload["state"]["config"]["guardrails"]["soft_floor_percent"] = 100;
+      out->append(record.time, record.type, payload.dump());
+    }
+  }
+  auto s = TradingSession::recover(FileJournal::read(stored));
+  ASSERT_EQ(s.config().guardrails.soft_floor_percent, 100);
+  const auto equity = s.snapshot()->equity;
+  ASSERT_GT(equity, m("10000"));
+  // Today the soft floor is the 9,000 floor plus the 1,000 drawdown: under equity.
+  auto warnings = s.warnings();
+  EXPECT_EQ(find(warnings, "SOFT_FLOOR"), nullptr);
+  const auto tonight = equity - m("1000");
+  const auto* rollover = find(warnings, "SOFT_FLOOR_ROLLOVER");
+  ASSERT_NE(rollover, nullptr);
+  EXPECT_EQ(rollover->severity, "warning");
+  EXPECT_EQ(rollover->scope, "aggregate");
+  EXPECT_DOUBLE_EQ(*rollover->actual, equity.dollars());
+  EXPECT_DOUBLE_EQ(*rollover->limit, (tonight + m("1000")).dollars());
+  EXPECT_NE(rollover->message.find("At rollover your soft floor becomes"), std::string::npos) << rollover->message;
+  // At or under today's soft floor, SOFT_FLOOR says so and the rollover warning,
+  // whose soft floor is then the same, is not added beside it.
+  f.next(); s.on_quotes({f.quote("3.90", "4.00")}, {f.valuation()}, f.time);
+  ASSERT_LE(s.snapshot()->equity, m("10000"));
+  warnings = s.warnings();
+  EXPECT_NE(find(warnings, "SOFT_FLOOR"), nullptr);
   EXPECT_EQ(find(warnings, "SOFT_FLOOR_ROLLOVER"), nullptr);
 }
 
