@@ -459,6 +459,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   each one-second tick, and every superseded version stayed in the browser for the
   query library's default five minutes: about 300 copies of each chain on the page.
   They now go five seconds after the page moves on to a newer version.
+- **One page's error no longer blanks the terminal.** Nothing caught a render error,
+  so one (an unexpected payload, or a what-if candidate saved by another build without
+  a name) emptied the whole page, navigation and kill switch included, and a bad saved
+  candidate did it again on every reload. Each page now shows its error in its place
+  with Try again, Reload and Reset saved layout, which clears only this browser's
+  saved drafts and layout. Saved what-if and Analyze candidates are checked field by
+  field, and malformed ones are dropped.
 
 ## 0.5.1 (2026-10-28)
 

@@ -1949,7 +1949,12 @@ new candidate or one picked to take them) or from closing picked positions, comp
 them in a table with each one's change in Greeks, and shows P&L by spot move at unchanged
 volatility. Removing a candidate's last order removes the candidate. Compare waits for
 every trimmed name to be nonempty and at most 64 UTF-8 bytes, with a hint beside invalid
-names. The list is kept in the browser, per account.
+names. The list is kept in the browser, per account; a saved candidate whose fields
+do not check out (one saved by another build, or damaged storage) is dropped when the
+list loads. A page that still fails to render shows its error in its place, with
+**Try again**, **Reload** and **Reset saved layout**, which clears only this browser's
+saved drafts and layout (what-if and Analyze candidates, drawings, strategy presets,
+chain and chart settings, workspaces).
 
 ### Risk warnings
 

@@ -15,15 +15,35 @@ const empty: AnalyzeState = { candidates: [], selected: null }
 const states = new Map<string, AnalyzeState>()
 const listeners = new Set<() => void>()
 const storageKey = (symbol: string) => `openport.analyze.${symbol}`
+const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value)
+function savedLeg(value: unknown): value is StrategyLeg {
+  return record(value) && typeof value.symbol === "string" && typeof value.underlying === "string" && (value.side === "buy" || value.side === "sell") &&
+    Number.isSafeInteger(value.ratio) && (value.ratio as number) >= 1 && (value.type === "call" || value.type === "put") &&
+    finite(value.strike) && typeof value.expiry === "string"
+}
+function savedCandidate(value: unknown): value is AnalyzeCandidate {
+  return record(value) && typeof value.id === "string" && typeof value.name === "string" && Array.isArray(value.legs) && value.legs.every(savedLeg) &&
+    finite(value.units) && value.units > 0 && finite(value.shares) && value.shares >= 0 && typeof value.visible === "boolean"
+}
+
+/**
+ * Another build or a damaged browser profile can leave anything in storage, and the tab
+ * reads it while rendering: keep only candidates whose every field checks out.
+ */
 function load(symbol: string): AnalyzeState {
   const saved = states.get(symbol)
   if (saved) return saved
   let state = empty
   try {
     const text = window.localStorage.getItem(storageKey(symbol))
-    const parsed = text ? JSON.parse(text) as AnalyzeState : null
-    if (parsed && Array.isArray(parsed.candidates)) state = { candidates: parsed.candidates.slice(0, maxAnalyzeCandidates), selected: parsed.selected ?? null }
-  } catch { /* storage unavailable: start empty */ }
+    const parsed: unknown = text ? JSON.parse(text) : null
+    if (record(parsed) && Array.isArray(parsed.candidates)) {
+      const candidates = parsed.candidates.filter(savedCandidate).slice(0, maxAnalyzeCandidates)
+        .map((c) => ({ ...c, legs: c.legs.map((leg) => ({ ...leg, quote: null })) }))
+      state = { candidates, selected: candidates.some((c) => c.id === parsed.selected) ? parsed.selected as string : candidates[0]?.id ?? null }
+    }
+  } catch { /* storage unavailable or unreadable: start empty */ }
   states.set(symbol, state)
   return state
 }

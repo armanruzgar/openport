@@ -10,6 +10,7 @@ import { createRoot } from "react-dom/client"
 import { App } from "./App"
 import { LiveProvider } from "./api/live"
 import { createQueryClient } from "./api/query-client"
+import { ErrorBoundary } from "./components/ErrorBoundary"
 import { watchLinkedToken } from "./lib/write-token"
 
 const queryClient = createQueryClient()
@@ -22,9 +23,12 @@ if (!root) throw new Error("missing #root")
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <LiveProvider>
-        <App />
-      </LiveProvider>
+      {/* Pages have their own boundaries; this one catches the rest, so the root never goes blank. */}
+      <ErrorBoundary label="The terminal">
+        <LiveProvider>
+          <App />
+        </LiveProvider>
+      </ErrorBoundary>
     </QueryClientProvider>
   </StrictMode>,
 )

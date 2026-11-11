@@ -20,15 +20,37 @@ export function whatIfNameError(name: string): string | null {
   return new TextEncoder().encode(trimmed).length > 64 ? "Use a name of 64 UTF-8 bytes or fewer." : null
 }
 
+const record = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
+const side = (value: unknown) => value === "buy" || value === "sell"
+/** An order the panel can show and send: one contract with a side, or two to four legs. */
+function savedOrder(value: unknown): value is NewOrder {
+  if (!record(value) || !Number.isSafeInteger(value.quantity) || (value.quantity as number) < 1) return false
+  if (!(value.type === "market" || (value.type === "limit" && typeof value.limit_price === "string"))) return false
+  if (value.legs === undefined) return typeof value.symbol === "string" && side(value.side)
+  return Array.isArray(value.legs) && value.legs.length >= 2 && value.legs.length <= 4 && value.legs.every((leg) =>
+    record(leg) && typeof leg.symbol === "string" && side(leg.side) && Number.isSafeInteger(leg.ratio) && (leg.ratio as number) >= 1)
+}
+function savedDraft(value: unknown): value is WhatIfDraft {
+  return record(value) && typeof value.id === "string" && typeof value.name === "string" && Array.isArray(value.orders) &&
+    value.orders.length >= 1 && value.orders.length <= maxOrders && value.orders.every(savedOrder)
+}
+
+/**
+ * Another build or a damaged browser profile can leave anything in storage, and the
+ * panel reads it while rendering: keep only candidates whose every field checks out.
+ */
 function load(scope: string): WhatIfState {
   const saved = states.get(scope)
   if (saved) return saved
   let state = empty
   try {
     const text = window.localStorage.getItem(storageKey(scope))
-    const parsed = text ? JSON.parse(text) as WhatIfState : null
-    if (parsed && Array.isArray(parsed.candidates)) state = { candidates: parsed.candidates, target: parsed.target ?? null }
-  } catch { /* storage unavailable: start empty */ }
+    const parsed: unknown = text ? JSON.parse(text) : null
+    if (record(parsed) && Array.isArray(parsed.candidates)) {
+      const candidates = parsed.candidates.filter(savedDraft).slice(0, maxCandidates)
+      state = { candidates, target: candidates.some((c) => c.id === parsed.target) ? parsed.target as string : null }
+    }
+  } catch { /* storage unavailable or unreadable: start empty */ }
   states.set(scope, state)
   return state
 }

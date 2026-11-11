@@ -14,6 +14,7 @@ import { ReplayBanner } from "./components/ReplayBanner"
 import { Welcome, welcome } from "./components/Welcome"
 import { Sidebar, viewLabels } from "./components/Sidebar"
 import { Empty } from "./components/ui"
+import { ErrorBoundary } from "./components/ErrorBoundary"
 import { shortcutAllowed } from "./lib/keyboard"
 import { HotkeyHelp, Popout, Workspaces } from "./components/TerminalTools"
 import { SymbolSearch, Watchlist } from "./components/Watchlist"
@@ -142,8 +143,11 @@ export function App() {
           </div>
           <Watchlist onSymbol={(s) => navigate({ symbol: s, expiry: null })} />
           <div className={split && (view === "positions" || view === "orders") ? "grid min-w-0 gap-4 2xl:grid-cols-2" : ""}>
-            <div className="min-w-0">{content}</div>
-            {split && (view === "positions" || view === "orders") && <div className="hidden min-w-0 2xl:block">{view === "positions" ? <OrdersView /> : <PositionsView />}</div>}
+            {/* A page that fails to render stays a message in its place: the sidebar, header and kill switch keep working. */}
+            <div className="min-w-0"><ErrorBoundary label={viewLabels[view]} resetKey={`${view}:${symbol ?? ""}`}>{content}</ErrorBoundary></div>
+            {split && (view === "positions" || view === "orders") && <div className="hidden min-w-0 2xl:block">
+              <ErrorBoundary label={view === "positions" ? viewLabels.orders : viewLabels.positions} resetKey={view}>{view === "positions" ? <OrdersView /> : <PositionsView />}</ErrorBoundary>
+            </div>}
           </div>
         </main>
         {help && <HotkeyHelp onClose={() => setHelp(false)} />}

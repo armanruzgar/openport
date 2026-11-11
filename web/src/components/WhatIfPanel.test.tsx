@@ -46,6 +46,16 @@ const name = (value: string) => act(async () => {
 })
 
 describe("what-if", () => {
+  it("renders past a candidate another build saved without a name", async () => {
+    // It threw on name.trim() in every render, blanking Positions on each reload.
+    localStorage.setItem("openport.what-if.live:old-build", '{"candidates":[{"id":"a1","orders":[{"symbol":"X"}]}],"target":null}')
+    try {
+      vi.mocked(useLive).mockReturnValue(liveState(status, null, "open", 0, "old-build"))
+      await render()
+      expect(host.querySelector('[aria-label="What-if"]')).not.toBeNull()
+      expect(host.textContent).toContain("Add closing every position")
+    } finally { localStorage.removeItem("openport.what-if.live:old-build") }
+  })
   it("builds candidates from positions and tickets, and compares them against the book", async () => {
     await render()
     expect(host.textContent).toContain("Build each candidate from a ticket's preview")
