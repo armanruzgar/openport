@@ -234,6 +234,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     const changed = (reason: DestinationChangeReason) => {
       const next = captureDestination()
       if (next.source !== previous.source || next.account !== previous.account) {
+        // Every new destination is a new account scope, however it was set: a sandbox
+        // that expires or ends sets the account directly. Account views remount, and the
+        // old account's cached data and late responses are no longer taken for this one's.
+        setAccountScope((scope) => scope + 1)
         if (reason === "automatic") setNotice(`Destination changed from ${destinationLabel(previous)}. Orders now go to ${destinationLabel(next)}.`)
         previous = next
       }

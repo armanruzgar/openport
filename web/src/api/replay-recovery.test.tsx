@@ -68,10 +68,12 @@ it("announces an account disappearing", async () => {
   expect(host.textContent).toContain("live account Practice")
 })
 
-it("announces sandbox expiry with the new live account", async () => {
+function Scope() { return <output>{useLive().accountScope}</output> }
+it("announces sandbox expiry with the new live account, as a new account scope", async () => {
   dataSource.set("live"); activeAccount.set("sandbox-one"); writeToken.set("sandbox-token", "sandbox-one")
   vi.mocked(api.status).mockResolvedValue({ ...status, sandboxes: { enabled: true } } as typeof status)
-  await render()
+  await render(<Scope />)
+  const before = host.querySelector("output")!.textContent
   const send = vi.fn(async () => new Response(JSON.stringify({ error: { code: "SANDBOX_EXPIRED", message: "Expired" } }), { status: 403 }))
   vi.stubGlobal("fetch", send)
   await act(async () => {
@@ -80,6 +82,20 @@ it("announces sandbox expiry with the new live account", async () => {
   expect(activeAccount.get()).toBe("main")
   expect(host.textContent).toContain("sandbox expired")
   expect(host.textContent).toContain("Orders now go to live account Practice")
+  // Account views remount, and the sandbox's cached data is not shown as the main account's.
+  expect(host.querySelector("output")!.textContent).not.toBe(before)
+})
+it("starts a new account scope when the server stops offering sandboxes", async () => {
+  dataSource.set("live"); activeAccount.set("sandbox-one"); writeToken.set("sandbox-token", "sandbox-one")
+  vi.mocked(api.status).mockResolvedValue({ ...status, sandboxes: { enabled: true } } as typeof status)
+  await render(<Scope />); await advance(1)
+  const before = host.querySelector("output")!.textContent
+  vi.mocked(api.status).mockResolvedValue({ ...status, sandboxes: { enabled: false } } as typeof status)
+  await act(async () => { await client.invalidateQueries({ queryKey: ["status"] }) }); await advance(1)
+  expect(activeAccount.get()).toBe("main")
+  expect(writeToken.get()).toBe("")
+  expect(host.textContent).toContain("Sandbox access ended")
+  expect(host.querySelector("output")!.textContent).not.toBe(before)
 })
 
 async function click(label: string) {
@@ -198,7 +214,6 @@ it("announces the two-minute unreachable fallback", async () => {
 })
 
 it("keeps the account scope across a socket blip, so an order sent before it still shows its result", async () => {
-  function Scope() { return <output>{useLive().accountScope}</output> }
   await render(<Scope />)
   const before = host.querySelector("output")!.textContent
   await act(async () => onConnection("closed"))

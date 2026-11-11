@@ -1230,6 +1230,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   block (larger once an evaluation is active) left the page list too little room, and
   Replay, Backtest and Status sat in a scroll area that nothing showed was there. The
   whole sidebar now scrolls as one, the page list first.
+- **A sandbox that ends hands over to the main account cleanly.** When a public-demo
+  sandbox expired, or the server stopped offering sandboxes, the terminal moved to the
+  main account without starting a new account scope, so for a moment the main account
+  could show the sandbox's positions, orders and fills, a late sandbox response could be
+  shown as current, and the next alert asked to confirm a changed destination. Every
+  change of account now starts a new scope, however it came about.
 
 ## 0.5.1 (2026-10-28)
 
