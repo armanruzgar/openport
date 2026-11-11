@@ -4342,7 +4342,7 @@ opening orders and cancels working openings outside the plan window.
 | `INVALID_REQUEST` | HTTP 400: a malformed body or query, including an order no market could make valid (see the HTTP errors below); nothing is recorded |
 | `UNKNOWN_ACCOUNT`, `ACCOUNTS_UNSUPPORTED` | HTTP 404 for an `account=` the server does not have; 409 when creating an account on a server that keeps one (a replay, or no accounts directory) |
 | `LIMITS_REVISION` | HTTP 409: `expected_revision` on `PUT /api/risk/limits` or `/api/risk/guardrails` is not the current `limits_revision`; refetch and retry |
-| `TRADING_UNAVAILABLE` | HTTP 503: the command inbox is full or the engine is stopping (with `Retry-After`), or the account's journal failed or is locked |
+| `TRADING_UNAVAILABLE` | HTTP 503: the command inbox is full or the engine is stopping (with `Retry-After`), or the account's journal failed or is locked, or paper trading is turned off (`--no-paper`), which no retry clears (without it) |
 | `PASS_ODDS_UNAVAILABLE` | HTTP 422: pass odds need an evaluation rule, complete current marks and ten completed days with intraday extremes |
 | `INVALID_SETTLEMENT`, `ALREADY_SETTLED` | Invalid/premature settlement or already settled OSI |
 | `UNKNOWN_ORDER`, `ORDER_TERMINAL` | Invalid cancellation target or already finished order |
@@ -4371,7 +4371,9 @@ opening orders and cancels working openings outside the plan window.
 ## Engine integration and HTTP API
 
 Paper trading is enabled by default in `openportd`; `--no-paper` disables it and
-reports `PAPER_DISABLED` in status.
+reports `PAPER_DISABLED` in status. Every trading and playbook write then answers 503
+`TRADING_UNAVAILABLE` ("Paper trading is turned off on this server") without
+`Retry-After`, since no retry can succeed.
 
 ### Accounts
 

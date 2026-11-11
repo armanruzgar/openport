@@ -345,11 +345,7 @@ bool playbook_write(const ApiRequest& request, MetricsSource& source, ApiComplet
       else if (!reply.error_code.empty()) complete(api_error(503, reply.error_code, reply.decision.message));
       else if (!reply.decision.ok()) complete(api_error(400, "INVALID_PLAYBOOK", reply.decision.message));
       else complete(ApiResponse{200, reply.playbook_result});
-    })) {
-      auto busy = api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable");
-      busy.retry_after = kInboxRetrySeconds;
-      complete(std::move(busy));
-    }
+    })) complete(command_refused(source));
   } catch (const std::exception& error) { complete(api_error(400, "INVALID_PLAYBOOK", error.what())); }
   return true;
 }

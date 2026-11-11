@@ -12,6 +12,9 @@
 #include <thread>
 #include <tuple>
 #include <vector>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 #include "openport/server/api.hpp"
 #include "openport/server/plans.hpp"
@@ -2344,12 +2347,20 @@ TEST(PaperAvailability, DisabledFailedJournalFullInboxAndStoppingFailClosed) {
     const auto response = write(engine, "POST", "/api/risk/kill", {{"action", "trip"}, {"reason", "test"}});
     EXPECT_EQ(response.status, 503) << response.body;
     EXPECT_EQ(json::parse(response.body)["error"]["code"], "TRADING_UNAVAILABLE");
-    // A full inbox or stopping engine asks the client to retry; a failed journal does not.
+    // A full inbox or stopping engine asks the client to retry; paper trading turned
+    // off for the process or a failed journal does not, since a retry cannot succeed.
     if (mode >= 2) {
       EXPECT_EQ(response.retry_after, server::kInboxRetrySeconds);
+    } else {
+      EXPECT_EQ(response.retry_after, 0) << mode;
     }
     if (mode == 0) {
       EXPECT_FALSE(engine.status().trading.enabled);
+      EXPECT_EQ(json::parse(response.body)["error"]["message"], "Paper trading is turned off on this server (--no-paper)");
+      // Playbook writes say the same.
+      const auto playbook = write(engine, "PUT", "/api/playbooks/morning/mode", {{"mode", "stage"}});
+      EXPECT_EQ(playbook.status, 503) << playbook.body;
+      EXPECT_EQ(playbook.retry_after, 0);
     }
     if (mode == 1) {
       EXPECT_EQ(engine.status().trading.write, "disabled");
@@ -2430,6 +2441,45 @@ TEST(PaperAvailability, LockedJournalDisablesEveryWriteButKeepsAnalyticsAndOwner
   EXPECT_TRUE(recovered->risk.kill_latched);
   EXPECT_EQ(recovered->risk.kill_reason, "owner");
   EXPECT_EQ(recovered->account_version, first.trading_view()->snapshot->account_version);
+  std::filesystem::remove_all(path.parent_path());
+}
+
+// Renaming, archiving or deleting an account addresses the one in the path: another
+// process holding only the main journal does not refuse them for an account whose
+// own journal this server holds, while main's own writes stay refused.
+TEST(PaperAvailability, AccountRoutesCheckTheJournalOfTheAccountTheyName) {
+  const auto path = paper_path();
+  auto options = paper_options();
+  options.paper_journal = path;
+  options.paper_accounts = path.parent_path() / "accounts";
+  std::string second;
+  {
+    PaperProvider provider;
+    server::Engine engine(provider, {{"SPX"}}, options);
+    engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+    const auto created = write(engine, "POST", "/api/accounts", {{"name", "Second"}, {"plan", "practice"}});
+    ASSERT_EQ(created.status, 201) << created.body;
+    second = json::parse(created.body)["account"]["id"].get<std::string>();
+    engine.stop();
+  }
+  const int held = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  ASSERT_GE(held, 0);
+  ASSERT_EQ(::flock(held, LOCK_EX | LOCK_NB), 0);
+  {
+    PaperProvider provider;
+    server::Engine engine(provider, {{"SPX"}}, options);
+    engine.start();
+    ASSERT_TRUE(wait_for([&] { return engine.trading_view(second) != nullptr; }));
+    const auto refused = write(engine, "POST", "/api/risk/kill", {{"action", "trip"}, {"reason", "main"}});
+    EXPECT_EQ(refused.status, 503) << refused.body;
+    EXPECT_TRUE(json::parse(refused.body)["error"]["message"].get<std::string>().starts_with("JOURNAL_LOCKED:"));
+    const auto renamed = write(engine, "PATCH", "/api/accounts/" + second, {{"name", "Renamed"}});
+    EXPECT_EQ(renamed.status, 200) << renamed.body;
+    EXPECT_EQ(write(engine, "PATCH", "/api/accounts/" + second, {{"archived", true}}).status, 200);
+    engine.stop();
+  }
+  ::close(held);
   std::filesystem::remove_all(path.parent_path());
 }
 

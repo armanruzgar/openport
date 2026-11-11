@@ -32,6 +32,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **`--no-paper` writes and account routes beside a locked main journal.** A trading
+  or playbook write to a server started with `--no-paper` answered 503 "Command inbox
+  full or trading unavailable" with `Retry-After: 1`, so clients, the Python client
+  among them, retried a request no retry could clear. It now says paper trading is
+  turned off on this server and sends no `Retry-After`. Renaming, archiving,
+  unarchiving or deleting a named account was refused with main's `JOURNAL_LOCKED`
+  reason when another process held only main's journal; these routes now check the
+  account they name.
 - **Query values that are not UTF-8, and rules-compare's query.** A percent-decoded
   query key or value that was not UTF-8 reached the routes, and one a route echoed in
   its JSON answer (`chain?expiry=%ff`, `/api/earnings?symbol=%ff`) made printing the

@@ -3056,6 +3056,16 @@ bool known_account(const MetricsSource& source, const std::string& account) {
   return std::any_of(accounts.begin(), accounts.end(), [&](const auto& a) { return a.id == account; });
 }
 
+ApiResponse command_refused(const MetricsSource& source) {
+  const auto status = source.status();
+  if (status.accounts.empty() && status.trading.reason == "PAPER_DISABLED")
+    return api_error(503, "TRADING_UNAVAILABLE", "Paper trading is turned off on this server (--no-paper)");
+  // Safe to retry: an order resent with the same client_order_id and terms is answered once.
+  auto busy = api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable");
+  busy.retry_after = kInboxRetrySeconds;
+  return busy;
+}
+
 namespace {
 constexpr std::size_t kMaxProfileCurves = 8;
 constexpr std::size_t kMaxProfileLegs = 8;
@@ -4388,7 +4398,7 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
         if (--fan->pending == 0) fan->finish();
       };
       if (!source.post_trading(command, [command, record](TradingReply reply) { record(command_response(command, reply)); }))
-        record(api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable"));
+        record(command_refused(source));
     }
   } catch (const PlanRestrictionError& error) {
     complete(api_error(422, "INVALID_RULES", error.what()));
@@ -4514,10 +4524,14 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (pairs->size() == 1) account = pairs->at("account");
-  // An account whose journal another process holds cannot take writes.
+  // An account whose journal another process holds cannot take writes. A route that
+  // manages an account (rename, archive, delete) addresses the one in its path.
+  constexpr std::string_view managed = "/api/accounts/";
+  const std::string addressed = path.starts_with(managed) ? path.substr(managed.size())
+                                : account.empty() ? std::string(kMainAccount) : account;
   const auto status = source.status();
   for (const auto& a : status.accounts)
-    if ((a.id == (account.empty() ? std::string(kMainAccount) : account)) && a.trading.reason.starts_with("JOURNAL_LOCKED:")) {
+    if (a.id == addressed && a.trading.reason.starts_with("JOURNAL_LOCKED:")) {
       complete(api_error(503, "TRADING_UNAVAILABLE", a.trading.reason));
       return;
     }
@@ -4527,16 +4541,11 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
   }
   try {
     auto command = parse_command(request, path);
-    if (!path.starts_with("/api/accounts/")) command.account = account;
+    if (!path.starts_with(managed)) command.account = account;
     command.actor = request.actor;
     if (!source.post_trading(command, [command, complete](TradingReply reply) {
           complete(command_response(command, reply));
-        })) {
-      // Safe to retry: an order resent with the same client_order_id and terms is answered once.
-      auto busy = api_error(503, "TRADING_UNAVAILABLE", "Command inbox full or trading unavailable");
-      busy.retry_after = kInboxRetrySeconds;
-      complete(std::move(busy));
-    }
+        })) complete(command_refused(source));
   } catch (const PlanRestrictionError& error) {
     complete(api_error(422, "INVALID_RULES", error.what()));
   } catch (const TradingError& error) {
