@@ -480,6 +480,10 @@ AnalysisPortfolio parse_analysis_csv(std::string_view text, std::string_view for
   else if (out.format == "schwab") parse_schwab(rows, sink);
   else if (out.format == "ibkr") parse_ibkr(rows, sink);
   else throw std::invalid_argument("format must be auto, generic, tastytrade, schwab or ibkr");
+  // A holding whose lots net to zero is left out, and listed with its first line, so
+  // its symbol does not vanish without a word.
+  for (const auto& held : out.holdings)
+    if (held.quantity == 0) out.skipped.push_back(held.source + ": its lots net to zero");
   std::erase_if(out.holdings, [](const AnalysisHolding& h) { return h.quantity == 0; });
   if (out.holdings.empty()) throw std::invalid_argument("no open positions found");
   return out;

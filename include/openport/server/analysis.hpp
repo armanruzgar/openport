@@ -35,7 +35,8 @@ struct AnalysisPortfolio {
   std::string format;  ///< generic, tastytrade, schwab or ibkr
   md::Timestamp imported = 0;  ///< wall-clock time of the import
   std::vector<AnalysisHolding> holdings;
-  /// Lines the import passed over, with why: cash, totals, unsupported instruments.
+  /// Lines the import passed over, with why: cash, totals, unsupported instruments,
+  /// share fractions and holdings whose lots net to zero.
   std::vector<std::string> skipped;
 };
 
@@ -53,7 +54,7 @@ inline constexpr std::size_t kAnalysisMaxPortfolios = 32;
 /// Parses a positions file. Throws std::invalid_argument naming the line and the
 /// problem, or the columns a layout is missing. Holdings of one symbol are summed,
 /// at the quantity-weighted cost of the lots on the side they net to; ones that net
-/// to zero are dropped. Option symbols are read as OSI (padded or compact), Schwab's
+/// to zero are left out and listed as skipped. Option symbols are read as OSI (padded or compact), Schwab's
 /// "SPY 12/18/2026 600.00 C" and IBKR's "SPY 18DEC26 600 C"; columns that name only
 /// the underlying take SPXW, NDXP or RUTW off the monthly expiry. Futures and
 /// options on them are skipped.

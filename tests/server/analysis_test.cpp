@@ -180,6 +180,28 @@ TEST(AnalysisImport, OppositeLotsKeepTheCostOfTheSideThatRemains) {
   EXPECT_EQ(h.cost, 1.0);
 }
 
+// G-19: a holding whose lots net to zero is left out and listed as skipped, as
+// docs/analysis.md says, so its symbol does not vanish without a word.
+TEST(AnalysisImport, HoldingsThatNetToZeroAreListedAsSkipped) {
+  const auto p = server::parse_analysis_csv("symbol,quantity\nSPY,5\nSPY,-5\nQQQ,1\n", "generic");
+  ASSERT_EQ(p.holdings.size(), 1u);
+  EXPECT_EQ(p.holdings[0].symbol, "QQQ");
+  ASSERT_EQ(p.skipped.size(), 1u);
+  EXPECT_EQ(p.skipped[0], "line 2 SPY: its lots net to zero");
+}
+
+// G-98: the store keeps at most 32 portfolios, as docs/analysis.md says; another
+// import is refused until one is deleted.
+TEST(AnalysisImport, TheStoreKeepsAtMostThirtyTwoPortfolios) {
+  server::AnalysisPortfolios store;  // in memory
+  const auto p = server::parse_analysis_csv("symbol,quantity\nSPY,10\n", "generic");
+  for (std::size_t i = 0; i < server::kAnalysisMaxPortfolios; ++i) (void)store.add(p, "p" + std::to_string(i), 0);
+  EXPECT_EQ(store.list().size(), server::kAnalysisMaxPortfolios);
+  EXPECT_THROW((void)store.add(p, "one more", 0), std::invalid_argument);
+  ASSERT_TRUE(store.remove("p0"));
+  EXPECT_EQ(store.add(p, "one more", 0).id, "one-more");
+}
+
 // A file that names only the underlying gets the root that lists the expiry: SPX, NDX
 // and RUT settle their monthlies in the morning and every other expiry on the close.
 TEST(AnalysisImport, SplitColumnsTakeTheClosingRootOffTheMonthlyExpiry) {
