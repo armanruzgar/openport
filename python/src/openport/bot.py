@@ -49,7 +49,8 @@ class Runner:
         self.event_error: Exception | None = None
         self._stop = asyncio.Event()
         self._seen_fills: set[str] = set()
-        self._bars: dict[str, int] = {}
+        # Per symbol, the newest bar time not to deliver: closed before the start, or delivered.
+        self._bars: dict[str, float] = {}
         self._events: asyncio.Queue = asyncio.Queue(maxsize=256)
 
     def stop(self):
@@ -63,6 +64,19 @@ class Runner:
 
     async def _read(self, method, *args, **kwargs):
         return await asyncio.to_thread(method, *args, **kwargs)
+
+    async def _candles(self, symbol):
+        return (await self._read(self.client.candles, symbol, self.interval))["bars"]
+
+    async def _prime_bars(self, symbol):
+        # Bars a newer bar has already closed are history. The newest may still be
+        # open, so it is delivered once a bar follows it; before any bar, every bar
+        # that closes is new. Bar times are whole seconds, so one second earlier
+        # sorts just before the newest.
+        bars = await self._candles(symbol)
+        if len(bars) > 1:
+            return bars[-2]["t"]
+        return bars[0]["t"] - 1 if bars else float("-inf")
 
     async def _fill(self, fill):
         key = str(fill.get("attempt", "")) + ":" + str(fill["id"])
@@ -99,9 +113,11 @@ class Runner:
     async def run(self, *, max_ticks: int | None = None):
         """Run until stop/cancellation/max_ticks. History runs finish after recorded rows.
 
-        Live/replay starts prime existing fills, then deliver new ones once per run.
-        Bars are delivered when a newer bar proves the previous one closed. No
-        missing bars or quotes are synthesized. A paused replay produces no new bars.
+        Live/replay starts prime existing fills and bars before on_start, then deliver
+        new fills once per run, and each bar that closes after the start once a newer
+        bar proves it closed, including bars a hook's replay step closed before the
+        first poll. No missing bars or quotes are synthesized. A paused replay
+        produces no new bars.
         """
         if max_ticks is not None and max_ticks < 1:
             raise ValueError("max_ticks must be positive")
@@ -110,6 +126,8 @@ class Runner:
         try:
             if not history:
                 self._seen_fills = {str(fill.get("attempt", "")) + ":" + str(fill["id"]) for fill in (await self._read(self.client.fills))["fills"]}
+                for symbol in self.symbols:
+                    self._bars[symbol] = await self._prime_bars(symbol)
                 if self.use_events:
                     stream = asyncio.create_task(self._stream())
             await self._hook("on_start")
@@ -127,11 +145,8 @@ class Runner:
                 for fill in reversed((await self._read(self.client.fills))["fills"]):
                     await self._fill(fill)
                 for symbol in self.symbols:
-                    bars = (await self._read(self.client.candles, symbol, self.interval))["bars"]
-                    if symbol not in self._bars and len(bars) > 1:
-                        self._bars[symbol] = bars[-2]["t"]
-                    for bar in bars[:-1]:
-                        if bar["t"] > self._bars.get(symbol, bar["t"]):
+                    for bar in (await self._candles(symbol))[:-1]:
+                        if bar["t"] > self._bars[symbol]:
                             self._bars[symbol] = bar["t"]
                             await self._hook("on_bar", symbol, bar)
                 count += 1

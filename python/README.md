@@ -224,8 +224,10 @@ definition/mode changes require admin; ordinary trade scope cannot enable auto.
 to one second; `max_ticks` bounds an offline test. The runner never places orders
 by itself: preview and use stable client IDs in your hooks.
 
-Live and `for_replay()` clients prime existing fills, observe new fills once per
-runner, and emit closed bars only when a newer observed bar exists. `on_tick`
+Live and `for_replay()` clients read existing fills and bars before `on_start`,
+observe new fills once per runner, and emit every bar that closes after that
+read, once a newer observed bar exists, including bars a replay step in a hook
+closes before the first poll. Bars already closed at the start are not emitted. `on_tick`
 receives a status snapshot on each poll or event wakeup. They do not
 fabricate missing bars. Events wake fill reconciliation; REST polling also runs
 when WebSockets are unavailable or disconnected. `event_error` retains a streaming

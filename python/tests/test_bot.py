@@ -40,9 +40,59 @@ def test_runner_fallback_deduplicates_fills_and_emits_closed_bars(stub, replay):
     asyncio.run(runner.run(max_ticks=3))
     assert strategy.calls[0] == ("start",) and strategy.calls[-1] == ("stop",)
     assert [item[1]["id"] for item in strategy.calls if item[0] == "fill"] == ["1"]
-    assert [item[2]["t"] for item in strategy.calls if item[0] == "bar"] == [120, 180]
+    # The start saw bars 0 and 60: 0 had closed, 60 was still open and closes later.
+    assert [item[2]["t"] for item in strategy.calls if item[0] == "bar"] == [60, 120, 180]
     if replay:
         assert all(target.startswith("/api/replay/") for _, target, *_ in stub.requests)
+
+
+def bars(*times):
+    return [{"t": t, "o": 1, "h": 1, "l": 1, "c": 1} for t in times]
+
+
+@pytest.mark.parametrize("polls,delivered", [
+    ([[], [0, 60], [0, 60, 120]], [0, 60]),  # no bar yet when the runner starts
+    ([[0], [0, 60], [0, 60, 120]], [0, 60]),  # one bar, still open
+    ([[0, 60], [0, 60, 120, 180], [0, 60, 120, 180, 240]], [60, 120, 180]),  # two close between polls
+])
+def test_runner_delivers_every_bar_that_closes_after_it_starts(stub, polls, delivered):
+    original = stub.respond
+    reads = 0
+    def respond(method, target, headers, body):
+        nonlocal reads
+        status, value = original(method, target, headers, body)
+        if "/candles" in target:
+            value["bars"] = bars(*polls[min(reads, len(polls) - 1)])
+            reads += 1
+        return status, value
+    stub.respond = respond
+    strategy = Recorder()
+    runner = Runner(Client(stub.url), strategy, symbols=("SPX",), poll_interval=0.001, use_events=False)
+    # The first read is before on_start; each tick reads once more.
+    asyncio.run(runner.run(max_ticks=len(polls) - 1))
+    assert reads == len(polls)
+    assert [item[2]["t"] for item in strategy.calls if item[0] == "bar"] == delivered
+
+
+@pytest.mark.parametrize("hook", ["on_start", "on_tick"])
+def test_runner_delivers_the_bars_a_replay_step_closes_before_its_first_poll(stub, hook):
+    original = stub.respond
+    stepped = False
+    def respond(method, target, headers, body):
+        nonlocal stepped
+        status, value = original(method, target, headers, body)
+        stepped = stepped or (method == "PUT" and target == "/api/replay")
+        if "/candles" in target:
+            # A paused replay's first bar, open; then the four bars its step closed.
+            value["bars"] = bars(*(range(0, 300, 60) if stepped else [0]))
+        return status, value
+    stub.respond = respond
+    strategy = Recorder()
+    setattr(strategy, hook, lambda *_: strategy.client.step_replay("09:34"))
+    runner = Runner(Client(stub.url).for_replay(), strategy, symbols=("SPX",), poll_interval=0.001, use_events=False)
+    asyncio.run(runner.run(max_ticks=1))
+    assert stepped
+    assert [item[2]["t"] for item in strategy.calls if item[0] == "bar"] == [0, 60, 120, 180]
 
 
 def test_runner_history_walks_recorded_rows_and_always_stops(stub):

@@ -20,6 +20,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Strategy runner bars after a quiet start.** `openport.bot.Runner` started on a
+  symbol with no bar or one open bar (a fresh paused replay, or live before a bar
+  closed) skipped every bar that closed before a poll first saw two, and a hook that
+  stepped the replay before the first poll lost every bar the step closed. The runner
+  now reads each symbol's bars before `on_start` and delivers every bar that closes
+  after that.
 - **Feed failover and `Stale` feeds.** A paragraph of the
   [runtime guide](docs/runtime.md#feed-failover) still said a feed that reports `Stale`
   while healthy counts as failing. Failover judges freshness apart from that label:
