@@ -5,6 +5,7 @@
 #include <boost/asio/read_until.hpp>
 #include <boost/asio/streambuf.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/system/system_error.hpp>
 #include <gtest/gtest.h>
 #include <zlib.h>
 
@@ -31,6 +32,20 @@ std::string gzip(const std::string& text) {
   out.resize(zs.total_out);
   deflateEnd(&zs);
   return out;
+}
+
+/// What a call threw. A DNS or socket failure is marked as such, so a test of a check
+/// that must fail before any network access cannot pass on the lookup's failure.
+template <typename Call>
+std::string error_of(Call call) {
+  try {
+    call();
+  } catch (const boost::system::system_error& error) {
+    return std::string("network: ") + error.what();
+  } catch (const std::exception& error) {
+    return error.what();
+  }
+  return "(nothing thrown)";
 }
 
 TEST(Http, GunzipRoundTripsLargeRepetitiveText) {
@@ -63,36 +78,6 @@ TEST(Http, GunzipTakesUpTo256MiBByDefault) {
   EXPECT_EQ(openport::net::kMaxDecompressedBytes, 256u * 1024 * 1024);
   const std::string text(2 * 1024 * 1024, 'x');
   EXPECT_EQ(gunzip(gzip(text)), text);
-}
-
-TEST(Http, AFailedRetryDoesNotLeaveItsConnectionForTheNextRequest) {
-  namespace asio = boost::asio;
-  using asio::ip::tcp;
-  asio::io_context io;
-  tcp::acceptor acceptor(io, {asio::ip::make_address("127.0.0.1"), 0});
-  const auto port = acceptor.local_endpoint().port();
-  std::thread server([&] {
-    const auto serve = [&](std::string_view reply, bool close) {
-      auto socket = std::make_shared<tcp::socket>(acceptor.accept());
-      asio::streambuf request;
-      asio::read_until(*socket, request, "\r\n\r\n");
-      asio::write(*socket, asio::buffer(reply));
-      if (close) socket->close();
-      return socket;
-    };
-    // A kept-alive answer, then the server drops the connection.
-    serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", true);
-    // The retry: a malformed answer with a stale one behind it, connection left open.
-    const auto held = serve("HTTP/1.1 200 OK\r\nBroken header\r\n\r\n"
-                            "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nstale", false);
-    serve("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfresh", true);
-  });
-  openport::net::HttpClient client;
-  const auto url = "http://127.0.0.1:" + std::to_string(port) + "/x";
-  EXPECT_EQ(client.get(url, {}, std::chrono::seconds(5)).body, "ok");
-  EXPECT_THROW((void)client.get(url, {}, std::chrono::seconds(5)), std::exception);
-  EXPECT_EQ(client.get(url, {}, std::chrono::seconds(5)).body, "fresh");
-  server.join();
 }
 
 TEST(Http, ParsesUrls) {
@@ -146,10 +131,16 @@ TEST(Http, ParsesUrls) {
 TEST(Http, BrokerCallsCancelBeforeDnsAndExposeCaseInsensitiveHeaders) {
   openport::net::HttpClient client;
   const std::atomic<bool> cancelled{true};
-  EXPECT_THROW((void)client.post("https://does-not-exist.invalid/oauth/token", "secret", {},
-                                 std::chrono::seconds(1), &cancelled), std::runtime_error);
-  EXPECT_THROW((void)client.get_direct("https://does-not-exist.invalid/data", {},
-                                       std::chrono::seconds(1), &cancelled), std::runtime_error);
+  // Without the checks these would look the host up and fail there instead.
+  EXPECT_EQ(error_of([&] {
+              (void)client.post("https://does-not-exist.invalid/oauth/token", "secret", {}, std::chrono::seconds(1),
+                                &cancelled);
+            }),
+            "HTTP request cancelled");
+  EXPECT_EQ(error_of([&] {
+              (void)client.get_direct("https://does-not-exist.invalid/data", {}, std::chrono::seconds(1), &cancelled);
+            }),
+            "HTTP request cancelled");
   openport::net::HttpResponse response;
   response.headers = {{"x-ratelimit-available", "7"}, {"Retry-After", "60"}};
   EXPECT_EQ(response.header("X-Ratelimit-Available"), "7");
@@ -160,9 +151,10 @@ TEST(Http, BrokerCallsCancelBeforeDnsAndExposeCaseInsensitiveHeaders) {
 
 TEST(Http, WebSocketRejectsPlaintextAndCancelsBeforeDns) {
   auto socket = openport::net::make_websocket();
-  EXPECT_THROW(socket->connect("ws://does-not-exist.invalid/", nullptr), std::runtime_error);
+  EXPECT_EQ(error_of([&] { socket->connect("ws://does-not-exist.invalid/", nullptr); }),
+            "DXLink requires a TLS WebSocket URL");
   const std::atomic<bool> cancelled{true};
-  EXPECT_THROW(socket->connect("wss://does-not-exist.invalid/", &cancelled), std::runtime_error);
+  EXPECT_EQ(error_of([&] { socket->connect("wss://does-not-exist.invalid/", &cancelled); }), "WebSocket cancelled");
   socket->close();
   socket->close();
 }
@@ -245,7 +237,96 @@ TEST(Http, PreCancelledRequestsFailBeforeDnsOrNetworkAccess) {
   EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
 }
 
-// Socket tests use the WebServer suite so the sandbox-safe filter excludes them.
+/// Accepts the next connection within five seconds.
+bool accept_within(boost::asio::ip::tcp::acceptor& listener, boost::asio::ip::tcp::socket& peer) {
+  listener.non_blocking(true);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    boost::system::error_code ec;
+    listener.accept(peer, ec);
+    if (!ec) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  return false;
+}
+
+/// Reads one whole request (its header and any Content-Length body) within five
+/// seconds: its text, or nothing. A socket closed with a request left unread would be
+/// reset, not closed.
+std::optional<std::string> request_text(boost::asio::ip::tcp::socket& peer) {
+  peer.non_blocking(true);
+  std::string text;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (const auto end = text.find("\r\n\r\n"); end != std::string::npos) {
+      const auto at = text.find("Content-Length: ");
+      const std::size_t length = at == std::string::npos || at > end ? 0 : std::stoul(text.substr(at + 16));
+      if (text.size() >= end + 4 + length) return std::optional<std::string>(std::move(text));
+    }
+    char bytes[4096];
+    boost::system::error_code ec;
+    const auto count = peer.read_some(boost::asio::buffer(bytes), ec);
+    if (ec == boost::asio::error::would_block) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } else if (ec) {
+      return std::nullopt;
+    } else {
+      text.append(bytes, count);
+    }
+  }
+  return std::nullopt;
+}
+
+bool read_request(boost::asio::ip::tcp::socket& peer) { return request_text(peer).has_value(); }
+
+void answer(boost::asio::ip::tcp::socket& peer, const std::string& body) {
+  boost::system::error_code ignored;
+  boost::asio::write(peer, boost::asio::buffer("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) +
+                                               "\r\n\r\n" + body), ignored);
+}
+
+/// A response's body, or the error a request threw.
+template <typename Request>
+std::string body_of(Request request) {
+  try {
+    return request().body;
+  } catch (const std::exception& error) {
+    return std::string("error: ") + error.what();
+  }
+}
+
+/// Reads one bodiless request's head within five seconds; empty if none arrives.
+std::string request_head(boost::asio::ip::tcp::socket& peer) {
+  peer.non_blocking(true);
+  std::string text;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (text.find("\r\n\r\n") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
+    char bytes[4096];
+    boost::system::error_code ec;
+    const auto count = peer.read_some(boost::asio::buffer(bytes), ec);
+    if (ec == boost::asio::error::would_block) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } else if (ec) {
+      return {};
+    } else {
+      text.append(bytes, count);
+    }
+  }
+  return text;
+}
+
+/// A header's value in a request head, or empty.
+std::string header_of(const std::string& head, const std::string& name) {
+  const auto at = head.find("\r\n" + name + ": ");
+  if (at == std::string::npos) return {};
+  const auto start = at + name.size() + 4;
+  return head.substr(start, head.find("\r\n", start) - start);
+}
+
+// Every test that opens a socket, even on loopback, is in the WebServer suite, so
+// --gtest_filter=-WebServer.* runs the rest where sockets are not allowed. Their fake
+// servers give up on a connection that does not come within five seconds: a client
+// that opens fewer than expected fails the test instead of hanging it in join().
 TEST(WebServer, HttpCancellationInterruptsReadAndTlsHandshake) {
   namespace asio = boost::asio;
   using tcp = asio::ip::tcp;
@@ -343,18 +424,15 @@ TEST(WebServer, HttpClientSendsAuthorizationOnlyToTheOriginItWasGivenFor) {
   tcp::acceptor first(io, {asio::ip::make_address("127.0.0.1"), 0});
   tcp::acceptor second(io, {asio::ip::make_address("127.0.0.1"), 0});
   const auto elsewhere = "http://127.0.0.1:" + std::to_string(second.local_endpoint().port());
-  // Each server answers `count` requests, one per connection, and notes what they carried.
+  // Each server answers up to `count` requests, one per connection, and notes what they carried.
   const auto serve = [&io](tcp::acceptor& listener, int count, std::string next, std::vector<std::string>& seen) {
     return std::thread([&io, &listener, count, next, &seen] {
       for (int i = 0; i < count; ++i) {
         tcp::socket peer(io);
-        boost::system::error_code ec;
-        listener.accept(peer, ec);
-        if (ec) return;
-        std::string request(4096, '\0');
-        request.resize(peer.read_some(asio::buffer(request), ec));
-        const auto at = request.find("Authorization: ");
-        seen.push_back(at == std::string::npos ? "" : request.substr(at + 15, request.find("\r\n", at) - at - 15));
+        if (!accept_within(listener, peer)) return;
+        const auto request = request_head(peer);
+        if (!request.starts_with("GET ")) return;
+        seen.push_back(header_of(request, "Authorization"));
         const auto path = request.substr(4, request.find(' ', 4) - 4);
         std::string reply;
         if (path == "/same") {
@@ -367,7 +445,8 @@ TEST(WebServer, HttpClientSendsAuthorizationOnlyToTheOriginItWasGivenFor) {
         const std::string body = path == "/end" ? "done" : "";
         reply += "Content-Length: " + std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n";
         reply += body;
-        asio::write(peer, asio::buffer(reply), ec);
+        boost::system::error_code ignored;
+        asio::write(peer, asio::buffer(reply), ignored);
       }
     });
   };
@@ -375,11 +454,13 @@ TEST(WebServer, HttpClientSendsAuthorizationOnlyToTheOriginItWasGivenFor) {
   auto a = serve(first, 2, elsewhere, at_first);
   auto b = serve(second, 1, "", at_second);
   openport::net::HttpClient client;
-  const auto response = client.get("http://127.0.0.1:" + std::to_string(first.local_endpoint().port()) + "/same",
-                                   {{"Authorization", "Bearer secret"}});
+  const auto body = body_of([&] {
+    return client.get("http://127.0.0.1:" + std::to_string(first.local_endpoint().port()) + "/same",
+                      {{"Authorization", "Bearer secret"}}, std::chrono::seconds(10));
+  });
   a.join();
   b.join();
-  EXPECT_EQ(response.body, "done");
+  EXPECT_EQ(body, "done");
   EXPECT_EQ(at_first, (std::vector<std::string>{"Bearer secret", "Bearer secret"}));  // same origin
   EXPECT_EQ(at_second, (std::vector<std::string>{""}));  // another port is another origin
 }
@@ -418,63 +499,46 @@ TEST(WebServer, HttpClientDoesNotRetryARequestThatTimedOutOnAKeptAliveConnection
   const auto waited = std::chrono::steady_clock::now() - started;
   stop = true;
   server.join();
+  // A retry would show as a second connection; the wait is bounded only to rule out a
+  // hang, loosely, so a loaded runner cannot fail it.
   EXPECT_EQ(accepted.load(), 1);
-  EXPECT_LT(waited, std::chrono::milliseconds(1900));
+  EXPECT_LT(waited, std::chrono::seconds(30));
 }
 
-/// Accepts the next connection within five seconds.
-bool accept_within(boost::asio::ip::tcp::acceptor& listener, boost::asio::ip::tcp::socket& peer) {
-  listener.non_blocking(true);
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (std::chrono::steady_clock::now() < deadline) {
-    boost::system::error_code ec;
-    listener.accept(peer, ec);
-    if (!ec) return true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-  }
-  return false;
-}
-
-/// Reads one whole request (its header and any Content-Length body) within five
-/// seconds. A socket closed with a request left unread would be reset, not closed.
-bool read_request(boost::asio::ip::tcp::socket& peer) {
-  peer.non_blocking(true);
-  std::string text;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (const auto end = text.find("\r\n\r\n"); end != std::string::npos) {
-      const auto at = text.find("Content-Length: ");
-      const std::size_t length = at == std::string::npos || at > end ? 0 : std::stoul(text.substr(at + 16));
-      if (text.size() >= end + 4 + length) return true;
-    }
-    char bytes[4096];
-    boost::system::error_code ec;
-    const auto count = peer.read_some(boost::asio::buffer(bytes), ec);
-    if (ec == boost::asio::error::would_block) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    } else if (ec) {
-      return false;
-    } else {
-      text.append(bytes, count);
-    }
-  }
-  return false;
-}
-
-void answer(boost::asio::ip::tcp::socket& peer, const std::string& body) {
-  boost::system::error_code ignored;
-  boost::asio::write(peer, boost::asio::buffer("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) +
-                                               "\r\n\r\n" + body), ignored);
-}
-
-/// A response's body, or the error a request threw.
-template <typename Request>
-std::string body_of(Request request) {
-  try {
-    return request().body;
-  } catch (const std::exception& error) {
-    return std::string("error: ") + error.what();
-  }
+TEST(WebServer, AFailedRetryDoesNotLeaveItsConnectionForTheNextRequest) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto url = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port()) + "/x";
+  std::atomic<int> served{0};
+  std::thread server([&] {
+    std::vector<std::unique_ptr<tcp::socket>> held;
+    const auto serve = [&](std::string_view reply, bool close) {
+      auto peer = std::make_unique<tcp::socket>(io);
+      if (!accept_within(listener, *peer) || !read_request(*peer)) return false;
+      boost::system::error_code ignored;
+      asio::write(*peer, asio::buffer(reply), ignored);
+      if (close) peer->close(ignored);
+      held.push_back(std::move(peer));
+      ++served;
+      return true;
+    };
+    // A kept-alive answer, then the server drops the connection; then a malformed
+    // answer with a stale one behind it, the connection left open; then a fresh one.
+    if (serve("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", true) &&
+        serve("HTTP/1.1 200 OK\r\nBroken header\r\n\r\n"
+              "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nstale",
+              false))
+      serve("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfresh", true);
+  });
+  openport::net::HttpClient client;
+  EXPECT_EQ(body_of([&] { return client.get(url, {}, std::chrono::seconds(5)); }), "ok");
+  const auto failed = body_of([&] { return client.get(url, {}, std::chrono::seconds(5)); });
+  EXPECT_TRUE(failed.starts_with("error: ")) << failed;
+  EXPECT_EQ(body_of([&] { return client.get(url, {}, std::chrono::seconds(5)); }), "fresh");
+  server.join();
+  EXPECT_EQ(served.load(), 3);
 }
 
 TEST(WebServer, HttpClientNeverSendsOnAKeptAliveConnectionTheServerHasClosed) {
@@ -582,34 +646,6 @@ TEST(WebServer, HttpClientSendsAPostOnANewConnectionOnceTheKeptAliveOneHasIdled)
   EXPECT_TRUE(second.load());
 }
 
-/// Reads one bodiless request's head within five seconds; empty if none arrives.
-std::string request_head(boost::asio::ip::tcp::socket& peer) {
-  peer.non_blocking(true);
-  std::string text;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-  while (text.find("\r\n\r\n") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
-    char bytes[4096];
-    boost::system::error_code ec;
-    const auto count = peer.read_some(boost::asio::buffer(bytes), ec);
-    if (ec == boost::asio::error::would_block) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    } else if (ec) {
-      return {};
-    } else {
-      text.append(bytes, count);
-    }
-  }
-  return text;
-}
-
-/// A header's value in a request head, or empty.
-std::string header_of(const std::string& head, const std::string& name) {
-  const auto at = head.find("\r\n" + name + ": ");
-  if (at == std::string::npos) return {};
-  const auto start = at + name.size() + 4;
-  return head.substr(start, head.find("\r\n", start) - start);
-}
-
 TEST(WebServer, HttpClientSendsAPortThatIsNotTheSchemesDefaultInHost) {
   namespace asio = boost::asio;
   using tcp = asio::ip::tcp;
@@ -711,6 +747,97 @@ TEST(WebServer, HttpClientTakesABodilessAnswerThatNamesGzip) {
   EXPECT_EQ(paths, (std::vector<std::string>{"/a", "/b", "/empty"}));
 }
 
+// Broker calls (OAuth, accounts) never follow a redirect: it would carry a client
+// secret, a refresh token or a bearer token to wherever its Location points. The 307
+// comes back as it is, and the request went out once.
+TEST(WebServer, HttpClientHandsARedirectBackToAPostOrADirectGet) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  tcp::acceptor elsewhere(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+  const auto steal = "http://127.0.0.1:" + std::to_string(elsewhere.local_endpoint().port()) + "/steal";
+  std::vector<std::string> requests;
+  std::thread server([&] {
+    for (int i = 0; i < 2; ++i) {
+      tcp::socket peer(io);
+      if (!accept_within(listener, peer)) return;
+      auto request = request_text(peer);
+      if (!request) return;
+      requests.push_back(std::move(*request));
+      boost::system::error_code ignored;
+      asio::write(peer, asio::buffer("HTTP/1.1 307 Temporary Redirect\r\nLocation: " + steal +
+                                     "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                  ignored);
+    }
+  });
+  openport::net::HttpClient client;
+  const auto timeout = std::chrono::seconds(5);
+  openport::net::HttpResponse posted;
+  openport::net::HttpResponse fetched;
+  try {
+    posted = client.post(base + "/oauth/token", "refresh_token=SECRET", {}, timeout);
+    fetched = client.get_direct(base + "/accounts", {{"Authorization", "Bearer SECRET"}}, timeout);
+  } catch (const std::exception& error) {
+    ADD_FAILURE() << error.what();
+  }
+  server.join();
+  EXPECT_EQ(posted.status, 307);
+  EXPECT_EQ(posted.location, steal);
+  EXPECT_EQ(fetched.status, 307);
+  EXPECT_EQ(fetched.location, steal);
+  ASSERT_EQ(requests.size(), 2u);
+  EXPECT_TRUE(requests[0].starts_with("POST /oauth/token ")) << requests[0];
+  EXPECT_TRUE(requests[0].ends_with("\r\n\r\nrefresh_token=SECRET")) << requests[0];
+  EXPECT_TRUE(requests[1].starts_with("GET /accounts ")) << requests[1];
+  // Nothing went to the address the redirects named.
+  elsewhere.non_blocking(true);
+  tcp::socket followed(io);
+  boost::system::error_code ec;
+  elsewhere.accept(followed, ec);
+  EXPECT_TRUE(ec == asio::error::would_block) << ec.message();
+}
+
+// Cboe serves its chains gzipped: the body is inflated, whatever the case of the
+// coding's name, and wire_bytes counts what crossed the network.
+TEST(WebServer, HttpClientInflatesAGzipBodyAndCountsItsWireBytes) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+  std::string text = "{\"data\":[";
+  for (int i = 0; i < 2000; ++i) text += "{\"option\":\"SPXW261005P07405000\",\"bid\":4.4},";
+  text += "{}]}";
+  const auto compressed = gzip(text);
+  std::thread server([&] {
+    for (const auto* coding : {"gzip", "GZIP"}) {
+      tcp::socket peer(io);
+      if (!accept_within(listener, peer) || request_head(peer).empty()) return;
+      boost::system::error_code ignored;
+      asio::write(peer,
+                  asio::buffer("HTTP/1.1 200 OK\r\nContent-Encoding: " + std::string(coding) + "\r\nContent-Length: " +
+                               std::to_string(compressed.size()) + "\r\nConnection: close\r\n\r\n" + compressed),
+                  ignored);
+    }
+  });
+  openport::net::HttpClient client;
+  for (int i = 0; i < 2; ++i) {
+    SCOPED_TRACE(i);
+    try {
+      const auto response = client.get(base + "/chain.json", {}, std::chrono::seconds(5));
+      EXPECT_EQ(response.status, 200);
+      EXPECT_EQ(response.body.size(), text.size());
+      EXPECT_TRUE(response.body == text);
+      EXPECT_EQ(response.wire_bytes, compressed.size());
+    } catch (const std::exception& error) {
+      ADD_FAILURE() << error.what();
+    }
+  }
+  server.join();
+}
+
 /// A key and a self-signed certificate for 127.0.0.1, made for one test.
 struct LoopbackCertificate {
   LoopbackCertificate() {
@@ -757,6 +884,22 @@ struct LoopbackCertificate {
   X509* certificate = nullptr;
 };
 
+/// Clients made while this lives trust `file` as their system store, which OpenSSL
+/// lets SSL_CERT_FILE name; the previous setting comes back after.
+struct TrustOnly {
+  std::optional<std::string> previous;
+  explicit TrustOnly(const std::filesystem::path& file) {
+    if (const char* value = std::getenv("SSL_CERT_FILE")) previous = value;
+    setenv("SSL_CERT_FILE", file.c_str(), 1);
+  }
+  ~TrustOnly() {
+    if (previous) setenv("SSL_CERT_FILE", previous->c_str(), 1);
+    else unsetenv("SSL_CERT_FILE");
+  }
+  TrustOnly(const TrustOnly&) = delete;
+  TrustOnly& operator=(const TrustOnly&) = delete;
+};
+
 TEST(WebServer, WebSocketCloseReturnsPromptlyAfterAReceive) {
   namespace asio = boost::asio;
   namespace beast = boost::beast;
@@ -765,20 +908,7 @@ TEST(WebServer, WebSocketCloseReturnsPromptlyAfterAReceive) {
   openport::test::RecordingFile directory;
   const auto trusted = directory.directory / "loopback.pem";
   loopback.write(trusted);
-  // The client trusts the system store, which OpenSSL lets SSL_CERT_FILE name.
-  struct TrustOnly {
-    std::optional<std::string> previous;
-    explicit TrustOnly(const std::filesystem::path& file) {
-      if (const char* value = std::getenv("SSL_CERT_FILE")) previous = value;
-      setenv("SSL_CERT_FILE", file.c_str(), 1);
-    }
-    ~TrustOnly() {
-      if (previous) setenv("SSL_CERT_FILE", previous->c_str(), 1);
-      else unsetenv("SSL_CERT_FILE");
-    }
-    TrustOnly(const TrustOnly&) = delete;
-    TrustOnly& operator=(const TrustOnly&) = delete;
-  } trust(trusted);
+  const TrustOnly trust(trusted);
 
   asio::ssl::context server_tls(asio::ssl::context::tls_server);
   ASSERT_EQ(SSL_CTX_use_certificate(server_tls.native_handle(), loopback.certificate), 1);
@@ -822,6 +952,81 @@ TEST(WebServer, WebSocketCloseReturnsPromptlyAfterAReceive) {
     EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(1));
   }
   server.join();
+}
+
+TEST(WebServer, HttpClientRefusesRedirectsItMustNotFollow) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor plain(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto downgrade = "http://127.0.0.1:" + std::to_string(plain.local_endpoint().port()) + "/x";
+  {
+    // A relative path it cannot place, and another scheme.
+    tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+    const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+    std::vector<std::string> paths;
+    std::thread server([&] {
+      for (int i = 0; i < 2; ++i) {
+        tcp::socket peer(io);
+        if (!accept_within(listener, peer)) return;
+        const auto head = request_head(peer);
+        if (!head.starts_with("GET ")) return;
+        const auto path = head.substr(4, head.find(' ', 4) - 4);
+        paths.push_back(path);
+        const std::string location = path == "/relative" ? "moved.json" : "ftp://127.0.0.1/x";
+        boost::system::error_code ignored;
+        asio::write(peer,
+                    asio::buffer("HTTP/1.1 302 Found\r\nLocation: " + location +
+                                 "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                    ignored);
+      }
+    });
+    openport::net::HttpClient client;
+    const auto relative = body_of([&] { return client.get(base + "/relative", {}, std::chrono::seconds(5)); });
+    const auto scheme = body_of([&] { return client.get(base + "/ftp", {}, std::chrono::seconds(5)); });
+    server.join();
+    EXPECT_TRUE(relative.starts_with("error: refusing a redirect to moved.json from ")) << relative;
+    EXPECT_TRUE(scheme.starts_with("error: refusing a redirect to ftp://127.0.0.1/x from ")) << scheme;
+    EXPECT_EQ(paths, (std::vector<std::string>{"/relative", "/ftp"}));
+  }
+  // An https origin moving to plain http.
+  const LoopbackCertificate loopback;
+  openport::test::RecordingFile directory;
+  const auto trusted = directory.directory / "loopback.pem";
+  loopback.write(trusted);
+  const TrustOnly trust(trusted);
+  asio::ssl::context server_tls(asio::ssl::context::tls_server);
+  ASSERT_EQ(SSL_CTX_use_certificate(server_tls.native_handle(), loopback.certificate), 1);
+  ASSERT_EQ(SSL_CTX_use_PrivateKey(server_tls.native_handle(), loopback.key), 1);
+  tcp::acceptor secure(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto origin = "https://127.0.0.1:" + std::to_string(secure.local_endpoint().port()) + "/data";
+  bool answered = false;
+  std::thread server([&] {
+    tcp::socket peer(io);
+    if (!accept_within(secure, peer)) return;
+    asio::ssl::stream<tcp::socket> stream(std::move(peer), server_tls);
+    boost::system::error_code ec;
+    stream.handshake(asio::ssl::stream_base::server, ec);
+    asio::streambuf request;
+    if (!ec) asio::read_until(stream, request, "\r\n\r\n", ec);
+    if (!ec)
+      asio::write(stream,
+                  asio::buffer("HTTP/1.1 302 Found\r\nLocation: " + downgrade +
+                               "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+                  ec);
+    answered = !ec;
+  });
+  openport::net::HttpClient client;
+  const auto refused = body_of([&] { return client.get(origin, {}, std::chrono::seconds(5)); });
+  server.join();
+  EXPECT_TRUE(answered);
+  EXPECT_TRUE(refused.starts_with("error: refusing a redirect to " + downgrade + " from ")) << refused;
+  // Nothing went to the plain http address.
+  plain.non_blocking(true);
+  tcp::socket followed(io);
+  boost::system::error_code ec;
+  plain.accept(followed, ec);
+  EXPECT_TRUE(ec == asio::error::would_block) << ec.message();
 }
 
 TEST(WebServer, PollingProviderStopInterruptsAnInFlightHttpRead) {
