@@ -302,6 +302,30 @@ TEST(ThetaData, AFailedQuoteRootDoesNotRetireTheLastCompleteSnapshot) {
 }
 
 
+// A close-delimited 200 cut inside a row parsed without error, and the snapshot it
+// ended retired every contract after the cut (bid = ask = 0) as if delisted.
+TEST(ThetaData, ATruncatedResponseThrowsAndKeepsTheLastSnapshot) {
+  const std::string whole(kQuotes);
+  const auto cut = whole.find("\"strike\":8000.0");
+  ASSERT_NE(cut, std::string::npos);
+  EXPECT_THROW((void)providers::parse_theta_rows(whole.substr(0, cut)), std::runtime_error);
+  EXPECT_THROW((void)providers::parse_theta_rows(whole.substr(0, whole.size() - 10)), std::runtime_error);
+  EXPECT_EQ(providers::parse_theta_rows(whole.substr(0, whole.size() - 1)).size(), 3u);  // only the newline missing
+  providers::ThetaDataProvider provider;
+  Collector sink;
+  provider.publish_chain("SPX", providers::parse_theta_rows(kQuotes), {}, {}, {}, sink);
+  sink.events.clear();
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) -> net::HttpResponse {
+    if (url.find("/quote?symbol=SPXW") != std::string_view::npos) return {200, whole.substr(0, cut)};
+    return {200, {}};
+  };
+  provider.poll_once(http, "SPX", {}, sink);
+  EXPECT_TRUE(sink.all<md::OptionQuote>().empty());
+  ASSERT_EQ(sink.all<md::ProviderStatus>().size(), 1u);
+  EXPECT_EQ(sink.all<md::ProviderStatus>()[0].state, md::FeedState::Error);
+}
+
 TEST(ThetaData, DoesNotInventVolumeAndMapsItOnlyWhenSupplied) {
   providers::ThetaDataProvider provider;
   Collector sink;

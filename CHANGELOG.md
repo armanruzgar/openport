@@ -586,6 +586,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   poll. A next page must now use the same scheme, host, port and path as the one
   before it and differ from it, as the historical importer already required; the
   poll otherwise fails with an error and keeps the last chain.
+- **A ThetaData response cut off mid-row no longer delists the rest of the chain.** The
+  NDJSON reader skipped an incomplete last record without an error, so a 200 response
+  without a length whose connection dropped inside a row (through a proxy, say) read
+  as a whole, shorter snapshot, and every contract after the cut was published at bid
+  and ask 0. Such a response is now an error, and the last complete chain stays.
 
 ## 0.5.1 (2026-10-28)
 

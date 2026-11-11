@@ -116,6 +116,10 @@ std::vector<ThetaRow> parse_theta_rows(std::string_view ndjson) {
     }
     if (!row.root.empty() && has_right && row.strike > 0.0) rows.push_back(std::move(row));
   }
+  // The stream skips an incomplete last record, as a close-delimited response cut off
+  // mid-row leaves: the rows before it are not the whole snapshot, and publishing them
+  // would retire every contract after the cut.
+  if (stream.truncated_bytes() != 0) throw std::runtime_error("ThetaData: truncated NDJSON response");
   return rows;
 }
 
