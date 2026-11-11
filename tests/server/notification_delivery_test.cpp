@@ -87,7 +87,8 @@ server::ApiResponse call(server::ReplayHost& host, std::string method, std::stri
   return result.get();
 }
 
-// Socket tests share the WebServer suite for the sandbox-safe test filter.
+// Socket tests share the WebServer suite, so --gtest_filter=-WebServer.* runs the
+// rest where sockets are not allowed.
 TEST(WebServer, ReplayAlertsReachWebhookAndNtfyOnlyWithOptInAndDoNotResendHistory) {
   NotificationReceiver receiver;
   for (const bool enabled : {false, true}) {
