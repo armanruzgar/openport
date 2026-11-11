@@ -46,15 +46,23 @@ TEST(Http, GunzipRejectsCorruptInput) {
   EXPECT_THROW((void)gunzip("not gzip at all"), std::runtime_error);
 }
 
-TEST(Http, GunzipRejectsExpansionBeyond256MiB) {
-  const auto compressed = gzip(std::string(256 * 1024 * 1024 + 1, 'x'));
-  EXPECT_THROW((void)gunzip(compressed), std::runtime_error);
+// The limit's edge, checked at 1 MiB: at the 256 MiB every response takes, each of
+// these held about 1 GB, twice over when CTest ran them side by side.
+TEST(Http, GunzipAcceptsExactlyItsLimitAndRejectsOneByteMore) {
+  constexpr std::size_t kLimit = 1024 * 1024;
+  EXPECT_EQ(gunzip(gzip(std::string(kLimit, 'x')), kLimit).size(), kLimit);
+  try {
+    (void)gunzip(gzip(std::string(kLimit + 1, 'x')), kLimit);
+    ADD_FAILURE() << "one byte past the limit was accepted";
+  } catch (const std::runtime_error& error) {
+    EXPECT_STREQ(error.what(), "gzip: decompressed output exceeds 1 MiB");
+  }
 }
 
-TEST(Http, GunzipAcceptsExactlyTheDecompressionLimit) {
+TEST(Http, GunzipTakesUpTo256MiBByDefault) {
   EXPECT_EQ(openport::net::kMaxDecompressedBytes, 256u * 1024 * 1024);
-  const auto compressed = gzip(std::string(openport::net::kMaxDecompressedBytes, 'x'));
-  EXPECT_EQ(gunzip(compressed).size(), openport::net::kMaxDecompressedBytes);
+  const std::string text(2 * 1024 * 1024, 'x');
+  EXPECT_EQ(gunzip(gzip(text)), text);
 }
 
 TEST(Http, AFailedRetryDoesNotLeaveItsConnectionForTheNextRequest) {

@@ -427,7 +427,7 @@ HttpResponse HttpClient::get(std::string_view url, const Headers& headers,
   }
 }
 
-std::string gunzip(std::string_view compressed) {
+std::string gunzip(std::string_view compressed, std::size_t limit) {
   if (compressed.size() > std::numeric_limits<uInt>::max()) {
     throw std::runtime_error("gzip: compressed input too large");
   }
@@ -448,8 +448,10 @@ std::string gunzip(std::string_view compressed) {
     zs.avail_out = sizeof chunk;
     status = inflate(&zs, Z_NO_FLUSH);
     const std::size_t produced = sizeof chunk - zs.avail_out;
-    if (produced > kMaxDecompressedBytes - out.size()) {
-      throw std::runtime_error("gzip: decompressed output exceeds 256 MiB");
+    if (produced > limit - out.size()) {
+      const auto bound = limit % (1024 * 1024) == 0 ? std::to_string(limit / (1024 * 1024)) + " MiB"
+                                                    : std::to_string(limit) + " bytes";
+      throw std::runtime_error("gzip: decompressed output exceeds " + bound);
     }
     out.append(chunk, produced);
   }

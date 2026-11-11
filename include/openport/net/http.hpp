@@ -97,7 +97,8 @@ class HttpClient {
 inline constexpr std::size_t kMaxDecompressedBytes = 256 * 1024 * 1024;
 
 /// Decompresses a complete gzip stream. Rejects corrupt streams and expansion
-/// beyond kMaxDecompressedBytes so a small response cannot exhaust memory.
-[[nodiscard]] std::string gunzip(std::string_view compressed);
+/// beyond `limit` bytes so a small response cannot exhaust memory; every response
+/// takes kMaxDecompressedBytes, and tests take a small one to check its edge.
+[[nodiscard]] std::string gunzip(std::string_view compressed, std::size_t limit = kMaxDecompressedBytes);
 
 }  // namespace openport::net
