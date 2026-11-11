@@ -65,11 +65,19 @@ class DemoProvider final : public md::Provider {
   bool started_ = false;
 };
 
+/// Whose the directories named for this process's own PID are.
+enum class OwnDirectories : bool {
+  Live,      ///< this process's own: kept
+  Orphaned,  ///< an earlier run's: this process has made none yet, as at openportd's startup
+};
 /// Removes the openport-feed-PID-* and openport-demo-PID-* directories that a process
 /// no longer running left in the temporary directory, as a SIGKILL does; a running
 /// process's directories and other users' are never touched. Returns how many went.
-std::size_t remove_orphaned_demo_directories();
+/// A container's openportd is PID 1 at every start, so a hard-killed run's directories
+/// carry the PID of the process that starts after it: at startup, pass Orphaned.
+std::size_t remove_orphaned_demo_directories(OwnDirectories own = OwnDirectories::Live);
 /// The same sweep confined to a supplied temporary directory.
-std::size_t remove_orphaned_demo_directories(const std::filesystem::path& temporary);
+std::size_t remove_orphaned_demo_directories(const std::filesystem::path& temporary,
+                                             OwnDirectories own = OwnDirectories::Live);
 
 }  // namespace openport::providers

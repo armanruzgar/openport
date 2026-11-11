@@ -148,6 +148,20 @@ TEST(DemoFeed, ConcurrentOrphanSweepsFinishWithoutTouchingLiveDirectories) {
   }
 }
 
+// openportd is PID 1 in a container at every start, so a hard-killed run's directory
+// (160-190 MB of generated days) carried the new process's own PID, and the sweep kept
+// it as live on every later start.
+TEST(DemoFeed, AtStartupDirectoriesNamedForThisProcessAreAnEarlierRunsOrphans) {
+  test::RecordingFile fixture;
+  const auto earlier = fixture.directory / ("openport-feed-" + std::to_string(::getpid()) + "-prevRn");
+  std::filesystem::create_directories(earlier / "days");
+  std::ofstream(earlier / "days" / "2026-09-16.oprec") << "day";
+  EXPECT_EQ(providers::remove_orphaned_demo_directories(fixture.directory), 0u);
+  EXPECT_TRUE(std::filesystem::exists(earlier));
+  EXPECT_EQ(providers::remove_orphaned_demo_directories(fixture.directory, providers::OwnDirectories::Orphaned), 1u);
+  EXPECT_FALSE(std::filesystem::exists(earlier));
+}
+
 // A demo feed's own directory carries its process id, so that sweep can find it.
 TEST(DemoFeed, ItsTemporaryDirectoryNamesItsProcess) {
   providers::DemoProvider provider(settings(std::make_shared<DemoClock>()));

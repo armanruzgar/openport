@@ -349,7 +349,7 @@ void DemoProvider::run(md::Subscription subscription, md::EventSink& sink) {
   }
 }
 
-std::size_t remove_orphaned_demo_directories(const std::filesystem::path& temporary) {
+std::size_t remove_orphaned_demo_directories(const std::filesystem::path& temporary, OwnDirectories own) {
   std::size_t removed = 0;
   std::error_code iteration_error;
   std::filesystem::directory_iterator entry(temporary, iteration_error), end;
@@ -364,11 +364,14 @@ std::size_t remove_orphaned_demo_directories(const std::filesystem::path& tempor
     if (dash == 0 || dash == std::string_view::npos) continue;
     pid_t pid = 0;
     const auto [parsed_end, error] = std::from_chars(rest.data(), rest.data() + dash, pid);
-    if (error != std::errc{} || parsed_end != rest.data() + dash || pid <= 0 || pid == ::getpid()) continue;
+    if (error != std::errc{} || parsed_end != rest.data() + dash || pid <= 0) continue;
+    const bool ours = pid == ::getpid();
+    if (ours && own == OwnDirectories::Live) continue;
     struct stat info {};
     if (::lstat(entry->path().c_str(), &info) != 0 || !S_ISDIR(info.st_mode) || info.st_uid != ::getuid()) continue;
-    // Only a process that no longer exists gives its directories up.
-    if (::kill(pid, 0) == 0 || errno != ESRCH) continue;
+    // Only a process that no longer exists gives its directories up; before this one
+    // has made any, those named for its own PID are an earlier run's.
+    if (!ours && (::kill(pid, 0) == 0 || errno != ESRCH)) continue;
     // Sweep children independently: another server can remove any of them while
     // we walk. A vanished child must not prevent removing the now-empty root.
     std::error_code contents_error;
@@ -385,10 +388,10 @@ std::size_t remove_orphaned_demo_directories(const std::filesystem::path& tempor
   return removed;
 }
 
-std::size_t remove_orphaned_demo_directories() {
+std::size_t remove_orphaned_demo_directories(OwnDirectories own) {
   std::error_code error;
   const auto temporary = std::filesystem::temp_directory_path(error);
-  return error ? 0 : remove_orphaned_demo_directories(temporary);
+  return error ? 0 : remove_orphaned_demo_directories(temporary, own);
 }
 
 }  // namespace openport::providers
