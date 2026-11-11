@@ -60,11 +60,16 @@ only shard 1 saves it for later runs, avoiding competing uploads. Warm runs are
 expected well under 20 minutes, with a 35-minute timeout for cold-cache headroom.
 The macOS build is the release archive's: `-DOPENPORT_STATIC_DEPS=ON`
 links OpenSSL and zstd statically, and CI checks it needs only macOS's own libraries.
-Changes only to `site/`, `docs/` (other than `docs/openapi.yaml`, which the tests
-read) or top-level Markdown files skip CI. Otherwise each job runs only when the
+Changes only to `docs/` (other than `docs/openapi.yaml`, which the tests read) or
+top-level Markdown files skip CI; a change to `site/` runs the web job, whose tests
+cover the landing page's scripts, and the Pages workflow runs those tests again before
+it publishes the site. Otherwise each job runs only when the
 push changes what it builds or checks: the C++ jobs for sources, tests, CMake,
 scenarios and data; the web job for `web/`; the Python job for `python/` and
-`tools/`; the Docker job for the image and `deploy/`. A change to the workflow or
+`tools/`; the Docker job for the image, `deploy/` and `packaging/`, which it also
+builds into the `.deb` and `.rpm` packages a release ships, checked with
+`tools/package_test.py`, including a start of `openportd` with the systemd unit's own
+flags. A change to the workflow or
 to `docs/openapi.yaml` runs every job. On `main` runs are batched: one runs at a
 time, a newer push replaces a run still waiting, and each run decides its jobs
 from everything changed since the last commit CI passed, so a push whose own run
@@ -162,7 +167,9 @@ formats and runs the extracted native binary before upload. Checksums cover arch
 and packages: the workflow rewrites `SHA256SUMS` once everything is attached. Ubuntu 24.04's glibc baseline
 applies to the RPM too; do not advertise older enterprise distro compatibility.
 On a matching Linux machine, `python3 tools/package_test.py PACKAGE_DIRECTORY
---arch amd64` (or `arm64`) checks locally built packages without installing them.
+--arch amd64` (or `arm64`) checks locally built packages without installing them; it
+starts the extracted `openportd` briefly with the unit's flags, the demo feed and a free
+port. CI's Docker job does the same for amd64 on every change to the image or `packaging/`.
 `tools/release.sh` builds a release on your own machine: it checks and tests the web
 terminal and the engine, packages this machine's build with checksums and release notes
 into `dist/`, smoke-tests the Docker image (built with this commit's revision) and puts a

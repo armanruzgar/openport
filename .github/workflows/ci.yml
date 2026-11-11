@@ -1,20 +1,19 @@
 name: CI
 
-# Changes only to the site, the docs or top-level Markdown skip the build. The
-# OpenAPI contract stays in: the web, Python and Docker contract tests read it.
+# Changes only to the docs or top-level Markdown skip the build. The OpenAPI
+# contract stays in: the web, Python and Docker contract tests read it. A change to
+# the site runs the web job, whose tests cover the landing page's scripts.
 on:
   push:
     branches: [main]
     paths:
       - '**'
-      - '!site/**'
       - '!docs/**'
       - 'docs/openapi.yaml'
       - '!*.md'
   pull_request:
     paths:
       - '**'
-      - '!site/**'
       - '!docs/**'
       - 'docs/openapi.yaml'
       - '!*.md'
@@ -492,3 +491,26 @@ jobs:
       - name: Demo proxy
         if: ${{ !cancelled() }}
         run: python3 tools/demo_proxy_test.py -v
+      # A release also packages the image's programs as .deb and .rpm with a systemd
+      # unit (release-assets.yml). Built and checked here too, with openportd started
+      # from the unit's own command line, a break in packaging/ or a flag the unit
+      # passes shows before a release goes out without packages or with a unit that
+      # exits on start.
+      - name: Packages and their systemd unit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          stage="$RUNNER_TEMP/stage"
+          mkdir -p "$stage/bin" "$stage/share/openport" "$stage/docs"
+          container="$(docker create openport:ci)"
+          docker cp "$container:/usr/local/bin/openportd" "$stage/bin/"
+          docker cp "$container:/usr/local/bin/openport-probe" "$stage/bin/"
+          docker cp "$container:/usr/share/openport/web" "$stage/share/openport/"
+          docker rm "$container"
+          cp README.md LICENSE THIRD_PARTY_NOTICES.txt "$stage/"
+          cp docs/*.md "$stage/docs/"
+          version="$("$stage/bin/openportd" --version)"
+          cmake -S packaging -B "$RUNNER_TEMP/packages" -DOPENPORT_STAGE="$stage" \
+            -DOPENPORT_PACKAGE_VERSION="${version#openportd }" -DOPENPORT_PACKAGE_ARCH=amd64
+          cpack --config "$RUNNER_TEMP/packages/CPackConfig.cmake" -B "$RUNNER_TEMP/packages"
+          python3 tools/package_test.py "$RUNNER_TEMP/packages" --arch amd64
