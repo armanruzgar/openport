@@ -215,7 +215,11 @@ sample-response tests but have not yet been run live with credentials.
 | [Interactive Brokers](../src/providers/ibkr.cpp) | Client Portal Web API via the local gateway. `/tickle` keeps the session and reports its authentication; search, strikes and info map conids to OSI from trading class, maturity, right and strike, cached for the day. `parse_ibkr_snapshot()` reads display strings (`1.2K`, `C` closes) and `_updated` clocks, and the day's volume (7762) only from real-time rows; first snapshots of a contract only warm its line. One `RequestBudget` paces requests; market-data lines are counted across underlyings. |
 
 The broker adapters allowlist their REST paths and use non-redirecting HTTP calls.
-OAuth refreshes and the Interactive Brokers keepalive are the only POSTs.
+OAuth refreshes and the Interactive Brokers keepalive are the only POSTs. A POST is
+never retried, so it reuses a kept-alive connection only within a second of the last
+request; a GET that fails on a reused connection, which the server may have closed as
+the request arrived, is sent once more on a new one. No request goes out on a
+connection the server has already closed.
 [`RequestBudget`](../include/openport/providers/request_budget.hpp) is a rolling
 request window with exponential backoff for adapters without Tradier's headers. Error messages exclude server bodies and tokens. Broker
 rate timers use operational time, independently of market-event clocks. See

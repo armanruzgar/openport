@@ -27,6 +27,10 @@ using TlsStream = beast::ssl_stream<beast::tcp_stream>;
 constexpr std::size_t kMaxBody = 512u * 1024 * 1024;
 constexpr std::string_view kUserAgent =
     "OpenPort/" OPENPORT_VERSION " (+https://github.com/armanruzgar/openport)";
+/// A POST is never retried, so it goes out on a kept-alive connection only when that
+/// was in use moments ago: a server may be closing a longer-idle one as the request
+/// is written. Common keep-alive idle timeouts are five seconds or more.
+constexpr auto kPostReuseIdle = std::chrono::seconds(1);
 
 }  // namespace
 
@@ -90,6 +94,7 @@ struct HttpClient::Impl {
   std::unique_ptr<beast::tcp_stream> plain;
   Url connected;
   beast::flat_buffer buffer;
+  std::chrono::steady_clock::time_point last_used{};  ///< when the open connection last finished a request
 
   Impl() {
     tls_context.set_verify_mode(ssl::verify_peer);
@@ -113,6 +118,23 @@ struct HttpClient::Impl {
 
   [[nodiscard]] beast::tcp_stream& tcp_layer() {
     return tls ? beast::get_lowest_layer(*tls) : *plain;
+  }
+
+  /// Whether the open connection to `url` can carry another request: nothing has
+  /// arrived on it since the last response. A server that dropped the idle connection
+  /// has sent its FIN (or a TLS close_notify, or a 408) by now, and a request written
+  /// after that would fail.
+  [[nodiscard]] bool quiet(const Url& url) {
+    if (!connected_to(url) || buffer.size() > 0) return false;
+    auto& socket = tcp_layer().socket();
+    boost::system::error_code ec;
+    socket.non_blocking(true, ec);
+    if (ec) return false;
+    char peeked = 0;
+    (void)socket.receive(asio::buffer(&peeked, 1), tcp::socket::message_peek, ec);
+    boost::system::error_code ignored;
+    socket.non_blocking(false, ignored);
+    return ec == asio::error::would_block;
   }
 
   // Beast only enforces tcp_stream timeouts on asynchronous operations, so every
@@ -226,6 +248,7 @@ struct HttpClient::Impl {
     out.body = gzipped ? gunzip(response.body()) : std::move(response.body());
     out.elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::steady_clock::now() - started);
+    last_used = std::chrono::steady_clock::now();
     if (!response.keep_alive()) close();
     return out;
   }
@@ -234,6 +257,35 @@ struct HttpClient::Impl {
                        http::verb method = http::verb::get, std::string_view body = {}) {
     return tls ? exchange(*tls, url, headers, timeout, method, body)
                : exchange(*plain, url, headers, timeout, method, body);
+  }
+
+  /// One request to `target`, on the kept-alive connection while it is quiet, else on
+  /// a new one. A server can still drop a kept-alive connection as a request reaches
+  /// it, so a GET that fails on a reused connection is sent once more on a new one.
+  /// A POST is not: the server may have acted on it. Nor is a timeout, which has
+  /// waited the whole timeout already.
+  HttpResponse fetch(const Url& target, const Headers& headers, std::chrono::seconds timeout,
+                     http::verb method = http::verb::get, std::string_view body = {}) {
+    const bool posting = method == http::verb::post;
+    const bool reusing =
+        quiet(target) && (!posting || std::chrono::steady_clock::now() - last_used <= kPostReuseIdle);
+    try {
+      if (!reusing) connect(target, timeout);
+      return request(target, headers, timeout, method, body);
+    } catch (const std::exception& error) {
+      close();
+      const auto* system = dynamic_cast<const boost::system::system_error*>(&error);
+      const bool timed_out = system && system->code() == beast::error::timeout;
+      if (!reusing || posting || timed_out || (cancellation && cancellation->load())) throw;
+    }
+    // A failed retry closes too, so no half-read connection is reused.
+    try {
+      connect(target, timeout);
+      return request(target, headers, timeout, method, body);
+    } catch (...) {
+      close();
+      throw;
+    }
   }
 
   HttpResponse direct(std::string_view url, std::string_view body, const Headers& headers,
@@ -245,8 +297,7 @@ struct HttpClient::Impl {
       check_cancelled();
       const auto target = parse_url(url);
       if (!target) throw std::runtime_error("invalid HTTP URL");
-      if (!connected_to(*target)) connect(*target, timeout);
-      auto response = request(*target, headers, timeout, method, body);
+      auto response = fetch(*target, headers, timeout, method, body);
       check_cancelled();
       cancellation = previous;
       return response;
@@ -275,28 +326,6 @@ HttpResponse HttpClient::post(std::string_view url, std::string_view body, const
 HttpResponse HttpClient::get(std::string_view url, const Headers& headers,
                              std::chrono::seconds timeout) {
   Headers sent = headers;
-  const auto fetch = [&](const Url& target) {
-    const bool reusing = impl_->connected_to(target);
-    try {
-      if (!reusing) impl_->connect(target, timeout);
-      return impl_->request(target, sent, timeout);
-    } catch (const std::exception& error) {
-      impl_->close();
-      // A timeout has already waited the whole timeout; a retry would wait it again.
-      const auto* system = dynamic_cast<const boost::system::system_error*>(&error);
-      const bool timed_out = system && system->code() == beast::error::timeout;
-      if (!reusing || timed_out || (impl_->cancellation && impl_->cancellation->load())) throw;
-    }
-    // A kept-alive connection can be closed by the server between requests; retry once fresh.
-    // A failed retry closes too, so no half-read connection is reused.
-    try {
-      impl_->connect(target, timeout);
-      return impl_->request(target, sent, timeout);
-    } catch (...) {
-      impl_->close();
-      throw;
-    }
-  };
   // Follows data a host has moved, as Cboe moved its delayed quotes in September 2026.
   constexpr int kMaxRedirects = 5;
   std::optional<Url> target = parse_url(url);
@@ -304,7 +333,7 @@ HttpResponse HttpClient::get(std::string_view url, const Headers& headers,
   const Url origin = *target;
   for (int redirects = 0;; ++redirects) {
     impl_->check_cancelled();
-    auto response = fetch(*target);
+    auto response = impl_->fetch(*target, sent, timeout);
     const int s = response.status;
     const bool moved = s == 301 || s == 302 || s == 303 || s == 307 || s == 308;
     if (!moved || response.location.empty()) return response;

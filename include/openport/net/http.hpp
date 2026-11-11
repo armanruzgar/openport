@@ -48,6 +48,11 @@ struct HttpResponse {
 /// 308, as GETs), never from https to http, dropping Authorization once one leaves the
 /// URL's scheme, host and port.
 ///
+/// A kept-alive connection carries the next request only while nothing has arrived
+/// on it since the last response, so one the server has closed is replaced first. A
+/// GET that still fails on a reused connection (the server closed it as the request
+/// arrived) is sent once more on a new one; a timeout is not.
+///
 /// Not thread-safe: give each thread its own client.
 class HttpClient {
  public:
@@ -69,6 +74,8 @@ class HttpClient {
 
   /// Single-origin requests for brokers. Never follow redirects or retry a POST:
   /// a redirect must not forward an OAuth body or escape an adapter's path allowlist.
+  /// So a POST goes out on a kept-alive connection only within a second of its last
+  /// request; after that a server may be timing the connection out.
   virtual HttpResponse get_direct(std::string_view url, const Headers& headers,
                                   std::chrono::seconds timeout,
                                   const std::atomic<bool>* cancellation = nullptr);

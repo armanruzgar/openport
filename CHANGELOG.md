@@ -72,6 +72,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   last digit of a double (0.1 + 0.2 beside 0.3) never finished choosing its axis
   ticks and held the tab until it ran out of memory. The ticks are now counted
   rather than stepped to, and values that print alike share one tick.
+- **Requests after an idle spell.** The first broker request or webhook sent after
+  the server had closed an idle kept-alive connection failed with "Connection reset
+  by peer" or "end of stream", though the server was up. tastytrade's OAuth refresh,
+  about 14 minutes into a stream, dropped the feed and reconnected. A connection the
+  server has closed is now replaced before a request goes out, a POST reuses one only
+  within a second of the last request, and a GET that fails on a reused connection is
+  sent once more on a new one.
 
 ## 0.5.1 (2026-10-28)
 

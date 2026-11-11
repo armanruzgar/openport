@@ -368,6 +368,166 @@ TEST(WebServer, HttpClientDoesNotRetryARequestThatTimedOutOnAKeptAliveConnection
   EXPECT_LT(waited, std::chrono::milliseconds(1900));
 }
 
+/// Accepts the next connection within five seconds.
+bool accept_within(boost::asio::ip::tcp::acceptor& listener, boost::asio::ip::tcp::socket& peer) {
+  listener.non_blocking(true);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    boost::system::error_code ec;
+    listener.accept(peer, ec);
+    if (!ec) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  return false;
+}
+
+/// Reads one whole request (its header and any Content-Length body) within five
+/// seconds. A socket closed with a request left unread would be reset, not closed.
+bool read_request(boost::asio::ip::tcp::socket& peer) {
+  peer.non_blocking(true);
+  std::string text;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (const auto end = text.find("\r\n\r\n"); end != std::string::npos) {
+      const auto at = text.find("Content-Length: ");
+      const std::size_t length = at == std::string::npos || at > end ? 0 : std::stoul(text.substr(at + 16));
+      if (text.size() >= end + 4 + length) return true;
+    }
+    char bytes[4096];
+    boost::system::error_code ec;
+    const auto count = peer.read_some(boost::asio::buffer(bytes), ec);
+    if (ec == boost::asio::error::would_block) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    } else if (ec) {
+      return false;
+    } else {
+      text.append(bytes, count);
+    }
+  }
+  return false;
+}
+
+void answer(boost::asio::ip::tcp::socket& peer, const std::string& body) {
+  boost::system::error_code ignored;
+  boost::asio::write(peer, boost::asio::buffer("HTTP/1.1 200 OK\r\nContent-Length: " + std::to_string(body.size()) +
+                                               "\r\n\r\n" + body), ignored);
+}
+
+/// A response's body, or the error a request threw.
+template <typename Request>
+std::string body_of(Request request) {
+  try {
+    return request().body;
+  } catch (const std::exception& error) {
+    return std::string("error: ") + error.what();
+  }
+}
+
+TEST(WebServer, HttpClientNeverSendsOnAKeptAliveConnectionTheServerHasClosed) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+  // Each connection answers one request, kept alive, and then the server closes it,
+  // as a server does once a connection has been idle for its keep-alive timeout.
+  std::atomic<int> closed{0};
+  std::thread server([&] {
+    for (int i = 0; i < 3; ++i) {
+      tcp::socket peer(io);
+      if (!accept_within(listener, peer) || !read_request(peer)) return;
+      answer(peer, "ok");
+      boost::system::error_code ignored;
+      peer.close(ignored);
+      ++closed;
+    }
+  });
+  const auto after_close = [&](int count) {
+    for (int waited = 0; waited < 5000 && closed.load() < count; ++waited)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));  // the FIN reaches the client
+  };
+  openport::net::HttpClient client;
+  const auto timeout = std::chrono::seconds(5);
+  EXPECT_EQ(body_of([&] { return client.post(base + "/oauth/token", "first", {}, timeout); }), "ok");
+  after_close(1);
+  // Written to the closed connection, a POST would fail though the server is up, and a
+  // POST is never retried.
+  EXPECT_EQ(body_of([&] { return client.post(base + "/oauth/token", "second", {}, timeout); }), "ok");
+  after_close(2);
+  EXPECT_EQ(body_of([&] { return client.get_direct(base + "/option-chains/SPX/nested", {}, timeout); }), "ok");
+  server.join();
+  EXPECT_EQ(closed.load(), 3);
+}
+
+TEST(WebServer, HttpClientRetriesAGetButNotAPostThatAKeptAliveConnectionDropped) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+  // Each connection answers one request, kept alive, then reads the next and closes
+  // unanswered: the server timed the connection out just as the request arrived.
+  std::atomic<int> accepted{0};
+  std::atomic<bool> stop{false};
+  std::thread server([&] {
+    for (const auto* reply : {"a", "b"}) {
+      tcp::socket peer(io);
+      if (!accept_within(listener, peer)) return;
+      ++accepted;
+      if (!read_request(peer)) return;
+      answer(peer, reply);
+      if (!read_request(peer)) return;
+      boost::system::error_code ignored;
+      peer.close(ignored);
+    }
+    // A retried POST would open another connection.
+    while (!stop) {
+      tcp::socket extra(io);
+      boost::system::error_code ec;
+      listener.accept(extra, ec);
+      if (!ec) ++accepted;
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  });
+  openport::net::HttpClient client;
+  const auto timeout = std::chrono::seconds(5);
+  EXPECT_EQ(body_of([&] { return client.get_direct(base + "/a", {}, timeout); }), "a");
+  EXPECT_EQ(body_of([&] { return client.get_direct(base + "/b", {}, timeout); }), "b");  // sent again, on a new connection
+  const auto posted = body_of([&] { return client.post(base + "/c", "c", {}, timeout); });
+  EXPECT_TRUE(posted.starts_with("error: ")) << posted;
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  stop = true;
+  server.join();
+  EXPECT_EQ(accepted.load(), 2);
+}
+
+TEST(WebServer, HttpClientSendsAPostOnANewConnectionOnceTheKeptAliveOneHasIdled) {
+  namespace asio = boost::asio;
+  using tcp = asio::ip::tcp;
+  asio::io_context io;
+  tcp::acceptor listener(io, {asio::ip::make_address("127.0.0.1"), 0});
+  const auto base = "http://127.0.0.1:" + std::to_string(listener.local_endpoint().port());
+  // The first connection stays open and quiet; the server could time it out at any
+  // moment, so a POST after a second's idling must not go out on it.
+  std::atomic<bool> second{false};
+  std::thread server([&] {
+    tcp::socket first(io), next(io);
+    if (!accept_within(listener, first) || !read_request(first)) return;
+    answer(first, "first");
+    if (!accept_within(listener, next) || !read_request(next)) return;
+    second = true;
+    answer(next, "second");
+  });
+  openport::net::HttpClient client;
+  const auto timeout = std::chrono::seconds(2);
+  EXPECT_EQ(body_of([&] { return client.post(base + "/hook", "1", {}, timeout); }), "first");
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  EXPECT_EQ(body_of([&] { return client.post(base + "/hook", "2", {}, timeout); }), "second");
+  server.join();
+  EXPECT_TRUE(second.load());
+}
+
 TEST(WebServer, PollingProviderStopInterruptsAnInFlightHttpRead) {
   namespace asio = boost::asio;
   using tcp = asio::ip::tcp;
