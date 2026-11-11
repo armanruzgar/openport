@@ -102,11 +102,11 @@ function OrdersAccount({ trading }: { trading: TradingStatus }) {
     </div>
     <TradingError error={tab === "fills" ? fills.error : orders.error} />
     {tab === "fills"
-      ? <Panel title="Fills">{fills.data ? <FillsTable fills={fillRows} /> : <Empty>Loading fills…</Empty>}</Panel>
+      ? <Panel title="Fills">{fills.data ? <FillsTable fills={fillRows} total={fills.data.fills.length} /> : <Empty>Loading fills…</Empty>}</Panel>
       : <Panel title={tab === "working" ? "Working orders" : "Order history"} actions={tab === "working" && trading.enabled && working.length > 0
           ? <button type="button" className="trade-button" onClick={() => { setNotice(null); setCancelAll(true) }}>Cancel all</button> : undefined}>
         {notice && <p className="mb-2 text-xs text-muted" role="status">{notice}</p>}
-        {orders.data ? <OrdersTable orders={visible} all={all} trading={trading} onDone={setNotice} empty={tab === "working" ? "No working orders." : "No orders match."} /> : <Empty>Loading orders…</Empty>}
+        {orders.data ? <OrdersTable orders={visible} all={all} trading={trading} onDone={setNotice} empty={emptyText(tab === "working" ? working.length : all.length, tab)} /> : <Empty>Loading orders…</Empty>}
       </Panel>}
     {cancelAll && <CancelAllDialog orders={working} trading={trading} onClose={() => setCancelAll(false)}
       onDone={(message) => { setNotice(message); setCancelAll(false) }} />}
@@ -168,8 +168,14 @@ function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[];
   </div>
 }
 
-function FillsTable({ fills }: { fills: Fill[] }) {
-  if (!fills.length) return <p className="text-sm text-muted">No fills yet.</p>
+/** Why a tab shows no rows: there are none, or the filters and search hide the `count` there are. */
+function emptyText(count: number, tab: Tab): string {
+  const what = tab === "working" ? "working orders" : tab === "fills" ? "fills" : "orders"
+  return count ? `No ${what} match these filters.` : tab === "working" ? "No working orders." : `No ${what} yet.`
+}
+
+function FillsTable({ fills, total }: { fills: Fill[]; total: number }) {
+  if (!fills.length) return <p className="text-sm text-muted">{emptyText(total, "fills")}</p>
   return <Table label="Fills" left={2} pin={1} headers={["Time", "Contract", "Side", "Qty", "Price", "Quote", "Fee", "Order"]}>
     {groupByDay(fills, (f) => f.time).flatMap((group) => [
       <tr key={`day-${group.day}`} className="bg-raised/40"><td colSpan={8} className="!py-1 text-[10px] uppercase tracking-wide text-muted">{group.label}</td></tr>,

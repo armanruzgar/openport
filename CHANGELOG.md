@@ -928,6 +928,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   no underlying price yet, a level below the market was sent as "at or above" and
   armed on the first update. The text now gives the level and its direction, and
   without a price the ticket asks which way the level is crossed.
+- **Orders says when its filters hide every row.** The side, status, origin and search
+  filters apply to all three tabs, and a filter that hid every row left "No working
+  orders." or "No fills yet." beside a tab reading "Working · 1" or "Fills · 1" and a
+  Cancel all button. The page now says that no orders or fills match the filters, and
+  says there are none only when there are none.
 
 ## 0.5.1 (2026-10-28)
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { api } from "../api/client"
 import { liveState, useLive } from "../api/live"
 import { tradingQueries } from "../api/trading"
-import { order, status } from "../test/trading-fixtures"
+import { fill, order, status } from "../test/trading-fixtures"
 import { waitForRender } from "../test/render"
 import { OrdersView } from "./OrdersView"
 
@@ -48,6 +48,26 @@ it.each([false, true])("confirms before cancelling and keeps the last result on 
   expect(all ? cancelAll : cancel).toHaveBeenCalledOnce()
   expect(host.querySelector('[role="status"]')?.textContent).toContain(all ? "1 order cancelled" : ": cancelled")
   expect(host.querySelector("dialog")).toBeNull()
+})
+it("says when the filters hide every row, not that there are none", async () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))
+  client.setQueryData(tradingQueries(0, "17", true).fills.queryKey, { account_version: "17", fills: [fill] })
+  await act(async () => root.render(<QueryClientProvider client={client}><OrdersView /></QueryClientProvider>))
+  const status = host.querySelector<HTMLSelectElement>('select[aria-label="Status filter"]')!
+  await act(async () => { status.value = "filled"; status.dispatchEvent(new Event("change", { bubbles: true })) })
+  expect(host.textContent).toContain("Working · 1")
+  expect(host.textContent).toContain("No working orders match these filters.")
+  expect(host.textContent).not.toContain("No working orders.")
+  await click("All · 1")
+  expect(host.textContent).toContain("No orders match these filters.")
+  await click("Fills · 1")
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="Search orders"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "QQQ")
+    search.dispatchEvent(new Event("input", { bubbles: true }))
+  })
+  expect(host.textContent).toContain("No fills match these filters.")
+  expect(host.textContent).not.toContain("No fills yet.")
 })
 it("edits the order as it is now, and not one that has since filled", async () => {
   vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})))
