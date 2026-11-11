@@ -38,11 +38,18 @@ import { useWriteToken } from "../lib/write-token"
 /** Dollar Greeks as the money beside them: "+$57,422.55", "−$104.64". */
 const dollars = (value: number | null | undefined) => isNum(value) ? signedMoney(value.toFixed(2)) : "—"
 
-/** Right-aligned numeric table; the first `left` columns are labels, aligned left. */
-export function Table({ label, headers, children, left = 1 }: { label: string; headers: string[]; children: ReactNode; left?: number }) {
+/**
+ * A row's name column, kept in view while a wide table scrolls sideways (on a phone the
+ * row's side, status and actions lie a screen or more to the right), so an action is
+ * never aimed at another row.
+ */
+export const pinned = "sticky left-0 z-[1] bg-panel"
+
+/** Right-aligned numeric table; the first `left` columns are labels, aligned left. `pin` is the column kept in view, as `pinned`. */
+export function Table({ label, headers, children, left = 1, pin }: { label: string; headers: string[]; children: ReactNode; left?: number; pin?: number }) {
   return <div className="max-w-full overflow-x-auto" tabIndex={0} role="region" aria-label={label}>
     <table className="w-full text-right text-xs tabular whitespace-nowrap">
-      <thead className="text-muted"><tr>{headers.map((header, i) => <th key={header} scope="col" className={`px-2 py-2 text-[11px] font-normal uppercase tracking-wide ${i < left ? "text-left" : ""}`}>{header}</th>)}</tr></thead>
+      <thead className="text-muted"><tr>{headers.map((header, i) => <th key={header} scope="col" className={`px-2 py-2 text-[11px] font-normal uppercase tracking-wide ${i < left ? "text-left" : ""} ${i === pin ? pinned : ""}`}>{header}</th>)}</tr></thead>
       <tbody className="[&_td]:px-2 [&_td]:py-2 [&_tr]:border-t [&_tr]:border-border/40 [&_td:first-child]:text-left">{children}</tbody>
     </table>
   </div>
@@ -116,7 +123,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
   if (!positions.length) return <p className="text-sm text-muted">No open positions. Click a bid or ask on the Trade page to build a ticket.</p>
   const picking = onSelect != null && selected != null
   const underlying = picking ? positions.find((p) => selected.has(p.symbol))?.underlying : undefined
-  return <Table label="Positions" left={picking ? 2 : 1} headers={[...(picking ? ["Pick"] : []), "Contract", "Qty", "Avg price", "Mark / age", "Market value", "Unrealized", "P&L %", "Net realized", "Today", "Dollar delta", "Vega", "Theta", ""]}>
+  return <Table label="Positions" left={picking ? 2 : 1} pin={picking ? 1 : 0} headers={[...(picking ? ["Pick"] : []), "Contract", "Qty", "Avg price", "Mark / age", "Market value", "Unrealized", "P&L %", "Net realized", "Today", "Dollar delta", "Vega", "Theta", ""]}>
     {positions.map((position) => {
       const change = position.unrealised != null ? ratio(position.unrealised, position.basis.replace("-", "")) : null
       return <tr key={position.symbol} tabIndex={0} aria-label={`${contractLabel(position)} position${onClose && !position.awaiting_settlement ? "; F to close" : ""}`}
@@ -128,7 +135,7 @@ export function Positions({ positions, onClose, onExits, onExercise, onSettle, o
         {picking && <td><input type="checkbox" className="accent-[var(--accent)]" aria-label={`Pick ${contractLabel(position)} to close together`}
           checked={selected.has(position.symbol)} disabled={position.awaiting_settlement || (underlying != null && position.underlying !== underlying)}
           onChange={(e) => onSelect(position.symbol, e.target.checked)} /></td>}
-        <td>
+        <td className={`!text-left ${pinned}`}>
           <div className="font-medium">{contractLabel(position)} <span className="text-muted">{position.settlement}</span></div>
           <div className="mt-1 text-[11px] text-faint">{position.symbol}</div>
           {position.awaiting_settlement && <span className="mt-1 inline-block rounded-full border border-warn px-2 py-0.5 text-[10px] text-warn">Awaiting settlement</span>}

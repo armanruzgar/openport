@@ -13,6 +13,7 @@ import { TradeDetail } from "./JournalView"
 import { trades } from "../test/trading-fixtures"
 import { OrdersView } from "./OrdersView"
 import { PositionsView } from "./PositionsView"
+import css from "../index.css?raw"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 const clients: QueryClient[] = []
@@ -65,6 +66,23 @@ describe("shares from exercise and assignment", () => {
     expect(html).toContain("buy 200 SPY shares at that price: together, the $500.00 strike")
     expect(html).toContain("gives up about $220.00 of time value")
     expect(html).toContain(">Exercise 2</button>")
+  })
+})
+
+describe("on a phone", () => {
+  it("keeps each order's and fill's contract in view while the row scrolls to its side, status and actions", () => {
+    const html = render(<OrdersView />)
+    expect(html).toMatch(/<th scope="col" class="[^"]*sticky left-0[^"]*bg-panel[^"]*">Contract<\/th>/)
+    expect(html).toMatch(/<td class="!text-left sticky left-0[^"]*"><div class="flex items-center gap-1.5 font-medium">SPX Oct 16 7000C/)
+    expect(html).not.toMatch(/<th[^>]*sticky[^>]*>Time<\/th>/)
+    // Positions keep their contract in view past the pick boxes.
+    const positions = render(<PositionsView />)
+    expect(positions).toMatch(/<th scope="col" class="[^"]*sticky left-0[^"]*">Contract<\/th>/)
+    expect(positions).not.toMatch(/<th[^>]*sticky[^>]*>Pick<\/th>/)
+  })
+  it("keeps a ticket's submit at the foot of the sheet", () => {
+    const phone = css.slice(css.indexOf("@media (max-width: 639px)"))
+    expect(phone).toMatch(/\.ticket-sheet button\[type="submit"\] \{[^}]*position: sticky;[^}]*bottom: 0\.5rem;/)
   })
 })
 

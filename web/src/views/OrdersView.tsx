@@ -13,7 +13,7 @@ import { editable, isOpen, reasonEvidence } from "../lib/orders"
 import { describeChain, describeTrigger } from "../lib/ticket"
 import { formatMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
-import { Table } from "./PositionsView"
+import { pinned, Table } from "./PositionsView"
 
 type Tab = "working" | "all" | "fills"
 const statusTone: Record<Order["status"], Tone> = {
@@ -121,12 +121,12 @@ function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[];
   const [detail, setDetail] = useState<Order | null>(null)
   return <div className="space-y-2">
     {!orders.length ? <p className="text-sm text-muted">{empty}</p> :
-    <Table label="Orders" left={2} headers={["Time", "Contract", "Side", "Type", "Filled / qty", "Limit", "Avg fill", "Status", ""]}>
+    <Table label="Orders" left={2} pin={1} headers={["Time", "Contract", "Side", "Type", "Filled / qty", "Limit", "Avg fill", "Status", ""]}>
       {groupByDay(orders, (o) => o.accepted_at).flatMap((group) => [
         <tr key={`day-${group.day}`} className="bg-raised/40"><td colSpan={9} className="!py-1 text-[10px] uppercase tracking-wide text-muted">{group.label}</td></tr>,
         ...group.items.map((order) => <tr key={order.id}>
           <td className="text-muted">{timeET(order.accepted_at)}</td>
-          <td className="!text-left"><div className="flex items-center gap-1.5 font-medium">{orderLabel(order)}
+          <td className={`!text-left ${pinned}`}><div className="flex items-center gap-1.5 font-medium">{orderLabel(order)}
               {order.legs && <Badge tone="accent">{order.legs.length} legs</Badge>}
               {order.role && <Badge tone={order.role === "stop_loss" ? "negative" : "positive"}>{order.role === "stop_loss" ? "Stop" : "Target"}</Badge>}
               {order.bracket && <Badge tone="neutral">Bracket</Badge>}</div>
@@ -170,12 +170,12 @@ function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[];
 
 function FillsTable({ fills }: { fills: Fill[] }) {
   if (!fills.length) return <p className="text-sm text-muted">No fills yet.</p>
-  return <Table label="Fills" left={2} headers={["Time", "Contract", "Side", "Qty", "Price", "Quote", "Fee", "Order"]}>
+  return <Table label="Fills" left={2} pin={1} headers={["Time", "Contract", "Side", "Qty", "Price", "Quote", "Fee", "Order"]}>
     {groupByDay(fills, (f) => f.time).flatMap((group) => [
       <tr key={`day-${group.day}`} className="bg-raised/40"><td colSpan={8} className="!py-1 text-[10px] uppercase tracking-wide text-muted">{group.label}</td></tr>,
       ...group.items.map((fill) => <tr key={fill.id}>
         <td className="text-muted">{timeET(fill.time)}</td>
-        <td className="!text-left font-medium">{osiLabel(fill.symbol, fill.underlying)}</td>
+        <td className={`!text-left font-medium ${pinned}`}>{osiLabel(fill.symbol, fill.underlying)}</td>
         <td className={fill.side === "buy" ? "text-bullish" : "text-bearish"}>{fill.side.toUpperCase()}</td>
         <td>{fill.quantity}</td><td>{formatMoney(fill.price)}</td><td><FillBook fill={fill} /></td><td>{<FeeAmount fee={fill.fee} fees={fill.fees} />}</td><td>#{fill.order_id}<div className="text-[10px] text-faint">{fill.actor ?? "unknown"}</div></td>
       </tr>),

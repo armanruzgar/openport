@@ -916,6 +916,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   series, or by its bars' range), takes focus, and the arrow keys, Home and End step
   through its points while a live region reads each one out. A draggable marker's
   slider also states its range.
+- **Positions, orders and tickets on a phone.** On a 375-pixel screen the positions,
+  orders and fills tables scroll sideways for a screen or more, and scrolling to a
+  row's Close, Edit or Cancel moved its contract out of sight, so with several rows the
+  button was easy to press on the wrong one; an order ticket's submit button sat more
+  than two screens down its sheet. Each row's contract now stays at the left edge while
+  the table scrolls, and the ticket's submit stays at the foot of the sheet.
 
 ## 0.5.1 (2026-10-28)
 

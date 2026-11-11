@@ -179,6 +179,13 @@
     border-radius: 1rem 1rem 0 0;
     padding-bottom: env(safe-area-inset-bottom);
   }
+  /* A ticket runs past two screens on a phone: its submit stays at the foot of the sheet. */
+  .ticket-sheet button[type="submit"] {
+    position: sticky;
+    bottom: 0.5rem;
+    z-index: 1;
+    box-shadow: 0 -0.75rem 1rem var(--panel);
+  }
   button, .trade-button, select { min-height: 44px; }
   [data-chain] button { min-height: 40px; }
   .trade-input { font-size: 16px; }
