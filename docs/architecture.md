@@ -176,11 +176,13 @@ verification. Driver 6 also labels automatic playbook time-stop cancellations
 `PLAYBOOK_TIME_STOP`. Driver 7 fixes evaluation and payout rules, including requiring
 a flat account for equity targets under trade consistency or microscalping,
 driver 8 fills and order mechanics: queue fills, stop stress, underlying trails, a
-walking order's `then` and limit flatten, and driver 9 corporate actions and
+walking order's `then` and limit flatten, driver 9 corporate actions and
 financing: prices from before a split's ex-date, option triggers on a split stock,
 dividends on adjusted series and across catch-up rollovers, financing from an
-account's first trading date and portfolio margin on adjusted series. Older drivers
-retain their original reducer behavior. The start input records `"driver": 9`: batches of whole market instants, with each
+account's first trading date and portfolio margin on adjusted series, and driver 10
+working share orders: client IDs per attempt, OCO pairs counted once and stops
+reached only in their session. Older drivers
+retain their original reducer behavior. The start input records `"driver": 10`: batches of whole market instants, with each
 underlying's quotes offered at the market time its own snapshot arrived; a new
 trading date's first batch rolling each account over on the finished day's closing
 marks before that batch's quotes; and each command's input recorded before the

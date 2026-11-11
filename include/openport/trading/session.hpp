@@ -460,6 +460,11 @@ class TradingSession {
   /// splits, financing from a placeholder date, and portfolio margin crediting the
   /// value of adjusted series it does not scan.
   void set_revised_corporate_actions(bool revised);
+  /// Preserve share-order behavior when verifying replay drivers 1–9: an earlier
+  /// attempt's client ID answered as a retry, an OCO partner checked and reserved as a
+  /// second sell beside the first, and a stop triggered by a print outside the
+  /// session it works in.
+  void set_revised_share_orders(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

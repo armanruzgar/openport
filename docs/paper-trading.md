@@ -374,7 +374,9 @@ it); a stop activates once a print reaches its level (at or above for a buy, at 
 for a sell) and then executes at the print (`stop`, through any gap) or rests as a limit
 (`stop_limit`). One the current fresh price already crosses executes when accepted;
 otherwise it takes prints stamped at or after its acceptance. Market and stop orders
-work in the regular session; `extended_hours: true` lets a limit also work premarket
+work in the regular session, and only a print from it (its 16:00 close included)
+reaches a stop: a premarket or after-hours print through the level leaves it armed.
+`extended_hours: true` lets a limit also work premarket
 (04:00 ET to the open) and after hours (to 20:00 ET, 17:00 on an early close), sessions
 `md::stock_extended_session` models on the stock market's business days. The prices
 are the feed's underlying prints in those hours; the simulator adds no extended-hours
@@ -421,8 +423,17 @@ plans can open shares through a bracketed working order, and the plan's trade-ri
 limit then measures the move to the stop rather than the shares' value; that stop
 cannot be cancelled while the shares are held (`STOP_REQUIRED`). `oco` places
 a partner order on the same symbol, as `<client_order_id>:oco`; the first fill of either
-cancels the other with `OCO_FILLED`. A retry with the same `client_order_id` and terms is
-answered as first accepted (200); other terms under it are 409 `DUPLICATE_CLIENT_ID`.
+cancels the other with `OCO_FILLED`. Since only one of the two fills, the pair counts
+once: the cash, IRA, buy-only and defined-risk checks take the partner as a sale instead
+of the first order, not beside it, so a target and a stop for the same shares held do not
+sell short, and the pair reserves buying power for whichever of its orders would take
+more. A retry with the same `client_order_id` and terms gets the first answer: the
+order as it stands (200), or the rejection it ended with, a refused partner's included;
+other terms under it are 409 `DUPLICATE_CLIENT_ID`. Client IDs are scoped to the
+attempt: after an account reset, an earlier attempt's ID names a new share order.
+Runs recorded with replay driver 9 or earlier kept each of these as it was: an
+earlier attempt's ID answered as a retry, a refused partner's retry as other terms, an
+OCO pair's partner checked and reserved as a second sale, and any print reaching a stop.
 `POST /api/stocks/orders/preview` runs the order on a private copy and reports the
 account after, its reservation included. Cancel-all (for all or the symbol) and
 account resets cancel share orders; flatten leaves them. A buy-write (shares and a short call at one net price) is

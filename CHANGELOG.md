@@ -30,6 +30,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   split, dividend, financing and margin fixes below. Runs recorded with drivers 1–8
   still pass `--verify-run` with their original rollovers and margin; like driver 8's,
   they can no longer be resumed or restarted.
+- **Replay driver 10.** New reproducible runs record driver 10, which also applies the
+  working share order fixes below: client IDs per attempt, an OCO pair checked and
+  reserved as one, and stops reached only in their session. Runs recorded with
+  drivers 1–9 still pass `--verify-run` with their original share orders; like driver
+  9's, they can no longer be resumed or restarted.
 
 ### Providers
 
@@ -486,6 +491,23 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   hash chain of every account journal once to resume it and again for the records it
   recovers from (about 1.4 s more for a 46 MB journal); `--compact-journals` did the
   same. Each journal is now read once.
+- **Share-order client IDs after a reset.** A share order's client ID kept naming its
+  order across account resets: sending the same order after a reset placed nothing and
+  answered 200 with the earlier attempt's cancelled order, and other terms under the ID
+  were refused with `DUPLICATE_CLIENT_ID`. Client IDs are now scoped to the attempt,
+  as option orders' are, so the ID names a new order.
+- **Retrying a rejected share order.** A retry of a share order rejected as it worked
+  answered 200 as if it had been accepted, and a retry of an order whose `oco` partner
+  was refused got 409 `DUPLICATE_CLIENT_ID`. Both now get the original rejection.
+- **A share OCO pair on held shares.** A target and a stop for the same shares held
+  were checked as two sales: a cash account, an IRA or a buy-only plan refused the
+  pair as a short sale, and a margin account reserved buying power for a short that
+  could not happen. The pair now counts once: the larger of its two sales, and the
+  reservation of whichever order would take more.
+- **Share stops and after-hours prints.** A regular-hours share stop was reached by an
+  after-hours or premarket print, and then sold at the next open at whatever price it
+  printed. A stop is now reached only by a print from the regular session, its close
+  included.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

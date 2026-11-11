@@ -341,5 +341,181 @@ TEST(StockOrders, MarketOrdersWaitForTheOpenAndResetsCancelThem) {
   ASSERT_TRUE(s.reset_account(m("100000"), {}, "fresh", ny(9, 34)).decision.ok());
   EXPECT_EQ(stock_order(s, 3).reason.code, Reason::ACCOUNT_RESET);
 }
+
+TEST(StockOrders, AClientIdNamesOneShareOrderPerAttempt) {
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 10" : "driver 9");
+    test::RecordingFile file;
+    const auto path = (file.directory / "attempts.jsonl").string();
+    const auto open = ny(10);
+    TradingSession s(config(), open, test::create_journal(path));
+    s.set_revised_share_orders(revised);
+    auto again = order("again", Side::Buy, StockOrderType::Limit, 5, "450.00");
+    again.tif = TimeInForce::Gtc;
+    ASSERT_TRUE(s.submit_stock_order(again, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+    ASSERT_TRUE(s.reset_account(m("100000"), {}, "fresh", ny(10, 1)).decision.ok());
+    ASSERT_EQ(stock_order(s, 1).reason.code, Reason::ACCOUNT_RESET);
+    const auto placed = s.submit_stock_order(again, ny(10, 2));
+    if (!revised) {
+      // Drivers 1-9 answered it as a retry of the earlier attempt's cancelled order.
+      EXPECT_TRUE(placed.replayed);
+      EXPECT_EQ(placed.order_id, 1u);
+      EXPECT_EQ(s.snapshot()->stock_orders.size(), 1u);
+      continue;
+    }
+    // The earlier attempt's ID names a new order, which works.
+    ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+    EXPECT_FALSE(placed.replayed);
+    EXPECT_EQ(placed.order_id, 2u);
+    EXPECT_EQ(stock_order(s, 2).status, OrderStatus::Working);
+    // Within this attempt it names that order: a retry is answered, other terms refused.
+    EXPECT_TRUE(s.submit_stock_order(again, ny(10, 3)).replayed);
+    auto other = again;
+    other.shares = 6;
+    EXPECT_EQ(s.submit_stock_order(other, ny(10, 3)).decision.code, Reason::DUPLICATE_CLIENT_ID);
+    // After another reset, other terms under it are a new order too.
+    ASSERT_TRUE(s.reset_account(m("100000"), {}, "again", ny(10, 4)).decision.ok());
+    const auto changed = s.submit_stock_order(other, ny(10, 5));
+    ASSERT_TRUE(changed.decision.ok()) << changed.decision.message;
+    EXPECT_FALSE(changed.replayed);
+    EXPECT_EQ(changed.order_id, 3u);
+    EXPECT_EQ(TradingSession::recover(FileJournal::read(path)).snapshot_json(), s.snapshot_json());
+  }
+}
+
+TEST(StockOrders, ARetryGetsTheRejectionItsOrderOrPairFirstGot) {
+  // An order the plan rejects as it works answers an identical retry with that rejection.
+  auto c = config();
+  c.rules.require_stop_loss = true;
+  c.rules.max_trade_risk = m("1000");
+  const auto open = ny(10);
+  TradingSession s(c, open);
+  auto wide = order("wide", Side::Buy, StockOrderType::Market, 100);
+  wide.stop_loss = m("480");
+  const auto first = s.submit_stock_order(wide, open, StockPrice{"SPY", open, m("500")});
+  ASSERT_EQ(first.order_id, 1u);
+  ASSERT_EQ(first.decision.code, Reason::MAX_TRADE_RISK);
+  const auto retry = s.submit_stock_order(wide, open);
+  EXPECT_TRUE(retry.replayed);
+  EXPECT_EQ(retry.order_id, 1u);
+  EXPECT_EQ(retry.decision.code, Reason::MAX_TRADE_RISK);
+  // A pair whose partner was refused: drivers 1-9 took its retry for other terms.
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 10" : "driver 9");
+    auto b = config();
+    b.rules.buying_power = true;
+    TradingSession t(b, open);
+    t.set_revised_share_orders(revised);
+    auto pair = order("pair", Side::Buy, StockOrderType::Limit, 1, "1.00");
+    pair.oco.push_back(order("", Side::Buy, StockOrderType::Limit, 5000, "500.00"));
+    const auto refused = t.submit_stock_order(pair, open, StockPrice{"SPY", open, m("500")});
+    ASSERT_EQ(refused.decision.code, Reason::BUYING_POWER);
+    ASSERT_EQ(refused.order_id, 1u);
+    EXPECT_EQ(stock_order(t, 1).status, OrderStatus::Rejected);
+    EXPECT_EQ(stock_order(t, 1).oco, 0u);
+    const auto again = t.submit_stock_order(pair, open);
+    EXPECT_EQ(again.decision.code, revised ? Reason::BUYING_POWER : Reason::DUPLICATE_CLIENT_ID);
+    EXPECT_EQ(again.replayed, revised);
+    EXPECT_EQ(again.order_id, 1u);
+    // Another partner under the ID is other terms.
+    auto smaller = pair;
+    smaller.oco.back().shares = 4000;
+    EXPECT_EQ(t.submit_stock_order(smaller, open).decision.code, Reason::DUPLICATE_CLIENT_ID);
+    EXPECT_EQ(t.snapshot()->stock_orders.size(), 1u);
+  }
+}
+
+TEST(StockOrders, AnOcoPairSellsTheSharesHeldOnce) {
+  const auto open = ny(10);
+  auto pair = order("pair", Side::Sell, StockOrderType::Limit, 100, "510.00");
+  pair.tif = TimeInForce::Gtc;
+  pair.oco.push_back(order("", Side::Sell, StockOrderType::Stop, 100, std::nullopt, "495.00"));
+  pair.oco.back().tif = TimeInForce::Gtc;
+  auto cash = config();
+  cash.rules.account_type = AccountType::Cash;
+  cash.rules.buying_power = true;
+  auto buy_only = config();
+  buy_only.rules.buy_only = true;
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 10" : "driver 9");
+    // A target and a stop for 100 shares held only ever sell those 100: a cash account
+    // and a buy-only plan take them, where drivers 1-9 took the stop for a short sale.
+    for (const auto& c : {cash, buy_only}) {
+      TradingSession s(c, open);
+      s.set_revised_share_orders(revised);
+      ASSERT_TRUE(s.trade_stock("SPY", 100, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+      const auto refusal = c.rules.buy_only ? Reason::BUY_ONLY : Reason::ACCOUNT_TYPE;
+      const auto placed = s.submit_stock_order(pair, open);
+      if (!revised) {
+        EXPECT_EQ(placed.decision.code, refusal);
+        continue;
+      }
+      ASSERT_TRUE(placed.decision.ok()) << placed.decision.message;
+      ASSERT_EQ(s.snapshot()->stock_orders.size(), 2u);
+      EXPECT_EQ(stock_order(s, 1).oco, 2u);
+      EXPECT_EQ(s.snapshot()->buying_power.reserved, Money{});
+      // A third sell would sell shares the pair already does.
+      EXPECT_EQ(s.submit_stock_order(order("more", Side::Sell, StockOrderType::Limit, 1, "520.00"), open).decision.code, refusal);
+    }
+    // On margin the pair reserves nothing for a short sale that cannot happen.
+    auto margin = config();
+    margin.rules.buying_power = true;
+    TradingSession s(margin, open);
+    s.set_revised_share_orders(revised);
+    ASSERT_TRUE(s.trade_stock("SPY", 100, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+    const auto available = s.snapshot()->buying_power.available;
+    ASSERT_TRUE(s.submit_stock_order(pair, open).decision.ok());
+    if (revised) {
+      EXPECT_EQ(s.snapshot()->buying_power.reserved, Money{});
+      EXPECT_EQ(s.snapshot()->buying_power.available, available);
+    } else {
+      EXPECT_TRUE(s.snapshot()->buying_power.reserved > Money{});
+    }
+    // The stop fills and cancels the target.
+    ASSERT_TRUE(price(s, ny(10, 30), "494").decision.ok());
+    EXPECT_EQ(stock_order(s, 2).status, OrderStatus::Filled);
+    EXPECT_EQ(stock_order(s, 1).reason.code, Reason::OCO_FILLED);
+    EXPECT_TRUE(s.snapshot()->stocks.empty());
+  }
+}
+
+TEST(StockOrders, ARegularHoursStopIsReachedOnlyByPricesFromItsSession) {
+  const md::Date next{2026, 9, 23};
+  auto stop = order("stop", Side::Sell, StockOrderType::Stop, 100, std::nullopt, "490.00");
+  stop.tif = TimeInForce::Gtc;
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 10" : "driver 9");
+    TradingSession s(config(), ny(15, 59));
+    s.set_revised_share_orders(revised);
+    ASSERT_TRUE(s.trade_stock("SPY", 100, ny(15, 59), StockPrice{"SPY", ny(15, 59), m("495")}).decision.ok());
+    ASSERT_TRUE(s.submit_stock_order(stop, ny(15, 59)).decision.ok());
+    ASSERT_EQ(stock_order(s, 1).status, OrderStatus::Armed);
+    // An after-hours print through the stop, then the next open above it.
+    ASSERT_TRUE(price(s, ny(18, 30), "480").decision.ok());
+    ASSERT_TRUE(price(s, ny(9, 31, next), "505").decision.ok());
+    if (!revised) {
+      // Drivers 1-9 triggered on the after-hours print and sold at the open's.
+      EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
+      EXPECT_EQ(stock_order(s, 1).fill_price, m("505"));
+      continue;
+    }
+    EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Armed);
+    EXPECT_EQ(stock_order(s, 1).triggered_at, 0);
+    EXPECT_EQ(s.snapshot()->stocks.at(0).position.shares, 100);
+    ASSERT_TRUE(price(s, ny(10, 0, next), "489").decision.ok());
+    EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
+    EXPECT_EQ(stock_order(s, 1).fill_price, m("489"));
+  }
+  // The regular session's closing print reaches it; it sells at the next open.
+  TradingSession s(config(), ny(15, 59));
+  ASSERT_TRUE(s.trade_stock("SPY", 100, ny(15, 59), StockPrice{"SPY", ny(15, 59), m("495")}).decision.ok());
+  ASSERT_TRUE(s.submit_stock_order(stop, ny(15, 59)).decision.ok());
+  ASSERT_TRUE(price(s, ny(16), "489").decision.ok());
+  EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Working);
+  EXPECT_EQ(stock_order(s, 1).triggered_at, ny(16));
+  ASSERT_TRUE(price(s, ny(9, 31, next), "500").decision.ok());
+  EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Filled);
+  EXPECT_EQ(stock_order(s, 1).fill_price, m("500"));
+}
 }  // namespace
 }  // namespace openport::trading

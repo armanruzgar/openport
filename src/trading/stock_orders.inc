@@ -182,14 +182,34 @@ bool stock_order_session(const StockOrder& o, Timestamp time) {
   return o.request.extended_hours ? md::stock_extended_session(time).open : md::stock_session(time).open;
 }
 
+/// Whether a print stamped `time` is one of the sessions this order works in: printed
+/// while one is open, or the close a session prints at its end. A stop's level is
+/// reached only on such a print, not on an after-hours or premarket one.
+bool stock_order_print(const StockOrder& o, Timestamp time) {
+  const auto session = o.request.extended_hours ? md::stock_extended_session(time) : md::stock_session(time);
+  return session.open || session.market_time == time;
+}
+
+/// The open OCO partner of a working order that is not an exit, which the order's
+/// fill would cancel: the two never both fill. Null without one.
+const StockOrder* open_partner(const State& s, const StockOrder& o) {
+  if (!s.revised_share_orders || o.oco == 0 || o.exit()) return nullptr;
+  const auto& partner = s.stock_orders.at(static_cast<std::size_t>(o.oco - 1));
+  return partner.open() && !partner.exit() ? &partner : nullptr;
+}
+
 /// The shares the open share orders other than `except` would sell beyond the longs
 /// held, and the shares they would buy beyond the shorts: bracket exits excluded, as
-/// they only ever reduce.
+/// they only ever reduce. Of an OCO pair of sells only the larger counts, since one
+/// filling cancels the other.
 Quantity pending_short_shares(const State& s, const std::string& symbol, OrderId except, Quantity extra) {
   Quantity position = shares_held(s, symbol);
   Quantity lowest = std::min<Quantity>(position, 0);
   for (const auto& o : s.stock_orders) {
     if (!o.open() || o.exit() || o.id == except || o.request.symbol != symbol || o.request.side != Side::Sell) continue;
+    if (const auto* partner = open_partner(s, o); partner && partner->id != except && partner->request.side == Side::Sell &&
+        (partner->request.shares > o.request.shares || (partner->request.shares == o.request.shares && partner->id < o.id)))
+      continue;
     position -= o.request.shares;
     lowest = std::min(lowest, position);
   }
@@ -216,7 +236,8 @@ std::optional<Money> stock_order_bound(const State& s, const StockOrder& o) {
 /// What the open share orders reserve: each, in acceptance order after those before it,
 /// what filling it at its bound would take from buying power (the change in the
 /// requirement plus the cash it pays), never less than nothing. Bracket exits only
-/// reduce, so they reserve nothing.
+/// reduce, so they reserve nothing. An OCO pair fills one of its orders at most: it
+/// reserves once, at its first order, for whichever of the two would take more.
 Money stock_orders_reserved(const State& s) {
   if (std::none_of(s.stock_orders.begin(), s.stock_orders.end(), [](const StockOrder& o) { return o.open() && !o.exit(); }))
     return {};
@@ -226,12 +247,34 @@ Money stock_orders_reserved(const State& s) {
   Money previous = after.ledger.account().cash - requirement(after, book);
   for (const auto& o : s.stock_orders) {
     if (!o.open() || o.exit()) continue;
-    const auto bound = stock_order_bound(s, o);
-    if (!bound) continue;
-    after.ledger.trade_stock(o.request.symbol, signed_shares_of(o.request), *bound, Money{});
-    const Money now = after.ledger.account().cash - requirement(after, book);
-    reserved = reserved + std::max(Money{}, previous - now);
-    previous = now;
+    const auto* partner = open_partner(s, o);
+    if (partner && partner->id < o.id) continue;  // reserved with its partner
+    if (!partner) {
+      const auto bound = stock_order_bound(s, o);
+      if (!bound) continue;
+      after.ledger.trade_stock(o.request.symbol, signed_shares_of(o.request), *bound, Money{});
+      const Money now = after.ledger.account().cash - requirement(after, book);
+      reserved = reserved + std::max(Money{}, previous - now);
+      previous = now;
+      continue;
+    }
+    // Either order of the pair filled alone, from the ledger the orders before it
+    // leave: the one that leaves less is reserved, and the orders after it follow it.
+    const auto start = after.ledger;
+    std::optional<Ledger> worst;
+    Money least;
+    for (const auto* one : {&o, partner}) {
+      const auto bound = stock_order_bound(s, *one);
+      if (!bound) continue;
+      after.ledger = start;
+      after.ledger.trade_stock(one->request.symbol, signed_shares_of(one->request), *bound, Money{});
+      const Money left = after.ledger.account().cash - requirement(after, book);
+      if (!worst || left < least) { worst = after.ledger; least = left; }
+    }
+    after.ledger = worst ? *worst : start;
+    if (!worst) continue;
+    reserved = reserved + std::max(Money{}, previous - least);
+    previous = least;
   }
   return reserved;
 }
@@ -250,27 +293,28 @@ void end_stock_order(State& s, OrderId id, OrderStatus status, Decision reason, 
 /// at once: a limit that crosses the current price fills now, a stop that is already
 /// reached activates. Returns the refusal, if any, and the new order's ID.
 std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest request, OrderRole role, OrderId parent,
-                                                Events& events);
+                                                Events& events, OrderId pair = 0);
 void work_stock_orders(State& s, Events& events, std::optional<OrderId> only = std::nullopt);
 
 /// The acceptance checks: the price's freshness only for an order that executes now,
 /// the account, the plan and the account type for opening orders, which sees the
-/// working sells too, and the buying power the order would reserve.
-Decision stock_acceptance_check(const State& s, const StockOrderRequest& r, OrderRole role) {
+/// working sells too, and the buying power the order would reserve. An OCO partner
+/// names its first order as `pair`: it sells instead of that order, not beside it.
+Decision stock_acceptance_check(const State& s, const StockOrderRequest& r, OrderRole role, OrderId pair = 0) {
   const auto signed_shares = signed_shares_of(r);
   const auto held = shares_held(s, r.symbol);
   if (role != OrderRole::Normal) return {};
   if (s.time < halt_end(s, r.symbol)) return failure(Reason::MARKET_HALTED, "Trading is halted for " + r.symbol);
   // A sell reduces only what the working sells before it leave of the longs.
   const bool reduces = signed_shares > 0 ? held < 0 && signed_shares <= -held
-                                         : held > 0 && pending_short_shares(s, r.symbol, 0, signed_shares) >= 0;
+                                         : held > 0 && pending_short_shares(s, r.symbol, pair, signed_shares) >= 0;
   if (const auto d = account_check(s, reduces); !d.ok()) return d;
   if (const auto d = share_open_loss_check(s, r.symbol, held, signed_shares); !d.ok()) return d;
   if (reduces) return {};
   if (const auto d = plan_entry_check(s.config.rules, r.symbol, s.time); !d.ok()) return d;
   if (md::is_index_underlying(r.symbol))
     return failure(Reason::INVALID_ORDER, "Index underlyings settle in cash and have no shares to trade");
-  if (r.side == Side::Sell && pending_short_shares(s, r.symbol, 0, -r.shares) < 0) {
+  if (r.side == Side::Sell && pending_short_shares(s, r.symbol, pair, -r.shares) < 0) {
     if (s.config.rules.buy_only) return failure(Reason::BUY_ONLY, "This plan is buy-only: share sales may only reduce long shares");
     if (s.config.rules.defined_risk) return failure(Reason::DEFINED_RISK, "This plan allows defined risk only: short shares can lose without limit");
     if (s.config.rules.account_type != AccountType::Margin)
@@ -288,8 +332,8 @@ Decision stock_acceptance_check(const State& s, const StockOrderRequest& r, Orde
 }
 
 std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest request, OrderRole role, OrderId parent,
-                                                Events& events) {
-  if (const auto d = stock_acceptance_check(s, request, role); !d.ok()) return {d, 0};
+                                                Events& events, OrderId pair) {
+  if (const auto d = stock_acceptance_check(s, request, role, pair); !d.ok()) return {d, 0};
   auto partners = std::move(request.oco);
   request.oco.clear();
   StockOrder order;
@@ -303,6 +347,12 @@ std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest requ
   order.actor = s.actor;
   const auto id = order.id;
   s.stock_orders.push_back(std::move(order));
+  // An OCO partner is paired with its first order before its reservation is checked,
+  // so the two reserve as one.
+  if (pair != 0) {
+    s.stock_orders.mut(static_cast<std::size_t>(id - 1)).oco = pair;
+    s.stock_orders.mut(static_cast<std::size_t>(pair - 1)).oco = id;
+  }
   // The account's buying power, with this order reserved, must stay available.
   if (role == OrderRole::Normal && s.config.rules.buying_power && buying_power(s).total.available < Money{}) {
     State without = s;
@@ -310,6 +360,7 @@ std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest requ
     if (buying_power(without).total.available > buying_power(s).total.available) {
       const auto short_by = -buying_power(s).total.available;
       const auto symbol = s.stock_orders.back().request.symbol;
+      if (pair != 0) s.stock_orders.mut(static_cast<std::size_t>(pair - 1)).oco = 0;
       s.stock_orders.truncate(s.stock_orders.size() - 1);
       return {{Reason::BUYING_POWER, "This share order needs more buying power than the account has available",
                short_by.dollars(), 0.0, symbol}, 0};
@@ -318,8 +369,12 @@ std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest requ
   event(events, "stock_order_accepted", Json{{"id", id}, {"order", s.stock_orders.back().request}});
   for (auto& partner : partners) {
     partner.client_order_id = s.stock_orders.at(static_cast<std::size_t>(id - 1)).request.client_order_id + ":oco";
-    auto [d, other] = accept_stock_order(s, std::move(partner), OrderRole::Normal, 0, events);
+    auto terms = partner;
+    auto [d, other] = accept_stock_order(s, std::move(partner), OrderRole::Normal, 0, events, s.revised_share_orders ? id : 0);
     if (!d.ok()) {
+      // The refused partner's terms stay on the order, so a retry of the pair gets
+      // this answer again rather than DUPLICATE_CLIENT_ID.
+      if (s.revised_share_orders) s.stock_orders.mut(static_cast<std::size_t>(id - 1)).request.oco.push_back(std::move(terms));
       end_stock_order(s, id, OrderStatus::Rejected, d, events);
       return {d, id};
     }
@@ -398,10 +453,11 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
       shares = std::min(shares, available);
     }
     if (o.status == OrderStatus::Armed) {
-      // Stops are reached on the price itself; they activate in any session the
-      // order works in, and execute only in one.
+      // Stops are reached on the price itself, printed in a session the order works
+      // in (its close included), and execute only while one is open.
       const auto level = *o.request.stop_price;
       if (!(buy ? *price >= level : *price <= level)) continue;
+      if (s.revised_share_orders && !stock_order_print(o, mark->second.time)) continue;
       auto& armed = s.stock_orders.mut(i);
       armed.status = OrderStatus::Working;
       armed.triggered_at = s.time;

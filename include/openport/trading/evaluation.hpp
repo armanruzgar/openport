@@ -111,6 +111,9 @@ struct Evaluation {
   std::string decision;           ///< Human-readable pass/fail explanation.
   OrderId first_order = 1;        ///< Orders with smaller IDs belong to earlier attempts.
   std::uint64_t first_fill = 1;   ///< Likewise for fills.
+  /// Likewise for share orders, whose client IDs name orders of this attempt only;
+  /// left at 1 by replay drivers 1–9, whose retries looked at every attempt's.
+  OrderId first_stock_order = 1;
   md::Date day;                   ///< Trading day in progress.
   Money day_open_equity;
   std::optional<Money> day_open_floor; ///< Fixed daily base for percentage open-loss caps.

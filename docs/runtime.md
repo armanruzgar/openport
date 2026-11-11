@@ -1105,7 +1105,7 @@ be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
 their existing journal bytes; restart creates a byte-identical prefix on the current
-driver (9).
+driver (10).
 
 ### Verifying a run
 
@@ -1234,6 +1234,14 @@ made before the first market data accrues no financing for the years before it, 
 portfolio margin takes only what it scans out of equity
 ([paper trading](paper-trading.md)). Runs recorded with drivers 1–8 verify with
 their original rollovers and margin; they can no longer be resumed or restarted.
+
+Driver 10 applies this build's working share order fixes: a share order's client ID
+names an order of the current attempt only, an OCO pair is checked and reserves
+buying power as one sale, a retry of a pair whose partner was refused gets that
+refusal, and a stop is reached only by a print from its session
+([paper trading](paper-trading.md#working-share-orders)). Runs recorded with drivers
+1–9 verify with their original share orders; they can no longer be resumed or
+restarted.
 
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).

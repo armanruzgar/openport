@@ -8113,7 +8113,7 @@
       },
       "post": {
         "summary": "POST /api/stocks/orders",
-        "description": "Paper trading only. A working share order for a stock or ETF: market, limit, stop or stop_limit, DAY or GTC, optional extended_hours for limits (premarket 04:00 to the open and after hours to 20:00 ET, 17:00 on early-close days), an optional bracket and an optional oco partner. Shares trade at the underlying's single price, so an order fills whole, at that price, once a print at or after its acceptance crosses its limit or reaches its stop; one the current fresh price crosses fills at once. Opening orders take account, plan, account-type (working sells included) and stop-requirement checks when accepted and reserve buying power at their limit (or the price, or a buy stop's level); each execution takes the checks POST /api/stocks/trade does, and a refusal then rejects the order. 201 when accepted, 200 for a retry of the same client_order_id and terms. Requires trade:ACCOUNT (or trade:*) live, replay scope in replay.",
+        "description": "Paper trading only. A working share order for a stock or ETF: market, limit, stop or stop_limit, DAY or GTC, optional extended_hours for limits (premarket 04:00 to the open and after hours to 20:00 ET, 17:00 on early-close days), an optional bracket and an optional oco partner. Shares trade at the underlying's single price, so an order fills whole, at that price, once a print at or after its acceptance crosses its limit or reaches its stop; one the current fresh price crosses fills at once. Opening orders take account, plan, account-type (working sells included) and stop-requirement checks when accepted and reserve buying power at their limit (or the price, or a buy stop's level); each execution takes the checks POST /api/stocks/trade does, and a refusal then rejects the order. An oco pair counts as one sale in those checks and reserves for whichever of its orders would take more, and a stop is reached only by a regular-session print (its close included). 201 when accepted; a retry of the same client_order_id and terms in the same attempt gets the first answer: 200 with the order, or the rejection it ended with. Requires trade:ACCOUNT (or trade:*) live, replay scope in replay.",
         "x-scope": "trade",
         "responses": {
           "201": {
@@ -21926,7 +21926,7 @@
           },
           "restart": {
             "type": "string",
-            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (9), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
+            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (10), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
           },
           "at": {
             "type": "string",

@@ -671,6 +671,7 @@ inline void to_json(Json& j, const Evaluation& e) {
   if (e.day_lock != Reason::NONE) { j["day_lock"] = e.day_lock; j["day_locked_at"] = e.day_locked_at; }
   if (e.short_profit != Money{}) j["short_profit"] = e.short_profit;
   if (e.first_stock_fill != 1) j["first_stock_fill"] = e.first_stock_fill;
+  if (e.first_stock_order != 1) j["first_stock_order"] = e.first_stock_order;
   if (e.closed_trades != 0) j["closed_trades"] = e.closed_trades;
   if (e.best_trade) j["best_trade"] = *e.best_trade;
   if (e.day_executions != 0) j["day_executions"] = e.day_executions;
@@ -706,6 +707,7 @@ inline void from_json(const Json& j, Evaluation& e) {
   e.decision_code = decision_code_of(e.status, e.decision_code);
   added_field(j, "day_lock", e.day_lock); added_field(j, "day_locked_at", e.day_locked_at);
   added_field(j, "short_profit", e.short_profit); added_field(j, "first_stock_fill", e.first_stock_fill);
+  added_field(j, "first_stock_order", e.first_stock_order);
   added_field(j, "closed_trades", e.closed_trades);
   added_field(j, "best_trade", e.best_trade);
   added_field(j, "day_executions", e.day_executions);
@@ -996,6 +998,9 @@ struct State {
   /// splits, dividends, financing and adjusted-series margin (see
   /// set_revised_corporate_actions).
   bool revised_corporate_actions = true;
+  /// Transient compatibility: false for replay drivers 1–9, which keep their original
+  /// share-order retries, OCO pairs and stop triggers (see set_revised_share_orders).
+  bool revised_share_orders = true;
   std::set<std::string> walked; ///< Transient symbols to match after this transaction's market is in place.
   SessionConfig config;
   Timestamp time = 0;

@@ -712,6 +712,7 @@ void Desk::start_trading() {
       account.session->set_revised_evaluation(options_.revised_evaluation);
       account.session->set_revised_fills(options_.revised_fills);
       account.session->set_revised_corporate_actions(options_.revised_corporate_actions);
+      account.session->set_revised_share_orders(options_.revised_share_orders);
       account.session->set_actor("system");
       account.sampled_snapshot = account.session->snapshot();
     } catch (const TradingError& error) {
@@ -889,6 +890,7 @@ void Desk::create_account(const TradingCommand& c, TradingReply& reply) {
     account.session->set_revised_evaluation(options_.revised_evaluation);
     account.session->set_revised_fills(options_.revised_fills);
     account.session->set_revised_corporate_actions(options_.revised_corporate_actions);
+    account.session->set_revised_share_orders(options_.revised_share_orders);
     account.session->set_actor("system");
     account.equity = std::make_unique<EquityStore>(file.string() + ".equity.csv");
   } catch (const TradingError& error) {
@@ -2682,6 +2684,7 @@ constexpr bool Desk::Options::* kDriverOptions[] = {
     &Desk::Options::revised_evaluation,    // 7: evaluation and payout rules
     &Desk::Options::revised_fills,         // 8: fills, stops, walks and flatten closes
     &Desk::Options::revised_corporate_actions,  // 9: splits, dividends, financing and adjusted margin
+    &Desk::Options::revised_share_orders,  // 10: share-order client IDs, OCO pairs and stop sessions
 };
 static_assert(std::size(kDriverOptions) == static_cast<std::size_t>(kReplayDriver - 1), "each driver after the first adds one option");
 }  // namespace

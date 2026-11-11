@@ -1668,6 +1668,7 @@ Evaluation fresh_evaluation(const State& s, std::uint64_t attempt) {
   e.cycle_started = s.time;
   e.first_order = static_cast<OrderId>(s.orders.size() + 1);
   e.first_fill = s.fills.size() + 1;
+  if (s.revised_share_orders) e.first_stock_order = static_cast<OrderId>(s.stock_orders.size() + 1);
   if (s.config.rules.phase != Phase::Funded && s.config.rules.microscalp_percent > 0)
     e.first_stock_fill = s.stock_fills.size() + 1;
   e.day = s.day;
@@ -6080,6 +6081,10 @@ void TradingSession::set_revised_corporate_actions(bool revised) {
   impl_->state.revised_corporate_actions = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
+void TradingSession::set_revised_share_orders(bool revised) {
+  impl_->state.revised_share_orders = revised;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {
   impl_->opening_rule_inputs = std::move(inputs);
   impl_->compact_opening_rule_inputs = compact;
@@ -7933,18 +7938,25 @@ CommandResult TradingSession::submit_stock_order(StockOrderRequest request, Time
   if (feed_price && (feed_price->symbol != request.symbol || feed_price->price <= Money{} || feed_price->time < 0 || feed_price->time > time))
     throw TradingError(Reason::INVALID_QUOTE, "A stock price needs the traded symbol, a positive price and no later time");
   const auto& current = impl_->state;
-  // A retry finds the order its client ID first named, partner included.
+  // A retry finds the order its client ID first named in this attempt, partner
+  // included, and gets its first answer: the order as it stands, or the rejection it
+  // ended with. An earlier attempt's orders hold no IDs (first_stock_order).
   for (const auto& o : current.stock_orders) {
-    if (o.exit() || o.request.client_order_id != request.client_order_id) continue;
-    auto terms = request;
-    terms.oco.clear();
-    bool same = o.request == terms && (o.oco != 0) == !request.oco.empty();
-    if (same && o.oco != 0) {
-      auto partner = request.oco.front();
-      partner.client_order_id = request.client_order_id + ":oco";
-      same = current.stock_orders.at(static_cast<std::size_t>(o.oco - 1)).request == partner;
+    if (o.exit() || o.id < current.evaluation.first_stock_order || o.request.client_order_id != request.client_order_id) continue;
+    // The terms as the order took them: its partner under the name it was given.
+    auto named = request;
+    for (auto& partner : named.oco) partner.client_order_id = request.client_order_id + ":oco";
+    bool same = false;
+    if (!o.request.oco.empty()) {
+      same = o.request == named;  // a partner refused with the order: its terms stay on it
+    } else {
+      auto terms = named;
+      terms.oco.clear();
+      same = o.request == terms && (o.oco != 0) == !named.oco.empty();
+      if (same && o.oco != 0) same = current.stock_orders.at(static_cast<std::size_t>(o.oco - 1)).request == named.oco.front();
     }
-    CommandResult replay{same ? Decision{} : failure(Reason::DUPLICATE_CLIENT_ID, "Client order ID already used with other terms"),
+    CommandResult replay{!same ? failure(Reason::DUPLICATE_CLIENT_ID, "Client order ID already used with other terms")
+                               : o.status == OrderStatus::Rejected ? o.reason : Decision{},
                          o.id, current.version};
     replay.replayed = same;
     return replay;

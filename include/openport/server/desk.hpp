@@ -40,7 +40,7 @@ struct OpeningQuotation {
 /// the driver it recorded, so its fills and hashes reproduce. A new driver raises this
 /// and adds its option to the table set_replay_driver and replay_driver read
 /// (desk.cpp), and nothing else.
-inline constexpr int kReplayDriver = 9;
+inline constexpr int kReplayDriver = 10;
 
 /// Single-owner market-to-account kernel. The caller supplies both clocks and
 /// drain boundaries; this class has no threads, queue, HTTP or clock reads.
@@ -91,6 +91,9 @@ class Desk {
     bool revised_fills = true; ///< Driver 8 fixes fills, stops, walks and flatten closes.
     /// Driver 9 fixes splits, dividends, financing and adjusted series' portfolio margin.
     bool revised_corporate_actions = true;
+    /// Driver 10 fixes working share orders: client IDs per attempt, an OCO pair
+    /// checked and reserved as one, and stops that trigger only in their session.
+    bool revised_share_orders = true;
     /// Optional run-start capability. Absent on older runs, preserving their fills.
     bool opening_rule_checks = true;
     /// Optional run-start capability: older runs journal the entire input maps.
