@@ -118,6 +118,8 @@ class Stub:
             return 200, {**body, "trade": path.split("/")[-2], "account_version": "1"}
         if path == "/api/tokens/reload":
             return 200, {"names": ["operator"], "count": 1, "loaded_at": TIME}
+        if path == "/api/notifications/history":
+            return 200, shaped("NotificationHistory", sequence="1", events=[])
         if path == "/api/status":
             return 200, self.status
         if path == "/api/volatility/scanner":

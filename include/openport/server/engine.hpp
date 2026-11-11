@@ -88,6 +88,9 @@ class MetricsSource {
   [[nodiscard]] virtual Notifications* notifications() const { return nullptr; }
   /// Public settings remain visible even when this source cannot forward events.
   [[nodiscard]] virtual const Notifications* configured_notifications() const { return notifications(); }
+  /// The local event channel (/ws/events), which keeps each account's recent events;
+  /// nullptr when this source has none.
+  [[nodiscard]] virtual const Notifications* event_stream() const { return nullptr; }
   [[nodiscard]] virtual Sandboxes* sandboxes() const { return nullptr; }
   /// Named groups of accounts that copied orders fan out to; nullptr when not offered.
   [[nodiscard]] virtual AccountGroups* account_groups() const { return nullptr; }
@@ -178,6 +181,7 @@ class Engine final : public MetricsSource {
   [[nodiscard]] EngineStatus status() const override;
   [[nodiscard]] Notifications* notifications() const override { return options_.notifications.get(); }
   [[nodiscard]] const Notifications* configured_notifications() const override { return configured_notifications_.get(); }
+  [[nodiscard]] const Notifications* event_stream() const override { return options_.event_stream.get(); }
   [[nodiscard]] Sandboxes* sandboxes() const override { return options_.sandboxes.get(); }
   [[nodiscard]] md::Timestamp wall_time() const override { return options_.clock(); }
   [[nodiscard]] std::shared_ptr<const TradingView> trading_view() const override;

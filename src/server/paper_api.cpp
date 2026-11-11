@@ -3139,7 +3139,8 @@ constexpr std::pair<std::string_view, std::string_view> kRouteMethods[] = {
     {"/api/playbooks/{}/mode", "PUT"}, {"/api/playbooks/{}/evaluate", "POST"},
     {"/api/playbooks/{}/signal-secret", "GET, HEAD, POST, DELETE"}, {"/api/signals/{}", "POST"},
     {"/api/rule-packs/validate", "POST"}, {"/api/sandboxes", "POST"}, {"/api/tokens/reload", "POST"},
-    {"/api/notifications/test", "POST"}, {"/api/notifications/channels/{}", "PUT"}, {"/api/earnings", "GET, HEAD"},
+    {"/api/notifications/test", "POST"}, {"/api/notifications/channels/{}", "PUT"},
+    {"/api/notifications/history", "GET, HEAD"}, {"/api/earnings", "GET, HEAD"},
     {"/api/earnings/import", "POST"}, {"/api/earnings/imported", "DELETE"},
     {"/api/analysis/portfolios", "GET, HEAD, POST"}, {"/api/analysis/portfolios/{}", "GET, HEAD, DELETE"},
     {"/api/analysis/portfolios/{}/risk/{}", "GET, HEAD"}, {"/api/backtests", "GET, HEAD, POST, DELETE"},
@@ -4634,6 +4635,11 @@ void handle_api_async(const ApiRequest& request, MetricsSource& source, ApiCompl
     return;
   }
   if (request.target.starts_with("/api/notifications/")) {
+    // The history is read-only and needs no delivery channel: GET answered it above.
+    if (const auto bare = std::string_view(request.target).substr(0, request.target.find('?')); bare == "/api/notifications/history") {
+      complete(method_not_allowed(bare, request.method));
+      return;
+    }
     if (!source.notifications()) { complete(api_error(503, "NOTIFICATIONS_UNAVAILABLE", "Notifications are unavailable on this source")); return; }
     try {
       const auto body = json::parse(request.body);

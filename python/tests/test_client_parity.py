@@ -42,7 +42,7 @@ CALLS = [
     ("send_staged_order", "{stage}"), ("dismiss_staged_order", "{stage}"),
     ("pass_odds",), ("rules_compare", ["intraday-100k"]), ("validate_rule_pack", {}),
     ("strategy_template", "SPX", "expiry", {}), ("calendar_events",),
-    ("test_notification", "channel"), ("configure_notification", "{channel}"), ("create_sandbox",),
+    ("test_notification", "channel"), ("configure_notification", "{channel}"), ("notification_history",), ("create_sandbox",),
     ("list_backtests",), ("start_backtest", "test", "practice"), ("get_backtest", "{id}"),
     ("compare_backtests", ["1", "2"]), ("keep_backtest", "{id}"), ("cancel_backtest", "{id}"), ("cancel_backtest",),
     ("list_replays",), ("start_replay",), ("control_replay",), ("stop_replay",), ("replay_history",),

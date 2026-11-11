@@ -581,7 +581,9 @@ void Engine::run() {
       desk_.apply_command(command, desk_.market_time(), options_.clock());
     }
     publish_desk();
-    if (options_.notifications && !stopping_ && !shutting_down_) {
+    // Outbound channels and the local event stream both hear of a stall: the stream keeps
+    // it in its history, so a terminal opened later can still see it happened.
+    if ((options_.notifications || options_.event_stream) && !stopping_ && !shutting_down_) {
       const auto capabilities = provider_.capabilities();
       const auto stale_after = std::chrono::duration_cast<std::chrono::nanoseconds>(
           std::max(3 * capabilities.poll_interval, std::chrono::seconds(60))).count();
@@ -592,9 +594,12 @@ void Engine::run() {
         // A stream's market closing is not a stall either (see overdue).
         const bool stalled = health.state == md::FeedState::Stopped ||
                              overdue(symbol, since, received, stale_after, capabilities);
-        if (stalled && stalled_.insert(symbol).second)
-          options_.notifications->publish({"feed_stalled", "", desk_.market_time(),
-              symbol + ": feed stalled; check the terminal's feed status.", {{"underlying", symbol}}});
+        if (stalled && stalled_.insert(symbol).second) {
+          const NotificationEvent stall{"feed_stalled", "", desk_.market_time(),
+              symbol + ": feed stalled; check the terminal's feed status.", {{"underlying", symbol}}};
+          if (options_.notifications) options_.notifications->publish(stall);
+          if (options_.event_stream) options_.event_stream->publish(stall);
+        }
         if (!stalled) stalled_.erase(symbol);
       }
     }

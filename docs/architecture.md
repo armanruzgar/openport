@@ -81,7 +81,9 @@ flowchart LR
   use its own clock. Demo/replay observers require the operator's `include_simulated`
   opt-in; replay run names isolate observations, and catch-up only primes them.
   A separate mutex serializes observations from concurrent engines. No notification
-  configuration, credentials or delivery state enters the trading journal.
+  configuration, credentials or delivery state enters the trading journal. The local
+  event stream also keeps each account's recent events, and the feed's stalls, in a
+  bounded memory-only history (200 per account, 10,000 in all) that HTTP reads.
 - **Commands** from the terminal (orders, cancels, resets) are queued and applied on
   the engine thread, between market batches, so each account sees one ordered stream
   of market data and commands.

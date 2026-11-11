@@ -74,16 +74,20 @@ source plus browser price alerts. **Mark all read** clears unread badges;
 are recorded even when fill toasts are disabled. Receipt times are explicitly
 browser receipt times, not invented market timestamps.
 
-The current server API has notification channel configuration and test actions, but
-no notification-history endpoint. This drawer therefore records events the browser
-observes after its initial account snapshot and persists them locally; it is not an
-audit log of events that happened while the browser was closed, and another browser
-or device starts with an empty drawer. What the server keeps is elsewhere: fills,
-assignments, exercises and rule trips stay in the account (Orders and Journal), and
-each server alert keeps its fire count and last firing time (the header's alerts
-dialog, `GET /api/alerts`). What it does not keep is a floor warning, a feed stall
-or a playbook-ready notice, and every firing of a repeating alert but the last: with
-no browser open these leave no record. To have them while away, configure an
+The drawer records the events the browser observes after its initial account
+snapshot and persists them locally. It also reads what openportd kept
+([`GET /api/notifications/history`](api.md#notification-history)) when it opens and
+every 30 seconds, and adds the kinds a browser cannot see for itself: a feed stall,
+a floor warning (entering or leaving the $500 band), a staged playbook order, and
+every firing of a server alert, the earlier firings of a repeating one included. So
+a terminal opened later, or on another device, shows those that happened while no
+browser was open. They join the drawer unread, without a toast or a sound, and each
+is taken once per account: one you clear does not come back. openportd keeps the
+latest 200 per account in memory, so a restart of openportd forgets them. Fills,
+assignments, exercises and rule trips stay in the account (Orders and Journal) and
+are announced as the browser observes them; each server alert also keeps its fire
+count and last firing time (the header's alerts dialog, `GET /api/alerts`). To have
+notifications delivered while away, configure an
 [external notification channel](runtime.md#external-notifications) (a webhook, ntfy,
 Discord or Telegram), which delivers each as it happens.
 

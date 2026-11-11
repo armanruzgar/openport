@@ -10,7 +10,9 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <string_view>
 #include <thread>
+#include <utility>
 
 #include "openport/net/http.hpp"
 #include "openport/server/paper.hpp"
@@ -45,6 +47,12 @@ struct NotificationEvent {
   nlohmann::json details = nlohmann::json::object();
 };
 
+/// Events openportd's event stream keeps for each account and source, newest last, for
+/// GET /api/notifications/history; the feed's own events are kept beside them.
+inline constexpr std::size_t kNotificationHistory = 200;
+/// Every account's kept events together: past this the oldest go first.
+inline constexpr std::size_t kNotificationHistoryTotal = 10'000;
+
 /// One bounded, memory-only delivery queue. No network or logging on producers.
 /// Observation, publication, settings and status are thread-safe.
 class Notifications {
@@ -57,6 +65,8 @@ class Notifications {
                    static_cast<unsigned long long>(dropped));
     };
     bool worker = true;  ///< False allows deterministic pumping with deliver_one in tests.
+    /// Recent events kept per account and source for history(); zero keeps none.
+    std::size_t history = 0;
   };
   Notifications(NotificationConfig config, std::unique_ptr<net::HttpClient> http, Options options);
   ~Notifications();
@@ -66,10 +76,21 @@ class Notifications {
   void publish(const NotificationEvent& event);
   using Subscriber = std::function<void(const nlohmann::json&)>;
   /// Receives only `account`'s events from `source` ("live" or "replay"); JSON is built
-  /// only when such a subscriber exists. Callbacks must only enqueue bounded work; never
-  /// block on I/O. No history is replayed. Floor events arrive only on entering or
-  /// leaving the default warning band, not on every observation.
+  /// only when such a subscriber exists or history is kept. Callbacks must only enqueue
+  /// bounded work; never block on I/O. No history is replayed. Floor events arrive only
+  /// on entering or leaving the default warning band, not on every observation.
   std::uint64_t subscribe(std::string account, std::string source, Subscriber subscriber);
+  struct History {
+    std::uint64_t sequence = 0;  ///< The latest published when read: read on after it.
+    nlohmann::json events = nlohmann::json::array();
+  };
+  /// The kept events of `account` on `source` ("live" or "replay"), with the feed's own
+  /// (feed_stalled) on that source, as the stream sent them plus `received` (the server
+  /// clock when published), oldest first: the newest `limit` after sequence `since`.
+  /// Order transitions (order_state) are not kept; a removed account's go with it.
+  [[nodiscard]] History history(std::string_view account, std::string_view source,
+                                std::uint64_t since, std::size_t limit) const;
+  [[nodiscard]] std::size_t history_capacity() const { return options_.history; }
   void unsubscribe(std::uint64_t subscription);
   /// History primes observation without delivering recovered or fast-forwarded events.
   void observe(std::string_view account, const TradingView& view, bool history = false);
@@ -109,6 +130,8 @@ class Notifications {
     std::set<std::string> stages;
   };
   bool enqueue(std::size_t channel, const NotificationEvent& event);
+  /// Keeps a published stream message for history(); mutex_ held.
+  void remember(const std::pair<std::string, std::string>& key, std::uint64_t sequence, nlohmann::json message);
   void run();
   std::size_t capacity_;
   bool include_simulated_;
@@ -124,6 +147,13 @@ class Notifications {
   // Keyed by stream account and source, so a publication touches only its own listeners.
   std::map<std::pair<std::string, std::string>, std::map<std::uint64_t, Subscriber>> subscribers_;
   std::map<std::string, bool> stream_near_floor_;  // by publisher account, like Channel::near_floor
+  struct Kept {
+    std::uint64_t sequence = 0;
+    nlohmann::json message;
+  };
+  // Kept stream messages by stream account and source; the feed's own under an empty account.
+  std::map<std::pair<std::string, std::string>, std::deque<Kept>> history_;
+  std::size_t kept_ = 0;  // entries across history_
   std::uint64_t subscription_ = 0, sequence_ = 0;
   std::atomic<bool> stopping_{false};
   std::thread thread_;

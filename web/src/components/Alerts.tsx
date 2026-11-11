@@ -12,6 +12,9 @@ import { Dialog } from "./Dialog"
 import { NotificationSettings } from "./NotificationSettings"
 import { ServerAlerts, ServerAlertWatcher } from "./ServerAlerts"
 import { randomId } from "../lib/id"
+import { useQuery } from "@tanstack/react-query"
+import { api, ApiError } from "../api/client"
+import { newServerEntries } from "../lib/server-notifications"
 
 const setAt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
 
@@ -41,7 +44,28 @@ export function AlertWatcher() {
     <FillWatcher sound={settings.sound} enabled={source === "live" && settings.fills} />
     <DeliveryWatcher sound={settings.sound} />
     <RuleWatcher sound={settings.sound} />
+    <ServerNotificationWatcher />
   </>
+}
+
+/** Feed stalls, floor warnings, staged playbook orders and alert firings the server kept,
+ * those of a time no terminal was open included, join the drawer quietly: no toast for the past. */
+function ServerNotificationWatcher() {
+  const { source, account } = useLive()
+  const stream = source === "live" || source === "replay" ? source : null
+  const history = useQuery({
+    queryKey: ["notification-history", stream, account],
+    queryFn: ({ signal }) => api.notificationHistory(account, stream ?? "live", signal),
+    enabled: stream !== null,
+    retry: false,
+    // An older server has no history route: stop asking.
+    refetchInterval: (query) => query.state.error instanceof ApiError && query.state.error.status === 404 ? false : 30_000,
+  }).data
+  useEffect(() => {
+    if (!history || !stream) return
+    for (const entry of newServerEntries(history, `${stream}:${account}`)) notificationHistory.add(entry)
+  }, [history, stream, account])
+  return null
 }
 
 function RuleWatcher({ sound }: { sound: boolean }) {
@@ -195,7 +219,7 @@ export function AlertsButton() {
     {open && <section id="notification-center" aria-label="Notification history" className="notification-drawer absolute inset-x-3 top-full z-30 mt-2 max-w-[calc(100vw-1.5rem)] sm:left-auto sm:right-0 sm:w-96 rounded-lg border border-border bg-panel p-3 shadow-chart"
       onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); ref.current?.querySelector("button")?.focus() } }}>
       <h2 className="text-sm font-medium text-foreground">Notifications · {unread} unread</h2>
-      <p className="my-2 text-[11px] text-muted">Observed in this browser · {source} / {account}. Times below are receipt times. Recent 200 events across accounts.</p>
+      <p className="my-2 text-[11px] text-muted">Observed in this browser, or kept by the server for feed stalls, floor warnings, staged playbook orders and alerts · {source} / {account}. Times below are receipt times. Recent 200 events across accounts.</p>
       <div className="mb-2 flex flex-wrap gap-2">
         <button className="trade-button" onClick={() => notificationHistory.markAllRead(scope)} disabled={!unread}>Mark all read</button>
         <button className="trade-button" onClick={() => notificationHistory.clear(scope)} disabled={!list.length}>Clear</button>

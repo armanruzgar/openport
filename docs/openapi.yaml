@@ -5132,6 +5132,78 @@
         }
       }
     },
+    "/api/notifications/history": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/account"
+        },
+        {
+          "name": "source",
+          "in": "query",
+          "required": false,
+          "description": "live (the default, the demo market's accounts included) or replay, the replay beside it; each replay event carries its run_id.",
+          "schema": {
+            "enum": [
+              "live",
+              "replay"
+            ],
+            "default": "live"
+          }
+        },
+        {
+          "name": "since",
+          "in": "query",
+          "required": false,
+          "description": "Only events after this sequence: pass the sequence an earlier answer gave to read what came since.",
+          "schema": {
+            "type": "string",
+            "pattern": "^[0-9]+$"
+          }
+        },
+        {
+          "name": "limit",
+          "in": "query",
+          "required": false,
+          "description": "The newest this many of them.",
+          "schema": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 200
+          }
+        }
+      ],
+      "get": {
+        "summary": "Read recent notifications",
+        "description": "The events the account's event stream (/ws/events) published recently, as its PaperEvent messages plus received (the server clock when published), oldest first, with the feed's own events (feed_stalled, account empty) on the same source. openportd keeps up to capacity events per account and source and 10,000 in all, in memory only: they are gone after a restart, and a deleted account's, an expired sandbox's and a finished replay run's go with it. Order transitions (order_state) are not kept: read /api/orders. Floor events are kept on entering and leaving the warning band only. Sandbox tokens read their own live account only (403 SCOPE_REQUIRED otherwise).",
+        "x-scope": "read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationHistory"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          },
+          "503": {
+            "description": "NOTIFICATIONS_UNAVAILABLE: this source has no event stream. No Retry-After header is returned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/sandboxes": {
       "post": {
         "summary": "Create a visitor sandbox on simulated demo prices",
@@ -6415,7 +6487,7 @@
       "get": {
         "summary": "Subscribe to versioned account events",
         "x-scope": "read",
-        "description": "Opt-in sibling of /ws. Starts with EventStreamReady, then PaperEvent messages from Notifications::publish. Live includes demo paper accounts; replay carries run_id. No historical delivery or resume; sequence is process-local and gaps may belong to other accounts. Reconcile REST fills/orders after every disconnect. A slow consumer exceeding 256 queued messages is disconnected. Existing token, origin, host and sandbox account checks apply. Times come from the engine; missing market time stays null.",
+        "description": "Opt-in sibling of /ws. Starts with EventStreamReady, then PaperEvent messages from Notifications::publish. Live includes demo paper accounts; replay carries run_id. No historical delivery or resume on the socket: GET /api/notifications/history reads recent events. sequence is process-local and gaps may belong to other accounts. Reconcile REST fills/orders after every disconnect. A slow consumer exceeding 256 queued messages is disconnected. Existing token, origin, host and sandbox account checks apply. Times come from the engine; missing market time stays null.",
         "parameters": [
           {
             "name": "version",
@@ -30791,7 +30863,7 @@
           },
           "event": {
             "type": "string",
-            "description": "fill, order_state, order_rejected, alert, rule_trip, playbook_ready, floor, assignment, exercise; future kinds may be added."
+            "description": "fill, order_state, order_rejected, alert, rule_trip, playbook_ready, floor, assignment, exercise, and in history feed_stalled; future kinds may be added."
           },
           "account": {
             "type": "string"
@@ -30839,6 +30911,70 @@
           "details"
         ],
         "additionalProperties": true
+      },
+      "NotificationHistoryEvent": {
+        "description": "A PaperEvent as the event stream sent it, with the server clock when it was published.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PaperEvent"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "received": {
+                "type": "string",
+                "description": "The server's clock when the event was published (UTC). market_time is the market data's."
+              }
+            },
+            "required": [
+              "received"
+            ]
+          }
+        ]
+      },
+      "NotificationHistory": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "const": "live",
+                "type": "string"
+              },
+              {
+                "const": "replay",
+                "type": "string"
+              }
+            ]
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Events kept per account and source; older ones are dropped first."
+          },
+          "sequence": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "The latest sequence published when this was read, across all accounts: pass it as since to read only later events."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificationHistoryEvent"
+            }
+          }
+        },
+        "required": [
+          "account",
+          "source",
+          "capacity",
+          "sequence",
+          "events"
+        ],
+        "additionalProperties": false
       },
       "EventStreamReady": {
         "type": "object",

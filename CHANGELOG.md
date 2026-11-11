@@ -35,6 +35,20 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   price, leave volume unknown. The extra field takes no extra market-data line. Not
   yet run live with an account; reports welcome.
 
+### Features
+
+- **Notification history.** openportd kept no record of the notifications it
+  published: a floor warning, a feed stall, a staged playbook order or an earlier
+  firing of a repeating alert reached only a terminal open at the time, or an
+  external channel, and a terminal opened later (or on another device) showed none of
+  them. `GET /api/notifications/history` now returns an account's recent events as the
+  event stream sent them, with the time the server published each and the feed's
+  stalls beside them: the latest 200 per account, in memory until openportd restarts.
+  The bell drawer reads it and adds those a browser cannot see for itself, unread and
+  without a toast; `Client.notification_history()` reads it too. Feed stalls are
+  published whether or not an outbound channel is configured, and an alert event's
+  details now carry its `fired` count.
+
 ### Fixes
 
 - **Warming-up and unknown underlyings.** Right after startup, before an underlying's

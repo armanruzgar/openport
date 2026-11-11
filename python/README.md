@@ -235,9 +235,13 @@ Risk scenarios accept beta weighting, days forward and term scaling without chan
 Client parity includes `get_order`, `playbooks`, `get_playbook(id, version)`,
 `create_playbook`, `version_playbook` (pass the current version), `archive_playbook`,
 `playbook_mode`, `send_staged_order`, `dismiss_staged_order`, `notifications`,
-`test_notification`, `configure_notification`, `create_sandbox`, `calendar_events`,
-`pass_odds`, `strategy_template`, `replay_history` and `get_replay`. Notification
-status comes from `status`; configuration/test require admin. Sandbox creation
+`test_notification`, `configure_notification`, `notification_history`,
+`create_sandbox`, `calendar_events`, `pass_odds`, `strategy_template`,
+`replay_history` and `get_replay`. Notification status comes from `status`;
+configuration/test require admin. `notification_history(since=None, limit=None)`
+returns the account's recent events as the event stream sent them, each with the
+server's `received` time, oldest first; pass the answer's `sequence` as `since` to
+read only later ones. Sandbox creation
 returns a secret token; store it privately. MCP intentionally omits credential
 issuance and notification administration. It exposes the other copilot reads and
 playbook, alert, journal, what-if, backtest and order-change tools. Preview before

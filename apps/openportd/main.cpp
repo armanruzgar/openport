@@ -873,6 +873,9 @@ int run(int argc, char** argv) {
     engine_options.series = std::make_shared<server::SeriesStore>(series_directory);
   server::Notifications::Options event_options;
   event_options.worker = false;
+  // Recent events stay readable (GET /api/notifications/history) after the terminal
+  // that would have shown them was closed; memory only, gone at restart.
+  event_options.history = server::kNotificationHistory;
   engine_options.event_stream = std::make_shared<server::Notifications>(server::NotificationConfig{}, nullptr, event_options);
   engine_options.analytics.fallback_rate = settings.rate;
   engine_options.analytics.american_model = settings.american_model;

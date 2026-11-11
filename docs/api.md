@@ -499,7 +499,7 @@ channels receive only when listed. `floor` fires only when the account enters or
 leaves the default $500 warning band of `breach.room` (inclusive), with
 `details.warning` true on entry and false on exit and `details.floor_distance`;
 unchanged observations and unknown room are silent. `details` carries fill/order/alert/stage IDs and kind-specific
-evidence. `market_time` is the engine's event timestamp, null when unknown;
+evidence; an alert's also has `fired`, how many times it has fired. `market_time` is the engine's event timestamp, null when unknown;
 `simulated:true` describes paper execution, not the provenance of market prices.
 Read `status.provider` to distinguish recorded, generated and provider quotes.
 `sequence` is a process-local decimal-string counter shared across accounts;
@@ -518,6 +518,33 @@ reconcile `/api/fills` and `/api/orders`. `openport.stream.events()` yields type
 and falls back to polling if streaming is unavailable. Outbound notification
 configuration is independent: the local channel works on demo/replay without
 enabling external notification delivery.
+
+### Notification history
+
+`GET /api/notifications/history?account=main&source=live` returns what the event
+stream published for one account recently, oldest first, whether or not anything was
+listening:
+
+```json
+{"account":"main","source":"live","capacity":200,"sequence":"42","events":[{"type":"event","version":1,"sequence":"40","event":"feed_stalled","account":"","source":"live","run_id":null,"market_time":"2026-09-22T14:05:00.000000000Z","simulated":true,"message":"SPX: feed stalled; check the terminal's feed status.","details":{"underlying":"SPX"},"received":"2026-09-22T14:20:00.000000000Z"}]}
+```
+
+Each event is the stream's message plus `received`, the server's clock when it was
+published; `market_time` stays the market data's. The feed's own `feed_stalled`
+events, with an empty `account` and the underlying in `details`, are kept beside
+every account's on their source: the stream sends them to no account, and openportd
+publishes them whether or not an outbound channel is configured. openportd keeps the
+newest 200 events per account and source (`capacity`) and 10,000 in all, in memory
+only: a restart empties it, and a deleted account's, an expired sandbox's and a
+finished replay run's events go with it. Order transitions (`order_state`) are not
+kept, since `/api/orders` has every one, and `floor` events are kept on entering and
+leaving the warning band only, as the stream sends them. `since=SEQUENCE` returns
+only the events after the `sequence` an earlier answer gave (sequences restart with
+openportd, so compare `received` across a restart) and `limit=1..200` the newest that
+many. `source=replay` reads the replay beside the live feed; its events carry their
+`run_id`. Access follows the stream's: a sandbox token reads its own live account
+only. `Client.notification_history()` reads it, and the terminal's bell drawer seeds
+itself from it.
 
 ## Signed inbound signals
 

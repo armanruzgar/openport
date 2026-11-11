@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
+#include <vector>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -83,6 +85,30 @@ std::chrono::milliseconds interval(const NotificationChannel& channel) {
   // Telegram: <=1/s per chat, <=20/min in groups. Apply the group budget to all chats.
   // Discord limits are dynamic; space requests and also follow bucket headers.
   return channel.type == "telegram" ? 3100ms : channel.type == "discord" ? 2000ms : 1000ms;
+}
+/// Where a publisher's account id belongs on the stream: "replay/RUN/ID" is ID on the
+/// replay source with its run, "demo/ID" is ID on live, anything else is itself on live.
+struct StreamKey {
+  std::string account;
+  std::string source;
+  json run;
+};
+StreamKey stream_key(std::string account) {
+  StreamKey key;
+  key.account = std::move(account);
+  key.source = "live";
+  key.run = nullptr;
+  if (key.account.starts_with("replay/")) {
+    key.source = "replay";
+    const auto slash = key.account.find('/', 7);
+    if (slash != std::string::npos) {
+      key.run = key.account.substr(7, slash - 7);
+      key.account.erase(0, slash + 1);
+    }
+  } else if (key.account.starts_with("demo/")) {
+    key.account.erase(0, 5);
+  }
+  return key;
 }
 }  // namespace
 
@@ -227,22 +253,72 @@ void Notifications::publish(const NotificationEvent& event) {
     details["warning"] = near;
     details["floor_distance"] = distance.str();
   }
-  std::string account = event.account, source = "live";
-  json run = nullptr;
-  if (account.starts_with("replay/")) {
-    source = "replay";
-    const auto slash = account.find('/', 7);
-    if (slash != std::string::npos) { run = account.substr(7, slash - 7); account.erase(0, slash + 1); }
-  } else if (account.starts_with("demo/")) account.erase(0, 5);
+  auto key = stream_key(event.account);
   const auto sequence = ++sequence_;
-  const auto listeners = subscribers_.find({account, source});
-  if (listeners == subscribers_.end() || listeners->second.empty()) return;
+  const auto listeners = subscribers_.find({key.account, key.source});
+  const bool listened = listeners != subscribers_.end() && !listeners->second.empty();
+  // Order transitions are frequent and /api/orders keeps every one; the other kinds
+  // stay reviewable after the browser that would have seen them was closed.
+  const bool kept = options_.history > 0 && event.kind != "order_state";
+  if (!listened && !kept) return;
+  const auto build = [&] {
+    return json{{"type", "event"}, {"version", 1}, {"sequence", std::to_string(sequence)},
+        {"event", event.kind}, {"account", key.account}, {"source", key.source}, {"run_id", key.run},
+        {"market_time", stamp(event.time)}, {"simulated", true}, {"message", event.message}, {"details", std::move(details)}};
+  };
+  json message;
+  if (kept) {
+    message = build();
+    auto entry = message;
+    entry["received"] = stamp(options_.wall_clock());
+    remember({key.account, key.source}, sequence, std::move(entry));
+  }
+  if (!listened) return;
   const auto subscribers = listeners->second;
   lock.unlock();
-  const json message{{"type", "event"}, {"version", 1}, {"sequence", std::to_string(sequence)},
-      {"event", event.kind}, {"account", account}, {"source", source}, {"run_id", run},
-      {"market_time", stamp(event.time)}, {"simulated", true}, {"message", event.message}, {"details", std::move(details)}};
+  // Without history the message is built outside the lock, only for listeners.
+  if (message.is_null()) message = build();
   for (const auto& [id, subscriber] : subscribers) { (void)id; subscriber(message); }
+}
+void Notifications::remember(const std::pair<std::string, std::string>& key, std::uint64_t sequence, json message) {
+  auto& kept = history_[key];
+  kept.push_back({sequence, std::move(message)});
+  ++kept_;
+  if (kept.size() > options_.history) {
+    kept.pop_front();
+    --kept_;
+  }
+  // All accounts' together stay bounded too, however many there are: the oldest goes.
+  while (kept_ > kNotificationHistoryTotal) {
+    auto oldest = history_.end();
+    for (auto it = history_.begin(); it != history_.end(); ++it)
+      if (!it->second.empty() && (oldest == history_.end() || it->second.front().sequence < oldest->second.front().sequence))
+        oldest = it;
+    if (oldest == history_.end()) break;
+    oldest->second.pop_front();
+    --kept_;
+    if (oldest->second.empty()) history_.erase(oldest);
+  }
+}
+Notifications::History Notifications::history(std::string_view account, std::string_view source,
+                                              std::uint64_t since, std::size_t limit) const {
+  const std::lock_guard lock(mutex_);
+  std::vector<const Kept*> found;
+  const auto gather = [&](const std::string& name) {
+    const auto entries = history_.find({name, std::string(source)});
+    if (entries == history_.end()) return;
+    for (const auto& entry : entries->second)
+      if (entry.sequence > since) found.push_back(&entry);
+  };
+  gather(std::string(account));
+  // The feed's own events (account "") belong to every account on its source.
+  if (!account.empty()) gather({});
+  std::sort(found.begin(), found.end(), [](const Kept* a, const Kept* b) { return a->sequence < b->sequence; });
+  const std::size_t first = found.size() > limit ? found.size() - limit : std::size_t{0};
+  History result;
+  result.sequence = sequence_;
+  for (std::size_t i = first; i < found.size(); ++i) result.events.push_back(found[i]->message);
+  return result;
 }
 std::uint64_t Notifications::subscribe(std::string account, std::string source, Subscriber subscriber) {
   const std::lock_guard lock(mutex_);
@@ -396,6 +472,15 @@ void Notifications::remove_account(const std::string& account, bool discard_pend
   for (auto& channel : channels_) channel.near_floor.erase(account);
   stream_near_floor_.erase(account);
   if (discard_pending) std::erase_if(queue_, [&](const auto& pending) { return pending.event.account == account; });
+  // Its history goes with it: a deleted account's, an expired sandbox's, an ended run's.
+  const auto key = stream_key(account);
+  const auto entries = history_.find({key.account, key.source});
+  if (entries == history_.end()) return;
+  const auto before = entries->second.size();
+  // Every replay run's account shares one stream key; only this run's events go.
+  std::erase_if(entries->second, [&](const Kept& entry) { return entry.message.at("run_id") == key.run; });
+  kept_ -= before - entries->second.size();
+  if (entries->second.empty()) history_.erase(entries);
 }
 
 bool Notifications::observed(std::string_view account, std::string_view source) {
@@ -492,7 +577,7 @@ void Notifications::observe(std::string_view account, const TradingView& view, b
           watched + " " + c.metric + (c.direction == trading::TriggerDirection::AtOrBelow ? " at or below " : " at or above ") +
           c.level.str() + (alert.value ? " (now " + alert.value->str() + ")" : std::string()),
           {{"alert_id", std::to_string(alert.id)}, {"metric", c.metric}, {"level", c.level.str()},
-           {"value", alert.value ? json(alert.value->str()) : json(nullptr)}});
+           {"value", alert.value ? json(alert.value->str()) : json(nullptr)}, {"fired", alert.fired}});
     }
     // Expiry deliveries use Settlement closures; stock fills identify the option's side.
     for (std::size_t i = previous->stock_fills.size(); i < current.stock_fills.size(); ++i) {

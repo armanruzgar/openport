@@ -985,6 +985,36 @@ std::optional<std::vector<std::string_view>> view_keys(std::string_view view) {
   return std::nullopt;
 }
 
+/// GET /api/notifications/history: what the event stream kept for an account on a
+/// source (live or replay), with the feed's own events, oldest first.
+ApiResponse notification_history(const ApiRequest& request, const MetricsSource& source,
+                                 const std::map<std::string, std::string>& query) {
+  const auto account = query_account(request.target, request.access.sandbox);
+  if (!account) return error(400, "account must be an account ID: lowercase letters, digits and single hyphens");
+  for (const auto& [key, value] : query) {
+    (void)value;
+    if (key != "account" && key != "source" && key != "since" && key != "limit")
+      return error(400, "unknown query parameter " + key + "; history takes account, source, since and limit");
+  }
+  const auto named = query.find("source");
+  const std::string stream = named == query.end() ? "live" : named->second;
+  if (stream != "live" && stream != "replay") return error(400, "source must be live or replay");
+  std::uint64_t since = 0;
+  if (!bounded_number(query, "since", std::uint64_t{0}, std::numeric_limits<std::uint64_t>::max(), since))
+    return error(400, "since must be a sequence number, as an earlier answer gave it");
+  std::size_t limit = kNotificationHistory;
+  if (!bounded_number(query, "limit", std::size_t{1}, kNotificationHistory, limit))
+    return error(400, "limit must be a whole number from 1 to " + std::to_string(kNotificationHistory));
+  // As on /ws/events: a sandbox token reads its own live account only.
+  if (!request.access.sandbox.empty() && stream != "live")
+    return api_error(403, "SCOPE_REQUIRED", "Sandbox tokens may read only their own live account's notifications");
+  const auto* events = source.event_stream();
+  if (!events) return api_error(503, "NOTIFICATIONS_UNAVAILABLE", "This source keeps no notification history");
+  auto kept = events->history(*account, stream, since, limit);
+  return ok(json{{"account", *account}, {"source", stream}, {"capacity", events->history_capacity()},
+                 {"sequence", std::to_string(kept.sequence)}, {"events", std::move(kept.events)}});
+}
+
 /// The GET routes. With `deferred`, a read whose Heston or SABR fit is not cached
 /// fills it and returns nullopt; without, every read is answered here.
 std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSource& source, DeferredRead* deferred) {
@@ -1006,6 +1036,7 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
                                                                           : target.substr(question + 1));
   if (!parsed) return error(400, "duplicate or malformed query parameter");
   const auto& query = *parsed;
+  if (path == "/api/notifications/history") return notification_history(request, source, query);
   int expiries = 8;
   double window = 0.0;
   if (!bounded_number(query, "expiries", 1, 500, expiries)) {

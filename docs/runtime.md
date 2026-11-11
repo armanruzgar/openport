@@ -1780,6 +1780,12 @@ intervals, or a stopped feed; a feed that reports `stale` while its updates arri
 not stalled, and neither is a stream while its market is closed. Recovery rearms the
 feed warning.
 
+With or without a channel, openportd keeps each account's recent events, feed stalls
+included and `order_state` excepted, for
+[`GET /api/notifications/history`](api.md#notification-history): the terminal's bell
+drawer reads them, so a stall or floor warning that happened while no browser was open
+still shows there. That history is in memory only and does not survive a restart.
+
 By default only accounts on the live engine send. Set `"include_simulated": true`
 in the notification file or `OPENPORT_NOTIFY_JSON` to also attach delivery to demo
 and replay engines, including the main replay provider and interactive drills.

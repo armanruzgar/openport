@@ -170,6 +170,32 @@ export interface NotificationStatus {
   /** Public channel settings and shared counters, independent of this source's forwarding availability. */
   channels: NotificationChannel[]
 }
+/** An event the server kept: the event stream's message plus when the server published it. */
+export interface NotificationHistoryEvent {
+  type: "event"
+  version: 1
+  sequence: string
+  /** A NotificationEvent kind; later servers may add kinds. */
+  event: string
+  /** Empty for the feed's own events (feed_stalled). */
+  account: string
+  source: "live" | "replay"
+  run_id: string | null
+  market_time: string | null
+  simulated: true
+  message: string
+  details: Record<string, unknown>
+  /** The server's clock when it published the event, not a market time. */
+  received: string
+}
+/** GET /api/notifications/history: what the server kept of an account's notifications, oldest first. */
+export interface NotificationHistory {
+  account: string
+  source: "live" | "replay"
+  capacity: number
+  sequence: string
+  events: NotificationHistoryEvent[]
+}
 
 export type SpotSource = "quote" | "parity" | null
 

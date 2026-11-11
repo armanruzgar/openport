@@ -639,6 +639,16 @@ class Client:
         return self._request("PUT", "/notifications/channels/" + quote(channel, safe=""),
                              settings, control=True)
 
+    def notification_history(self, *, since: str | int | None = None, limit: int | None = None,
+                             source: str | None = None) -> JSON:
+        """Recent events of this client's account as the event stream sent them, each with the
+        server's received time, oldest first, with the feed's own (feed_stalled). The server keeps
+        them in memory only and skips order_state; pass the answer's sequence as since to read
+        only later events. A replay client reads the replay's."""
+        return self._request("GET", "/notifications/history", params={
+            "source": source or ("live" if self._prefix == "/api" else "replay"), "since": since, "limit": limit},
+            scoped=True, control=True)
+
     def create_sandbox(self) -> JSON:
         """Create an isolated demo account; the returned token is a secret."""
         return self._request("POST", "/sandboxes", {}, control=True, retry=False)
