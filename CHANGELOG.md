@@ -166,6 +166,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the server kept running unseen, holding its port and journal lock, and a
   `--backtest` run went on. Without `--token-file` it now stops the server, or cancels
   the backtest and writes its report, as Ctrl-C does; under `nohup` it stays ignored.
+- **The macOS archive names and keeps its oldest macOS.** It was compiled for whatever
+  macOS built it: 0.5.1 is stamped for macOS 27, with OpenSSL built for 27, and needs
+  C++ library functions that macOS 14 and older lack, so it cannot start there, and
+  nothing said so. A Mac build that links OpenSSL and zstd statically now targets
+  macOS 15 (`OPENPORT_MACOS_FLOOR` in `CMakeLists.txt`); `tools/release.sh` makes the
+  archive only when those libraries are built for macOS 15 or older and checks the
+  programs, and otherwise leaves it to the release workflow, which builds it on
+  macOS 15. CI checks the same on every macOS build. The Homebrew formula requires
+  macOS 15 on Apple Silicon, which the published 0.5.1 archive needs too, and the
+  README, the install guide and the release notes say so.
 - **Third-party licences ship with every release.** The archives, the `.deb` and
   `.rpm` packages and the container image carried only OpenPort's own MIT licence
   (the image not even that), though the programs contain databento-cpp, libdbn_c,

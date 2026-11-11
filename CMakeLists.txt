@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.25)
 
+# The oldest macOS the release archive runs on. A Mac build that links OpenSSL and zstd
+# statically (OPENPORT_STATIC_DEPS), as the archive does, is compiled for it, which
+# has to be set before project(). The libraries must be built for it or an older
+# macOS too: tools/release.sh and the release workflow check them and the programs.
+set(OPENPORT_MACOS_FLOOR 15.0)
+if(CMAKE_HOST_APPLE AND OPENPORT_STATIC_DEPS AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET ${OPENPORT_MACOS_FLOOR} CACHE STRING "Oldest macOS the programs run on")
+endif()
+
 project(openport
   VERSION 0.5.1
   DESCRIPTION "Options pricing, volatility surfaces, matching and real-time risk"

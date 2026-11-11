@@ -7,6 +7,8 @@ class Openport < Formula
   depends_on :macos
 
   on_arm do
+    # The release archive's programs need macOS 15 or later (OPENPORT_MACOS_FLOOR).
+    depends_on macos: :sequoia
     url "https://github.com/armanruzgar/openport/releases/download/v0.5.1/openport-0.5.1-darwin-arm64.tar.gz"
     sha256 "2757841951a36a24c6d90f0ba1e9ae018b5440fc5d3f3366cceb634be733712c"
   end

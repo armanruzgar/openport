@@ -91,7 +91,7 @@ On delayed data, a pass is practice, not proof of real-time performance.
 
 ## Quick start
 
-On a Mac, with Homebrew (Intel builds from source):
+On a Mac, with Homebrew (Apple Silicon needs macOS 15 or later; Intel builds from source):
 
 ```bash
 brew tap armanruzgar/openport https://github.com/armanruzgar/openport

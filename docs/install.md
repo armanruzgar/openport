@@ -20,7 +20,8 @@ The last command reads the existing token and opens its link. If startup has not
 created the file yet, wait a few seconds and retry. Omit `--open` to print it only.
 The service keeps accounts and chart history under
 `$(brew --prefix)/var/openport`; logs are in `var/log/openport.log` and
-`var/log/openport.error.log`. Apple Silicon installs the self-contained archive;
+`var/log/openport.error.log`. Apple Silicon installs the self-contained archive,
+which needs macOS 15 or later;
 Intel Macs build the release tag with Homebrew's CMake, Node, Boost, OpenSSL and
 zstd dependencies. This takes longer and needs network access to fetch build
 dependencies. No Intel bottle is claimed.
@@ -145,7 +146,7 @@ and [Docker's WSL2 setup](https://docs.docker.com/desktop/features/wsl/).
 ## Release archives and source
 
 Each [release](https://github.com/armanruzgar/openport/releases) has archives for Linux
-(amd64 and arm64) and macOS (Apple Silicon).
+(amd64 and arm64) and macOS (Apple Silicon, macOS 15 Sequoia or later).
 
 From source (CMake 3.25+, a C++20 compiler, Boost 1.83+, OpenSSL 3, zlib, zstd and
 Node 22+; everything else is fetched and pinned by checksum):
@@ -161,8 +162,11 @@ To install it, `cmake --install build --component openport --prefix ~/.local` pu
 `openportd` in `bin/` and the terminal in `share/openport/web`, where it finds it on
 its own. The scenario library is compiled into the binary and needs no installed
 files. A release archive has the same layout: unpack it and run `bin/openportd` (Linux
-needs OpenSSL 3, zlib and zstd; the macOS archive, for Apple silicon, needs nothing
-installed). `openportd --version` prints the version. The terminal opens with a short
+needs OpenSSL 3, zlib and zstd; the macOS archive, for Apple silicon and macOS 15 or
+later, needs nothing installed). The macOS archive is built for macOS 15 whatever Mac
+builds it: `OPENPORT_MACOS_FLOOR` in `CMakeLists.txt` sets the deployment target of
+a build with `-DOPENPORT_STATIC_DEPS=ON`, and the OpenSSL and zstd it links must be
+built for that macOS too. `openportd --version` prints the version. The terminal opens with a short
 welcome the first time; the footer's welcome link shows it again.
 
 ## Recording

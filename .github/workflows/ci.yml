@@ -66,8 +66,9 @@ jobs:
           area cpp '^(src|include|apps|tests|cmake|bench|scenarios|data|packaging)/|^CMakeLists\.txt$'
           area web '^(web|site)/'
           # The offline tool tests also check the release files: the formula, packaging,
-          # image and third-party notices, and the dependencies the notices list.
-          area python '^(python|tools|Formula|packaging)/|^(Dockerfile|THIRD_PARTY_NOTICES\.txt|web/public/THIRD_PARTY_NOTICES\.txt|web/package-lock\.json|cmake/Dependencies\.cmake|\.github/workflows/release-assets\.yml)$'
+          # image and third-party notices, the dependencies the notices list, and the
+          # oldest macOS the archive supports, which CMakeLists.txt sets.
+          area python '^(python|tools|Formula|packaging)/|^(CMakeLists\.txt|Dockerfile|THIRD_PARTY_NOTICES\.txt|web/public/THIRD_PARTY_NOTICES\.txt|web/package-lock\.json|cmake/Dependencies\.cmake|\.github/workflows/release-assets\.yml)$'
           area docker '^(src|include|apps|cmake|scenarios|data|packaging|web|tools)/|^CMakeLists\.txt$|^Dockerfile$|^\.dockerignore$|^docker-compose\.yml$'
           cat "$GITHUB_OUTPUT"
 
@@ -273,9 +274,27 @@ jobs:
               -- ./build/tests/openport_tests --gtest_filter="$test" < /dev/null || true
             echo "::endgroup::"
           done
-      # The release archive is built this way; it must run on a Mac without Homebrew.
-      - name: Links only macOS's own libraries
+      # The release archive is built this way; it must run on a Mac without Homebrew,
+      # and on the oldest macOS it supports (OPENPORT_MACOS_FLOOR in CMakeLists.txt),
+      # which the programs and the OpenSSL and zstd they link statically are built for.
+      - name: Links only macOS's own libraries, built for the oldest macOS supported
         run: |
+          cached() { sed -n "s/^$1:[A-Z]*=//p" build/CMakeCache.txt; }
+          floor="$(cached CMAKE_OSX_DEPLOYMENT_TARGET)"
+          expected="$(awk '/^set\(OPENPORT_MACOS_FLOOR [0-9.]+\)$/ { sub(/\)$/, "", $2); print $2 }' CMakeLists.txt)"
+          if [ -z "$floor" ] || [ "$floor" != "$expected" ]; then
+            echo "::error::the deployment target is '$floor', not OPENPORT_MACOS_FLOOR $expected"
+            exit 1
+          fi
+          for file in build/apps/openportd build/apps/openport-probe \
+              "$(cached OPENSSL_SSL_LIBRARY)" "$(cached OPENSSL_CRYPTO_LIBRARY)" "$(cached OPENPORT_ZSTD_LIBRARY)"; do
+            newest="$(otool -l "$file" | awk '$1 == "minos" { print $2 }' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+            echo "$file: macOS $newest"
+            if [ -z "$newest" ] || [ "$(printf '%s\n%s\n' "$newest" "$floor" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)" != "$floor" ]; then
+              echo "::error::$file is built for macOS ${newest:-unknown}, newer than $floor"
+              exit 1
+            fi
+          done
           for binary in build/apps/openportd build/apps/openport-probe; do
             otool -L "$binary"
             if otool -L "$binary" | tail -n +2 | grep -v -E '^[[:space:]]+/(usr/lib|System/Library)/'; then
@@ -340,6 +359,8 @@ jobs:
         run: python tools/docker_entrypoint_test.py
       - name: Third-party notices in every release artifact (offline)
         run: python tools/notices_test.py
+      - name: Oldest macOS the release archive supports (offline)
+        run: python tools/macos_floor_test.py
       - name: Install system dependencies
         if: ${{ !cancelled() && env.BUILD_CPP == 'true' }}
         run: |
