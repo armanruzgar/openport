@@ -3575,8 +3575,9 @@ alerts fire in the terminal only.
 Alerts change no orders or positions: they are allowed whatever the account's state, and
 a reset keeps them. In **Alerts → Account alerts**, choose the scope and measure,
 enter the inclusive level and optionally enable repeat. A spread takes two to four
-explicit legs with ratios from 1 to 10, or can start from held legs; the saved legs
-stay fixed when positions change. Firings show their time and value in the list.
+explicit legs with ratios from 1 to 10, or can start from held legs (offered for each
+underlying whose positions make such a spread); the saved legs stay fixed when
+positions change. Firings show their time and value in the list.
 Alerts keep working only while the server and its feed are running. A restart
 restores their state but cannot evaluate market moves during the downtime.
 
