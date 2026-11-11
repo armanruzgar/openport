@@ -103,7 +103,7 @@ function Dashboard({ trading }: { trading: TradingStatus }) {
     <div className="min-w-0 space-y-4">
       <PageHeader
         title={<span className="flex flex-wrap items-center gap-2">Dashboard {evaluationBadge(data, r.plan)}</span>}
-        subtitle={<>{r.plan ?? "Paper account"} · {phaseFact(r)} · attempt {e.attempt} · started {timestampET(e.started)}</>}>
+        subtitle={<>{[r.plan ?? "Paper account", ...(phaseFact(r) === r.plan ? [] : [phaseFact(r)])].join(" · ")} · attempt {e.attempt} · started {timestampET(e.started)}</>}>
         <button type="button" className="trade-button" onClick={() => setResetting("")} disabled={!trading.enabled}>
           {e.enabled ? "New attempt" : "Start an evaluation"}
         </button>
@@ -111,7 +111,7 @@ function Dashboard({ trading }: { trading: TradingStatus }) {
       {data.costs && <p className="text-sm text-muted">Program costs so far: {formatMoney(data.costs.total)} ·
         evaluation {formatMoney(data.costs.evaluation)}, resets {formatMoney(data.costs.reset)}, activation {formatMoney(data.costs.activation)} ·
         payouts received {formatMoney(data.costs.payouts_received)} · net after payouts {formatMoney(data.costs.net)}</p>}
-      {data.journal_size && <p className="text-xs text-muted">Journal: {data.journal_size.bytes.toLocaleString()} bytes · {data.journal_size.records.toLocaleString()} records{data.journal_size.warning ? ` · ${data.journal_size.warning}` : ""}</p>}
+      {data.journal_size && <p className="text-xs text-muted" title="The account's journal file on the server, which records every change to the account">Account file: {data.journal_size.bytes.toLocaleString()} bytes · {data.journal_size.records.toLocaleString()} records{data.journal_size.warning ? ` · ${data.journal_size.warning}` : ""}</p>}
 
       {e.status !== "active" && (
         <div role="status" className={`rounded-lg border p-4 ${e.status === "passed" ? "border-bullish/50 bg-bullish/5" : "border-bearish/50 bg-bearish/5"}`}>

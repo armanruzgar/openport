@@ -39,7 +39,7 @@ export function useWelcome() {
   return useSyncExternalStore(welcome.subscribe, welcome.get, () => false)
 }
 
-/** What openport is, where its data comes from, and where to start. */
+/** What OpenPort is, where its data comes from, and where to start. */
 export function Welcome({ onNavigate }: { onNavigate: (view: View) => void }) {
   const open = useWelcome()
   const { status, trading } = useLive()
@@ -51,7 +51,7 @@ export function Welcome({ onNavigate }: { onNavigate: (view: View) => void }) {
     welcome.close()
     onNavigate(view)
   }
-  return <Dialog title="Welcome to openport" onClose={() => welcome.close()}>
+  return <Dialog title="Welcome to OpenPort" onClose={() => welcome.close()}>
     <p className="text-sm">An options analytics terminal and a paper-trading simulator. Orders fill against the
       quotes your market data displays, up to their size, and nothing reaches an exchange.</p>
     <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-sm">

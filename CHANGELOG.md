@@ -1063,6 +1063,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   ignored the text still in the field, marked only by a red border. Such text is now
   not sent: the profile keeps the last overrides that parsed, and the field says
   what it takes, as the scenario explorer does.
+- **One word, one meaning, and one brand.** "Journal" names the trade journal page, but
+  the Dashboard and the Replay page's finished runs used it for the size of the
+  account's journal file, whose record count has nothing to do with the trades there;
+  that figure is now the "account file". The welcome dialog and the alerts dialog
+  wrote the name as "openport"; they say "OpenPort" like the rest of the terminal. The
+  Dashboard no longer reads "Practice · Practice" for the built-in Practice plan.
 
 ## 0.5.1 (2026-10-28)
 

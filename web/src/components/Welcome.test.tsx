@@ -62,7 +62,7 @@ describe("the welcome", () => {
     await act(async () => root.render(wrap(<Welcome onNavigate={navigate} />)))
     const text = host.textContent ?? ""
     expect(text).not.toContain("demo")
-    expect(text).toContain("Welcome to openport")
+    expect(text).toContain("Welcome to OpenPort")
     expect(text).toContain(`${status.provider.name}, `)
     expect(text).toContain("nothing reaches an exchange")
     expect(text).toContain("not investment advice")

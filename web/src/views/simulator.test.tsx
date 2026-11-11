@@ -149,6 +149,15 @@ describe("simulator pages", () => {
     expect(row).not.toContain("Evaluation")
     expect(planFacts(plan)).toContain("Practice")
     expect(planFacts(plan)).not.toContain("Evaluation")
+    // The plan is named Practice and so is its program step: the Dashboard says it once.
+    const dashboard = render(<DashboardView />, { ...practice, evaluation: { ...practice.evaluation, attempt: 1 } }, [plan])
+    expect(dashboard).toContain("Practice · attempt 1")
+    expect(dashboard).not.toContain("Practice · Practice")
+  })
+  it("calls the account's journal file an account file, not the trade journal", () => {
+    const html = render(<DashboardView />, { ...account, journal_size: { bytes: 2048, records: 12, warning: null } })
+    expect(html).toContain("Account file: 2,048 bytes · 12 records")
+    expect(html).not.toContain("Journal: 2,048")
   })
   it("shows a passed attempt's target as reached although the liquidation sold below it", () => {
     // B37: liquidation sells at the bid, so equity can end just under the target that passed.

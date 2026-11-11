@@ -159,11 +159,11 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
         <input type="checkbox" role="switch" aria-label="Alert sound" checked={settings.sound} className="h-4 w-4 accent-[var(--accent)]"
           onChange={(e) => alertStore.update((current) => ({ ...current, sound: e.target.checked }))} /></label>
       <p className="text-xs text-muted">{permission === "granted" ? "Browser notifications are on, so alerts reach you in other tabs too."
-        : permission === "denied" ? "This browser blocks notifications from openport, so alerts show on this page only. Allow them in the site settings to change that."
+        : permission === "denied" ? "This browser blocks notifications from OpenPort, so alerts show on this page only. Allow them in the site settings to change that."
         : permission === "unsupported" ? "This browser has no notifications, so alerts show on this page only."
         : <>Alerts show on this page. <button type="button" className="text-accent hover:underline"
             onClick={() => void requestNotifications().then(setPermission)}>Allow browser notifications</button> to see them in other tabs too.</>}</p>
-      <p className="text-[11px] text-faint">Browser price alerts are kept in this browser and run while openport is open, on the feed's prices{delay ? `, which arrive ${Math.round(delay / 60)} minutes late` : ""}. A price alert fires once, then clears.</p>
+      <p className="text-[11px] text-faint">Browser price alerts are kept in this browser and run while OpenPort is open, on the feed's prices{delay ? `, which arrive ${Math.round(delay / 60)} minutes late` : ""}. A price alert fires once, then clears.</p>
     </section>
     <ServerAlerts />
     <NotificationSettings />

@@ -362,7 +362,7 @@ it("shows journal size and the long verification warning before Verify", async (
   vi.mocked(api.replay).mockResolvedValue(next)
   const verify = vi.spyOn(api, "verifyReplay")
   await render()
-  expect(host.textContent).toContain("123,456 records")
+  expect(host.textContent).toContain("314.6 MB account file · 123,456 records")
   expect(host.textContent).toContain("about 61 seconds")
   expect(host.textContent).toContain("Long verification")
   expect(host.textContent).toContain("Compaction breaks exact")

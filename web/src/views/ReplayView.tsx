@@ -302,7 +302,7 @@ export function ReplayView({ onNavigate }: { onNavigate?: (view: View) => void }
           <span>P&amp;L {run.pnl === null ? "—" : formatMoney(run.pnl)}{run.valuation_complete === false ? " (incomplete marks)" : ""}</span>
           {run.drill && <details className="w-full"><summary>Drill score {run.drill.score == null ? "Not graded (incomplete run or evidence)" : `${run.drill.score.toFixed(0)}/100`}{personalBestLabel(run)}</summary>
             <ul>{run.drill.objectives.map(o => <li key={o.id}>{o.id}: {o.passed == null ? "Unknown" : o.passed ? "Passed" : "Missed"}{o.observed == null ? "" : ` · observed ${o.observed.toFixed(2)}`}</li>)}</ul><p>{run.drill.basis}</p></details>}
-          {run.journal_size && <span>{size(run.journal_size.bytes)} journal · {run.journal_size.records.toLocaleString()} records</span>}
+          {run.journal_size && <span title="The run's account journal file on the server">{size(run.journal_size.bytes)} account file · {run.journal_size.records.toLocaleString()} records</span>}
           {run.journal_size?.warning && <p className="w-full text-warn">{run.journal_size.warning}</p>}
           {run.verification_cost && <p className="w-full text-muted">Verification estimate: about {run.verification_cost.estimated_seconds} seconds or more.
             {run.verification_cost.warning && <span className="text-warn"> {run.verification_cost.warning}</span>}</p>}
