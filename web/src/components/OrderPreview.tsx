@@ -1,7 +1,7 @@
 import { useActionApi } from "../api/action-client"
 import { FeeAmount } from "./FeeAmount"
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { useLive } from "../api/live"
 import type { NewOrder, OrderChange, OrderPreview, PreviewExecution, PreviewFill, TradingStatus } from "../api/trading-types"
@@ -10,9 +10,28 @@ import { formatMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 import { BreachPanel } from "./BreachPanel"
 
-/** A debounced preview of `body`, refetched when the account changes. */
+/** `value`, changing at most once every `ms`: the newest one when the wait ends. */
+function useThrottled<T>(value: T, ms: number): T {
+  const [shown, setShown] = useState(value)
+  const last = useRef(Date.now())
+  useEffect(() => {
+    if (Object.is(value, shown)) return
+    const timer = window.setTimeout(() => { last.current = Date.now(); setShown(value) }, Math.max(0, last.current + ms - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [value, shown, ms])
+  return shown
+}
+
+/** How often at most a preview is checked again only because quotes moved. */
+export const previewQuoteRefreshMs = 3_000
+
+/**
+ * A debounced preview of `body`, checked again when the account changes and when the
+ * feed's quotes move: an account with nothing on the contract does not change with
+ * them. The last answer for the same terms stays up while the next one loads.
+ */
 function usePreview<T>(kind: string, body: T | null, trading: TradingStatus, fetch: (body: T) => Promise<OrderPreview>) {
-  const { accountScope } = useLive()
+  const { accountScope, underlyings } = useLive()
   const token = useWriteToken()
   const signature = JSON.stringify(body)
   const [ready, setReady] = useState("")
@@ -20,14 +39,21 @@ function usePreview<T>(kind: string, body: T | null, trading: TradingStatus, fet
     const timer = window.setTimeout(() => setReady(signature), 300)
     return () => window.clearTimeout(timer)
   }, [signature])
+  const market = useThrottled(underlyings.map((u) => `${u.symbol}:${u.version}`).join(" "), previewQuoteRefreshMs)
+  const queryKey = ["trading", accountScope, kind, trading.account_version, ready, trading.write, token, market] as const
   const query = useQuery({
-    queryKey: ["trading", accountScope, kind, trading.account_version, ready, trading.write, token],
+    queryKey,
     queryFn: () => fetch(JSON.parse(ready) as T),
     enabled: body != null && signature === ready && trading.enabled,
     retry: false,
+    // Only the account and market versions (3 and 7) may differ: never other terms' answer.
+    placeholderData: (previous, prior) => {
+      const before = prior?.queryKey
+      return before && [0, 1, 2, 4, 5, 6].every((i) => before[i] === queryKey[i]) ? previous : undefined
+    },
   })
   return { data: signature === ready && body ? query.data : undefined, error: signature === ready ? query.error : null,
-    loading: body != null && (signature !== ready || query.isFetching) }
+    loading: body != null && (signature !== ready || (query.isFetching && query.data === undefined)) }
 }
 export function useOrderPreview(order: NewOrder | null, trading: TradingStatus) {
   const api = useActionApi()

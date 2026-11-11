@@ -4659,6 +4659,9 @@ position (Long Call, Close Short Put...), sets the limit from Bid/Mid/Ask (snapp
 the root's tick, down for a buy and up for a sell, so a mid between ticks is valid), says whether
 the order is marketable at the far side or will rest, and requests buying power and
 floor risk from the server preview. The web has no second copy of margin rules.
+An open ticket checks its preview again when the account changes and, at most every
+three seconds, when the feed's quotes move, keeping the last answer for the same
+terms on screen while the next one loads.
 Quoted premium estimates exclude slippage; the server preview includes the plan's
 slippage. Buy-only plans block opening sells; decided attempts allow closing orders and block opening ones with the reason.
 Both tickets offer **Join trade** when their underlying has an open whole trade,

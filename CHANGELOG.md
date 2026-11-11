@@ -362,6 +362,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   ticket's result and scrolled the page to it, twice, and briefly showed the status
   from when it was sent. The result now takes focus once, keeps its last refreshed
   copy while the next loads, and fetches just that order instead of every order.
+- **The order preview follows the market.** A ticket's preview (what fills at once,
+  buying power after, maximum loss, suggested size) was checked again only when the
+  account changed, and an account with nothing on the contract does not change as
+  its quotes move. A ticket left open kept the preview from when its terms were last
+  edited. It is now checked again as quotes move, at most every three seconds, and
+  keeps the last answer up while the next loads.
 
 ## 0.5.1 (2026-10-28)
 

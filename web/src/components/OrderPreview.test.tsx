@@ -8,7 +8,7 @@ import { liveState, useLive } from "../api/live"
 import type { NewOrder, OrderPreview } from "../api/trading-types"
 import { order as resting, status, trading } from "../test/trading-fixtures"
 import { EditOrderDialog } from "./OrderActions"
-import { OrderPreviewPanel, useOrderPreview } from "./OrderPreview"
+import { OrderPreviewPanel, previewQuoteRefreshMs, useOrderPreview } from "./OrderPreview"
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
 const preview: OrderPreview = { account_version: "17", decision: "ok", reason: null, buying_power: { required: "501", before: "10000", after: "9499" },
   exposure_change: { dollar_delta: 100, dollar_gamma_1pct: 1, vega: 10, theta: -5 }, max_loss: "501", max_loss_basis: "expiry_payoff", equity_at_max_loss: "9499", breaches_floor: true,
@@ -45,6 +45,34 @@ describe("order preview", () => {
     expect(host.textContent).not.toContain("$9,499.00")
     await tick()
     expect(request).toHaveBeenLastCalledWith(expect.objectContaining({ quantity: 3 }), trading.write)
+  })
+  it("checks the order again as quotes move, at most every few seconds, keeping the last answer up", async () => {
+    // An account with nothing on the contract: its version stays put while the market moves.
+    const request = vi.spyOn(api, "previewOrder").mockResolvedValue(preview)
+    const view = () => act(async () => root.render(<QueryClientProvider client={client}><Harness /></QueryClientProvider>))
+    const moved = (version: number) => liveState({ ...status, underlyings: status.underlyings.map((u) => ({ ...u, version })) }, null, "open")
+    await view()
+    await tick()
+    expect(request).toHaveBeenCalledOnce()
+    let answer!: (value: OrderPreview) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve }))
+    vi.mocked(useLive).mockReturnValue(moved(2))
+    await view()
+    await act(async () => { await vi.advanceTimersByTimeAsync(previewQuoteRefreshMs) })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(host.textContent).toContain("$9,499.00")
+    expect(host.textContent).not.toContain("Checking order")
+    await act(async () => { answer({ ...preview, buying_power: { ...preview.buying_power, after: "9399" } }); await vi.advanceTimersByTimeAsync(10) })
+    expect(host.textContent).toContain("$9,399.00")
+    // A quote a second asks once per period, not once per quote.
+    for (const version of [3, 4, 5]) {
+      vi.mocked(useLive).mockReturnValue(moved(version))
+      await view()
+      await act(async () => { await vi.advanceTimersByTimeAsync(500) })
+    }
+    expect(request).toHaveBeenCalledTimes(2)
+    await act(async () => { await vi.advanceTimersByTimeAsync(previewQuoteRefreshMs) })
+    expect(request).toHaveBeenCalledTimes(3)
   })
   it("shows failure without guessing and disables size", async () => {
     vi.spyOn(api, "previewOrder").mockRejectedValue(new Error("offline"))
