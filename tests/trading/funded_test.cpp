@@ -9,6 +9,7 @@
 
 #include "support/scripted_market.hpp"
 #include "support/journal.hpp"
+#include "support/legacy_journal.hpp"
 #include "support/temporary_directory.hpp"
 
 namespace openport::trading {
@@ -1040,19 +1041,10 @@ TEST(TradingFunded, WithoutSizeScalingNoRecordWritesItsFieldsOrEvents) {
   }
 }
 
-/// Rewrite a transaction as the schema 2 record written before funded accounts
-/// and multi-leg orders.
+/// Rewrite a transaction as the schema 2 record its first build wrote, before funded
+/// accounts and multi-leg orders: only the keys that build wrote.
 std::string earlier_schema_two(std::string_view payload) {
-  auto j = nlohmann::json::parse(payload);
-  for (auto* e : {&j["state"]["evaluation"], &j["snapshot"]["evaluation"]}) {
-    for (const auto* key : {"floor_locked", "day_open_realised", "qualifying_days", "cycle_started", "payouts"}) e->erase(key);
-    for (auto& day : (*e)["days"]) { day.erase("realised"); day.erase("qualifying"); }
-  }
-  for (const auto* key : {"phase", "lock_balance", "payouts"}) j["state"]["config"]["rules"].erase(key);
-  for (auto& order : j["state"]["orders"]) order["request"].erase("legs");
-  for (const auto* list : {"recent_orders", "open_orders"})
-    for (auto& order : j["snapshot"][list]) order["request"].erase("legs");
-  return j.dump();
+  return test::as_written_by(test::first_schema_two_journal(), payload);
 }
 
 TEST(TradingFunded, EarlierSchemaTwoJournalsRecoverAsEvaluations) {

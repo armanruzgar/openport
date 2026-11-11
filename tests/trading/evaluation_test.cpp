@@ -7,6 +7,7 @@
 #include "openport/trading/history.hpp"
 #include "support/scripted_market.hpp"
 #include "support/journal.hpp"
+#include "support/legacy_journal.hpp"
 
 namespace openport::trading {
 namespace {
@@ -535,24 +536,9 @@ class CapturingJournal final : public Journal {
   std::uint64_t sequence() const override { return entries.size(); }
   std::string head() const override { return std::string(64, '0'); }
 };
-/// Rewrite a schema 2 transaction as the schema 1 record an older build wrote.
-std::string schema_one(std::string_view payload) {
-  auto j = nlohmann::json::parse(payload);
-  j["schema"] = 1;
-  auto& state = j["state"];
-  for (const auto* key : {"evaluation", "attempts", "closures"}) state.erase(key);
-  state["config"].erase("rules");
-  for (auto& order : state["orders"]) order.erase("system");
-  auto& snapshot = j["snapshot"];
-  for (const auto* key : {"evaluation", "buying_power", "closures", "attempts"}) snapshot.erase(key);
-  for (const auto* list : {"recent_orders", "open_orders"})
-    for (auto& order : snapshot[list]) order.erase("system");
-  for (auto& event : j["events"]) {
-    event["payload"].erase("system");
-    event["payload"].erase("rules");
-  }
-  return j.dump();
-}
+/// Rewrite a schema 2 transaction as the schema 1 record an older build wrote: only
+/// the keys that build wrote, so a reader that needs any later key fails here too.
+std::string schema_one(std::string_view payload) { return test::as_written_by(test::schema_one_journal(), payload); }
 
 TEST(TradingEvaluation, JournalRecoveryRestoresRulesProgressAndSystemOrders) {
   TemporaryDirectory directory;
