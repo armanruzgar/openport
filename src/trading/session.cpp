@@ -987,9 +987,12 @@ struct Margin {
 };
 /// The positions' signed value at their marks (shorts negative), shares included;
 /// a short without a mark counts at its buy-back value and a long without one at nothing.
-Money position_value(const State& s, const MarginBook& book) {
+/// `scanned` leaves out the series with an adjusted deliverable, which a portfolio scan
+/// does not reprice.
+Money position_value(const State& s, const MarginBook& book, bool scanned = false) {
   Money value;
   for (const auto& [symbol, entry] : book) {
+    if (scanned && !standard_deliverable(deliverable_of(s, symbol))) continue;
     const auto mark = s.marks.find(symbol);
     if (mark != s.marks.end()) value = value + (mark->second.price * 100) * entry.first;
     else if (entry.first < 0) value = value - entry.second;
@@ -1101,12 +1104,15 @@ Margin margin_of(const State& s, const MarginBook& book) {
     const auto groups = lot_groups(s, margin_legs(s, book), margin_stocks(s));
     if (groups.size() > 1) {
       // Portfolio margin scans the standard series and shares; adjusted series take
-      // strategy margin on top, which the scan's repricing does not cover.
+      // strategy margin on top, which the scan's repricing does not cover. Only what
+      // the scan covers is taken from equity: strategy margin already holds a short
+      // adjusted series' buy-back and has a long one paid for. Replay drivers 1-8 took
+      // the adjusted series' value too, crediting a long one and charging a short twice.
       if (s.config.rules.margin == MarginMode::Portfolio) {
         const auto adjusted = grouped_requirement(groups, allocation_policy(s), false);
         if (const auto scanned = portfolio_margin_requirement(groups[0].legs, s.valuations, s.time,
             s.config.limits.max_valuation_age, s.ledger.stocks(), share_prices(s), margin_policy(s.config.rules)))
-          return {*scanned + adjusted, *scanned + adjusted - position_value(s, book)};
+          return {*scanned + adjusted, *scanned + adjusted - position_value(s, book, s.revised_corporate_actions)};
       }
       Money minimum;
       if (s.config.rules.margin == MarginMode::Portfolio)

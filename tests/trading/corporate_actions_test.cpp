@@ -386,5 +386,48 @@ TEST(CorporateActions, OptionOrdersTriggeredByTheStocksPriceTakeTheSplit) {
   }
 }
 
+TEST(CorporateActions, PortfolioMarginTakesFromEquityOnlyWhatItsScanCovers) {
+  // Portfolio margin adds strategy margin for an adjusted series, which has a long paid
+  // for and holds a short's buy-back: neither is taken out of equity a second time.
+  auto listed = *md::parse_osi("SPY261016C00500000");
+  listed.root = "SPY1";
+  listed.standard = false;
+  const Deliverable deliverable{150, m("25")};
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    Spy f;
+    f.spot = 500;
+    const auto account = [&](MarginMode mode, bool buying_power) {
+      auto c = roomy();
+      c.initial_cash = m("10000");
+      c.rules.margin = mode;
+      c.rules.buying_power = buying_power;
+      auto s = std::make_unique<TradingSession>(c, f.time);
+      s->set_revised_corporate_actions(revised);
+      EXPECT_TRUE(s->define(listed, f.time, deliverable).decision.ok());
+      ++f.observation;
+      s->on_quotes({{listed.osi_symbol(), f.observation, f.time, m("10.00"), m("10.20"), 1000, 1000}},
+                   {{listed.osi_symbol(), f.time, 0.6, 0.02, 0.5, -0.05, 500, 500, 0.99,
+                     md::years_between(f.time, listed.expiry_time()), 0.2, true}},
+                   f.time, {{"SPY", f.time, m("500")}});
+      return s;
+    };
+    for (const auto side : {Side::Buy, Side::Sell}) {
+      auto portfolio = account(MarginMode::Portfolio, false);
+      auto strategy = account(MarginMode::Strategy, false);
+      ASSERT_TRUE(portfolio->submit(f.market("one", listed, 1, side), f.time).decision.ok());
+      ASSERT_TRUE(strategy->submit(f.market("one", listed, 1, side), f.time).decision.ok());
+      ASSERT_EQ(portfolio->snapshot()->account.cash, strategy->snapshot()->account.cash);
+      // Drivers 1-8 credited a long's value, $1,010 at its 10.10 mark, and charged a short's twice.
+      const auto credited = revised ? Money{} : (side == Side::Buy ? m("1010") : m("-1010"));
+      EXPECT_EQ(portfolio->snapshot()->buying_power.available, strategy->snapshot()->buying_power.available + credited);
+    }
+    // $102,000 of premium on $10,000 is more than the account can pay for.
+    auto portfolio = account(MarginMode::Portfolio, true);
+    const auto bought = portfolio->submit(f.market("hundred", listed, 100, Side::Buy), f.time);
+    if (revised) { EXPECT_EQ(bought.decision.code, Reason::BUYING_POWER); }
+    else { EXPECT_TRUE(bought.decision.ok()) << bought.decision.message; }
+  }
+}
 }  // namespace
 }  // namespace openport::trading

@@ -263,7 +263,11 @@ cash over the shares) and covers them with lots of their own deliverable; shares
 an adjusted group's shorts first. Cash accounts and IRAs cover an adjusted call with its
 deliverable's shares. Scenario grids, risk profiles, breach risk and historical stress
 reprice it the same way. Portfolio margin scans the standard series and shares and adds
-strategy margin for adjusted series, which its scan does not reprice. The desk quotes,
+strategy margin for adjusted series, which its scan does not reprice, and takes from
+equity only the value of what it scans: strategy margin already has a long adjusted
+series paid for and holds a short one's buy-back. Runs recorded with replay driver 8
+or earlier took the adjusted series' value too, crediting a long one back as
+buying power and charging a short one's twice. The desk quotes,
 values and fills an adjusted series from the standard series that pays the same (the 250
 call for a 2:1-adjusted 500 call): prices times shares/100, displayed sizes over it and
 Greeks scaled the same, once the feed lists that series. When none is listed (a 3:2 or a

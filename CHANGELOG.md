@@ -440,6 +440,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   reset with a credit rate before the first quotes arrived was credited interest from
   1970 at its first rollover (about $207,000 on $100,000 at 3.65%), which could pass a
   custom evaluation outright. Financing now runs from the account's first trading date.
+- **Portfolio margin with adjusted series.** Portfolio margin took the value of
+  adjusted series it does not scan out of equity as well as their strategy margin: a
+  long adjusted option counted back as buying power, so the account could buy them on
+  unlimited credit, and a short one's buy-back was charged twice. Only what the scan
+  covers is now taken from equity.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
