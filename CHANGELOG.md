@@ -1001,6 +1001,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   64 KiB, choosing a valid one filled the text box but kept "Scenario packs are at most
   64 KiB" under it, and the same file could not be chosen again after editing the
   text. A file that fits now clears the error, and any file can be chosen again.
+- **Risk and equity panels stay up while they refresh.** The Dashboard's intraday
+  equity chart, the scenario explorer and the historical VaR and stress panel are
+  fetched again whenever the account changes (every fill, order or cancel, and every
+  few seconds while positions are held), and each blanked until the new answer came:
+  the equity chart flashed "Loading equity history…" and lost its day choice, and the
+  explorer's grid also vanished at each keystroke. They now keep the last result on
+  screen while the next one loads, and say when they are loading for the first time.
 
 ## 0.5.1 (2026-10-28)
 

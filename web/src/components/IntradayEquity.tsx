@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "../api/client"
 import { shownReplay, useLive } from "../api/live"
+import { sameAccountPlaceholder } from "../api/trading"
 import type { Account, EquityRisk } from "../api/trading-types"
 import { LineChart } from "../charts/LineChart"
 import { intradayEquity, riskHistory } from "../lib/equity"
@@ -14,8 +15,11 @@ const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-dig
 export function IntradayEquity({ account }: { account: Account }) {
   const live = useLive()
   const { accountScope, trading } = live
+  // The version moves with every fill and, while positions are held, every few seconds:
+  // keep the last history on screen while the next one loads.
   const history = useQuery({ queryKey: ["trading", accountScope, "equity", trading?.account_version], queryFn: ({ signal }) => api.equity(signal),
-    enabled: !!trading?.enabled || !!account.damaged, refetchInterval: 30_000, retry: false })
+    enabled: !!trading?.enabled || !!account.damaged, refetchInterval: 30_000, retry: false,
+    placeholderData: (previous, prior) => sameAccountPlaceholder(previous, prior?.queryKey, accountScope) })
   const [selected, setSelected] = useState("")
   const [metric, setMetric] = useState<keyof EquityRisk>("dollar_delta")
   const [allDays, setAllDays] = useState(false)

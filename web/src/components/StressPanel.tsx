@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { api } from "../api/client"
 import { useLive } from "../api/live"
+import { sameAccountPlaceholder } from "../api/trading"
 import type { HistoricalRisk, StressResult, TailRisk } from "../api/trading-types"
 import { formatMoney } from "../lib/trading"
 import { TradingError } from "./TradingControls"
@@ -45,7 +46,10 @@ export function StressResultPanel({ data, account = true }: { data: HistoricalRi
 }
 export function HistoricalRiskPanel() {
   const { accountScope, trading } = useLive()
+  // A new account version (each fill, order or cancel) keeps the last result while the next loads.
   const result = useQuery({ queryKey: ["trading", accountScope, "risk-history", trading?.account_version],
-    queryFn: ({ signal }) => api.riskHistory(signal), retry: false })
-  return <><TradingError error={result.error} />{result.data && <StressResultPanel data={result.data} />}</>
+    queryFn: ({ signal }) => api.riskHistory(signal), retry: false,
+    placeholderData: (previous, prior) => sameAccountPlaceholder(previous, prior?.queryKey, accountScope) })
+  return <><TradingError error={result.error} />{result.data ? <StressResultPanel data={result.data} />
+    : !result.error && <p className="text-xs text-muted">Loading historical risk…</p>}</>
 }
