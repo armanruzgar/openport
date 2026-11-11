@@ -151,10 +151,20 @@ TEST(StateDelta, DeltasThatDoNotFitAreRejected) {
   Json state = {{"orders", Json::array({1, 2})}, {"cash", 5}};
   for (const auto* delta : {R"({"o":{"cash":{"o":{}}}})", R"({"o":{"orders":{"a":{"2":{"v":3}},"n":2}}})",
                             R"({"o":{"missing":{"o":{}}}})", R"({"o":{"orders":{"a":{"2":{"o":{}}},"n":3}}})",
-                            R"({"o":{"orders":{"a":{"x":{"v":3}},"n":2}}})", R"({"x":1})", R"([1])"}) {
+                            R"({"o":{"orders":{"a":{"x":{"v":3}},"n":2}}})", R"({"x":1})", R"([1])",
+                            // A length that is no whole number, or runs past the elements carried.
+                            R"({"o":{"orders":{"a":{}}}})", R"({"o":{"orders":{"a":{},"n":-1}}})",
+                            R"({"o":{"orders":{"a":{},"n":1.5}}})", R"({"o":{"orders":{"a":{},"n":30000000}}})",
+                            R"({"o":{"orders":{"a":{"3":{"v":4}},"n":4}}})", R"({"o":{"orders":{"a":{"0":{"v":0},"1":{"v":1}},"n":4}}})",
+                            // Removals that are not the names of keys the object has.
+                            R"({"o":{},"d":"orders"})", R"({"o":{},"d":["missing"]})", R"({"o":{},"d":[1]})"}) {
     auto copy = state;
     EXPECT_THROW(detail::apply_state_delta(copy, Json::parse(delta)), std::invalid_argument) << delta;
   }
+  // What the writer records still applies: growing by the elements carried, removing a key held.
+  EXPECT_EQ(patched(state, Json::parse(R"({"o":{"orders":{"a":{"2":{"v":3},"3":{"v":4}},"n":4}},"d":["cash"]})")),
+            (Json{{"orders", Json::array({1, 2, 3, 4})}}));
+  EXPECT_EQ(patched(state, Json::parse(R"({"o":{"orders":{"a":{"0":{"v":7}},"n":1}}})")), (Json{{"orders", Json::array({7})}, {"cash", 5}}));
 }
 
 TEST(TradingJournalSchema, OptionalExecutionRulesRoundTripAndOlderRulesKeepTheirDefaults) {
@@ -453,6 +463,24 @@ TEST(TradingJournalSchema, DamagedDeltasAreCorrupt) {
       if (i == d) p["delta"]["o"]["version"] = {{"v", 99}};
     }));
   });
+  // A forged length is corrupt at once, never memory padded to it or nulls recovered,
+  // and so is a removal of anything but keys the state has.
+  int forged = 0;
+  for (const auto& orders : {Json{{"a", Json::object()}, {"n", -1}}, Json{{"a", Json::object()}, {"n", 30'000'000}},
+                             Json{{"a", Json::object()}, {"n", -1.5}}}) {
+    expect_corrupt([&] {
+      recover(rewritten(directory, "length" + std::to_string(++forged) + ".jsonl", source, [&](std::size_t i, Json& p) {
+        if (i == d) p["delta"]["o"]["orders"] = orders;
+      }));
+    });
+  }
+  for (const auto& removed : {Json("orders"), Json::array({"missing"})}) {
+    expect_corrupt([&] {
+      recover(rewritten(directory, "removed" + std::to_string(++forged) + ".jsonl", source, [&](std::size_t i, Json& p) {
+        if (i == d) p["delta"]["d"] = removed;
+      }));
+    });
+  }
   expect_corrupt([&] {
     recover(rewritten(directory, "unknown.jsonl", source, [d](std::size_t i, Json& p) {
       if (i == d) p["schema"] = 4;

@@ -56,16 +56,30 @@ void apply_state_delta(Json& state, const Json& delta) {
         throw std::invalid_argument("A new key's delta must carry its value");
       apply_state_delta(state[it.key()], it.value());
     }
-    if (const auto removed = delta.find("d"); removed != delta.end())
-      for (const auto& key : *removed) state.erase(key.get<std::string>());
+    // The writer removes only keys the state had, in an array of their names.
+    if (const auto removed = delta.find("d"); removed != delta.end()) {
+      if (!removed->is_array()) throw std::invalid_argument("An object delta's removed keys must be an array");
+      for (const auto& key : *removed) {
+        if (!key.is_string() || !state.contains(key.get<std::string>()))
+          throw std::invalid_argument("An object delta removes only keys the object has");
+        state.erase(key.get<std::string>());
+      }
+    }
     return;
   }
   if (const auto items = delta.find("a"); items != delta.end()) {
     if (!state.is_array() || !items->is_object()) throw std::invalid_argument("An array delta patches an array");
-    const auto length = delta.at("n").get<std::size_t>();
+    const auto n = delta.find("n");
+    if (n == delta.end() || !n->is_number_unsigned()) throw std::invalid_argument("An array delta's length must be a whole number");
+    const auto length = n->get<std::size_t>();
     const auto old = state.size();
+    // An array grows only by the elements the delta carries whole: checked before
+    // padding, so a forged length can neither leave nulls nor exhaust memory.
+    if (length > old && length - old > items->size())
+      throw std::invalid_argument("An array delta's length runs past the elements it carries");
     if (length < old) state.erase(state.begin() + static_cast<std::ptrdiff_t>(length), state.end());
     while (state.size() < length) state.push_back(nullptr);
+    std::size_t added = 0;
     for (auto it = items->begin(); it != items->end(); ++it) {
       std::size_t index = 0;
       const auto& key = it.key();
@@ -74,8 +88,10 @@ void apply_state_delta(Json& state, const Json& delta) {
         throw std::invalid_argument("An array delta index is out of range");
       if (index >= old && !it.value().contains("v"))
         throw std::invalid_argument("A new element's delta must carry its value");
+      if (index >= old) ++added;
       apply_state_delta(state[index], it.value());
     }
+    if (old + added < length) throw std::invalid_argument("An array delta leaves a new element without its value");
     return;
   }
   throw std::invalid_argument("Unknown state delta node");

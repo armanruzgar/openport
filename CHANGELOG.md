@@ -519,6 +519,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   after-hours or premarket print, and then sold at the next open at whatever price it
   printed. A stop is now reached only by a print from the regular session, its close
   included.
+- **Forged state deltas in a journal.** Recovery trusted an array delta's length and
+  the shape of an object delta's removals: in a hand-edited or foreign journal whose
+  hash chain was recomputed, a length of -1 padded memory until openportd ran out, a
+  large or fractional one recovered quietly with nulls or an emptied array, and a
+  removal written as a string deleted that key. Recovery now refuses each as
+  `JOURNAL_CORRUPT`, before padding anything; what openportd writes is unchanged.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
