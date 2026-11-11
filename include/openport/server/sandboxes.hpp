@@ -47,6 +47,7 @@ class Sandboxes {
   /// Expired tokens stop working immediately; capacity returns after file removal.
   [[nodiscard]] std::vector<std::string> expired();
   void removed(const std::string& account);
+  /// A creation that failed: its sandbox expires at once and its budget is given back.
   void failed(const std::string& account);
 
  private:
@@ -57,8 +58,12 @@ class Sandboxes {
     std::deque<Clock::time_point> orders;
     std::deque<Clock::time_point> exits = {};
     std::string client = {};  ///< the address that created it, which may hold per_client at once
+    Clock::time_point created = {};  ///< when it was reserved, in creations_ and its client's bucket
   };
   [[nodiscard]] std::optional<ApiResponse> charge(const std::string& account, bool exit_budget);
+  /// Gives back the creation budget a reservation took when no sandbox came of it.
+  /// Caller holds mutex_.
+  void refund(const Entry& entry);
   Options options_;
   std::mutex mutex_;
   std::map<std::string, Entry> entries_;

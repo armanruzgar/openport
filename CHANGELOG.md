@@ -1337,6 +1337,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   analytics time whatever `to` said, so a `to` more than 45 days back was refused as
   an unordered range. The default 45 days now end at the given `to`, as on the series
   route.
+- **A failed sandbox creation spends no creation budget.** A creation refused with 503
+  `SANDBOX_UNAVAILABLE` (a full command inbox, whose `Retry-After: 1` invites a retry,
+  or a journal that cannot be written) still counted as one of the visitor's 3 and the
+  demo's 30 creations an hour: three such failures locked a visitor out for an hour,
+  and thirty every visitor, though no sandbox was made. It no longer counts.
 
 ## 0.5.1 (2026-10-28)
 

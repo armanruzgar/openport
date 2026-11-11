@@ -43,6 +43,7 @@ class SandboxSource final : public server::MetricsSource {
     return desk->trading_view(account);
   }
   bool post_trading(server::TradingCommand command, server::TradingCompletion complete) override {
+    if (inbox_full) return false;
     if (hold) { queued = std::move(command); pending = std::move(complete); return true; }
     desk->command(std::move(command), std::move(complete), market.time, market.time);
     return true;
@@ -50,6 +51,7 @@ class SandboxSource final : public server::MetricsSource {
   test::ScriptedMarket market;
   std::unique_ptr<server::Desk> desk;
   bool hold = false;
+  bool inbox_full = false;
   server::TradingCommand queued;
   server::TradingCompletion pending;
  private:
@@ -691,6 +693,29 @@ TEST_F(Sandboxes, FailedJournalRefusesCreationAndReleasesCapacity) {
   fail_sync = false;
   source->desk->expire_sandboxes(manager->expired());
   create();
+}
+// B-119: a creation that makes no sandbox gives its budget back, so the retry its 503
+// asks for is not refused for the rest of the hour, for this client or for everyone.
+TEST_F(Sandboxes, FailedCreationsSpendNoCreationBudget) {
+  limits.per_client = 3;
+  limits.global = 4;
+  configure();
+  source->inbox_full = true;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    const auto busy = send(request("POST", "/api/sandboxes"));
+    EXPECT_EQ(busy.status, 503) << attempt << busy.body;
+    EXPECT_EQ(busy.retry_after, server::kInboxRetrySeconds) << attempt;
+  }
+  source->inbox_full = false;
+  fail_sync = true;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    const auto failed = send(request("POST", "/api/sandboxes"));
+    EXPECT_EQ(failed.status, 503) << attempt << failed.body;
+  }
+  fail_sync = false;
+  source->desk->expire_sandboxes(manager->expired());
+  for (int created = 0; created < 3; ++created) create();
+  EXPECT_EQ(send(request("POST", "/api/sandboxes")).status, 429);
 }
 TEST_F(Sandboxes, OffKeepsPublicReadsAndWritePolicyAndDoesNotCleanFiles) {
   source.reset();

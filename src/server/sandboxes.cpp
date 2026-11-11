@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <boost/asio/ip/address.hpp>
 #include <nlohmann/json.hpp>
 #include <openssl/crypto.h>
@@ -77,7 +78,7 @@ void Sandboxes::create(const ApiRequest& request, MetricsSource& source, ApiComp
     } else {
       do { id = "sbox-" + random_hex(); } while (entries_.contains(id));
       secret = "sandbox_" + random_hex();
-      entries_.emplace(id, Entry{digest(secret), now, false, {}, {}, request.client_ip});
+      entries_.emplace(id, Entry{digest(secret), now, false, {}, {}, request.client_ip, now});
       creations_.push_back(now);
       clients_[request.client_ip].push_back(now);
     }
@@ -102,7 +103,14 @@ void Sandboxes::create(const ApiRequest& request, MetricsSource& source, ApiComp
         complete({201, nlohmann::json{{"account", id}, {"token", secret},
             {"idle_seconds", options_.idle.count()}, {"simulated", true}}.dump()});
       })) {
-    removed(id);
+    {
+      // Nothing was created: the retry this asks for must not find the budget spent.
+      const std::lock_guard lock(mutex_);
+      if (const auto found = entries_.find(id); found != entries_.end()) {
+        refund(found->second);
+        entries_.erase(found);
+      }
+    }
     auto busy = api_error(503, "SANDBOX_UNAVAILABLE", "Sandbox command inbox is full or trading is unavailable.");
     busy.retry_after = kInboxRetrySeconds;
     complete(std::move(busy));
@@ -168,8 +176,20 @@ std::vector<std::string> Sandboxes::expired() {
 void Sandboxes::failed(const std::string& account) {
   const std::lock_guard lock(mutex_);
   auto& entry = entries_.at(account);
+  refund(entry);
   entry.ready = true;
   entry.used = options_.clock() - options_.idle;
+}
+void Sandboxes::refund(const Entry& entry) {
+  const auto take = [&](std::deque<Clock::time_point>& times) {
+    const auto found = std::find(times.rbegin(), times.rend(), entry.created);
+    if (found != times.rend()) times.erase(std::next(found).base());
+  };
+  take(creations_);
+  if (const auto client = clients_.find(entry.client); client != clients_.end()) {
+    take(client->second);
+    if (client->second.empty()) clients_.erase(client);
+  }
 }
 void Sandboxes::removed(const std::string& account) {
   const std::lock_guard lock(mutex_);
