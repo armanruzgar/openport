@@ -32,6 +32,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Commands on a quiet feed.** A trading command did not wake the engine thread, so
+  on a quiet feed (the demo between its batches, a paused replay, a polling feed
+  between polls) each order, cancel or preview waited out the engine's 50 ms wait for
+  market data, holding a sequential client such as a bot to about 16 commands a
+  second. Posting a command now wakes the engine, which applies it at once.
 - **Trade notes with a non-string mistake.** `PUT /api/trades/{id}/note` with a
   `mistakes` pick that is not a string answered 400 with the JSON library's internal
   message; it now says `mistakes must be strings`, as tags do.

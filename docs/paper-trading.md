@@ -4534,8 +4534,9 @@ keep displayed practice fills. The flags apply only to main, unlike `--paper-fee
 
 The engine thread alone owns every session. A bounded FIFO inbox (256 pending
 commands) sequences writes, applies the drained market batch first, then applies
-commands in ingress order. HTTP threads enqueue
-and return; completions are posted onto the requesting Beast session executor.
+commands in ingress order. HTTP threads enqueue, wake the engine thread (so a
+command on a quiet feed is applied at once, not after the engine's 50 ms wait for
+market data) and return; completions are posted onto the requesting Beast session executor.
 A full inbox or stopping engine returns 503 `TRADING_UNAVAILABLE` with
 `Retry-After: 1`: the inbox drains as the engine applies commands, and an order sent
 again with the same client ID and terms is answered once. A command's cost grows with

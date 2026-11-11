@@ -2368,6 +2368,20 @@ TEST(PaperAvailability, DisabledFailedJournalFullInboxAndStoppingFailClosed) {
   }
 }
 
+// A command wakes the engine thread: on a quiet feed it is applied at once, not after
+// the engine's 50 ms wait for market events runs out.
+TEST_F(PaperEngine, CommandsOnAQuietFeedAreAppliedWithoutWaitingOutTheDrain) {
+  seed();
+  auto fastest = std::chrono::steady_clock::duration::max();
+  for (int i = 0; i < 10; ++i) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto response = write(*engine, "POST", "/api/orders/preview", order(market));
+    fastest = std::min(fastest, std::chrono::steady_clock::now() - started);
+    ASSERT_EQ(response.status, 200) << response.body;
+  }
+  EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(fastest).count(), 25);
+}
+
 TEST(PaperAvailability, LockedJournalDisablesEveryWriteButKeepsAnalyticsAndOwnerWorking) {
   const auto path = paper_path();
   auto bytes = [&] {
