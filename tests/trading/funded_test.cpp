@@ -134,7 +134,9 @@ TEST(TradingFunded, SizeScalingCountsResetRemovalsAndReviewForfeitsAsWithdrawals
     ASSERT_TRUE(s.submit(f.market("long-close", 1, Side::Sell), f.time).decision.ok());
     ASSERT_TRUE(s.request_payout(m("40"), f.time).decision.ok());
     EXPECT_EQ(size_scaling_profit(s.snapshot()->evaluation, plan_inputs(*s.snapshot()).balance), m("400"));
-    if (review) EXPECT_EQ(s.snapshot()->evaluation.payouts.back().review->forfeited, m("200"));
+    if (review) {
+      EXPECT_EQ(s.snapshot()->evaluation.payouts.back().review->forfeited, m("200"));
+    }
     next_day(s, f, {2026, 9, 24});
     EXPECT_EQ(s.snapshot()->evaluation.starting_balance, m("12500"));
     EXPECT_EQ(s.snapshot()->evaluation.size_scaling->history.size(), 1U);
