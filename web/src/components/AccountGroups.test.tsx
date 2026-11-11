@@ -69,6 +69,24 @@ it("reads a server without groups as having none", async () => {
   expect(groups).toEqual([])
 })
 
+it("keeps an archived member when a group is edited and saved", async () => {
+  const kept: AccountGroup = { name: "desk", allocation: "ratio", members: [{ account: "main", ratio: "1.00" }, { account: "old", ratio: "0.50" }] }
+  vi.spyOn(api, "accountGroups").mockResolvedValue({ groups: [kept] })
+  const put = vi.spyOn(api, "putAccountGroup").mockResolvedValue(kept)
+  await render(<AccountGroupsEditor trading={trading} accounts={accounts} />)
+  await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Edit desk")!.click())
+  const rows = [...host.querySelectorAll("fieldset label")].map((label) => label.textContent)
+  expect(rows).toEqual(["Main · main", "Swing · swing", "Old · old · archived"])
+  expect(host.querySelector<HTMLInputElement>('input[aria-label="Ratio for Old"]')!.value).toBe("0.50")
+  const save = () => [...host.querySelectorAll("button")].find((b) => b.textContent === "Save group")!
+  await act(async () => save().click())
+  expect(put).toHaveBeenLastCalledWith("desk", { allocation: "ratio", members: [{ account: "main", ratio: "1.00" }, { account: "old", ratio: "0.50" }] }, trading.write)
+  // Unchecking it is the way to take it out.
+  await act(async () => host.querySelectorAll<HTMLInputElement>('fieldset input[type="checkbox"]')[2]!.click())
+  await act(async () => save().click())
+  expect(put).toHaveBeenLastCalledWith("desk", { allocation: "ratio", members: [{ account: "main", ratio: "1.00" }] }, trading.write)
+})
+
 it("creates a ratio group from active accounts and deletes one", async () => {
   vi.spyOn(api, "accountGroups").mockResolvedValue({ groups: [desk] })
   const put = vi.spyOn(api, "putAccountGroup").mockResolvedValue(desk)

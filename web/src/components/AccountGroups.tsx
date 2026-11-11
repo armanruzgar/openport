@@ -73,7 +73,14 @@ export function AccountGroupsEditor({ trading, accounts }: { trading: TradingSta
   const [error, setError] = useState<unknown>()
   const busy = useRef(false)
   const eligible = accounts.filter((a) => !a.archived && !a.sandbox_idle_seconds)
-  const members = eligible.filter((a) => ratios[a.id] != null)
+  // An edited group keeps the members a new group could not take (archived, sandbox or
+  // not listed here): the server keeps them too, so saving must not drop them unseen.
+  const kept = Object.keys(ratios).filter((id) => !eligible.some((a) => a.id === id)).map((id) => {
+    const account = accounts.find((a) => a.id === id)
+    return { id, name: account?.name ?? id, note: account?.archived ? "archived" : account ? "sandbox" : "not listed" }
+  })
+  const rows = [...eligible.map((a) => ({ id: a.id, name: a.name, note: "" })), ...kept]
+  const members = rows.filter((a) => ratios[a.id] != null)
   const validName = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name) && name.length <= 40
   const validRatios = allocation === "equity" || members.every((m) => /^\d+(\.\d{1,4})?$/.test(ratios[m.id]!) && Number(ratios[m.id]) > 0 && Number(ratios[m.id]) <= 100)
   const blocked = pending || writeBlocked(trading, token)
@@ -112,12 +119,13 @@ export function AccountGroupsEditor({ trading, accounts }: { trading: TradingSta
         </select>
       </label>
       <fieldset className="space-y-1"><legend className="text-xs text-muted">Members</legend>
-        {eligible.map((a) => <div key={a.id} className="flex items-center gap-2 text-sm">
+        {rows.map((a) => <div key={a.id} className="flex items-center gap-2 text-sm">
           <label className="flex flex-1 items-center gap-2"><input type="checkbox" checked={ratios[a.id] != null}
-            onChange={(event) => setRatios((current) => { const next = { ...current }; if (event.target.checked) next[a.id] = "1"; else delete next[a.id]; return next })} />{a.name} <span className="text-xs text-muted">· {a.id}</span></label>
+            onChange={(event) => setRatios((current) => { const next = { ...current }; if (event.target.checked) next[a.id] = "1"; else delete next[a.id]; return next })} />{a.name} <span className="text-xs text-muted">· {a.id}{a.note && ` · ${a.note}`}</span></label>
           {allocation === "ratio" && ratios[a.id] != null && <input aria-label={`Ratio for ${a.name}`} className="trade-input w-20" inputMode="decimal" value={ratios[a.id]}
             onChange={(event) => setRatios((current) => ({ ...current, [a.id]: event.target.value }))} />}
         </div>)}
+        {kept.length > 0 && <p className="text-[11px] text-muted">Members that could not join a new group stay in this one; uncheck one to remove it.</p>}
       </fieldset>
       <button type="submit" className="trade-button" disabled={blocked || !validName || !members.length || members.length > 16 || !validRatios}>Save group</button>
     </form>

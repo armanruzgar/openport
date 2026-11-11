@@ -174,6 +174,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   an official close or a completed snapshot still reaches it at once; the rest of the
   market reaches it with the next analytics pass, once a second. Demo and replay runs
   are unchanged.
+- **Editing an account group keeps its archived members.** The editor listed and
+  saved only accounts that could join a new group, so saving a group with an
+  archived member dropped it without a word, and copied orders no longer reached it
+  once unarchived. Such members now stay as checked rows marked archived; unchecking
+  one is the way to remove it.
 
 ## 0.5.1 (2026-10-28)
 

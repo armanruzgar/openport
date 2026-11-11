@@ -4402,7 +4402,9 @@ lists them. Names follow the account ID rules. Writes need admin scope, every me
 must exist (404 `UNKNOWN_ACCOUNT` otherwise), and the server keeps at most 32 groups
 in `account-groups.json` beside the main journal, replaced atomically. Groups are
 configuration, not trading: no journal records them, and deleting one changes no
-account. Sandbox servers and visitors are not offered them.
+account. Sandbox servers and visitors are not offered them. An archived account stays
+in its groups: the terminal's group editor shows it as a checked row marked archived,
+and saving the group keeps it unless it is unchecked.
 
 `POST /api/orders/copy` takes `{"group": name, "order": {...}}`, the order as
 `POST /api/orders` takes it, and mirrors it in the server layer: each member account
