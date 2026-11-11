@@ -471,7 +471,9 @@ stays on the backup.
 The two feeds' contracts share one id space, mapped by OSI symbol as the demo feed
 maps its days; only the feed in charge of an underlying reaches the engine. A switch
 first reports the underlying's status naming the new feed, then sends that feed's
-latest quote, open interest, Greeks and spot. Contracts it does not price keep their
+latest spot, official closes, and each contract's quote, open interest, Greeks and
+volume. Feeds send a volume count or a close only when it changes, so the muted
+feed's are kept for the switch. Contracts it does not price keep their
 previous, aging quotes until its first complete snapshot (or, for a stream, its first
 healthy status) vouches for its chain; then they are cleared without a market time.
 

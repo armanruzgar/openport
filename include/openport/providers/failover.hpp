@@ -30,9 +30,10 @@ namespace openport::providers {
 /// Both feeds' contracts are remapped by OSI symbol into one id space, as the demo
 /// feed does across recordings. Only the active feed's events reach the engine.
 /// A switch first publishes the underlying's status, naming the feed in
-/// ProviderStatus::feed, then the new feed's latest values; quotes the new feed
-/// does not price are cleared before its first complete snapshot or healthy
-/// status can vouch for them. Quotes keep their own market times, so paper
+/// ProviderStatus::feed, then the new feed's latest values (spot, official closes,
+/// quotes, open interest, Greeks and volume, which feeds send only when they change);
+/// quotes the new feed does not price are cleared before its first complete snapshot
+/// or healthy status can vouch for them. Quotes keep their own market times, so paper
 /// trading's freshness checks apply to the backup as to any feed.
 class FailoverProvider final : public md::Provider {
  public:
@@ -84,7 +85,10 @@ class FailoverProvider final : public md::Provider {
     std::map<md::InstrumentId, md::OptionQuote> quotes;
     std::map<md::InstrumentId, md::OpenInterest> interest;
     std::map<md::InstrumentId, md::VendorGreeks> greeks;
+    std::map<md::InstrumentId, md::OptionVolume> volumes;
     std::map<std::string, md::UnderlyingQuote> spots;
+    /// Official closes per underlying and date, the last week's.
+    std::map<std::string, std::map<md::Date, md::UnderlyingClose>> closes;
   };
 
   struct Route {

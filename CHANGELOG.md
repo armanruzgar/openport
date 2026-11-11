@@ -483,6 +483,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   with `last_success` empty, and a `feed_stalled` notification went out at the first
   poll and never rearmed, so a later real outage sent none. Such polls now count as
   updates, and the `stale` label alone is no longer a stall.
+- **Volume and closes across a feed failover.** The fallback kept only the muted feed's
+  quotes, open interest and Greeks; its volume counts and official closes were
+  dropped, and a switch did not send them. After a switch, or the return to the main
+  feed, a contract kept the other feed's volume until its own count changed (all day,
+  for one that stopped trading), and a Cboe close sent while Cboe was muted for that
+  underlying was lost for the day. Both are now kept for each feed and sent with a
+  switch.
 
 ## 0.5.1 (2026-10-28)
 

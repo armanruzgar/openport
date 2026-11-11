@@ -139,6 +139,9 @@ void FailoverProvider::receive(Source source, md::Event event) {
           cache.interest[value.id] = value;
         } else if constexpr (std::is_same_v<T, md::VendorGreeks>) {
           cache.greeks[value.id] = value;
+        } else if constexpr (std::is_same_v<T, md::OptionVolume>) {
+          // Polling feeds send a count only when it changes, so it is kept for a switch.
+          cache.volumes[value.id] = value;
         }
         if (!active(source, underlying)) return;
         define(value.id);
@@ -148,6 +151,11 @@ void FailoverProvider::receive(Source source, md::Event event) {
         credit(value.symbol);
         if (active(source, value.symbol)) sink_->publish(value);
       } else if constexpr (std::is_same_v<T, md::UnderlyingClose>) {
+        // Cboe sends each close once, so a muted feed's is kept for a switch.
+        auto& closes = cache.closes[value.symbol];
+        closes[value.date] = value;
+        const auto oldest = md::date_from_days(md::days_since_epoch(value.date) - 7);
+        std::erase_if(closes, [&oldest](const auto& entry) { return entry.first < oldest; });
         if (active(source, value.symbol)) sink_->publish(value);
       } else if constexpr (std::is_same_v<T, md::SnapshotComplete>) {
         // A primary snapshot whose market time advanced is fresh whatever its label says.
@@ -271,6 +279,8 @@ void FailoverProvider::switch_to(const std::string& underlying, Route& route, So
   // aging quotes until it vouches for its chain, when vouch() clears them.
   auto& cache = caches_[source];
   if (const auto spot = cache.spots.find(underlying); spot != cache.spots.end()) sink_->publish(spot->second);
+  if (const auto closes = cache.closes.find(underlying); closes != cache.closes.end())
+    for (const auto& entry : closes->second) sink_->publish(entry.second);
   route.unpriced.clear();
   for (md::InstrumentId id = 0; id < contracts_.size(); ++id) {
     if (contracts_[id].underlying != underlying) continue;
@@ -283,6 +293,7 @@ void FailoverProvider::switch_to(const std::string& underlying, Route& route, So
     sink_->publish(quote->second);
     if (const auto it = cache.interest.find(id); it != cache.interest.end()) sink_->publish(it->second);
     if (const auto it = cache.greeks.find(id); it != cache.greeks.end()) sink_->publish(it->second);
+    if (const auto it = cache.volumes.find(id); it != cache.volumes.end()) sink_->publish(it->second);
   }
 }
 

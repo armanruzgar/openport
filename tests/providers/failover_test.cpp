@@ -202,6 +202,64 @@ TEST_F(Failover, ARecoveredPrimaryTakesBackWithItsLatestValues) {
   EXPECT_EQ(provider->capabilities().delay, 0s);
 }
 
+TEST_F(Failover, AMutedFeedsVolumeAndClosesArriveWhenItTakesOver) {
+  const auto spy = contract("SPY   261016C00600000");
+  primary_snapshot();
+  primary->send(status(md::FeedState::Live, "SPY"));
+  primary->send(md::OptionVolume{7, kStart, 100});
+  primary->send(status(md::FeedState::Error));
+  at(31);
+  ASSERT_TRUE(provider->on_backup("SPX"));
+  // The backup prices A for SPX, and SPY, which stays on the primary: SPY's volume and
+  // official close are muted.
+  backup->send(md::ContractDefinition{0, kA});
+  backup->send(md::ContractDefinition{1, spy});
+  backup->send(md::OptionQuote{0, kStart, 30.9, 31.4, 10, 10});
+  backup->send(md::OptionVolume{0, kStart, 90});
+  backup->send(md::OptionQuote{1, kStart, 4.0, 4.2, 5, 5});
+  backup->send(md::OptionVolume{1, kStart, 3000});
+  backup->send(md::UnderlyingClose{"SPY", kStart, {2026, 9, 23}, 600.5});
+  backup->send(md::SnapshotComplete{"SPX", kStart});
+  backup->send(status(md::FeedState::Delayed));
+  backup->send(status(md::FeedState::Delayed, "SPY"));
+  EXPECT_TRUE(sink.all<md::UnderlyingClose>().empty());
+  // The primary recovers. While muted, its count for A moves on to 500.
+  now = kStart + 50 * kSecond;
+  primary->send(status(md::FeedState::Live, "SPY"));
+  primary->send(md::OptionQuote{7, kStart + 49 * kSecond, 31.0, 31.5, 9, 9});
+  primary->send(md::OptionVolume{7, kStart + 49 * kSecond, 500});
+  primary->send(md::SnapshotComplete{"SPX", kStart + 49 * kSecond});
+  primary->send(status(md::FeedState::Live));
+  sink.events.clear();
+  now = kStart + 80 * kSecond;
+  primary->send(status(md::FeedState::Live, "SPY"));
+  primary->send(md::OptionQuote{7, kStart + 79 * kSecond, 31.0, 31.5, 9, 9});
+  primary->send(md::SnapshotComplete{"SPX", kStart + 79 * kSecond});
+  ASSERT_FALSE(provider->on_backup("SPX"));
+  // Back on the primary, A shows the primary's count, not the backup's 90.
+  auto volumes = sink.all<md::OptionVolume>();
+  ASSERT_EQ(volumes.size(), 1u);
+  EXPECT_EQ(volumes[0].id, 0u);
+  EXPECT_EQ(volumes[0].contracts, 500);
+  EXPECT_EQ(volumes[0].ts, kStart + 49 * kSecond);
+  // SPY fails over too: its count and the close the backup sent while muted come with it.
+  now = kStart + 90 * kSecond;
+  primary->send(md::SnapshotComplete{"SPX", kStart + 89 * kSecond});
+  primary->send(status(md::FeedState::Error, "SPY", "HTTP 503"));
+  sink.events.clear();
+  at(120);
+  ASSERT_TRUE(provider->on_backup("SPY"));
+  EXPECT_FALSE(provider->on_backup("SPX"));
+  volumes = sink.all<md::OptionVolume>();
+  ASSERT_EQ(volumes.size(), 1u);
+  EXPECT_EQ(volumes[0].id, 2u);
+  EXPECT_EQ(volumes[0].contracts, 3000);
+  const auto closes = sink.all<md::UnderlyingClose>();
+  ASSERT_EQ(closes.size(), 1u);
+  EXPECT_EQ(closes[0].symbol, "SPY");
+  EXPECT_EQ(closes[0].price, 600.5);
+}
+
 TEST_F(Failover, AStaleLabelledPrimaryWhoseSnapshotsAdvanceKeepsItsUnderlyings) {
   // As Schwab without isDelayed or IBKR's Z/Y fields: fresh data, timing unconfirmed.
   for (md::Timestamp t = 0; t <= 200; t += 5) {
