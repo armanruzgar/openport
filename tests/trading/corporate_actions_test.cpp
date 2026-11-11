@@ -402,7 +402,8 @@ TEST(CorporateActions, OptionOrdersTriggeredByTheStocksPriceTakeTheSplit) {
     stop.trigger->trail = Trail{TrailUnit::Amount, m("30")};
     const auto armed = s.submit(stop, f.time);
     ASSERT_TRUE(armed.decision.ok()) << armed.decision.message;
-    OrderRequest entry{"entry", call.osi_symbol(), Side::Buy, OrderType::Limit, TimeInForce::Gtc, 1, m("1.00"), {}, {}, {}};
+    // Under the bid, within the price band around the mid: it rests.
+    OrderRequest entry{"entry", call.osi_symbol(), Side::Buy, OrderType::Limit, TimeInForce::Gtc, 1, m("13.00"), {}, {}, {}};
     entry.bracket = Bracket{ExitSpec{Trigger{TriggerSource::Underlying, TriggerDirection::AtOrBelow, m("470")}, {}}, {}};
     const auto resting = s.submit(entry, f.time);
     ASSERT_TRUE(resting.decision.ok()) << resting.decision.message;
