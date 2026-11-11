@@ -143,6 +143,23 @@ it("saves fixed mistake picks independently of free-text tags", async () => {
   expect(save).toHaveBeenCalledWith(trade.id, { note: trade.note, tags: ["patient"], mistakes: ["chased"] }, trading.write)
 })
 
+it("lists each closure among the trade's fills, so a partial exercise adds up", async () => {
+  // Buy 5, exercise 1, sell 4: in / out 5 / 5 with fills for only 9 of the 10.
+  const partly: Trade = { ...trade, opened_contracts: 5, closed_contracts: 5, closure: null, closed_by: "flatten",
+    closures: [{ fee: "0.00", kind: "exercise", price: "0.50", quantity: 1, time: "2026-09-22T14:22:00Z" }] }
+  const fills = [{ ...fill, quantity: 5 }, { ...fill, id: "fill-2", side: "sell" as const, quantity: 4, price: "1.57" }]
+  await render(<TradeDetail trade={partly} fills={fills} trading={trading} />)
+  const rows = [...host.querySelectorAll('[aria-label="Trade fills"] tbody tr')].map((row) => row.textContent ?? "")
+  expect(rows).toHaveLength(3)
+  expect(rows[2]).toContain("Exercised")
+  expect(rows[2]).toContain("no fill · at intrinsic value")
+  expect(rows[2]).toContain("$0.50")
+  expect(host.textContent).not.toContain("Closed by")
+  // An older server without the list still names the closure that ended the trade.
+  await render(<TradeDetail trade={{ ...trade, closure: "settlement", closures: undefined }} fills={[]} trading={trading} />)
+  expect(host.textContent).toContain("Closed by settlement")
+})
+
 it("keeps a replay playing beside the live account out of the live journal", async () => {
   vi.spyOn(api, "candles").mockResolvedValue({ symbol: "SPX", interval: "1m", bars: [] })
   const fromTrade = vi.spyOn(api, "replayFromTrade")

@@ -497,6 +497,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   defined or quoted. That price now centres the strike window, so the chain is mapped
   and quoted, without being published as the underlying's price. A row with no price
   at all now says so instead of blaming the warm-up.
+- **A partial early exercise shows in the Journal.** When part of a long was exercised
+  early and the rest sold, the trade read “Contracts in / out 5 / 5” beside fills that
+  closed only 4, and nothing in `/api/trades` or the CSV exports named the exercised
+  contract. Each round trip now lists every closure, partial ones included, as
+  `closures` (kind, quantity, price, fee and time) in `/api/trades` and as a last
+  `closures` column in `trades.csv`, and the trade detail shows each as a row.
 
 ## 0.5.1 (2026-10-28)
 

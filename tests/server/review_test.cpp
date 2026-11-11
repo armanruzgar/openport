@@ -176,10 +176,11 @@ TEST(TradeReviewApi, CsvDateUsesNewYorkCalendarDateIncludingDst) {
       "quote.age_seconds", "fees.commission", "fees.clearing", "fees.regulatory", "fees.index", "feed", "stress_ticks", "queued"};
   EXPECT_EQ(server::paper_csv_columns(true), fill_columns);
   const auto trade_columns = server::paper_csv_columns(false);
-  ASSERT_EQ(trade_columns.size(), 110U);
+  ASSERT_EQ(trade_columns.size(), 111U);
   EXPECT_EQ(trade_columns[107], "settlement_value");
   EXPECT_EQ(trade_columns[108], "settlement_source");
   EXPECT_EQ(trade_columns[109], "time_stop_orders");
+  EXPECT_EQ(trade_columns[110], "closures");
 }
 TEST(TradeReviewApi, ExportsNameTheirRunAttemptAndClosingTradingDay) {
   test::ScriptedMarket f;

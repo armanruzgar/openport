@@ -5,7 +5,7 @@ import { Fragment, useMemo, useState } from "react"
 import { api, downloadCsv } from "../api/client"
 import { marketNow, shownReplay, useLive } from "../api/live"
 import { useAllOrders, useFills, useRefreshTrading, useSettlements, useTrades, useTradingSession } from "../api/trading"
-import type { Order, DayNote, Fill, RunIdentity, SettlementRecord, ShareTrade, Trade, TradingStatus, WholeTrade } from "../api/trading-types"
+import type { Order, DayNote, Fill, RunIdentity, SettlementRecord, ShareTrade, Trade, TradeClosure, TradingStatus, WholeTrade } from "../api/trading-types"
 import { HBarChart } from "../charts/HBarChart"
 import { FillBook } from "../components/FillBook"
 import { TradingError, WriteAccess, writeBlocked } from "../components/TradingControls"
@@ -530,6 +530,12 @@ function Shares({ trades, trading }: { trades: ShareTrade[]; trading: TradingSta
   )
 }
 
+/** A closure's row: what happened, and at what price. */
+const closureLabels: Record<TradeClosure["kind"], [string, string]> = {
+  exercise: ["Exercised", "at intrinsic value"], assignment: ["Assigned", "at intrinsic value"], settlement: ["Settled", "at settlement value"],
+  abandon: ["Abandoned", "at zero, nobody bid"], reset: ["Account reset", "at the last mark"],
+}
+
 export function TradeDetail({ trade, fills, trading, orders = [] }: { trade: Trade; fills: Fill[]; trading: TradingStatus; orders?: Order[] }) {
   const orderIds = new Set(fills.map((fill) => fill.order_id))
   const timeStops = orders.filter((order) => (orderIds.has(order.id) || (order.parent && orderIds.has(order.parent))) &&
@@ -555,7 +561,16 @@ export function TradeDetail({ trade, fills, trading, orders = [] }: { trade: Tra
           <td className={`px-2 py-1 ${f.side === "buy" ? "text-bullish" : "text-bearish"}`}>{f.side}</td>
           <td className="px-2 py-1">{f.quantity}</td><td className="px-2 py-1">{formatMoney(f.price)}</td><td className="px-2 py-1"><FillBook fill={f} /></td><td className="px-2 py-1">{<FeeAmount fee={f.fee} fees={f.fees} />}</td>
         </tr>)}
-        {trade.closure && <tr className="border-t border-border/40"><td className="px-2 py-1 text-left" colSpan={7}>Closed by {trade.closure} at {formatMoney(trade.average_close)}<SettlementPrint trade={trade} /></td></tr>}
+        {/* Closures took contracts out without a fill: each is a row, so the quantities add up. */}
+        {trade.closures ? trade.closures.map((closure, index) => <tr key={`closure-${index}`} className="border-t border-border/40">
+          <td className="px-2 py-1 text-left">{closureLabels[closure.kind][0]}<div className="text-[10px] text-faint">no fill · {closureLabels[closure.kind][1]}</div></td>
+          <td className="px-2 py-1 text-muted">{timestampET(closure.time)}</td>
+          <td className={`px-2 py-1 ${trade.direction === "long" ? "text-bearish" : "text-bullish"}`}>{trade.direction === "long" ? "sell" : "buy"}</td>
+          <td className="px-2 py-1">{closure.quantity}</td><td className="px-2 py-1">{formatMoney(closure.price)}</td>
+          <td className="px-2 py-1">{closure.kind === "settlement" ? <SettlementPrint trade={trade} /> : "—"}</td>
+          <td className="px-2 py-1">{formatMoney(closure.fee)}</td>
+        </tr>)
+          : trade.closure && <tr className="border-t border-border/40"><td className="px-2 py-1 text-left" colSpan={7}>Closed by {trade.closure} at {formatMoney(trade.average_close)}<SettlementPrint trade={trade} /></td></tr>}
         {trade.closed_by === "system" && <tr className="border-t border-border/40"><td className="px-2 py-1 text-left text-warn" colSpan={7}>
           {trade.system_reason === "expiry" ? "Closed by the simulator before expiry, not by your order." : `Closed by the simulator's ${trade.system_reason === "soft_floor" ? "soft-floor" : trade.system_reason === "target" ? "profit-target" : trade.system_reason === "drawdown" ? "drawdown" : ""} liquidation, not by your order.`}</td></tr>}
         </tbody>

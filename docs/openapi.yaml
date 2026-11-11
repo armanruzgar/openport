@@ -15138,6 +15138,13 @@
               }
             ]
           },
+          "closures": {
+            "type": "array",
+            "description": "Every closure of the round trip, oldest first: a partial early exercise or assignment as much as the settlement, reset, exercise, assignment or abandonment that ended it. Absent from older servers.",
+            "items": {
+              "$ref": "#/components/schemas/TradeClosure"
+            }
+          },
           "closed_by": {
             "anyOf": [
               {
@@ -15342,6 +15349,57 @@
           "unrealised",
           "closure",
           "fills"
+        ]
+      },
+      "TradeClosure": {
+        "type": "object",
+        "description": "Contracts that left a round trip without a fill: their price per unit (settlement or exercise intrinsic value, zero when abandoned, the last mark at a reset) and the closure's total fee.",
+        "properties": {
+          "fee": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "const": "settlement",
+                "type": "string"
+              },
+              {
+                "const": "reset",
+                "type": "string"
+              },
+              {
+                "const": "exercise",
+                "type": "string"
+              },
+              {
+                "const": "assignment",
+                "type": "string"
+              },
+              {
+                "const": "abandon",
+                "type": "string"
+              }
+            ]
+          },
+          "price": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "time": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "fee",
+          "kind",
+          "price",
+          "quantity",
+          "time"
         ]
       },
       "TradeNote": {

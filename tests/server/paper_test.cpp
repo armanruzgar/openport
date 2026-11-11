@@ -2683,8 +2683,10 @@ TEST(PaperRecovery, SettlementProvenanceIsDurableAndStopReleasesJournalWriter) {
   EXPECT_EQ(trade["settlement_value"], record["value"]);
   EXPECT_EQ(trade["settlement_source"], record["source"]["kind"]);
   const auto csv = server::handle_api({"GET", "/api/trades.csv"}, replacement).body;
-  EXPECT_NE(csv.find("settlement_value,settlement_source,time_stop_orders\r\n"), std::string::npos);
-  EXPECT_NE(csv.find("5012.00,provider_closing_print,\r\n"), std::string::npos);
+  EXPECT_NE(csv.find("settlement_value,settlement_source,time_stop_orders,closures\r\n"), std::string::npos);
+  // No time-stop orders, then the settlement as the trade's one closure, as JSON.
+  EXPECT_NE(csv.find("5012.00,provider_closing_print,,\"[{\"\"fee\"\":"), std::string::npos);
+  EXPECT_NE(csv.find("\"\"kind\"\":\"\"settlement\"\""), std::string::npos);
   const auto missing = server::handle_api({"GET", "/api/settlements?account=missing"}, replacement);
   EXPECT_EQ(missing.status, 404);
   EXPECT_EQ(json::parse(missing.body)["error"]["code"], "UNKNOWN_ACCOUNT");
@@ -3381,6 +3383,52 @@ TEST(PaperStocks, ExerciseDeliversSharesThatThePortfolioShowsAndCloses) {
   EXPECT_EQ(write(engine, "POST", "/api/stocks/close", {{"symbol", "spy"}}).status, 400);
   EXPECT_EQ(write(engine, "POST", "/api/positions/exercise", {{"symbol", symbol}, {"quantity", 0}}).status, 400);
   EXPECT_EQ(write(engine, "POST", "/api/positions/exercise", {{"symbol", symbol}, {"quantity", 5}}).status, 422);
+  engine.stop();
+}
+
+TEST(PaperStocks, ARoundTripListsEveryClosureAPartialExerciseIncluded) {
+  PaperProvider provider;
+  server::Engine engine(provider, md::Subscription{{"SPY"}}, paper_options());
+  engine.start();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view() != nullptr; }));
+  const auto contract = *md::parse_osi("SPY261022C00500000");
+  const auto symbol = contract.osi_symbol();
+  auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  const auto quote = [&] {
+    provider.sink->publish(md::UnderlyingQuote{"SPY", time, 519.9, 520.1, 520});
+    provider.sink->publish(md::OptionQuote{0, time, 21.0, 21.2, 10, 10});
+    ASSERT_TRUE(wait_for([&] { const auto m = engine.metrics("SPY"); return m && m->as_of == time && !m->slices.empty(); }));
+  };
+  provider.sink->publish(md::ContractDefinition{0, contract});
+  quote();
+  const auto bought = write(engine, "POST", "/api/orders", {{"client_order_id", "calls"}, {"symbol", symbol}, {"side", "buy"},
+      {"type", "limit"}, {"quantity", 2}, {"limit_price", "21.20"}, {"time_in_force", "day"}});
+  ASSERT_EQ(bought.status, 201) << bought.body;
+  time += md::kNanosPerSecond;
+  quote();
+  ASSERT_TRUE(wait_for([&] { return engine.trading_view()->snapshot->time == time; }));
+  const auto exercised = write(engine, "POST", "/api/positions/exercise", {{"symbol", symbol}, {"quantity", 1}});
+  ASSERT_EQ(exercised.status, 200) << exercised.body;
+  // The other contract is sold: a fill closes one and the exercise the other.
+  const auto sold = write(engine, "POST", "/api/orders", {{"client_order_id", "rest"}, {"symbol", symbol}, {"side", "sell"},
+      {"type", "limit"}, {"quantity", 1}, {"limit_price", "21.00"}, {"time_in_force", "day"}});
+  ASSERT_EQ(sold.status, 201) << sold.body;
+  const auto trades = read(engine, "/api/trades")["trades"];
+  ASSERT_EQ(trades.size(), 1U);
+  auto trade = trades.at(0);
+  EXPECT_EQ(trade["status"], "closed");
+  EXPECT_EQ(trade["closed_contracts"], 2);
+  EXPECT_EQ(trade["fills"].size(), 2U);
+  EXPECT_TRUE(trade["closure"].is_null());  // a fill ended it
+  ASSERT_EQ(trade["closures"].size(), 1U);
+  EXPECT_EQ(trade["closures"][0]["kind"], "exercise");
+  EXPECT_EQ(trade["closures"][0]["quantity"], 1);
+  EXPECT_EQ(trade["closures"][0]["price"], "20.00");  // intrinsic at 520
+  EXPECT_TRUE(trade["closures"][0]["fee"].is_string());
+  EXPECT_TRUE(trade["closures"][0]["time"].is_string());
+  const auto csv = server::handle_api({"GET", "/api/trades.csv"}, engine).body;
+  EXPECT_NE(csv.find("time_stop_orders,closures\r\n"), std::string::npos);
+  EXPECT_NE(csv.find("\"\"kind\"\":\"\"exercise\"\",\"\"price\"\":\"\"20.00\"\",\"\"quantity\"\":1,"), std::string::npos) << csv;
   engine.stop();
 }
 

@@ -73,6 +73,9 @@ inline std::vector<std::string> paper_csv_columns(bool fills) {
       columns.push_back(std::string("attribution.") + field);
     for (const auto* field : {"group", "buying_power", "return_on_buying_power", "strategy_buying_power", "strategy_return_on_buying_power", "settlement_value", "settlement_source", "time_stop_orders"})
       columns.push_back(field);
+    // Added after the rest, so earlier columns keep their places: every closure of the
+    // round trip (a partial exercise or assignment too) as a JSON array.
+    columns.push_back("closures");
   }
   return columns;
 }

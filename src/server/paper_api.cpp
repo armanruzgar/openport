@@ -1202,6 +1202,25 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
   std::map<std::pair<std::string, Timestamp>, const SettlementRecord*> settlements;
   for (const auto& record : s.settlements) settlements[{record.contract.osi_symbol(), record.time}] = &record;
   const auto all = lifecycles(s.recent_fills, s.closures, view.contracts);
+  // Every closure of each round trip, a partial exercise or assignment as much as the
+  // settlement, reset or abandonment that ended it: it belongs to its contract's round
+  // trip that opened last before it (by fills recorded) and was still open then.
+  std::map<std::string, std::vector<const Lifecycle*>> trips_by_symbol;
+  for (const auto& trip : all) trips_by_symbol[trip.symbol].push_back(&trip);
+  std::map<std::uint64_t, json> trip_closures;
+  for (const auto& closure : s.closures) {
+    const auto trips = trips_by_symbol.find(closure.symbol);
+    if (trips == trips_by_symbol.end()) continue;
+    const Lifecycle* owner = nullptr;
+    for (const auto* trip : trips->second)
+      if (trip->first_fill <= closure.after_fill && (owner == nullptr || trip->first_fill > owner->first_fill)) owner = trip;
+    if (owner == nullptr || (owner->closed && closure.time > *owner->closed)) continue;
+    auto& owned = trip_closures[owner->first_fill];
+    if (!owned.is_array()) owned = json::array();
+    owned.push_back({{"fee", closure.fee.str()}, {"kind", closure_name(closure.kind)}, {"price", closure.price.str()},
+                      {"quantity", closure.quantity < 0 ? -closure.quantity : closure.quantity},
+                      {"time", md::format_timestamp(closure.time)}});
+  }
   json trades = json::array();
   for (auto it = all.rbegin(); it != all.rend(); ++it) {
     const auto& t = *it;
@@ -1265,6 +1284,7 @@ json trades_json(const TradingView& view, std::string_view status, bool current_
         {"return", open || cost == Money{} ? json(nullptr) : number(net.dollars() / cost.dollars())},
         {"mark", mark}, {"unrealised", unrealised},
         {"closure", !t.closure ? json(nullptr) : json(closure_name(*t.closure))},
+        {"closures", trip_closures.contains(t.first_fill) ? trip_closures.at(t.first_fill) : json::array()},
         {"settlement_value", settlement ? json(settlement->value.str()) : json(nullptr)},
         {"settlement_source", settlement && settlement->source && settlement->source->contains("kind")
             ? json(settlement->source->at("kind")) : json(nullptr)},
@@ -4091,6 +4111,7 @@ std::optional<ApiResponse> paper_read(const ApiRequest& request, const MetricsSo
           if (const auto found = time_stops.find(id); found != time_stops.end())
             for (const auto& event : found->second) row["time_stop_orders"].push_back(event);
         row["time_stop_orders"] = row["time_stop_orders"].empty() ? "" : row["time_stop_orders"].dump();
+        row["closures"] = row["closures"].empty() ? "" : row["closures"].dump();
         rows.push_back(std::move(row));
       }
       for (const auto& row : trades.at("share_trades")) rows.push_back(row);

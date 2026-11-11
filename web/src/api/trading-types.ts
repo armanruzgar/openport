@@ -611,6 +611,8 @@ export interface Trade {
   settlement_value?: Money | null
   settlement_source?: string | null
   closure: "settlement" | "reset" | "exercise" | "assignment" | "abandon" | null
+  /** Every closure that took contracts out of it without a fill, a partial exercise or assignment included; absent from older servers. */
+  closures?: TradeClosure[]
   /** What closed it: the closure, or its last reducing fill's order. Null while open; absent from older servers. */
   closed_by?: TradeExit | null
   /** Why the reducer liquidated it when closed_by is "system": "target", "drawdown", "soft_floor" or "expiry". */
@@ -623,6 +625,8 @@ export interface Trade {
   mistakes?: string[]
   tags?: string[]
 }
+/** Contracts that left a round trip without a fill: the price is per unit (intrinsic value, zero when abandoned, the mark at a reset), the fee the closure's total. */
+export interface TradeClosure { fee: Money; kind: "settlement" | "reset" | "exercise" | "assignment" | "abandon"; price: Money; quantity: number; time: string }
 /** How a round trip ended: the trader's own order, a bracket exit, a flatten, a playbook's close, a reducer liquidation, or a closure. */
 export type TradeExit = "order" | "stop_loss" | "take_profit" | "flatten" | "playbook" | "system" | "settlement" | "exercise" | "assignment" | "abandon" | "reset"
 export interface TradeNote {
