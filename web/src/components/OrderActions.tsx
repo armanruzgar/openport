@@ -15,6 +15,7 @@ import { OrderPreviewPanel, useChangePreview } from "./OrderPreview"
 import { TradingError, WriteAccess, writeBlocked } from "./TradingControls"
 import { Badge } from "./ui"
 import { useWalk } from "./WalkFields"
+import { randomId } from "../lib/id"
 
 /** Runs one write at a time, keeping its error and pending state for this dialog. */
 export function useWrite(trading: TradingStatus) {
@@ -54,7 +55,7 @@ export function useClientOrderId() {
   return {
     stamp(request: NewOrder): NewOrder {
       const terms = JSON.stringify({ ...request, client_order_id: "" })
-      if (last.current?.terms !== terms) last.current = { terms, id: crypto.randomUUID() }
+      if (last.current?.terms !== terms) last.current = { terms, id: randomId() }
       return { ...request, client_order_id: last.current.id }
     },
     /** The next request is a new order even on the same terms. */

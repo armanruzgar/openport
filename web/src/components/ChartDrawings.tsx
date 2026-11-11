@@ -3,6 +3,7 @@ import type { Candle, CandleInterval } from "../api/types"
 import { barTime } from "../lib/candles"
 import type { Drawing } from "../lib/drawings"
 import { price } from "../lib/format"
+import { randomId } from "../lib/id"
 
 export function ChartDrawings({ bars, interval, drawings, onChange, onAlert }: {
   bars: readonly Candle[]; interval: CandleInterval; drawings: Drawing[]; onChange: (next: Drawing[]) => void; onAlert: (level: number) => void
@@ -19,7 +20,7 @@ export function ChartDrawings({ bars, interval, drawings, onChange, onAlert }: {
     <summary className="cursor-pointer py-2 text-muted">Drawings · {drawings.length} · keyboard entry and saved lines</summary>
     <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(event) => {
       event.preventDefault(); if (!valid) return
-      const id = crypto.randomUUID()
+      const id = randomId()
       onChange([...drawings, kind === "horizontal" ? { id, kind, price: Number(level) } : { id, kind, start: { time: start, price: Number(level) }, end: { time: end, price: Number(endPrice) } }].slice(-100))
       setLevel(""); setEndPrice("")
     }}>

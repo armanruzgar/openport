@@ -29,6 +29,7 @@ import { useStopTrail } from "./TrailFields"
 import { useChainedOrder } from "./ChainFields"
 import { Segmented } from "./ui"
 import { goodTillTimestamp, TimeInForceField } from "./TimeInForceField"
+import { randomId } from "../lib/id"
 
 export interface TicketSelection {
   symbol: string
@@ -263,7 +264,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
     setError(undefined)
     try {
       request.current ??= {
-        client_order_id: crypto.randomUUID(), symbol: selection.symbol, side, quantity: q,
+        client_order_id: randomId(), symbol: selection.symbol, side, quantity: q,
         ...(join.group ? { group: join.group } : {}),
         ...(type === "market" ? { type, time_in_force: effectiveTif as "ioc" | "exto" | "gtc_exto" | "gtd" } : { type, time_in_force: effectiveTif, limit_price: limitPrice }),
         ...(effectiveTif === "gtd" ? { good_till } : {}),
@@ -329,11 +330,13 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   return <>
     {(result != null || error != null) && <OrderResult order={result} error={error}>
       {(rejected(error) || result?.status === "rejected") && <button type="button" className="trade-button" onClick={newOrder}>New order</button>}
-      {!order && retryable(error) && <>
+      {/* A failure before the request was built sent nothing: retrying would fail the same way. */}
+      {!order && error != null && !submitted && <p className="text-xs text-muted">The order was not sent. Change it or close the ticket.</p>}
+      {!order && submitted && retryable(error) && <>
         <button type="button" className="trade-button" disabled={!valid || blocked || pending} onClick={() => void submit()}>Retry same order</button>
         <p className="text-xs text-muted">Retries keep the same client order ID. Check Positions before starting another ticket if the response was interrupted.</p>
       </>}
-      {!order && error != null && !rejected(error) && !retryable(error) && <p className="text-xs text-muted">Check Positions and Orders to confirm the order’s state before starting another ticket.</p>}
+      {!order && submitted && error != null && !rejected(error) && !retryable(error) && <p className="text-xs text-muted">Check Positions and Orders to confirm the order’s state before starting another ticket.</p>}
       {result && result.status !== "rejected" && variant === "panel" && <button type="button" className="trade-button" onClick={newOrder}>Another order</button>}
     </OrderResult>}
     <div>

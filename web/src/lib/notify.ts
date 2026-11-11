@@ -1,5 +1,6 @@
 import { notificationHistory, type NotificationKind } from "./notification-history"
 import { useSyncExternalStore } from "react"
+import { randomId } from "./id"
 
 export type Permission = NotificationPermission | "unsupported"
 export function notificationPermission(): Permission {
@@ -62,7 +63,7 @@ function chime() {
 
 /** Show an alert in the terminal, as a browser notification when allowed, and with a chime. */
 export function notify(title: string, body: string, sound: boolean, context?: { kind: NotificationKind; scope: string; id?: string; quiet?: boolean }) {
-  notificationHistory.add({ id: context?.id ?? crypto.randomUUID(), title, body, kind: context?.kind ?? "alert", scope: context?.scope ?? "browser" })
+  notificationHistory.add({ id: context?.id ?? randomId(), title, body, kind: context?.kind ?? "alert", scope: context?.scope ?? "browser" })
   if (context?.quiet) return
   toasts.push(title, body)
   if (notificationPermission() === "granted") {

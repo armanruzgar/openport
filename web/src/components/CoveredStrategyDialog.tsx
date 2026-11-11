@@ -13,6 +13,7 @@ import { useWrite } from "./OrderActions"
 import { OrderPreviewPanel, useOrderPreview } from "./OrderPreview"
 import { OrderResult } from "./OrderTicket"
 import { TradingError, WriteAccess } from "./TradingControls"
+import { randomId } from "../lib/id"
 
 /** Two explicit orders: shares first, then a covered call or the collar's option pair. */
 export function CoveredStrategyDialog({ kind, chain, trading, onClose, initialCall, initialQuantity }: {
@@ -86,7 +87,7 @@ export function CoveredStrategyDialog({ kind, chain, trading, onClose, initialCa
       onClick={() => { setAttempted(true); void write.run(() => api.tradeStock(chain.symbol, "buy", q * 100, trading.write), () => setBought(true)) }}>
       {write.pending ? "Buying shares…" : `1. Buy ${valid ? q * 100 : "…"} shares`}</button>
       : <button type="button" className="trade-button" disabled={!draft || !!stopRequired || !!order || write.pending || write.blocked || trading.kill_latched}
-        onClick={() => { if (!draft) return; request.current ??= { ...draft, client_order_id: crypto.randomUUID() }
+        onClick={() => { if (!draft) return; request.current ??= { ...draft, client_order_id: randomId() }
           void write.run(() => api.submitOrder(request.current!, trading.write), (result) => setOrder(result.order)) }}>
         {write.pending ? "Sending options…" : "2. Send options at market"}</button>}
   </Dialog>

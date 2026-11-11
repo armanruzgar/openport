@@ -11,6 +11,7 @@ import { notificationPermission, notify, requestNotifications, toasts, useToasts
 import { Dialog } from "./Dialog"
 import { NotificationSettings } from "./NotificationSettings"
 import { ServerAlerts, ServerAlertWatcher } from "./ServerAlerts"
+import { randomId } from "../lib/id"
 
 const setAt = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
 
@@ -123,7 +124,7 @@ export function AlertsDialog({ initial, onClose }: { initial?: { symbol: string;
   function add() {
     if (!valid) return
     alertStore.update((current) => ({ ...current, prices: [...current.prices,
-      { id: crypto.randomUUID(), symbol, direction, level: value, created: new Date().toISOString() }] }))
+      { id: randomId(), symbol, direction, level: value, created: new Date().toISOString() }] }))
     setLevel("")
   }
   return <Dialog title="Alerts" onClose={onClose}>

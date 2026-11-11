@@ -15,6 +15,7 @@ import { Dialog } from "./Dialog"
 import { useWrite } from "./OrderActions"
 import { TradingError, WriteAccess } from "./TradingControls"
 import { Badge, Segmented, toneOf, toneText } from "./ui"
+import { randomId } from "../lib/id"
 
 const dollars = (value: number) => formatMoney(value.toFixed(2))
 
@@ -154,7 +155,7 @@ export function TradeSharesDialog({ initial, initialSide = "buy", initialShares 
   const submit = () => {
     if (!order) return void write.run(() => api.tradeStock(symbol, side, n, trading.write), onClose)
     // A retry after an interrupted response keeps the same client order ID.
-    clientId.current ??= crypto.randomUUID()
+    clientId.current ??= randomId()
     void write.run(() => api.placeStockOrder({ ...order, client_order_id: clientId.current! }, trading.write), onClose)
   }
   const kindLabel = { now: "Now", market: "Market", limit: "Limit", stop: "Stop", stop_limit: "Stop-limit" } as const

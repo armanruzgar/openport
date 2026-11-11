@@ -102,6 +102,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the Mid button filled in a limit between ticks, which the preview and the order
   refused with `INVALID_TICK`. Bid, Mid and Ask now snap to the contract's tick, down
   for a buy and up for a sell.
+- **Trading over plain HTTP on a LAN address.** Browsers offer `crypto.randomUUID`
+  only on HTTPS or a loopback address, and the terminal called it for every client
+  order ID, transfer, alert and drawing. Opened as `http://<server-ip>:8080`, every
+  order ticket failed with `crypto.randomUUID is not a function` and offered a retry
+  that failed the same way. IDs now fall back to `crypto.getRandomValues`, and a
+  ticket offers a retry only for an order it actually sent.
 
 ## 0.5.1 (2026-10-28)
 

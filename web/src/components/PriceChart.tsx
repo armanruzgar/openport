@@ -17,6 +17,7 @@ import { expiryLabel, isNum, price } from "../lib/format"
 import { useMediaQuery } from "../lib/media"
 import { AlertsDialog } from "./Alerts"
 import { Segmented } from "./ui"
+import { randomId } from "../lib/id"
 
 const priceText = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
@@ -56,8 +57,8 @@ export function PriceChart({ symbol, spot, expiry }: { symbol: string; spot: num
   const draw = (point: DrawingPoint) => {
     if (drawMode === "trend" && !anchor) { setAnchor(point); return }
     if (drawMode === "trend" && anchor?.time === point.time) return
-    const drawing: Drawing = drawMode === "trend" && anchor ? { id: crypto.randomUUID(), kind: "trend", start: anchor, end: point }
-      : { id: crypto.randomUUID(), kind: "horizontal", price: point.price }
+    const drawing: Drawing = drawMode === "trend" && anchor ? { id: randomId(), kind: "trend", start: anchor, end: point }
+      : { id: randomId(), kind: "horizontal", price: point.price }
     changeDrawings([...drawings, drawing].slice(-100)); setDrawMode(null); setAnchor(null)
   }
   const height = useMediaQuery("(min-width: 640px)") ? 300 : 220

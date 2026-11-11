@@ -266,6 +266,15 @@ describe("order ticket interaction", () => {
     expect(vi.mocked(api.submitOrder).mock.calls[1]![0]).toBe(vi.mocked(api.submitOrder).mock.calls[0]![0])
     expect(host.textContent).toContain("Partial fill")
   })
+  it("submits where crypto.randomUUID is missing, as over plain HTTP on a LAN address", async () => {
+    const real = globalThis.crypto
+    vi.stubGlobal("crypto", { getRandomValues: real.getRandomValues.bind(real) })
+    await render()
+    await click("Submit order")
+    expect(vi.mocked(api.submitOrder).mock.calls[0]![0].client_order_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(host.textContent).toContain("Partial fill")
+    expect(host.textContent).not.toContain("Retry same order")
+  })
   it("does not offer an automatic retry or fresh ID for an unknown server failure", async () => {
     vi.mocked(api.submitOrder).mockRejectedValueOnce(new ApiError(500, "Unexpected response"))
     await render()

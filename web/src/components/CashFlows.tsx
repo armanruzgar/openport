@@ -7,6 +7,7 @@ import { timestampET } from "../lib/freshness"
 import { useWriteToken } from "../lib/write-token"
 import { TradingError, writeBlocked } from "./TradingControls"
 import { Panel } from "./ui"
+import { randomId } from "../lib/id"
 
 export function CashFlows({ account, trading }: { account: Account; trading: TradingStatus }) {
   const api = useActionApi()
@@ -23,7 +24,7 @@ export function CashFlows({ account, trading }: { account: Account; trading: Tra
   async function submit() {
     if (!valid || busy.current || writeBlocked(trading, token)) return
     const signed = direction === "withdrawal" ? `-${amount}` : amount
-    if (retry.current?.amount !== signed) retry.current = { amount: signed, id: crypto.randomUUID() }
+    if (retry.current?.amount !== signed) retry.current = { amount: signed, id: randomId() }
     busy.current = true; setPending(true); setError(undefined)
     try {
       await api.transferCash(retry.current.id, signed, trading.write)
