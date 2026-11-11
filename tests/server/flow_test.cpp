@@ -268,11 +268,13 @@ TEST(FlowApi, NetsPremiumByExpiryAndStrikeOverTheFilteredTape) {
   const auto call = option("SPXW  261021C05800000", 4.10, 4.30);
   const auto put = option("SPXW  261021P05700000", 3.00, 3.20);
   const auto later = option("SPXW  261023C05800000", 9.00, 9.40);
-  source.tape->add(print(kOpen, 4.30, 10, 1), call);        // +4,300
-  source.tape->add(print(kOpen + 1, 4.10, 2, 1), call);     // -820
-  source.tape->add(print(kOpen + 2, 3.00, 5, 1), put);      // -1,500
-  source.tape->add(print(kOpen + 3, 9.20, 1, 1), later);    // mid: unclassified 920
-  source.tape->add(print(kOpen + 4, 9.40, 200, 2), later);  // block +188,000
+  // A second apart, so none of these is a sweep or a spread's leg.
+  const md::Timestamp second = md::kNanosPerSecond;
+  source.tape->add(print(kOpen, 4.30, 10, 1), call);                 // +4,300
+  source.tape->add(print(kOpen + second, 4.10, 2, 1), call);         // -820
+  source.tape->add(print(kOpen + 2 * second, 3.00, 5, 1), put);      // -1,500
+  source.tape->add(print(kOpen + 3 * second, 9.20, 1, 1), later);    // mid: unclassified 920
+  source.tape->add(print(kOpen + 4 * second, 9.40, 200, 2), later);  // block +188,000
   auto body = get(source, "/api/underlyings/SPX/flow");
   EXPECT_EQ(body["source"], "feed");
   EXPECT_TRUE(body["message"].is_null());
@@ -309,6 +311,24 @@ TEST(FlowApi, NetsPremiumByExpiryAndStrikeOverTheFilteredTape) {
   for (const auto* bad : {"limit=0", "limit=1001", "type=both", "side=lifted", "side=", "min_size=-1",
                           "min_premium=x", "only=spread", "since=1"})
     get(source, std::string("/api/underlyings/SPX/flow?") + bad, 400);
+
+  // The call lifted on venues 3 and 4 within a second is a sweep (6, 7); a put bought and
+  // another sold on one venue within a millisecond, 1:1, are a spread's legs (8, 9). Each
+  // filter keeps only its own prints.
+  const auto wing = option("SPXW  261021P05650000", 1.90, 2.10);
+  source.tape->add(print(kOpen + 10 * second, 4.30, 3, 3), call);
+  source.tape->add(print(kOpen + 10 * second + second / 2, 4.30, 3, 4), call);
+  source.tape->add(print(kOpen + 20 * second, 3.20, 4, 5), put);
+  source.tape->add(print(kOpen + 20 * second + 1000, 1.90, 4, 5), wing);
+  const auto sequences = [&](const std::string& only) {
+    const auto filtered = get(source, "/api/underlyings/SPX/flow?only=" + only);
+    json kept = json::array();
+    for (const auto& p : filtered.at("prints")) kept.push_back(p.at("sequence"));
+    return kept;
+  };
+  EXPECT_EQ(sequences("sweep"), json::array({7, 6}));
+  EXPECT_EQ(sequences("multi_leg"), json::array({9, 8}));
+  EXPECT_EQ(sequences("block"), json::array({5}));
 }
 
 }  // namespace
