@@ -532,6 +532,10 @@ void forbid_framing(http::fields& response) {
   response.set("X-Content-Type-Options", "nosniff");
 }
 
+constexpr std::string_view kHostRejected =
+    "Host not allowed: address this server by IP address or localhost, or start it with "
+    "--allowed-host for this name";
+
 class Session {
  public:
   virtual ~Session() = default;
@@ -828,6 +832,12 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     const auto& header = parser_->get();
     const auto target = std::string_view(header.target().data(), header.target().size());
     if (header.method() == http::verb::post && target.substr(0, target.find('?')) == "/api/analysis/portfolios") {
+      // Only a request this server would take may send that much: anyone else is
+      // answered from the header, before the body is read, and the connection closes.
+      // Otherwise every connection could hold 4 MiB until its read timed out.
+      auto rejection = host_refused(header) ? std::optional(api_error(403, "HOST_REJECTED", std::string(kHostRejected)))
+                                            : check_api_write(api_request(header), shared_.write_policy);
+      if (rejection) return send_api(std::move(*rejection), header.version(), false);
       body_limit_ = kImportBodyLimit;
     } else {
       // A declared length is checked once, at the header; chunks against the new limit.
@@ -852,13 +862,9 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     http::request<http::string_body> request = parser_->release();
 
     // Before anything is served: a DNS-rebinding page addresses the server by a name
-    // its attacker controls. Clients without Host (HTTP/1.0) are not browsers.
-    if (request.count(http::field::host) > 1 ||
-        (request.count(http::field::host) == 1 &&
-         !host_allowed(request[http::field::host], shared_.allowed_origins, shared_.allowed_hosts))) {
-      const std::string reason =
-          "Host not allowed: address this server by IP address or localhost, or start it with "
-          "--allowed-host for this name";
+    // its attacker controls.
+    if (host_refused(request)) {
+      const std::string reason(kHostRejected);
       if (request.target().starts_with("/api/"))
         return send_api(api_error(403, "HOST_REJECTED", reason), request.version(), false);
       return reject_upgrade(request, http::status::forbidden, reason);
@@ -967,7 +973,16 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
         "Use POST (issue or rotate, empty body), GET or DELETE");
   }
 
-  void handle_api_request(const http::request<http::string_body>& request) {
+  /// Clients without Host (HTTP/1.0) are not browsers; any other Host must name this
+  /// server by an address, localhost or a name allowed on purpose (host_allowed).
+  bool host_refused(const http::request<http::string_body>& request) const {
+    return request.count(http::field::host) > 1 ||
+           (request.count(http::field::host) == 1 &&
+            !host_allowed(request[http::field::host], shared_.allowed_origins, shared_.allowed_hosts));
+  }
+
+  /// The request as the API sees it; from a header alone its body is empty.
+  ApiRequest api_request(const http::request<http::string_body>& request) {
     ApiRequest api{std::string(request.method_string()), std::string(request.target())};
     api.body = request.body();
     api.content_type = std::string(request[http::field::content_type]);
@@ -999,6 +1014,11 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
           header.empty() ? std::string_view{} : std::string_view(request[header]),
           !header.empty() && request.count(header) > 1);
     }
+    return api;
+  }
+
+  void handle_api_request(const http::request<http::string_body>& request) {
+    ApiRequest api = api_request(request);
     if (auto rejection = check_api_write(api, shared_.write_policy, &api.actor, &api.access))
       return send_api(std::move(*rejection), request.version(), request.keep_alive());
     // One check for every route: no handler sees a body it cannot parse, print or

@@ -152,6 +152,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   quote rebuilt the put-call parity estimate behind the window from every quoted
   contract, so an import ran about 70 times slower than with `--window 0`. Once an
   underlying has an estimate, quotes now refresh it once per market second.
+- **The 4 MiB import limit needs credentials first.** `POST /api/analysis/portfolios`
+  may send 4 MiB where every other route takes 64 KiB, and the larger limit was
+  granted before the request was authenticated. A client without a token could open
+  hundreds of connections that each held about 4 MiB until their reads timed out,
+  about 2 GiB in all: enough to restart a demo server, which deletes every visitor's
+  sandbox. The import's Host, Origin, credentials and Content-Type are now checked
+  from its header, and a request the server would refuse is answered before its
+  body is read.
 
 ## 0.5.1 (2026-10-28)
 

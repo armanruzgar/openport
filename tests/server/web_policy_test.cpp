@@ -5,6 +5,7 @@
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/asio/write.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
@@ -660,6 +661,75 @@ TEST(WebServer, OnlyThePortfolioImportTakesABodyOverSixtyFourKiB) {
   EXPECT_NE(order.body().find("64 KiB"), std::string::npos);
   const auto other = send("/api/analysis/portfolios/ira", 80 * 1024);
   EXPECT_EQ(other.result_int(), 400);
+  const std::lock_guard lock(mutex);
+  ASSERT_EQ(received.size(), 1u);
+  EXPECT_GT(received[0], 1024u * 1024);
+  web.stop();
+}
+
+// Only the import may send 4 MiB, so it is checked from its header: a request the
+// server would refuse is answered before its body is read, and a client without
+// credentials cannot make each connection hold 4 MiB until its read times out.
+TEST(WebServer, APortfolioImportTheServerWouldRefuseIsAnsweredBeforeItsBody) {
+  std::mutex mutex;
+  std::vector<std::size_t> received;
+  server::WebServer web("127.0.0.1", 0, {},
+      [&](const server::ApiRequest& request, server::ApiCompletion complete) {
+        { const std::lock_guard lock(mutex); received.push_back(request.body.size()); }
+        complete({200, "{}"});
+      }, {}, "secret", {}, {{"reader", {"read"}, "reader-secret"}}, false, {}, {}, {}, std::chrono::seconds(5));
+  web.start(1);
+  asio::io_context io;
+  const tcp::endpoint endpoint(asio::ip::make_address("127.0.0.1"), web.port());
+  const auto host = "127.0.0.1:" + std::to_string(web.port());
+  // Sends the header alone. A server that waited for the declared body would answer
+  // nothing, and close the connection when its five-second read timed out.
+  const auto header_only = [&](const std::string& name, const std::string& lines) {
+    tcp::socket socket(io);
+    socket.connect(endpoint);
+    const auto head = "POST /api/analysis/portfolios HTTP/1.1\r\nHost: " + name +
+                      "\r\nContent-Length: 4194304\r\n" + lines + "\r\n";
+    asio::write(socket, asio::buffer(head));
+    beast::flat_buffer buffer;
+    http::response<http::string_body> response;
+    beast::error_code error;
+    http::read(socket, buffer, response, error);
+    EXPECT_FALSE(error) << error.message();
+    return response;
+  };
+  struct Case {
+    std::string name, lines;
+    unsigned status;
+    std::string code;
+  };
+  const std::string typed = "Content-Type: application/json\r\n";
+  for (const auto& [name, lines, status, code] : std::vector<Case>{
+           {host, typed, 403, "WRITE_TOKEN_REQUIRED"},
+           {host, typed + "Authorization: Bearer wrong-secret\r\n", 403, "WRITE_TOKEN_REQUIRED"},
+           {host, typed + "Authorization: Bearer reader-secret\r\n", 403, "SCOPE_REQUIRED"},
+           {host, typed + "Authorization: Bearer secret\r\nOrigin: https://evil.test\r\n", 403, "ORIGIN_REJECTED"},
+           {host, "Content-Type: text/csv\r\nAuthorization: Bearer secret\r\n", 400, "INVALID_REQUEST"},
+           {"evil.test", typed + "Authorization: Bearer secret\r\n", 403, "HOST_REJECTED"}}) {
+    const auto response = header_only(name, lines);
+    EXPECT_EQ(response.result_int(), status) << code;
+    EXPECT_NE(response.body().find(code), std::string::npos) << response.body();
+    // The unread body ends the connection.
+    EXPECT_FALSE(response.keep_alive()) << code;
+  }
+  // An admin's import still takes a body over 64 KiB.
+  tcp::socket socket(io);
+  socket.connect(endpoint);
+  http::request<http::string_body> request{http::verb::post, "/api/analysis/portfolios", 11};
+  request.set(http::field::host, host);
+  request.set(http::field::content_type, "application/json");
+  request.set(http::field::authorization, "Bearer secret");
+  request.body() = "{\"csv\":\"" + std::string(1024 * 1024, 'x') + "\"}";
+  request.prepare_payload();
+  http::write(socket, request);
+  beast::flat_buffer buffer;
+  http::response<http::string_body> response;
+  http::read(socket, buffer, response);
+  EXPECT_EQ(response.result_int(), 200);
   const std::lock_guard lock(mutex);
   ASSERT_EQ(received.size(), 1u);
   EXPECT_GT(received[0], 1024u * 1024);

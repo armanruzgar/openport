@@ -9,7 +9,8 @@ response labels it so. It never sends anything to a broker.
 
 The Analysis page, or `POST /api/analysis/portfolios` with
 `{ "name", "csv", "format" }`, imports a CSV of up to 4 MiB (this route's request
-limit; every other route keeps 64 KiB) and 2,000 holdings. `format` is `auto` (detected from the columns), `generic`,
+limit; every other route keeps 64 KiB, and a request without admin access is refused
+before its body is read) and 2,000 holdings. `format` is `auto` (detected from the columns), `generic`,
 `tastytrade`, `schwab` or `ibkr`. Lots of one symbol are summed, with their
 quantity-weighted cost when every lot has one; holdings that net to zero, cash,
 totals and unsupported instruments (futures, bonds, funds) are left out and listed
