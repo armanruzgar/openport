@@ -9,6 +9,7 @@
 
 #include "support/scripted_market.hpp"
 #include "support/journal.hpp"
+#include "support/temporary_directory.hpp"
 
 namespace openport::trading {
 namespace {
@@ -989,19 +990,53 @@ TEST(TradingFunded, SizeScalingPreservesPurchasedTermsResetCountsAndRecovery) {
   std::filesystem::remove_all(directory);
 }
 
-TEST(TradingFunded, DisabledSizeScalingLeavesJournalBytesUntouched) {
+/// Whether any object anywhere in `j` has the key `name`.
+bool has_key(const nlohmann::json& j, std::string_view name) {
+  if (j.is_object()) {
+    for (const auto& [key, value] : j.items()) {
+      if (key == name || has_key(value, name)) return true;
+    }
+  } else if (j.is_array()) {
+    for (const auto& value : j) {
+      if (has_key(value, name)) return true;
+    }
+  }
+  return false;
+}
+
+TEST(TradingFunded, WithoutSizeScalingNoRecordWritesItsFieldsOrEvents) {
+  // Size scaling writes its rule, its progress on the evaluation and on archived
+  // attempts, and account_scaled events. A funded plan without it writes none of
+  // them, so its journal keeps the bytes written before the feature: through a
+  // trade, finished days, a payout and a reset that archives the attempt.
+  const test::TemporaryDirectory directory("openport-size-off");
+  const auto path = directory.file("account.jsonl");
   ScriptedMarket f;
-  auto a = std::make_shared<CapturingJournal>(), b = std::make_shared<CapturingJournal>();
-  auto rules = funded();
-  TradingSession first(config(rules), f.time, a);
-  rules.size_scaling = std::nullopt;
-  TradingSession second(config(rules), f.time, b);
-  f.seed(first); f.seed(second);
-  ASSERT_EQ(a->entries.size(), b->entries.size());
-  for (std::size_t i = 0; i < a->entries.size(); ++i) {
-    EXPECT_EQ(a->entries[i].payload, b->entries[i].payload);
-    EXPECT_EQ(a->entries[i].payload.find("size_scaling"), std::string::npos);
-    EXPECT_EQ(a->entries[i].payload.find("account_scaled"), std::string::npos);
+  const auto rules = funded();
+  ASSERT_FALSE(rules.size_scaling);
+  {
+    TradingSession s(config(rules), f.time, test::create_journal(path));
+    f.seed(s);
+    profit_day(s, f, "200");
+    next_day(s, f, {2026, 9, 23});
+    ASSERT_TRUE(s.request_payout(m("40"), f.time).decision.ok());
+    ASSERT_EQ(s.snapshot()->evaluation.payouts.size(), 1U);
+    winning_trade(s, f);
+    next_day(s, f, {2026, 9, 24});
+    ASSERT_TRUE(s.reset_account(m("10000"), rules, "again", f.time).decision.ok());
+    ASSERT_EQ(s.snapshot()->attempts.size(), 1U);
+  }
+  const auto recovery = FileJournal::read(path);
+  for (const auto& record : recovery.records)
+    EXPECT_FALSE(has_key(nlohmann::json::parse(record.payload), "size_scaling")) << record.seq << " " << record.type;
+  // Every state whole, as recovery rebuilds it, and every event.
+  const auto capture = std::make_shared<CapturingJournal>();
+  TradingSession::expand(recovery, *capture);
+  ASSERT_EQ(capture->entries.size(), recovery.records.size());
+  for (const auto& entry : capture->entries) {
+    const auto record = nlohmann::json::parse(entry.payload);
+    EXPECT_FALSE(has_key(record, "size_scaling")) << entry.type << ": " << entry.payload;
+    for (const auto& event : record.at("events")) EXPECT_NE(event.at("type"), "account_scaled") << entry.type;
   }
 }
 
