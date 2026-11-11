@@ -937,12 +937,17 @@ class EquityHistory(EquityPaging):
     error: str | None
 
 
-class CancelAllResult(TypedDict):
+class _Cancelled(TypedDict):
     account_version: str
     cancelled_orders: list[str]
 
 
-class FlattenResult(CancelAllResult):
+class CancelAllResult(_Cancelled):
+    """The option orders a cancel ended, and the share orders (their own IDs, GET /api/stocks/orders)."""
+    cancelled_stock_orders: list[str]
+
+
+class FlattenResult(_Cancelled):
     orders: list[Order]
     fills: list[Fill]
     stock_fills: list[JSON]

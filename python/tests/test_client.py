@@ -1,11 +1,13 @@
 # Copyright (c) 2026 OpenPort contributors. MIT License.
 import asyncio
 import json
+from typing import get_type_hints
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from openport import ApiError, Client, arrow_table, chain_frame, smile_frame, ticks, trades_frame
-from conftest import TIME
+from openport.types import CancelAllResult, FlattenResult
+from conftest import SPEC, TIME
 
 
 def test_urls_auth_accounts_and_unknown_fields(stub):
@@ -505,6 +507,12 @@ def test_sandbox_token_omits_account_by_default(stub):
     assert stub.requests[-1][2]["Authorization"] == "Bearer sandbox_secret"
     client.cancel_all()
     assert stub.requests[-1][1] == "/api/orders/cancel"
+
+
+def test_cancel_all_names_its_share_orders_and_flatten_does_not():
+    schemas = SPEC["components"]["schemas"]
+    assert set(get_type_hints(CancelAllResult)) == set(schemas["CancelAllResponse"]["properties"])
+    assert set(get_type_hints(FlattenResult)) == set(schemas["ClosePositionsResponse"]["properties"])
 
 
 def test_surface_requests_sabr_only_when_asked(stub):

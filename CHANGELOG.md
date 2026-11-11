@@ -128,7 +128,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **Cancel-all and share orders.** `POST /api/orders/cancel` cancels working and armed
   share orders as well as option orders, but its answer listed only the option orders,
   so a script or agent was told nothing was cancelled when share orders were. The
-  answer now carries `cancelled_stock_orders` too.
+  answer now carries `cancelled_stock_orders` too, which the Python client's
+  `CancelAllResult` types. The terminal's **Cancel all** counted option orders only;
+  it now shows with share orders alone and counts them in its confirmation and result.
 - **Methods a route does not take.** A known route asked with the wrong method
   answered 404, 400 or 405 depending on its handler, and no 405 carried the `Allow`
   header; `PUT /api/orders/what-if` even ran the what-if, and `PUT

@@ -4,7 +4,7 @@ import { useRef, useState } from "react"
 
 import { useLive } from "../api/live"
 import { useRefreshTrading, useTradingSession } from "../api/trading"
-import type { ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, NewOrder, Order, Position, StockHolding, StockOrder, TradingStatus } from "../api/trading-types"
+import type { CancelAllResponse, ClosePositionsResponse, FlattenPricing, FlattenPreview, FlattenResidual, NewOrder, Order, Position, StockHolding, StockOrder, TradingStatus } from "../api/trading-types"
 import { contractLabel, orderLabel, osiLabel } from "../lib/journal"
 import { closingAction, editableFields, flattenPlan, isOpen, openOrdersIn, orderChange, orderDraft, outcome, underlyingsOf } from "../lib/orders"
 import { describeTrigger } from "../lib/ticket"
@@ -181,28 +181,43 @@ export function CancelOrderDialog({ order, trading, onClose, onDone }: {
   </Dialog>
 }
 
-/** Cancel every working and armed order, or one underlying's. */
-export function CancelAllDialog({ orders, trading, onClose, onDone }: {
-  orders: readonly Order[]; trading: TradingStatus; onClose: () => void; onDone: (message: string) => void
+const plural = (count: number, what: string) => `${count} ${what}${count === 1 ? "" : "s"}`
+const openShareOrder = (order: StockOrder) => order.status === "working" || order.status === "partially_filled" || order.status === "armed"
+
+/** "2 orders cancelled", or with share orders "2 orders and 1 share order cancelled". */
+export function cancelledMessage(response: CancelAllResponse): string {
+  const options = response.cancelled_orders.length
+  const shares = response.cancelled_stock_orders?.length ?? 0
+  if (!shares) return `${plural(options, "order")} cancelled`
+  return `${options ? `${plural(options, "order")} and ` : ""}${plural(shares, "share order")} cancelled`
+}
+
+/** Cancel every working and armed order, share orders included, or one underlying's. */
+export function CancelAllDialog({ orders, stockOrders = [], trading, onClose, onDone }: {
+  orders: readonly Order[]; stockOrders?: readonly StockOrder[]; trading: TradingStatus; onClose: () => void; onDone: (message: string) => void
 }) {
   const api = useActionApi()
   const write = useWrite(trading)
   const [scope, setScope] = useState<string | null>(null)
   const cancelling = openOrdersIn(orders, scope)
-  const exits = cancelling.filter((o) => o.role != null).length
+  // The server ends an underlying's share orders with its option orders.
+  const shares = stockOrders.filter((o) => openShareOrder(o) && (scope == null || o.symbol === scope))
+  const total = cancelling.length + shares.length
+  const exits = cancelling.filter((o) => o.role != null).length + shares.filter((o) => o.role !== "entry").length
+  const scopes = [...new Set([...underlyingsOf(orders.filter(isOpen)), ...stockOrders.filter(openShareOrder).map((o) => o.symbol)])]
+  const what = !shares.length ? plural(cancelling.length, "open order")
+    : !cancelling.length ? plural(shares.length, "open share order")
+    : `${plural(cancelling.length, "open order")} and ${plural(shares.length, "share order")}`
   return (
     <Dialog title="Cancel orders" onClose={onClose}>
-      <ScopePicker value={scope} options={underlyingsOf(orders.filter(isOpen))} onChange={setScope} what="Cancel" />
-      <p className="text-sm">
-        This cancels {cancelling.length} open {cancelling.length === 1 ? "order" : "orders"}{scope ? ` on ${scope}` : ""}, armed ones included.
-      </p>
+      <ScopePicker value={scope} options={scopes} onChange={setScope} what="Cancel" />
+      <p className="text-sm">This cancels {what}{scope ? ` on ${scope}` : ""}, armed ones included.</p>
       {exits > 0 && <p className="text-sm text-warn">{exits === 1 ? "1 bracket exit protects" : `${exits} bracket exits protect`} a position; the position stays open without it.</p>}
       <WriteAccess trading={trading} />
       <TradingError error={write.error} />
-      <button type="button" className="trade-button" disabled={!cancelling.length || write.pending || write.blocked}
-        onClick={() => void write.run(() => api.cancelAllOrders(scope, trading.write),
-          (response) => onDone(`${response.cancelled_orders.length} ${response.cancelled_orders.length === 1 ? "order" : "orders"} cancelled`))}>
-        {write.pending ? "Cancelling…" : `Cancel ${cancelling.length} ${cancelling.length === 1 ? "order" : "orders"}`}
+      <button type="button" className="trade-button" disabled={!total || write.pending || write.blocked}
+        onClick={() => void write.run(() => api.cancelAllOrders(scope, trading.write), (response) => onDone(cancelledMessage(response)))}>
+        {write.pending ? "Cancelling…" : `Cancel ${plural(total, "order")}`}
       </button>
     </Dialog>
   )

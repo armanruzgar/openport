@@ -106,14 +106,14 @@ function OrdersAccount({ trading }: { trading: TradingStatus }) {
     <TradingError error={tab === "fills" ? fills.error : orders.error} />
     {tab === "fills"
       ? <Panel title="Fills">{fills.data ? <FillsTable fills={fillRows} total={fills.data.fills.length} /> : <Empty>Loading fills…</Empty>}</Panel>
-      : <Panel title={tab === "working" ? "Working orders" : "Order history"} actions={tab === "working" && trading.enabled && working.length > 0
+      : <Panel title={tab === "working" ? "Working orders" : "Order history"} actions={tab === "working" && trading.enabled && (working.length > 0 || shareOrders.length > 0)
           ? <button type="button" className="trade-button" onClick={() => { setNotice(null); setCancelAll(true) }}>Cancel all</button> : undefined}>
         {notice && <p className="mb-2 text-xs text-muted" role="status">{notice}</p>}
         {orders.data ? <OrdersTable orders={visible} all={all} trading={trading} onDone={setNotice}
           empty={tab === "working" && !working.length && shareOrders.length ? "No working option orders." : emptyText(tab === "working" ? working.length : all.length, tab)} /> : <Empty>Loading orders…</Empty>}
         {shareOrders.length > 0 && <div className="mt-3"><WorkingShareOrders orders={shareOrders} trading={trading} /></div>}
       </Panel>}
-    {cancelAll && <CancelAllDialog orders={working} trading={trading} onClose={() => setCancelAll(false)}
+    {cancelAll && <CancelAllDialog orders={working} stockOrders={shareOrders} trading={trading} onClose={() => setCancelAll(false)}
       onDone={(message) => { setNotice(message); setCancelAll(false) }} />}
   </div>
 }

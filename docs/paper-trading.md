@@ -449,7 +449,9 @@ earlier attempt's ID answered as a retry, a refused partner's retry as other ter
 OCO pair's partner checked and reserved as a second sale, and any print reaching a stop.
 `POST /api/stocks/orders/preview` runs the order on a private copy and reports the
 account after, its reservation included. Cancel-all (for all or the symbol) and
-account resets cancel share orders; flatten leaves them. A buy-write (shares and a short call at one net price) is
+account resets cancel share orders; flatten leaves them. Cancel-all names those it
+ended in `cancelled_stock_orders`, and the terminal's **Cancel all** on the Orders
+page counts them with the option orders. A buy-write (shares and a short call at one net price) is
 not offered: the order book has no mixed share-and-option instrument, so the
 covered-call template still buys shares first and sells the call as a separate order.
 

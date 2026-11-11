@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { liveState, useLive } from "../api/live"
 import { tradingQueries } from "../api/trading"
 import type { ClosePositionsResponse, FlattenPreview, Order, Position, StockHolding, StockOrder, WhatIfAccount } from "../api/trading-types"
-import { CancelAllDialog, EditOrderDialog, FlattenDialog, FlattenDryRun, FlattenOutcome } from "../components/OrderActions"
+import { CancelAllDialog, cancelledMessage, EditOrderDialog, FlattenDialog, FlattenDryRun, FlattenOutcome } from "../components/OrderActions"
 import { OrderDetailDialog } from "../components/OrderDetail"
 import { ExerciseDialog } from "../components/StockActions"
 import { account, fill, order, portfolio, risk, status, trading } from "../test/trading-fixtures"
@@ -87,11 +87,26 @@ describe("working share orders", () => {
     const orders = renderToStaticMarkup(<QueryClientProvider client={client}><OrdersView /></QueryClientProvider>)
     expect(positions).toContain("No shares held.")
     expect(orders).toContain("No working option orders.")
+    expect(orders).toContain(">Cancel all</button>")
     for (const html of [positions, orders]) {
       expect(html).toContain("Working share orders")
       expect(html).toContain("Sell 50 SPY · limit · limit $600.00 · GTC")
       expect(html).toContain(">Cancel 3</button>")
     }
+  })
+  it("are cancelled by Cancel all with the option orders and named in its result", () => {
+    const exit: StockOrder = { ...sell, id: "4", symbol: "QQQ", role: "stop_loss", status: "armed", parent: "2" }
+    const html = render(<CancelAllDialog orders={[order, stop]} stockOrders={[sell, exit]} trading={trading} onClose={() => {}} onDone={() => {}} />)
+    expect(html).toContain("This cancels 2 open orders and 2 share orders, armed ones included.")
+    expect(html).toContain("2 bracket exits protect a position; the position stays open without it.")
+    expect(html).toContain("QQQ only</option>")
+    expect(html).toContain("Cancel 4 orders</button>")
+    expect(render(<CancelAllDialog orders={[]} stockOrders={[sell]} trading={trading} onClose={() => {}} onDone={() => {}} />))
+      .toContain("This cancels 1 open share order, armed ones included.")
+    expect(cancelledMessage({ account_version: "18", cancelled_orders: ["1", "9"], cancelled_stock_orders: ["3"] })).toBe("2 orders and 1 share order cancelled")
+    expect(cancelledMessage({ account_version: "18", cancelled_orders: [], cancelled_stock_orders: ["3", "4"] })).toBe("2 share orders cancelled")
+    // An older server names no share orders.
+    expect(cancelledMessage({ account_version: "18", cancelled_orders: ["1"] })).toBe("1 order cancelled")
   })
   it("that a flatten leaves are named, with the short sales they would open", () => {
     const shares: StockHolding = { symbol: "SPY", shares: 200, average_price: "520.00", basis: "104000.00", mark: "525.00",
