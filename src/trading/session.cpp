@@ -3711,13 +3711,14 @@ void activate(State& s, OrderId id, Events& events) {
   match_symbols(s, {symbols.begin(), symbols.end()}, events, id);
   if (s.config.rules.fill_latency_ms == 0) end_ioc(s, id, "IOC exhausted available displayed liquidity", events);
 }
-/// Whether a stop exit's book has nothing left to fill it: a leg's closing side shows
-/// no size the quote it last offered has not already given. A market stop exit
-/// triggered then would find nothing, re-arm (end_ioc) and trigger again on the next
-/// transaction while the same quote stands, so it waits for new size instead (driver
-/// 11; replay drivers 1-10 triggered and re-armed it on every transaction). Only
-/// without impact or fill latency, which fill beyond displayed size or later; a
-/// stop-limit exit rests as a limit once triggered, so it never re-arms.
+/// Whether a stop exit's book has nothing left to fill it: a leg's closing side, which
+/// the quote shows with size, has had that size used up by earlier fills. A market
+/// stop exit triggered then would find nothing, re-arm (end_ioc) and trigger again on
+/// the next transaction while the same quote stands, so it waits for new size instead
+/// (driver 11; replay drivers 1-10 triggered and re-armed it on every transaction). A
+/// side the quote does not show is not used up: an exit gives away a long nobody bids
+/// for. Only without impact or fill latency, which fill beyond displayed size or later;
+/// a stop-limit exit rests as a limit once triggered, so it never re-arms.
 bool exit_without_size(const State& s, const Order& o) {
   if (!s.revised_lifecycle || o.role == OrderRole::Normal || !immediate(o.request) ||
       s.config.rules.impact_ticks != 0 || s.config.rules.fill_latency_ms != 0)
@@ -3726,7 +3727,11 @@ bool exit_without_size(const State& s, const Order& o) {
   if (legs.empty()) legs.push_back({o.request.symbol, o.request.side, 1});
   return std::any_of(legs.begin(), legs.end(), [&](const Leg& leg) {
     const auto book = s.books.find(leg.symbol);
-    return book != s.books.end() && (leg.side == Side::Buy ? book->second.ask_left : book->second.bid_left) / leg.ratio <= 0;
+    if (book == s.books.end()) return false;
+    const auto& q = book->second.quote;
+    const bool buy = leg.side == Side::Buy;
+    const Quantity shown = buy ? (q.ask ? q.ask_size : 0) : (q.bid ? q.bid_size : 0);
+    return shown > 0 && (buy ? book->second.ask_left : book->second.bid_left) / leg.ratio <= 0;
   });
 }
 /// Armed orders activate in eligible sessions; only EXTO/GTC_EXTO extend them.
