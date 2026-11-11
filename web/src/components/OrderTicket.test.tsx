@@ -275,6 +275,30 @@ describe("order ticket interaction", () => {
     expect(host.textContent).toContain("Partial fill")
     expect(host.textContent).not.toContain("Retry same order")
   })
+  it("focuses the result once and keeps focus where the trader put it as the working order refreshes", async () => {
+    // Each quote move on a working order's contract bumps the account version and refreshes the order.
+    const refreshed = vi.spyOn(api, "order").mockImplementation(async (id) => ({ account_version: "18", order: { ...order, id, filled_quantity: 3, remaining_quantity: 2 } }))
+    await render()
+    await click("Submit order")
+    const result = host.querySelector('[aria-label="Order result"]')!
+    await waitForRender(() => expect(result.textContent).toContain("3/5 filled"))
+    expect(document.activeElement).toBe(result)
+    expect(scroll).toHaveBeenCalledTimes(1)
+    const elsewhere = document.createElement("input")
+    document.body.append(elsewhere)
+    try {
+      elsewhere.focus()
+      for (const [index, version] of ["18", "19", "20"].entries()) {
+        await render({ ...trading, account_version: version })
+        // The refreshed copy stays up while the next loads: no flash of the submit response.
+        expect(result.textContent).toContain("3/5 filled")
+        await waitForRender(() => expect(refreshed.mock.calls.length).toBeGreaterThanOrEqual(index + 2))
+        expect(refreshed).toHaveBeenLastCalledWith("order-1", expect.anything())
+      }
+      expect(document.activeElement).toBe(elsewhere)
+      expect(scroll).toHaveBeenCalledTimes(1)
+    } finally { elsewhere.remove() }
+  })
   it("does not offer an automatic retry or fresh ID for an unknown server failure", async () => {
     vi.mocked(api.submitOrder).mockRejectedValueOnce(new ApiError(500, "Unexpected response"))
     await render()

@@ -55,13 +55,34 @@ function retryable(error: unknown) {
     : error instanceof TypeError || ((error instanceof Error || error instanceof DOMException) && ["AbortError", "TimeoutError"].includes(error.name))
 }
 
+/**
+ * The submitted order as the account has it now: fetched again on each account change
+ * (a fill, or a quote move on its contract), keeping the last copy while the next loads.
+ */
+export function useSubmittedOrder(order: Order | undefined, trading: TradingStatus): Order | undefined {
+  const api = useActionApi()
+  const { accountScope } = useLive()
+  const id = order?.id
+  const latest = useQuery({
+    queryKey: ["trading", accountScope, "ticket-order", id, trading.account_version],
+    queryFn: ({ signal }) => api.order(id!, signal),
+    enabled: id != null && trading.enabled,
+    placeholderData: (previous) => previous,
+  })
+  const current = latest.data?.order
+  return current && current.id === id ? current : order
+}
+
 export function OrderResult({ order, error, children }: { order?: Order; error?: unknown; children?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null)
+  // Once per outcome, a new order or a new failure: never again when the same order is
+  // refreshed, which happens on every account change while it works.
+  const outcome: unknown = order?.id ?? error ?? null
   useEffect(() => {
-    if (!order && !error) return
+    if (outcome == null) return
     ref.current?.focus({ preventScroll: true })
     ref.current?.scrollIntoView({ block: "start" })
-  }, [order, error])
+  }, [outcome])
   return <div ref={ref} role="region" tabIndex={-1} aria-label="Order result" aria-live="polite" className="space-y-2 outline-none">
     {order && <div className="rounded-md border border-border bg-raised p-3 text-sm">
       <strong className="capitalize">{order.status === "partially_filled" ? "Partial fill" : order.status}</strong>
@@ -106,7 +127,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   surface?: Surface
 }) {
   const api = useActionApi()
-  const { accountScope, underlyings, source, replay, status: feedStatus, accounts: liveAccounts } = useLive()
+  const { underlyings, source, replay, status: feedStatus, accounts: liveAccounts } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()
@@ -169,12 +190,7 @@ function TicketBody({ selection, quote, trading, onClose, variant, smile, surfac
   useEffect(() => {
     if (!submitted) first.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')?.focus()
   }, [submitted])
-  const latest = useQuery({
-    queryKey: ["trading", accountScope, "ticket-order", order?.id, trading.account_version],
-    queryFn: ({ signal }) => api.orders("all", signal),
-    enabled: order != null && trading.enabled,
-  })
-  const result = latest.data?.orders.find((item) => item.id === order?.id) ?? order
+  const result = useSubmittedOrder(order, trading)
   const held = portfolio?.positions.find((p) => p.symbol === selection.symbol)?.quantity ?? 0
   const maxQuantity = selection.closing ? (portfolio ? ((held > 0) !== (side === "buy") ? Math.abs(held) : 0) : selection.quantity ?? 0) : undefined
   const quantity = maxQuantity != null && Number(enteredQuantity) > maxQuantity ? String(maxQuantity) : enteredQuantity

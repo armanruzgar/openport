@@ -357,6 +357,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   journal is now kept until the journal's size or modified time changes, in memory and
   in `ID.jsonl.summary` beside it, so polling and restarts read only journals that
   changed. The first listing after an upgrade still reads each journal once.
+- **A working order's result stops taking the keyboard.** After an order rested,
+  every change to the account (each quote move on its contract) moved focus to the
+  ticket's result and scrolled the page to it, twice, and briefly showed the status
+  from when it was sent. The result now takes focus once, keeps its last refreshed
+  copy while the next loads, and fetches just that order instead of every order.
 
 ## 0.5.1 (2026-10-28)
 

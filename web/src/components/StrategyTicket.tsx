@@ -4,7 +4,6 @@ import { useActionApi } from "../api/action-client"
 import { useWalk } from "./WalkFields"
 import { FeeAmount } from "./FeeAmount"
 import { useJoinTrade } from "./JoinTradeField"
-import { useQuery } from "@tanstack/react-query"
 import { useMemo, useRef, useState } from "react"
 import { LiquidityWarning } from "./LiquidityWarning"
 
@@ -25,7 +24,7 @@ import { estimatedProfile, MAX_LEGS, MAX_RATIO, netQuote, riskProfile, roundNet,
 import { comboTickCents, extendedSession, formatMoney, limitOnlyNotice, paperNotice } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
 import { Dialog } from "./Dialog"
-import { OrderResult } from "./OrderTicket"
+import { OrderResult, useSubmittedOrder } from "./OrderTicket"
 import { useClientOrderId } from "./OrderActions"
 import { WriteAccess, writeBlocked } from "./TradingControls"
 import { useSpreadExits } from "./SpreadExits"
@@ -86,7 +85,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
   template?: Pick<TemplateSetup, "tag" | "widths">
 }) {
   const api = useActionApi()
-  const { accountScope, underlyings, source, replay, status: feedStatus } = useLive()
+  const { underlyings, source, replay, status: feedStatus } = useLive()
   const token = useWriteToken()
   const refresh = useRefreshTrading()
   const sameSession = useTradingSession()
@@ -114,12 +113,7 @@ function StrategyBody({ legs, onLegs, expiries, underlying, spot, trading, initi
   const [error, setError] = useState<unknown>()
   const clientIds = useClientOrderId()
   const busy = useRef(false)
-  const latest = useQuery({
-    queryKey: ["trading", accountScope, "ticket-order", order?.id, trading.account_version],
-    queryFn: ({ signal }) => api.orders("all", signal),
-    enabled: order != null && trading.enabled,
-  })
-  const result = latest.data?.orders.find((item) => item.id === order?.id) ?? order
+  const result = useSubmittedOrder(order, trading)
   // A different set of legs is a new strategy: reprice it at its mid and start a new order.
   const signature = legs.map((l) => `${l.symbol}:${l.side}:${l.ratio}`).join("|")
   const [pricedFor, setPricedFor] = useState(signature)
