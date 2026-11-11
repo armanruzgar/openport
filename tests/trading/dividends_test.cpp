@@ -296,5 +296,67 @@ TEST(TradingDividends, ACatchUpRolloverPaysADividendOnTheSharesBeforeALaterSplit
   }
 }
 
+TEST(TradingDividends, EarlyAssignmentWeighsTheDividendOnWhatAUnitDelivers) {
+  // A holder exercises a call before a dividend when its time value is less than what the
+  // dividend pays on the shares one unit delivers: twice a share's on a 2-for-1-adjusted
+  // series, a tenth on a 1-for-10, and twice on a standard series splitting 2-for-1 the same
+  // night, the dividend being on the split shares. Replay drivers 1-8 weighed a share's.
+  struct Case {
+    const char* name;
+    std::optional<Deliverable> deliverable;
+    double spot;
+    const char* bid;
+    const char* ask;
+    const char* dividend;
+    std::vector<CorporateAction> splits;
+    bool assigned;
+  };
+  const md::Date ex{2026, 12, 18};
+  const std::vector<Case> cases{
+      // 200 shares at 255 are 10.00 a unit in the money; 0.60 of time value, 1.00 a unit of dividend.
+      {"2:1-adjusted", Deliverable{200, {}}, 255, "10.50", "10.70", "0.50", {}, true},
+      // 10 shares at 5,100 are 10.00 a unit; 0.20 of time value, 0.10 a unit of dividend.
+      {"1:10-adjusted", Deliverable{10, {}}, 5100, "10.10", "10.30", "1.00", {}, false},
+      // A standard call at 510 splitting tonight; 0.60 of time value, 1.00 a unit of dividend.
+      {"splitting", std::nullopt, 510, "10.50", "10.70", "0.50", {{"SPY", ex, 2, 1}}, true},
+  };
+  for (const auto& c : cases) {
+    for (const bool revised : {false, true}) {
+      SCOPED_TRACE(std::string(c.name) + (revised ? ", driver 9" : ", drivers 1-8"));
+      auto call = *md::parse_osi("SPY270115C00500000");
+      if (c.deliverable) {
+        call.root = "SPY1";
+        call.standard = false;
+      }
+      auto time = md::new_york_to_utc({2026, 12, 17}, 10, 0);
+      std::uint64_t observation = 0;
+      TradingSession s(roomy(), time);
+      s.set_revised_corporate_actions(revised);
+      ASSERT_TRUE(s.define(call, time, c.deliverable).decision.ok());
+      const auto quote = [&] {
+        s.on_quotes({{call.osi_symbol(), ++observation, time, m(c.bid), m(c.ask), 100, 100}},
+                    {{call.osi_symbol(), time, 0.9, 0.01, 0.2, -0.05, c.spot, c.spot, 0.99, md::years_between(time, call.expiry_time()), 0.2, true}},
+                    time, {{"SPY", time, Money::from_double(c.spot)}});
+      };
+      quote();
+      ASSERT_TRUE(s.submit({"sold", call.osi_symbol(), Side::Sell, OrderType::Market, TimeInForce::Ioc, 40, {}, {}, {}, {}}, time).decision.ok());
+      time = md::new_york_to_utc({2026, 12, 17}, 16, 14, 30);
+      quote();
+      const auto night = md::new_york_to_utc({2026, 12, 17}, 18, 0);
+      s.on_quotes({}, {}, night);
+      const std::vector<Dividend> due{{"SPY", ex, m(c.dividend)}};
+      const bool expected = revised ? c.assigned : !c.assigned;
+      if (revised) {
+        // The warning beforehand weighs it the same way.
+        const auto warnings = s.warnings({}, due, c.splits);
+        const bool warned = std::any_of(warnings.begin(), warnings.end(), [](const RiskWarning& w) { return w.code == "EARLY_ASSIGNMENT"; });
+        EXPECT_EQ(warned, expected);
+      }
+      ASSERT_TRUE(s.roll_day(night, due, c.splits).decision.ok());
+      EXPECT_EQ(!s.snapshot()->closures.empty(), expected);
+    }
+  }
+}
+
 }  // namespace
 }  // namespace openport::trading

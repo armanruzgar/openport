@@ -167,7 +167,13 @@ plan limits and evaluation failures still apply independently.
 they did better exercising than holding it at the close, as exercise notices are due
 that evening. That is when its closing mark is below its intrinsic value at the
 underlying's close (a deep put whose time value is gone), or, for a call, when its
-time value is less than a dividend going ex on the new day in the account calendar.
+time value is less than what a dividend going ex on the new day in the account calendar
+pays on what one unit delivers: the dividend a share times the deliverable's shares
+over 100 (twice it for a 2:1-adjusted series, a tenth for a 1:10, nothing for a
+series that delivers cash only), counting a split that goes ex by the dividend's
+ex-date, whose shares the dividend is paid on. The `EARLY_ASSIGNMENT` warning weighs it
+the same way. Runs recorded with replay driver 8 or earlier weighed a share's
+dividend against a unit whatever the series delivered.
 The OCC allocates exercises to short positions at random, and
 openport cannot know how many holders exercise, so each such contract is assigned
 with even odds, drawn from the account's attempt, the contract and the date: a
@@ -2034,14 +2040,15 @@ in words, and `actual` and `limit` numbers whose meaning depends on the code:
 | `SOFT_FLOOR_ROLLOVER` | At rollover the soft floor would be at or above today's equity: pending guardrails apply, and a percent soft floor follows a ratcheted plan floor | Equity and that soft floor |
 | `FLOOR_RATCHET` | An active end-of-day drawdown floor that tonight's close at today's equity would raise (and lock, at a lock balance) | The floor tomorrow and today |
 | `EXPIRY_DELIVERY` | An American equity or ETF option expiring today a cent or more in the money, without a do-not-exercise instruction: held into expiry it is exercised or assigned and delivers shares, together the strike. Before an account's pre-expiry cutoff, names that time and the market close; only contracts still held because a close cannot fill are delivered | Buying power once every option expiring in the money today has delivered at today's price, and zero; `warning` whenever projected buying power is negative, including before the cutoff; otherwise `info` |
-| `EARLY_ASSIGNMENT` | A short American equity or ETF option the rollover may assign (about half of it, as described under early assignment): marked below its exercise value, or a call with less time value than a dividend going ex within a week and before its expiry; `warning` for tonight's rollover | The mark and the exercise value, or the time value and the dividend |
+| `EARLY_ASSIGNMENT` | A short American equity or ETF option the rollover may assign (about half of it, as described under early assignment): marked below its exercise value, or a call with less time value than what a dividend going ex within a week and before its expiry pays on what one unit delivers (after the splits the rollover applies by then); `warning` for tonight's rollover | The mark and the exercise value, or the time value and the dividend a unit |
 | `WARNINGS_UNAVAILABLE` | The account's warnings and breach estimate could not be computed (for example, a balance near the largest amount the account can hold overflows the expiry-delivery projection); it stands in for them, with the reason, while trading and the feed carry on | No numeric threshold |
 | `EX_DIVIDEND` | A held underlying (options or shares) goes ex-dividend within a week, with what the shares held are paid in whole cents (nothing, when that rounds to less than a cent); `warning` when short shares will pay it | The dividend a share, and null |
 | `PIN_RISK` | Under a plan with `pin_risk`, a short American equity or ETF option expiring today, before its expiry, is within $0.10 of its strike, in or out of the money ([simulated expiry pin risk](#simulated-expiry-pin-risk)); always `warning` | The underlying price less the strike, in dollars, and 0.10 |
 
-Warnings use the account's marks, valuations, limits and the dividend calendar the
-rollover pays from. They are views, not rules: nothing is journaled and no order is
-placed. Positions (Risk) and Dashboard show them above the breach estimates.
+Warnings use the account's marks, valuations, limits and the dividend and split
+calendars the rollover pays from and applies. They are views, not rules: nothing is
+journaled and no order is placed. Positions (Risk) and Dashboard show them above the
+breach estimates.
 
 ## Playbooks
 

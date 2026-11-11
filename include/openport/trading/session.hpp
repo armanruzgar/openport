@@ -523,9 +523,12 @@ class TradingSession {
   /// exercise value or with less time value than a dividend going ex within a week
   /// (EARLY_ASSIGNMENT: the mark and intrinsic value, or the time value and the
   /// dividend); and a held underlying's ex-date within a week (EX_DIVIDEND: the
-  /// dividend a share). `dividends` is the calendar the rollover pays from.
+  /// dividend a share). `dividends` is the calendar the rollover pays from, and
+  /// `splits` the corporate actions it applies: a split going ex by a dividend's
+  /// ex-date changes the shares a unit collects it on.
   [[nodiscard]] std::vector<RiskWarning> warnings(const std::map<std::string, double>& close_variances = {},
-                                                  const std::vector<Dividend>& dividends = {}) const;
+                                                  const std::vector<Dividend>& dividends = {},
+                                                  const std::vector<CorporateAction>& splits = {}) const;
   CommandResult cancel(OrderId id, Timestamp time, Reason reason = Reason::USER_CANCEL);
   /// Change a resting order in place: a DAY limit order, an armed order or a
   /// bracket exit. Its ID, fills and place among equal prices stay. The new

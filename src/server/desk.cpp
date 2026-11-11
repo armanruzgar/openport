@@ -1092,7 +1092,7 @@ void Desk::publish_trading() {
       // command already committed is still answered as committed.
       try {
         view->breach = session.breach(vols);
-        view->warnings = session.warnings(vols, dividends_);
+        view->warnings = session.warnings(vols, dividends_, corporate_actions_);
       } catch (const std::exception& error) {
         view->breach = {};
         view->warnings = {{"WARNINGS_UNAVAILABLE", "warning", "aggregate", {},

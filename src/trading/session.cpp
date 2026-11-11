@@ -532,6 +532,22 @@ Money unit_exercise_value(const State& s, const md::OptionContract& c, Money pri
   const Money worth = standard_deliverable(d) ? price : (price * d.shares + d.cash).prorate(1, 100);
   return c.type == pricing::OptionType::Call ? worth - strike : strike - worth;
 }
+/// What a dividend pays on what exercising one unit (a contract over its multiplier of
+/// 100) delivers: a share's dividend times the deliverable's shares over 100, once the
+/// stock's splits in `splits` going ex by the dividend's ex-date have split them, as the
+/// rollover splits shares before it pays. A series delivering cash only collects none.
+/// Replay drivers 1-8 weighed a share's dividend against a unit, whatever it delivered.
+Money unit_dividend(const State& s, const md::OptionContract& c, const Dividend& d, const std::vector<CorporateAction>& splits) {
+  if (!s.revised_corporate_actions) return d.per_share;
+  auto shares = deliverable_of(s, c.osi_symbol()).shares;
+  for (const auto& a : splits) {
+    if (a.symbol != c.underlying || a.ex_date > d.ex_date) continue;
+    const bool applied = std::any_of(s.corporate_actions.begin(), s.corporate_actions.end(),
+        [&](const CorporateActionRecord& r) { return r.symbol == a.symbol && r.ex_date == a.ex_date; });
+    if (!applied) shares = shares * a.numerator / a.denominator;
+  }
+  return d.per_share.prorate(shares, 100);
+}
 /// A bracket's two exits can fill only once between them: checks count the pair
 /// through its earlier order, so the later one is shadowed while both are open.
 /// Two orders that cancel each other may differ, so each counts in full.
@@ -4404,7 +4420,7 @@ std::optional<Money> underlying_price(const State& s, const std::string& symbol)
   return std::nullopt;
 }
 std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string, double>& close_variances,
-                                     const std::vector<Dividend>& dividends) {
+                                     const std::vector<Dividend>& dividends, const std::vector<CorporateAction>& splits) {
   std::vector<RiskWarning> out;
   const auto now = measure(s);
   const auto add = [&](std::string code, bool urgent, std::string scope, std::string symbol, std::string message,
@@ -4547,6 +4563,10 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
   // a dividend going ex on the new day (TradingSession::roll_day).
   const auto next_day = next_trading_day(s.day);
   const auto horizon = md::date_from_days(md::days_since_epoch(s.day) + 7);
+  // Splits still to go ex, which split a unit's shares before a dividend after them.
+  std::vector<CorporateAction> ahead;
+  for (const auto& a : splits)
+    if (a.ex_date > s.day) ahead.push_back(a);
   for (const auto& [symbol, position] : s.ledger.positions()) {
     const auto& c = s.contracts.at(symbol);
     if (position.quantity >= 0 || !physical(c) || c.expiry <= s.day) continue;
@@ -4565,14 +4585,19 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
     }
     if (!call) continue;
     const auto time_value = mark->second.price - intrinsic;
+    // What each dividend pays on what a unit delivers, as the rollover weighs it.
     std::map<md::Date, Money> by_date;
     for (const auto& d : dividends)
-      if (d.symbol == c.underlying && d.ex_date > s.day && d.ex_date <= std::min(horizon, c.expiry)) by_date[d.ex_date] = by_date[d.ex_date] + d.per_share;
+      if (d.symbol == c.underlying && d.ex_date > s.day && d.ex_date <= std::min(horizon, c.expiry))
+        by_date[d.ex_date] = by_date[d.ex_date] + unit_dividend(s, c, d, ahead);
+    const bool standard = standard_deliverable(deliverable_of(s, symbol));
     for (const auto& [date, dividend] : by_date) {
       if (time_value >= dividend) continue;
       const bool tonight = date <= next_day;
       add("EARLY_ASSIGNMENT", tonight, c.underlying, symbol, name + " ha" + (position.quantity == -1 ? "s " : "ve ") +
-          dollars(time_value) + " of time value, less than the " + dollars(dividend) + " dividend going ex on " + md::format_date(date) +
+          dollars(time_value) + " of time value, less than " +
+          (standard ? "the " + dollars(dividend) + " dividend" : dollars(dividend) + " a unit, what its deliverable is paid of the dividend") +
+          " going ex on " + md::format_date(date) +
           ": holders exercise to collect it, and the simulator assigns about half of them " +
           (tonight ? "at tonight's rollover" : "at the rollover before it") + ", delivering short shares that owe the dividend",
           time_value.dollars(), dividend.dollars());
@@ -6153,8 +6178,9 @@ BreachRisk TradingSession::breach(const std::map<std::string, double>& close_var
   return breach_of(impl_->state, close_variances);
 }
 std::vector<RiskWarning> TradingSession::warnings(const std::map<std::string, double>& close_variances,
-                                                  const std::vector<Dividend>& dividends) const {
-  return warnings_of(impl_->state, close_variances, dividends);
+                                                  const std::vector<Dividend>& dividends,
+                                                  const std::vector<CorporateAction>& splits) const {
+  return warnings_of(impl_->state, close_variances, dividends, splits);
 }
 /// What order `o` would trade at now on its executable sides: a single contract's
 /// ask (buys) or bid (sells), a combo's signed net; nothing without fresh quotes.
@@ -7022,7 +7048,8 @@ Quantity assigned_contracts(const State& s, const std::string& symbol, Quantity 
 }
 /// `closing` is when the finished day's marks were last published: the marks and
 /// the underlying's price decide as they stood then.
-void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp closing, Events& events) {
+void assign_early(State& s, const std::vector<Dividend>& dividends, const std::vector<CorporateAction>& splits,
+                  Timestamp closing, Events& events) {
   std::vector<std::string> shorts;
   for (const auto& [symbol, position] : s.ledger.positions()) {
     const auto& c = s.contracts.at(symbol);
@@ -7037,10 +7064,11 @@ void assign_early(State& s, const std::vector<Dividend>& dividends, Timestamp cl
     const Money intrinsic = std::max(Money{}, unit_exercise_value(s, contract, *price));
     if (intrinsic < Money::from_micros(10'000)) continue;
     // Holders exercise an option trading below its exercise value, and a call
-    // whose time value is less than a dividend going ex on the new day.
+    // whose time value is less than what a dividend going ex on the new day pays on
+    // what it delivers.
     Money dividend;
     for (const auto& d : dividends)
-      if (call && d.symbol == contract.underlying) dividend = dividend + d.per_share;
+      if (call && d.symbol == contract.underlying) dividend = dividend + unit_dividend(s, contract, d, splits);
     const char* reason = mark->second.price < intrinsic ? "below_intrinsic"
                        : mark->second.price - intrinsic < dividend ? "dividend" : nullptr;
     if (!reason) continue;
@@ -7344,7 +7372,7 @@ CommandResult TradingSession::roll_day(Timestamp time, const std::vector<Dividen
     // Financing is new-day P&L. Its opening daily-loss base stays unchanged;
     // charges can consume loss room and interest changes marked equity.
     accrue_financing(s, impl_->state, days, events);
-    assign_early(s, dividends, closing_time, events);
+    assign_early(s, dividends, actions, closing_time, events);
     // Splits take effect before the day's dividends, which are quoted on the split
     // shares. A rollover that spans several ex-dates takes them date by date, so a
     // dividend going ex before a split is paid on the shares before it (replay drivers

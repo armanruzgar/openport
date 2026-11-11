@@ -430,6 +430,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   trading dates (openportd down, say) applied every split before every dividend, so a
   dividend going ex before a later split was paid on the split shares: twice the cash
   for a 2:1. Each ex-date's splits and dividends now apply in date order.
+- **Dividend assignment of adjusted series.** Overnight early assignment weighed a
+  call's time value against a share's dividend, whatever the series delivered: a
+  2:1-adjusted short call that a dividend made worth exercising was never assigned, and
+  a 1:10 one that it did not was. It now weighs what the dividend pays on one unit's
+  deliverable, after a split going ex the same night, and so does the `EARLY_ASSIGNMENT`
+  warning.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
