@@ -74,11 +74,18 @@ source plus browser price alerts. **Mark all read** clears unread badges;
 are recorded even when fill toasts are disabled. Receipt times are explicitly
 browser receipt times, not invented market timestamps.
 
-The current server API has notification channel configuration and test actions,
-but no notification-history endpoint. This drawer therefore records events the
-browser observes after its initial account snapshot and persists them locally;
-it is not an audit log of events that happened while the browser was closed.
-Use Orders and Journal for the server's retained trade records.
+The current server API has notification channel configuration and test actions, but
+no notification-history endpoint. This drawer therefore records events the browser
+observes after its initial account snapshot and persists them locally; it is not an
+audit log of events that happened while the browser was closed, and another browser
+or device starts with an empty drawer. What the server keeps is elsewhere: fills,
+assignments, exercises and rule trips stay in the account (Orders and Journal), and
+each server alert keeps its fire count and last firing time (the header's alerts
+dialog, `GET /api/alerts`). What it does not keep is a floor warning, a feed stall
+or a playbook-ready notice, and every firing of a repeating alert but the last: with
+no browser open these leave no record. To have them while away, configure an
+[external notification channel](runtime.md#external-notifications) (a webhook, ntfy,
+Discord or Telegram), which delivers each as it happens.
 
 ## Chart studies and annotations
 
