@@ -97,7 +97,8 @@ TEST(TradingFunded, StartingBalancePayoutKeepsItsFloorAcrossHighsAndRollover) {
 TEST(TradingFunded, StaticResetPayoutRestartsTheFullDrawdownRoom) {
   for (const auto percent : {90, 95, 100}) {
     ScriptedMarket f;
-    auto rules = funded(); rules.drawdown_mode = DrawdownMode::Static;
+    // A static floor never trails, so it takes no lock.
+    auto rules = funded(); rules.drawdown_mode = DrawdownMode::Static; rules.lock_balance = {};
     rules.payouts.after_payout = PayoutFloor::Reset; rules.payouts.reset_percent = percent;
     TradingSession s(config(rules), f.time); f.seed(s);
     profit_day(s, f, "600");
