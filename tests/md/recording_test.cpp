@@ -761,11 +761,8 @@ TEST(RecordingDirectory, ByteRetentionUsesHeaderAgeRatherThanFilenameOrder) {
 }  // namespace
 
 namespace {
-template <typename Predicate>
-bool eventually(Predicate done) {
-  for (int attempt = 0; attempt < 500 && !done(); ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  return done();
-}
+// Retention runs on its own thread; like every wait for a worker, these allow
+// test::recording_eventually's five minutes, so a loaded runner cannot fail them.
 TEST(RecordingDirectory, RetentionFailuresWarnAndNeverStopStartupOrRollover) {
   test::RecordingFile file;
   auto header = test::recording_header();
@@ -793,7 +790,7 @@ TEST(RecordingDirectory, RetentionFailuresWarnAndNeverStopStartupOrRollover) {
   time = md::new_york_to_utc({2026, 9, 24}, 17, 0);
   recording->rollover();
   recording->publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
-  EXPECT_TRUE(eventually([&] { return refused >= 2; }));
+  EXPECT_TRUE(test::recording_eventually([&] { return refused >= 2; }));
   EXPECT_TRUE(recording->error().empty());
   recording->close();
   EXPECT_TRUE(recording->error().empty());
@@ -823,7 +820,7 @@ TEST(RecordingDirectory, RolloverRetentionRunsOffThePublishingThread) {
   EXPECT_TRUE(std::filesystem::exists(old));
   time = md::new_york_to_utc({2026, 9, 23}, 17, 0);
   recording.publish(md::UnderlyingQuote{"SPX", time, 0, 0, 5001});
-  EXPECT_TRUE(eventually([&] { return !std::filesystem::exists(old); }));
+  EXPECT_TRUE(test::recording_eventually([&] { return !std::filesystem::exists(old); }));
   EXPECT_FALSE(std::filesystem::exists(old.string() + ".end"));
   {
     const std::lock_guard guard(lock);
