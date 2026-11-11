@@ -308,7 +308,14 @@ No other dataset or underlying price is assumed.
 `/option/list/strikes`, `/option/list/contracts/quote`, `/option/history/quote`, `/option/history/trade`,
 `/option/history/open_interest`, `/index/history/price` and `/stock/history/quote`.
 It uses date and time ranges, expiration, strike and right selectors, and `1s`
-quote/price intervals. New York timestamps and optional fields are checked before
+quote/price intervals. Each stream (an underlying's prices, a chain's quotes, a chain's
+trades) is requested a block of fifteen-second import windows at a time, up to an hour
+within one New York date and the stream's session, and handed out window by window. A
+chain's block length comes from its contract count, so its one-second quotes stay near
+100,000 rows per response and a million buffered across chains; a response over Theta's
+250,000-row or 32 MiB limit halves the block and is requested again, down to one window.
+Requests wait only when Theta Terminal answers 429, since it queues requests itself.
+New York timestamps and optional fields are checked before
 publication. Its HTTP client and rate wait are injectable; failures do not print
 response bodies. There is no historical IV request or invented underlying last price.
 The expiration and strike lists have no date parameter; the date-specific contracts

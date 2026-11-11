@@ -592,16 +592,20 @@ Adjusted deliverables are excluded and corrected/cancelled trades fail instead o
 silently changing volume. None of these importers supplies official underlying
 closes or vendor Greeks.
 
-Requests are serial, with at least 100 ms between starts. ThetaData and Massive retry HTTP
+Requests are serial. Massive leaves at least 100 ms between starts; Theta Terminal queues
+requests itself, so ThetaData waits only when it answers 429. ThetaData and Massive retry HTTP
 429 at most three times, honouring integer `Retry-After` values up to 60 seconds;
 longer or malformed values stop the import. Other errors stop it. Databento streams
 responses through SDK callbacks and does not retry a failed billable request.
 The merger caps a window at one million events and the chain at 500,000 contracts.
 Databento pending OI is capped at one million observations. ThetaData responses are
-capped at 32 MiB and 250,000 rows after the HTTP client's bounded download. Exceeding
+capped at 32 MiB and 250,000 rows after the HTTP client's bounded download; a larger
+block is halved and requested again, down to one window. Exceeding
 a cap fails explicitly; reduce symbols or, for ThetaData/Massive, expiries and retry. Memory grows with the
-chain and one window, not a day's quotes. ThetaData requests each selected expiry
-separately, so unrestricted chains can take many requests. Progress reports completed
+chain and its buffered blocks, not a day's quotes. ThetaData requests each underlying's prices
+and each selected expiry's quotes and trades a block of windows at a time, up to an hour
+within one New York date and session, sized so one-second quotes stay near 100,000 rows a
+response and a million buffered; unrestricted chains still take many requests. Progress reports completed
 windows and written events. Massive retains one page per quote/trade stream, sized
 from 100 to 50,000 rows so all pages fit a one-million-record buffer cap and 32 MiB response cap; it follows pagination
 as each stream reaches its next window. Quotes and trades require historical plan

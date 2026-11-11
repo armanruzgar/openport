@@ -247,6 +247,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   for it every second even with nothing running. The server now keeps what the list
   shows of each report until the file changes, and the page polls every second only
   while a run is active, otherwise every 15 seconds.
+- **Faster ThetaData imports.** `openportd --import-day thetadata` sent one request for
+  each underlying and two for each expiry in every fifteen-second window, each after a
+  100 ms pause: about 4,900 requests and eight minutes of pauses for one SPY expiry,
+  hours for SPX. Each is now requested in blocks of up to an hour (25 requests for
+  that SPY day), a block too large for Theta's limits is split, and a request waits
+  only when Theta Terminal answers 429.
 
 ## 0.5.1 (2026-10-28)
 

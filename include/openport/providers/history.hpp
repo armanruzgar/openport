@@ -68,7 +68,8 @@ void import_days(const ImportDay& request, const std::vector<md::Date>& dates, m
 [[nodiscard]] std::unique_ptr<HistorySource> make_history_source(const std::string& provider);
 
 /// Injectable transport and wait for saved-response tests. Production serializes
-/// requests, waits at least 100 ms between them and honours bounded 429 retries.
+/// requests and honours bounded 429 retries; Massive also waits at least 100 ms
+/// between them, while ThetaData leaves pacing to Theta Terminal's own queue.
 using HistoryWait = std::function<void(std::chrono::milliseconds)>;
 [[nodiscard]] std::unique_ptr<HistorySource> theta_history(net::HttpClient& http,
                                                          HistoryWait wait);

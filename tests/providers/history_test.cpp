@@ -104,7 +104,10 @@ TEST(HistoryImport, ThetaSavedResponsesRoundTripWithMarketClocksDefinitionsAndFi
   EXPECT_EQ(interest[0].contracts, 1200);
   EXPECT_EQ(events_of<md::UnderlyingQuote>(records).size(), 2U);
   EXPECT_GT(completed, 1000U);
-  EXPECT_EQ(waits.size(), http.urls.size());
+  // Three lists and the day's OI, then hour-long blocks from 09:30 to 16:15 for SPY's
+  // quotes, the chain's quotes and its trades: 7 each, not one per 15-second window.
+  EXPECT_EQ(http.urls.size(), 25U);
+  EXPECT_TRUE(waits.empty());  // Theta Terminal queues requests itself; only a 429 waits
   for (const auto& url : http.urls) {
     EXPECT_EQ(url.find("expiration=2026-10-16"), std::string::npos);
     EXPECT_NE(url.find("format=ndjson"), std::string::npos);
@@ -168,6 +171,8 @@ TEST(HistoryImport, ThetaIndexPricesKeepOvernightClocksAndDistinctAmPmRoots) {
   test::EventCollector sink;
   source->prepare(input, {open, md::new_york_to_utc(input.date, 17, 0)}, sink);
   source->read({open, open + 15 * md::kNanosPerSecond}, sink);
+  const auto late = md::new_york_to_utc({2026, 9, 21}, 23, 45);
+  source->read({late, late + 15 * md::kNanosPerSecond}, sink);
   const auto midnight = md::new_york_to_utc(input.date, 0, 0);
   source->read({midnight, midnight + 15 * md::kNanosPerSecond}, sink);
   std::set<md::Settlement> settlements;
@@ -184,9 +189,14 @@ TEST(HistoryImport, ThetaIndexPricesKeepOvernightClocksAndDistinctAmPmRoots) {
   }
   EXPECT_EQ(spots, 1U);
   EXPECT_EQ(settlements, (std::set<md::Settlement>{md::Settlement::AM, md::Settlement::PM}));
-  EXPECT_TRUE(std::any_of(http.urls.begin(), http.urls.end(), [](const auto& url) {
-    return url.find("date=2026-09-22&start_time=00:00:00.000&end_time=00:00:14.999") != std::string::npos;
-  }));
+  // Blocks stop at New York midnight, as Theta's times belong to one date.
+  for (const auto* times : {"date=2026-09-21&start_time=20:15:00.000&end_time=21:14:59.999",
+                            "date=2026-09-21&start_time=23:45:00.000&end_time=23:59:59.999",
+                            "date=2026-09-22&start_time=00:00:00.000&end_time=00:59:59.999"}) {
+    EXPECT_TRUE(std::any_of(http.urls.begin(), http.urls.end(), [&](const auto& url) {
+      return url.find(times) != std::string::npos;
+    })) << times;
+  }
 }
 
 TEST(HistoryImport, RejectsInvalidFutureCurrentWeekendAndHolidayDatesBeforeFetching) {
@@ -455,7 +465,7 @@ TEST(HistoryImport, AFailureAfterTheFirstWindowRemovesThePartialRecording) {
   theta_responses(http);
   const auto saved = http.respond;
   http.respond = [saved](std::string_view url) -> net::HttpResponse {
-    if (url.find("start_time=09:30:15") != std::string_view::npos) return {500, "private provider error"};
+    if (url.find("start_time=10:30:00") != std::string_view::npos) return {500, "private provider error"};  // the second block
     return saved(url);
   };
   auto source = providers::theta_history(http, [](auto) {});
@@ -463,6 +473,57 @@ TEST(HistoryImport, AFailureAfterTheFirstWindowRemovesThePartialRecording) {
   EXPECT_THROW((void)providers::import_day(request(file.directory), *source, kToday,
       [&](std::size_t, std::size_t, std::uint64_t count) { written = count; }), std::runtime_error);
   EXPECT_GT(written, 0U);
+  EXPECT_TRUE(std::filesystem::is_empty(file.directory));
+}
+
+TEST(HistoryImport, ThetaHalvesABlockOverTheResponseLimitsDownToOneWindow) {
+  // One row past Theta's 250,000-row limit; rows are counted before any is parsed.
+  std::string oversized;
+  for (int line = 0; line <= 250'000; ++line) oversized += "{}\n";
+  const auto quote_times = [](const test::HttpStub& stub) {
+    std::vector<std::string> result;
+    for (const auto& url : stub.urls)
+      if (url.find("/option/history/quote?") != std::string::npos) result.push_back(url.substr(url.find("&start_time=")));
+    return result;
+  };
+  {
+    test::RecordingFile file;
+    test::HttpStub http;
+    theta_responses(http);
+    const auto saved = http.respond;
+    http.respond = [&](std::string_view url) -> net::HttpResponse {
+      if (url.find("/option/history/quote?") != std::string_view::npos &&
+          url.find("&start_time=09:30:00.000&end_time=10:29:59.999") != std::string_view::npos) return {200, oversized};
+      return saved(url);
+    };
+    auto source = providers::theta_history(http, [](auto) {});
+    const auto path = providers::import_day(request(file.directory), *source, kToday);
+    EXPECT_EQ(events_of<md::OptionQuote>(read(path)).size(), 3U);
+    const auto times = quote_times(http);
+    ASSERT_GE(times.size(), 3U);
+    EXPECT_EQ(times[0], "&start_time=09:30:00.000&end_time=10:29:59.999&interval=1s&format=ndjson");
+    EXPECT_EQ(times[1], "&start_time=09:30:00.000&end_time=09:59:59.999&interval=1s&format=ndjson");
+    EXPECT_EQ(times[2], "&start_time=10:00:00.000&end_time=10:29:59.999&interval=1s&format=ndjson");
+  }
+  test::RecordingFile file;
+  test::HttpStub http;
+  theta_responses(http);
+  const auto saved = http.respond;
+  http.respond = [&](std::string_view url) -> net::HttpResponse {
+    if (url.find("/option/history/quote?") != std::string_view::npos) return {200, oversized};
+    return saved(url);
+  };
+  auto source = providers::theta_history(http, [](auto) {});
+  try {
+    (void)providers::import_day(request(file.directory), *source, kToday);
+    FAIL() << "accepted one window over the row limit";
+  } catch (const std::runtime_error& error) {
+    EXPECT_NE(std::string(error.what()).find("row limit"), std::string::npos) << error.what();
+  }
+  const auto times = quote_times(http);
+  EXPECT_EQ(times.size(), 8U);  // 60, 30 and 15 minutes, then 450, 225, 105, 45 and 15 seconds
+  ASSERT_FALSE(times.empty());
+  EXPECT_NE(times.back().find("&start_time=09:30:00.000&end_time=09:30:14.999"), std::string::npos) << times.back();
   EXPECT_TRUE(std::filesystem::is_empty(file.directory));
 }
 
