@@ -142,12 +142,95 @@ void BM_MarginJointUnpaired(benchmark::State& state) {
   report_allocation(state, legs);
   for (auto _ : state) benchmark::DoNotOptimize(trading::margin_requirement(legs));
 }
+// One solve's work in cells, an exact rational operation weighing as much as 400
+// dictionary cells, about what each costs on a GitHub runner.
+std::uint64_t cells_of(const trading::detail::MarginWork& before, const trading::detail::MarginWork& after) {
+  return (after.pivots - before.pivots) + (after.checks - before.checks) + 400 * (after.rational - before.rational);
+}
+// The work of the books tests/trading/margin_allocation_test.cpp needs certified: the
+// mixed-expiry pairs (MixedExpiryBooksRetainTheirSeparateAllocations) and the random
+// small books checked against the exhaustive oracle.
+void BM_MarginWorkTestBooks(benchmark::State& state) {
+  using Positions = std::vector<std::pair<std::string, trading::Quantity>>;
+  const std::vector<std::pair<Positions, Positions>> cases{
+      {{{"SPY261022C00510000", -1}, {"SPY261022P00510000", -1}, {"SPY261022C00520000", -2},
+        {"SPY261029P00510000", -2}, {"SPY261105C00480000", -2}, {"SPY261105C00490000", 1}, {"SPY261105C00530000", 2}},
+       {{"SPY261022P00490000", -1}, {"SPY261022P00520000", -2}, {"SPY261029C00480000", 1},
+        {"SPY261029C00500000", -2}, {"SPY261105C00520000", 1}}},
+      {{{"SPY261022P00530000", -1}, {"SPY261029C00530000", -1}, {"SPY261105P00500000", -2}},
+       {{"SPY261029P00470000", -1}, {"SPY261029P00480000", -2}, {"SPY261029P00500000", 3},
+        {"SPY261029P00530000", -1}, {"SPY261105C00490000", 2}, {"SPY261105P00490000", -2}}},
+      {{{"SPY261022C00510000", -2}, {"SPY261029P00480000", -1}, {"SPY261029C00500000", 1},
+        {"SPY261105C00490000", -1}, {"SPY261105C00520000", 2}},
+       {{"SPY261022P00480000", -2}, {"SPY261022P00520000", -1}, {"SPY261029C00470000", -2},
+        {"SPY261029C00490000", 1}, {"SPY261029C00520000", 2}, {"SPY261105P00470000", 1}}},
+      {{{"SPY261022P00470000", 1}, {"SPY261022C00490000", -1}, {"SPY261022P00500000", 2},
+        {"SPY261022P00530000", -1}, {"SPY261105P00490000", 1}, {"SPY261105C00530000", 1}},
+       {{"SPY261022C00470000", -2}, {"SPY261022C00480000", -1}, {"SPY261029C00490000", -2},
+        {"SPY261029C00500000", 2}, {"SPY261029P00510000", -2}, {"SPY261029C00520000", 1}, {"SPY261105C00480000", -1}}},
+      {{{"SPY261022P00520000", 1}, {"SPY261029P00470000", 2}, {"SPY261029P00530000", -1}, {"SPY261105P00470000", -2}},
+       {{"SPY261022C00470000", -1}, {"SPY261022P00520000", 1}, {"SPY261022C00530000", 1}, {"SPY261029C00510000", 2}}}};
+  const auto build = [](const Positions& positions) {
+    std::vector<trading::MarginLeg> legs;
+    for (const auto& [symbol, q] : positions)
+      legs.push_back({*md::parse_osi(symbol), q, q < 0 ? trading::Money::parse("250") * -q : trading::Money{}, 500.0});
+    return legs;
+  };
+  std::uint64_t mixed = 0, oracle = 0, fallbacks = 0;
+  for (auto _ : state) {
+    for (std::size_t i = 0; i < cases.size(); ++i) {
+      std::map<std::string, trading::Quantity> combined;
+      for (const auto* positions : {&cases[i].first, &cases[i].second})
+        for (const auto& [symbol, q] : *positions) combined[symbol] += q;
+      for (const auto& book : {build(cases[i].first), build(cases[i].second), build(Positions(combined.begin(), combined.end()))}) {
+        const auto before = trading::detail::margin_work();
+        fallbacks += trading::margin_breakdown(book).front().allocation != "exact";
+        const auto work = cells_of(before, trading::detail::margin_work());
+        mixed = std::max(mixed, work);
+        state.counters["case" + std::to_string(i + 1)] = std::max(static_cast<double>(work), state.counters["case" + std::to_string(i + 1)].value);
+      }
+    }
+    std::uint32_t seed = 918237;
+    const auto next = [&]() { seed = seed * 1664525U + 1013904223U; return seed >> 8; };
+    std::vector<md::OptionContract> contracts;
+    for (const auto* expiry : {"261022", "261029", "261105"})
+      for (const auto* strike : {"00480000", "00490000", "00500000", "00510000", "00520000"})
+        for (const char type : {'C', 'P'})
+          contracts.push_back(*md::parse_osi(std::string("SPY") + expiry + type + strike));
+    for (const auto account : {trading::AccountType::Margin, trading::AccountType::Ira, trading::AccountType::Cash}) {
+      for (int trial = 0; trial < 800; ++trial) {
+        const trading::MarginPolicy policy{account, trial % 3 == 0 ? 25 : 0, 0};
+        std::map<std::size_t, trading::Quantity> quantities;
+        const auto count = 3 + next() % 5;
+        for (std::uint32_t n = 0; n < count; ++n) {
+          const trading::Quantity sign = next() % 2 ? 1 : -1;  // C++17: the right operand of += first
+          quantities[next() % contracts.size()] += sign;
+        }
+        std::vector<trading::MarginLeg> book;
+        for (const auto& [i, quantity] : quantities) {
+          if (!quantity) continue;
+          const auto n = quantity < 0 ? -quantity : quantity;
+          const auto premium = trading::Money::from_micros(300000001 + static_cast<std::int64_t>(next() % 2000000000));
+          book.push_back({contracts[i], quantity, quantity < 0 ? premium * n : trading::Money{}, 500.0});
+        }
+        if (book.empty()) continue;
+        const auto before = trading::detail::margin_work();
+        fallbacks += trading::margin_breakdown(book, {}, policy).front().allocation != "exact";
+        oracle = std::max(oracle, cells_of(before, trading::detail::margin_work()));
+      }
+    }
+  }
+  state.counters["max_mixed"] = static_cast<double>(mixed);
+  state.counters["max_oracle"] = static_cast<double>(oracle);
+  state.counters["fallbacks"] = static_cast<double>(fallbacks);
+}
 // The seeded sample tests/trading/margin_allocation_test.cpp checks for subadditivity
 // (SeededMixedExpirySubadditivityRate), solved once: the most work any of its books
-// takes, which a work budget must leave room for, as every one of them is certified.
+// takes, and how many take more than each candidate budget.
 void BM_MarginWorkSeededSample(benchmark::State& state) {
-  std::uint64_t solves = 0, fallbacks = 0, pivots = 0, checks = 0, rational = 0;
-  std::map<std::uint64_t, std::uint64_t> weighted{{16, 0}, {64, 0}, {256, 0}};
+  std::uint64_t solves = 0, fallbacks = 0, pivots = 0, checks = 0, rational = 0, most = 0;
+  std::map<std::uint64_t, std::uint64_t> over{{5'000'000, 0}, {10'000'000, 0}, {15'000'000, 0}, {20'000'000, 0},
+                                              {30'000'000, 0}, {50'000'000, 0}};
   for (auto _ : state) {
     std::uint32_t seed = 0xF490123U;
     const auto next = [&]() { seed = seed * 1664525U + 1013904223U; return seed >> 8; };
@@ -182,7 +265,9 @@ void BM_MarginWorkSeededSample(benchmark::State& state) {
           pivots = std::max(pivots, p);
           checks = std::max(checks, c);
           rational = std::max(rational, r);
-          for (auto& [weight, most] : weighted) most = std::max(most, p + c + weight * r);
+          const auto work = p + c + 400 * r;
+          most = std::max(most, work);
+          for (auto& [budget, count] : over) count += work > budget;
         }
       }
     }
@@ -192,12 +277,14 @@ void BM_MarginWorkSeededSample(benchmark::State& state) {
   state.counters["max_pivots"] = static_cast<double>(pivots);
   state.counters["max_checks"] = static_cast<double>(checks);
   state.counters["max_rational"] = static_cast<double>(rational);
-  for (const auto& [weight, most] : weighted) state.counters["max_w" + std::to_string(weight)] = static_cast<double>(most);
+  state.counters["max_cells"] = static_cast<double>(most);
+  for (const auto& [budget, count] : over) state.counters["over_" + std::to_string(budget / 1'000'000) + "M"] = static_cast<double>(count);
 }
 BENCHMARK(BM_MarginJointAdversarial)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MarginJointIrregular)->DenseRange(1, 16)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_MarginJointUnpaired)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_MarginWorkSeededSample)->Iterations(1)->Repetitions(1)->ReportAggregatesOnly(false)->Unit(benchmark::kSecond);
+BENCHMARK(BM_MarginWorkTestBooks)->Iterations(1)->Repetitions(1)->ReportAggregatesOnly(false)->Unit(benchmark::kSecond);
 BENCHMARK(BM_MarginPairing)->Arg(14)->Arg(80)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MarginJoint)->Arg(14)->Arg(80)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MarginJointLargeQuantity)->Arg(14)->Arg(80)->Unit(benchmark::kMicrosecond);
