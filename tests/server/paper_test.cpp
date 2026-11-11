@@ -6298,6 +6298,67 @@ TEST_F(PaperEngine, CopiedOrdersFanOutAsEachAccountsOwnSubmission) {
   std::filesystem::remove_all(path.parent_path());
 }
 
+// A copy sent again under an equity split goes to the members that hold its client
+// order ID, at the size each was sent, and to no member the first copy gave nothing,
+// though the first fill has since moved the split; the sizes still add up.
+TEST_F(PaperEngine, RetriedEquityCopyKeepsItsFirstSizes) {
+  engine.reset();
+  const auto path = paper_path();
+  auto options = paper_options();
+  options.paper_journal = path.string();
+  options.paper_accounts = path.parent_path() / "accounts";
+  options.account_groups = std::make_shared<server::AccountGroups>(path.parent_path() / "account-groups.json");
+  engine = std::make_unique<server::Engine>(provider, md::Subscription{{"SPX"}}, options);
+  engine->start();
+  ASSERT_TRUE(wait_for([&] { return engine->trading_view() != nullptr; }));
+  seed("4.00", "4.20", 100);
+  std::vector<std::string> accounts;
+  for (const auto* name : {"Left", "Right", "Third"}) {
+    const auto created = write(*engine, "POST", "/api/accounts", {{"name", name}, {"plan", "practice"}});
+    ASSERT_EQ(created.status, 201) << created.body;
+    accounts.push_back(json::parse(created.body)["account"]["id"].get<std::string>());
+  }
+  engine->synchronize().get();
+  auto response = write(*engine, "PUT", "/api/account-groups/pair", {{"allocation", "equity"},
+      {"members", {{{"account", accounts[0]}}, {{"account", accounts[1]}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  // Equal equity gives the one unit to the earlier member. Its fill at the ask leaves
+  // that account a little poorer, so a fresh split would give the unit to the other.
+  const auto copied = order(market, "copy-1", "4.20");
+  for (int sent = 0; sent < 3; ++sent) {
+    response = write(*engine, "POST", "/api/orders/copy", {{"group", "pair"}, {"order", copied}});
+    ASSERT_EQ(response.status, 207) << response.body;
+    const auto body = json::parse(response.body);
+    ASSERT_EQ(body["results"].size(), 2) << response.body;
+    EXPECT_EQ(body["results"][0]["quantity"], 1) << response.body;
+    EXPECT_EQ(body["results"][0]["status"], sent == 0 ? 201 : 200) << response.body;
+    EXPECT_EQ(body["results"][1]["quantity"], 0) << response.body;
+    EXPECT_TRUE(body["results"][1]["skipped"]) << response.body;
+    engine->synchronize().get();
+  }
+  EXPECT_EQ(read(*engine, "/api/orders?account=" + accounts[0])["orders"].size(), 1);
+  EXPECT_TRUE(read(*engine, "/api/orders?account=" + accounts[1])["orders"].empty());
+
+  // A member whose part never arrived is sent what the members holding the ID leave.
+  response = write(*engine, "PUT", "/api/account-groups/rest", {{"allocation", "equity"},
+      {"members", {{{"account", accounts[1]}}, {{"account", accounts[2]}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  auto part = order(market, "copy-2", "4.20");
+  ASSERT_EQ(write(*engine, "POST", "/api/orders?account=" + accounts[2], part).status, 201);
+  engine->synchronize().get();
+  part["quantity"] = 2;
+  response = write(*engine, "POST", "/api/orders/copy", {{"group", "rest"}, {"order", part}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto body = json::parse(response.body);
+  EXPECT_EQ(body["results"][0]["quantity"], 1) << response.body;
+  EXPECT_EQ(body["results"][0]["status"], 201) << response.body;
+  EXPECT_EQ(body["results"][1]["quantity"], 1) << response.body;
+  EXPECT_EQ(body["results"][1]["status"], 200) << response.body;
+  EXPECT_EQ(read(*engine, "/api/orders?account=" + accounts[2])["orders"].size(), 1);
+  engine->stop();
+  std::filesystem::remove_all(path.parent_path());
+}
+
 TEST_F(PaperEngine, AccountGroupsAreNotOfferedWithoutAStore) {
   expect_error(write(*engine, "GET", "/api/account-groups"), 404, "NOT_FOUND");
 }

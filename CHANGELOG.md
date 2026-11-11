@@ -20,6 +20,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Retried copies to an equity-split group.** `POST /api/orders/copy` recomputed an
+  equity split on every request, and after the first copy filled, the paying member's
+  slightly lower equity moved the remainder unit to another member. A retry with the
+  same `client_order_id` then skipped the member that traded and sent the other one a
+  new order, so a retried 1-lot left 2 lots across the group. A member that holds an
+  order under the ID is now sent that order's size again, which it answers as first
+  submitted, and only what those orders leave of the quantity is split among the rest.
 - **Recording to exFAT, FAT and network drives.** `--record-dir` published each
   finished day with a hard link, and on a filesystem without them it deleted the
   complete, cleanly closed day instead, at every rollover and shutdown, and stopped

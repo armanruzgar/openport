@@ -4437,8 +4437,13 @@ when every member accepted and 207 when any was skipped or refused, with
 `response` (the `SubmitOrderResponse` or error it would have answered alone).
 `POST /api/orders/copy/preview` previews every member's order on a private copy, as
 `/api/orders/preview` does. A retry with the same `client_order_id` is answered by each
-account as first submitted; under equity allocation a retry after equity moved may
-size an account differently and get `DUPLICATE_CLIENT_ID` from it. Copied orders take
+account as first submitted. Under equity allocation a retry is not split anew from
+equity that has moved since: each member whose current attempt holds an order under
+that ID is sent that order's size, and only what those orders leave of the quantity
+is split among the other members, so a member the first copy gave no units is sent
+none once the rest hold the whole order, and the sizes still add up to the order's.
+A retry with other terms gets `DUPLICATE_CLIENT_ID` from each member holding the ID,
+as a single account's would. Copied orders take
 no `then`, `oco` or `exits_only` (each account sizes its own exits; brackets are
 allowed and size with each fill), nor a query parameter. They need `trade:*` (or
 admin) scope, since they trade every member.

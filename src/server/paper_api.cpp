@@ -4174,6 +4174,16 @@ AccountGroup parse_account_group(std::string name, const json& body) {
   return group;
 }
 
+/// The quantity an account's current attempt first submitted under `client_order_id`,
+/// when it holds an order under that ID, which its reducer answers a retry from.
+std::optional<Quantity> submitted_quantity(const TradingSnapshot& s, const std::string& client_order_id) {
+  for (auto id = std::max<OrderId>(s.evaluation.first_order, 1); id <= s.recent_orders.size(); ++id) {
+    const auto& o = s.recent_orders[static_cast<std::size_t>(id - 1)];
+    if (o.request.client_order_id == client_order_id) return o.submission().quantity;
+  }
+  return std::nullopt;
+}
+
 /// One copied order's progress: each member's command and quantity, and its answer
 /// once its account has replied. The last reply completes the request.
 struct CopyFanOut {
@@ -4255,9 +4265,14 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
     if (!order.then.empty() || !order.oco.empty() || order.exits_only)
       throw std::invalid_argument("A copied order takes no then, oco or exits_only: each account sizes its own");
     // Equity allocation splits among the members whose positions are all marked; one
-    // that is not is skipped with its reason, and the rest take the whole order.
+    // that is not is skipped with its reason, and the rest take the whole order. A copy
+    // sent again is not split anew from equity that has moved: a member holding an order
+    // under its client_order_id is sent that order's size, so it answers as first
+    // submitted, and only what those orders leave is split among the others.
     std::vector<std::optional<Money>> equity;
     std::vector<bool> unmarked(group->members.size(), false);
+    std::vector<std::optional<Quantity>> sent(group->members.size());
+    Quantity held = 0;
     if (group->allocation == Allocation::Equity)
       for (std::size_t i = 0; i < group->members.size(); ++i) {
         const auto& m = group->members[i];
@@ -4266,14 +4281,18 @@ bool account_group_api(const ApiRequest& request, MetricsSource& source, ApiComp
           complete(api_error(404, "UNKNOWN_ACCOUNT", "No paper account " + m.account));
           return true;
         }
-        unmarked[i] = !view->snapshot->valuation_complete;
-        equity.push_back(unmarked[i] ? std::nullopt : std::optional(view->snapshot->equity));
+        sent[i] = submitted_quantity(*view->snapshot, order.client_order_id);
+        if (sent[i]) held += *sent[i];
+        unmarked[i] = !sent[i] && !view->snapshot->valuation_complete;
+        equity.push_back((unmarked[i] || sent[i].has_value()) ? std::nullopt : std::optional(view->snapshot->equity));
       }
     auto fan = std::make_shared<CopyFanOut>();
     fan->group = *group;
     fan->order = order;
     fan->preview = path.ends_with("/preview");
-    fan->quantities = allocate(*group, order.quantity, equity);
+    fan->quantities = allocate(*group, std::max<Quantity>(order.quantity - held, 0), equity);
+    for (std::size_t i = 0; i < sent.size(); ++i)
+      if (sent[i]) fan->quantities[i] = *sent[i];
     fan->results.resize(group->members.size());
     fan->complete = std::move(complete);
     std::vector<std::pair<std::size_t, TradingCommand>> commands;
