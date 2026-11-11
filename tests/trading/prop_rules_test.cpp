@@ -835,6 +835,52 @@ TEST(PropRules, ARulesReplayCountsMicroscalpingByRoundTripAsTheReducerDoes) {
   EXPECT_EQ(replay.decided_day, (md::Date{2026, 9, 22}));
 }
 
+/// An attempt started on Monday 2 March 2026 with two weeks of finished weekdays,
+/// flat at 10,000 without counted executions, and Monday 16 March in progress.
+Evaluation two_week_attempt() {
+  Evaluation e;
+  e.started = md::new_york_to_utc({2026, 3, 2}, 10, 0);
+  e.starting_balance = m("10000");
+  for (int d : {2, 3, 4, 5, 6, 9, 10, 11, 12, 13}) {
+    EvaluationDay finished;
+    finished.day = {2026, 3, d};
+    finished.open_equity = finished.close_equity = m("10000");
+    e.days.push_back(finished);
+  }
+  e.day = {2026, 3, 16};
+  e.day_open_equity = m("10000");
+  return e;
+}
+
+TEST(PropRules, ARulesReplayRunsTheInactivityWindowFromOwnExecutions) {
+  const auto e = two_week_attempt();
+  const PlanInputs now{m("10000"), m("10000"), Money{}, true, md::new_york_to_utc(e.day, 12, 0)};
+  AccountRules rules;
+  rules.max_drawdown = m("2000");
+  rules.inactivity_days = 5;
+  // A trade every weekday keeps a five-day window open.
+  ReplayActivity activity;
+  for (const auto& day : e.days) activity.executions.push_back(md::new_york_to_utc(day.day, 10, 30));
+  auto replay = replay_rules(e, now, activity, m("10000"), rules);
+  EXPECT_EQ(replay.status, EvaluationStatus::Active);
+  ASSERT_EQ(replay.days.size(), 11U);
+  EXPECT_EQ(replay.days.back().outcome, "active");
+  // After Wednesday 4 March's trade the window ends on Monday 9 March. A trade on
+  // Tuesday 10 March comes too late: as on the account, the calendar is checked first.
+  activity.executions = {md::new_york_to_utc({2026, 3, 10}, 10, 30), md::new_york_to_utc({2026, 3, 2}, 10, 30),
+                         md::new_york_to_utc({2026, 3, 4}, 10, 30)};
+  replay = replay_rules(e, now, activity, m("10000"), rules);
+  EXPECT_EQ(replay.status, EvaluationStatus::Failed);
+  EXPECT_EQ(replay.code, Reason::INACTIVITY);
+  EXPECT_EQ(replay.decided_day, (md::Date{2026, 3, 10}));
+  EXPECT_EQ(replay.days[5].outcome, "active");
+  EXPECT_EQ(replay.days[6].outcome, "failed");
+  // Without executions the window runs from the start.
+  replay = replay_rules(e, now, {}, m("10000"), rules);
+  EXPECT_EQ(replay.code, Reason::INACTIVITY);
+  EXPECT_EQ(replay.decided_day, (md::Date{2026, 3, 9}));
+}
+
 TEST(PropRules, ChallengeEconomicsWeighsPassOddsCostsAndThePayout) {
   const auto result = challenge_economics({{"eval", 0.5, m("100"), m("50"), 1}}, 1.0, m("1000"));
   ASSERT_EQ(result.steps.size(), 1U);

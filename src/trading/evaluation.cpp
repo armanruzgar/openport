@@ -577,6 +577,18 @@ RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const
       if (rules.microscalp_percent > 0 && trips[next_trip].held < rules.microscalp_seconds * md::kNanosPerSecond)
         e.short_profit = e.short_profit + std::max(Money{}, trips[next_trip].pnl);
   };
+  // Inactivity runs from the last own execution on an earlier trading date. The
+  // reducer checks the calendar before a command executes anything, so once the
+  // window has run out, that day's executions come too late to save it.
+  std::vector<Timestamp> executed = activity.executions;
+  std::sort(executed.begin(), executed.end());
+  std::size_t next_executed = 0;
+  const auto take_executions = [&](Timestamp time) {
+    if (rules.inactivity_days <= 0 || time <= 0) return;
+    const auto observed = plan_trading_date(rules, time);
+    for (; next_executed < executed.size() && plan_trading_date(rules, executed[next_executed]) < observed; ++next_executed)
+      e.last_activity = executed[next_executed];
+  };
   struct Day { md::Date day; Money open, close, realised; std::optional<Money> low, high; Timestamp low_at = 0, high_at = 0;
                std::uint64_t executions = 0; bool today = false; Timestamp close_at = 0; };
   std::vector<Day> path;
@@ -618,6 +630,7 @@ RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now, const
     const auto observe = [&](Money equity, Money balance, bool flat, Timestamp time, Timestamp shown) {
       if (decided || e.day_lock != Reason::NONE) return;
       take_trades(time);
+      take_executions(time);
       if (equity < *e.day_low_equity) e.day_low_equity = equity;
       if (equity > *e.day_high_equity) e.day_high_equity = equity;
       e.day_close_equity = equity;

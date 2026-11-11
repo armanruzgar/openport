@@ -2744,7 +2744,10 @@ recorded executions or, where the account did not count them, realised P&L. The 
 closed whole trades count toward trade objectives from when they closed, and
 `MICROSCALPING` reads each closed option and share round trip on its own, as the live
 objective does: a short one counts even when the rest of its trade held longer, lost or
-is still open. Nothing is re-executed: a lock ends that day at its level and later days move from there, and rules
+is still open. `inactivity_days` runs from the attempt's own executions (fills of the
+trader's orders and share trades, not the account's rule closes) on earlier trading
+dates: as on the account, where the calendar is checked before a command executes, a
+trade on the first day past the window comes too late to keep it. Nothing is re-executed: a lock ends that day at its level and later days move from there, and rules
 on orders, positions or the clock (open-loss and minute-volume caps, contract and trade
 risk caps, strategies, hold times, instruments and hours, flat time and holding rules,
 and the payout rules `payout_review`, `after_payout` and `reset_percent`) are listed per

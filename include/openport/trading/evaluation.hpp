@@ -305,8 +305,8 @@ struct ReplayTrade {
   Money pnl;
   Timestamp held = 0;
 };
-/// The attempt's closed trades a rules replay reads beside its recorded days, as the
-/// reducer's trade objectives read them.
+/// The attempt's trading a rules replay reads beside its recorded days, as the
+/// reducer's trade objectives and inactivity rule read it.
 struct ReplayActivity {
   /// Closed whole trades, for min_trades, trade consistency and the best-position cap.
   std::vector<ReplayTrade> trades;
@@ -314,6 +314,9 @@ struct ReplayActivity {
   /// flat, for microscalping: options net of fees, shares with their dividends. A
   /// round trip counts on its own, whether or not the rest of its trade has closed.
   std::vector<ReplayTrade> round_trips;
+  /// When the trader's own executions happened, for the inactivity rule: fills of
+  /// their option orders (not the account's rule closes) and their share trades.
+  std::vector<Timestamp> executions;
 };
 /// One recorded day in a rules replay, for one rule set: `outcome` is active,
 /// locked (its daily loss limit locked it), passed or failed (decided that day),
@@ -344,8 +347,11 @@ struct RuleReplay {
 /// them, with realised P&L. From when they closed, the activity's whole trades
 /// count toward the trade objectives and each round trip held under the
 /// microscalping threshold adds its positive net P&L to the short-round-trip
-/// profit. Nothing is re-executed, so a rule that would have closed positions (a
-/// lock, the open-loss cap) only ends that day at its level.
+/// profit. Inactivity runs from the last of the activity's executions on an earlier
+/// trading date than the observation: the reducer checks the calendar before a
+/// command executes anything, so an execution cannot save its own day once the
+/// window has run out. Nothing is re-executed, so a rule that would have closed
+/// positions (a lock, the open-loss cap) only ends that day at its level.
 [[nodiscard]] RuleReplay replay_rules(const Evaluation& recorded, const PlanInputs& now,
     const ReplayActivity& activity, Money starting_balance, const AccountRules& rules);
 

@@ -248,6 +248,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   that lost $100, counted nothing, so the account's own rules could replay to a pass its
   `MICROSCALPING` objective held back. Each option and share round trip now counts on
   its own, as it does on the account.
+- **Rule comparisons and the inactivity rule.** `POST /api/account/rules-compare` never
+  counted the attempt's executions toward `inactivity_days`, so every rule set with one,
+  the account's own included, failed `INACTIVITY` once the attempt was older than the
+  window, however often the account traded. The window now runs from the trader's own
+  fills and share trades, and, as on the account, a trade on the first day past the
+  window comes too late to keep it.
 - **Covered calls in the strategy optimizer.** A covered call's share cost was charged
   twice, so every one was valued 100 × spot too low: doubled `max_loss`, a negative
   `max_profit`, no breakeven, `pop` 0, an `expected` P&L near −100 × spot, half the

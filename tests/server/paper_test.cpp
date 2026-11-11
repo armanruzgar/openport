@@ -5958,6 +5958,41 @@ TEST_F(PaperEngine, RulesCompareReplaysTheAttemptAgainstPresetsAndCustomRules) {
   expect_error(write(*engine, "POST", "/api/account/rules-compare", {{"plans", many}}), 400, "INVALID_REQUEST");
 }
 
+TEST_F(PaperEngine, RulesCompareRunsTheInactivityWindowFromTheTradersOwnFills) {
+  seed();
+  auto rules = read(*engine, "/api/account")["rules"];
+  rules.update({{"plan", "Three-day window"}, {"inactivity_days", 3}});
+  auto response = write(*engine, "POST", "/api/account/reset", {{"initial_cash", "100000"}, {"rules", rules}, {"reason", "inactivity"}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  // A round trip every weekday from Tuesday 22 September to Monday 28 September:
+  // Friday to Monday is three days, inside the window.
+  for (int day : {22, 23, 24, 25, 28}) {
+    market.time = md::new_york_to_utc({2026, 9, day}, 10, 0);
+    quote();
+    ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "open-" + std::to_string(day), "4.20")).status, 201);
+    market.next();
+    quote();
+    auto close = order(market, "close-" + std::to_string(day), "4.00");
+    close["side"] = "sell";
+    ASSERT_EQ(write(*engine, "POST", "/api/orders", close).status, 201);
+  }
+  ASSERT_EQ(read(*engine, "/api/account")["evaluation"]["status"], "active");
+  auto one_day = rules;
+  one_day.update({{"plan", "One-day window"}, {"inactivity_days", 1}});
+  response = write(*engine, "POST", "/api/account/rules-compare",
+      {{"rules", {{{"name", "One-day window"}, {"initial_cash", "100000"}, {"rules", one_day}}}}});
+  ASSERT_EQ(response.status, 200) << response.body;
+  const auto result = json::parse(response.body);
+  EXPECT_EQ(result["days"].size(), 5U);
+  ASSERT_EQ(result["sets"].size(), 2U);
+  // The account's own rules replay to its live verdict.
+  EXPECT_EQ(result["sets"][0]["status"], "active");
+  // A one-day window ran out over the weekend, and Monday's trade came too late to keep it.
+  EXPECT_EQ(result["sets"][1]["status"], "failed");
+  EXPECT_EQ(result["sets"][1]["code"], "INACTIVITY");
+  EXPECT_EQ(result["sets"][1]["decided_day"], "2026-09-28");
+}
+
 TEST_F(PaperEngine, RulePacksValidateNormalizeAndStaySeparateFromPresets) {
   auto rules = read(*engine, "/api/account")["rules"];
   rules.update({{"profit_target", "6000"}, {"max_drawdown", "3000"}, {"drawdown_mode", "end_of_day"}});

@@ -3817,6 +3817,16 @@ ApiResponse rules_compare(const ApiRequest& request, const MetricsSource& source
     if (life.closed && life.fills.front() >= e.first_stock_fill && life.opened >= e.started)
       activity.round_trips.push_back({"s" + std::to_string(life.fills.front()), *life.closed, life.gross + life.dividends,
                                       *life.closed - life.opened});
+  // The attempt's own executions, for the inactivity rule, as the reducer counts them
+  // (count_trade): fills of the trader's orders, not the account's rule closes, and
+  // share trades. Fills keep them whether or not the account's own rules read them.
+  for (const auto& fill : s.recent_fills)
+    if (fill.id >= e.first_fill && fill.order_id > 0 && fill.order_id <= s.recent_orders.size() &&
+        !s.recent_orders[fill.order_id - 1].system)
+      activity.executions.push_back(fill.time);
+  for (const auto& fill : s.stock_fills)
+    if (fill.source == StockSource::Trade && fill.id >= e.first_stock_fill && fill.time >= e.started)
+      activity.executions.push_back(fill.time);
   const auto inputs = plan_inputs(s);
   json days = json::array();
   for (const auto& day : e.days) days.push_back(md::format_date(day.day));
