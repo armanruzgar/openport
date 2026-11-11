@@ -466,6 +466,13 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   with Try again, Reload and Reset saved layout, which clears only this browser's
   saved drafts and layout. Saved what-if and Analyze candidates are checked field by
   field, and malformed ones are dropped.
+- **Feeds that report `stale` while healthy.** Tradier's index chains, Schwab
+  responses without `isDelayed` and Interactive Brokers' frozen or unreported values
+  report `stale` after every successful poll, and the engine never counted those polls
+  as updates. A minute in, the status read `no successful update within 60 seconds`
+  with `last_success` empty, and a `feed_stalled` notification went out at the first
+  poll and never rearmed, so a later real outage sent none. Such polls now count as
+  updates, and the `stale` label alone is no longer a stall.
 
 ## 0.5.1 (2026-10-28)
 

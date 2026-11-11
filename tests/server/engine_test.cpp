@@ -137,6 +137,55 @@ TEST(Engine, PlanDependentStreamsKeepAdapterTimingStatusWhileQuotesRefreshReceip
   engine.stop();
 }
 
+TEST(Engine, PolledFeedsThatReportStaleRecordEachPollAndStallOnlyWhenTheyStop) {
+  class SilentHttp final : public net::HttpClient {
+   public:
+    net::HttpResponse post(std::string_view, std::string_view, const net::Headers&, std::chrono::seconds,
+                           const std::atomic<bool>*) override { return {200, "{}"}; }
+  };
+  server::Notifications::Options delivery;
+  delivery.worker = false;
+  auto notifications = std::make_shared<server::Notifications>(server::parse_notification_config(
+      R"({"channels":[{"id":"phone","type":"webhook","url":"https://example.invalid/hook"}]})"),
+      std::make_unique<SilentHttp>(), delivery);
+  ManualProvider provider;
+  provider.caps.poll_interval = std::chrono::seconds(15);
+  provider.caps.realtime_plan_dependent = true;
+  std::atomic<md::Timestamp> clock{1000 * md::kNanosPerSecond};
+  server::Engine::Options options;
+  options.clock = [&] { return clock.load(); };
+  options.notifications = notifications;
+  server::Engine engine(provider, {{"SPX"}}, options);
+  engine.start();
+  const auto queued = [&] { return notifications->status().at("queue_depth").get<int>(); };
+  const auto answer = [&] {
+    provider.sink->publish(md::ProviderStatus{1, md::FeedState::Stale, "Tradier: index timing unconfirmed", "SPX"});
+    return eventually([&] { return engine.status().underlyings.at("SPX").last_success == clock.load(); });
+  };
+  // As Tradier's index chains: every poll succeeds, and its timing stays unconfirmed.
+  for (int i = 0; i < 8; ++i) {
+    ASSERT_TRUE(answer()) << i;
+    const auto health = engine.status().underlyings.at("SPX");
+    EXPECT_EQ(health.state, md::FeedState::Stale);
+    EXPECT_EQ(health.message, "Tradier: index timing unconfirmed");
+    clock += 15 * md::kNanosPerSecond;
+  }
+  engine.synchronize().get();
+  EXPECT_EQ(queued(), 0);  // the label is not a stall
+  // Polls that stop are: one warning, ...
+  clock += 60 * md::kNanosPerSecond;
+  ASSERT_TRUE(eventually([&] { return queued() == 1; }));
+  EXPECT_EQ(engine.status().underlyings.at("SPX").message, "SPX: no successful update within 60 seconds");
+  engine.synchronize().get();
+  EXPECT_EQ(queued(), 1);
+  // ... which the next successful poll rearms.
+  ASSERT_TRUE(answer());
+  engine.synchronize().get();
+  clock += 61 * md::kNanosPerSecond;
+  ASSERT_TRUE(eventually([&] { return queued() == 2; }));
+  engine.stop();
+}
+
 TEST(Engine, StatusUsesRevisedPollBudgetForStaleness) {
   ManualProvider provider;
   provider.caps.poll_interval = std::chrono::seconds(1);

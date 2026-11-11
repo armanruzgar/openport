@@ -355,7 +355,12 @@ void Engine::update_health(const md::Event& event, md::Timestamp received) {
         health.message = feed->message;
         if (!feed->feed.empty()) health.feed = feed->feed;
       }
-      if (feed->state == md::FeedState::Live || feed->state == md::FeedState::Delayed) {
+      // A finished poll is an update whatever state it reports: a polled feed that says
+      // Stale (Tradier's indexes, Schwab without isDelayed, IBKR's frozen values) cannot
+      // confirm its timing, but it did answer. Streams prove themselves with quotes.
+      const bool polled = status_.capabilities.poll_interval > std::chrono::seconds(0);
+      if (feed->state == md::FeedState::Live || feed->state == md::FeedState::Delayed ||
+          (polled && feed->state == md::FeedState::Stale)) {
         health.last_success = received;
       } else if (feed->state == md::FeedState::Error) {
         health.last_error = feed->message;
@@ -555,8 +560,9 @@ void Engine::run() {
           std::max(3 * provider_.capabilities().poll_interval, std::chrono::seconds(60))).count();
       for (const auto& [symbol, health] : health_) {
         const auto since = health.last_success > 0 ? health.last_success : status_.started;
-        const bool stalled = health.state == md::FeedState::Stale || health.state == md::FeedState::Stopped ||
-            (since > 0 && received - since > stale_after);
+        // A Stale label is not a stall: a feed that says it while its updates arrive is
+        // healthy, and one that stops updating is caught by the timeout like any other.
+        const bool stalled = health.state == md::FeedState::Stopped || (since > 0 && received - since > stale_after);
         if (stalled && stalled_.insert(symbol).second)
           options_.notifications->publish({"feed_stalled", "", desk_.market_time(),
               symbol + ": feed stalled; check the terminal's feed status.", {{"underlying", symbol}}});

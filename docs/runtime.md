@@ -53,7 +53,11 @@ queue in a bounded inbox of 256; a full one answers 503 `TRADING_UNAVAILABLE` wi
 The engine publishes health state and message changes after the batch that
 contains them. Otherwise it publishes receipt and error timestamps at most once
 every 100 ms, including pending updates when the feed becomes idle. Timestamp-only
-updates reuse the published health map and strings.
+updates reuse the published health map and strings. Every finished poll of a polled
+feed is a successful update, whatever state it reports: one that reports `stale`
+(Tradier's indexes, Schwab without `isDelayed`, Interactive Brokers' frozen or
+unreported values) cannot confirm its timing but did answer, so it shows
+`no successful update within N seconds` only once its polls stop.
 
 No feed sends an event from the future. A live feed's event stamped more than five
 minutes after the system clock (a unit or epoch error, an upstream glitch) is refused
@@ -1693,7 +1697,8 @@ an enabled channel. `floor_distance` defaults to $500 and compares fixed-point
 It fires on entry to the distance and rearms after leaving it. A staged order fires
 when its stage ID becomes ready; price refreshes of the same stage stay quiet.
 Feed stalls use the status timeout, the greater of 60 seconds and three poll
-intervals, or an explicit stale/stopped state. Recovery rearms the feed warning.
+intervals, or a stopped feed; a feed that reports `stale` while its updates arrive is
+not stalled. Recovery rearms the feed warning.
 
 By default only accounts on the live engine send. Set `"include_simulated": true`
 in the notification file or `OPENPORT_NOTIFY_JSON` to also attach delivery to demo
