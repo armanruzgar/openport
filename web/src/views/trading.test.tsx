@@ -299,7 +299,8 @@ describe("paper trading fixtures", () => {
     }} trading={trading} />)
     expect(daily).toContain("Neither a kill-switch reset nor an account reset clears it")
     expect(daily).toContain("The opening order that reached the limit may finish its partial fills")
-    expect(daily).not.toContain("cleared TRADE_LIMIT")
+    // The Reset dialog's copy for a latch a reset cannot clear: components/KillSwitch.test.tsx.
+    expect(daily).toContain("Tripped: TRADE_LIMIT")
   })
   it("exposes call and put bid/ask buttons and an untradable reason", () => {
     const html = render(<ChainView symbol="SPX" expiry={selection.expiry.id} onExpiry={() => {}} />)
