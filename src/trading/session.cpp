@@ -4591,9 +4591,14 @@ std::vector<RiskWarning> warnings_of(const State& s, const std::map<std::string,
   for (const auto& [key, per_share] : upcoming) {
     const auto& [symbol, date] = key;
     const auto shares = shares_held(s, symbol);
+    // In whole cents, as the rollover pays it: less than half a cent is nothing.
+    const auto amount = nearest_cent(per_share * shares);
     auto message = symbol + " goes ex-dividend on " + md::format_date(date) + ", " + dollars(per_share) + " a share";
-    if (shares > 0) message += ": your " + std::to_string(shares) + " shares are paid " + dollars(per_share * shares);
-    else if (shares < 0) message += ": your " + std::to_string(-shares) + " short shares pay " + dollars(per_share * -shares);
+    if (shares != 0 && amount == Money{})
+      message += ": on your " + std::to_string(shares < 0 ? -shares : shares) + (shares < 0 ? " short" : "") +
+                 " shares it comes to less than half a cent, so nothing is paid";
+    else if (shares > 0) message += ": your " + std::to_string(shares) + " shares are paid " + dollars(amount);
+    else if (shares < 0) message += ": your " + std::to_string(-shares) + " short shares pay " + dollars(-amount);
     else message += ": option prices allow for it, and short calls with less time value than it may be assigned the night before";
     add("EX_DIVIDEND", shares < 0, symbol, {}, message, per_share.dollars(), std::nullopt);
   }
@@ -7195,6 +7200,10 @@ void pay_dividends(State& s, const std::vector<Dividend>& dividends, Events& eve
         [&](const DividendPayment& p) { return p.symbol == d.symbol && p.ex_date == d.ex_date; });
     if (shares == 0 || paid || d.per_share <= Money{}) continue;
     const Money amount = nearest_cent(d.per_share * shares);
+    // Less than half a cent on the shares pays nothing, and nothing is recorded. Replay
+    // drivers 1-8 passed it to the ledger, which refuses a zero payment, so the
+    // rollover failed and with it the account.
+    if (amount == Money{} && s.revised_corporate_actions) continue;
     s.ledger.receive_dividend(d.symbol, amount);
     Attribution part;
     part.other = amount.dollars();

@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <tuple>
+#include <vector>
 
 #include "openport/trading/dividends.hpp"
 #include "openport/trading/history.hpp"
@@ -231,6 +235,39 @@ TEST(TradingDividends, OptionsExpiringOnTheNewDaySettleInsteadOfBeingAssigned) {
   for (const auto& closure : snap->closures) EXPECT_EQ(closure.symbol, f.call.osi_symbol());
   for (const auto& p : snap->positions)
     if (p.position.contract.expiry == expiring_call.expiry) { EXPECT_EQ(p.position.quantity, -10); }
+}
+
+TEST(TradingDividends, ADividendThatRoundsToNothingPaysNothingAndTheDayRollsOn) {
+  // $0.004 on one share is under half a cent: replay drivers 1-8 asked the ledger to pay
+  // $0.00, which it refuses, so the rollover failed and with it the account.
+  const std::vector<Dividend> due{{"SPY", {2026, 12, 18}, m("0.004")}};
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    Held f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_corporate_actions(revised);
+    ASSERT_TRUE(s.define(f.call, f.time).decision.ok());
+    f.quote(s, 520);
+    ASSERT_TRUE(s.trade_stock("SPY", 1, f.time).decision.ok());
+    f.time = md::new_york_to_utc({2026, 12, 17}, 16, 0);
+    f.quote(s, 521);
+    const auto night = md::new_york_to_utc({2026, 12, 17}, 18, 0);
+    s.on_quotes({}, {}, night);
+    if (!revised) {
+      EXPECT_THROW((void)s.roll_day(night, due), TradingError);
+      continue;
+    }
+    // The warning says what the rollover will pay: nothing.
+    const auto warnings = s.warnings({}, due);
+    const auto ex = std::find_if(warnings.begin(), warnings.end(), [](const RiskWarning& w) { return w.code == "EX_DIVIDEND"; });
+    ASSERT_NE(ex, warnings.end());
+    EXPECT_NE(ex->message.find("less than half a cent, so nothing is paid"), std::string::npos) << ex->message;
+    const auto cash = s.snapshot()->account.cash;
+    ASSERT_TRUE(s.roll_day(night, due).decision.ok());
+    EXPECT_TRUE(s.snapshot()->dividends.empty());
+    EXPECT_EQ(s.snapshot()->account.cash, cash);
+    EXPECT_EQ(s.snapshot()->evaluation.day, (md::Date{2026, 12, 18}));
+  }
 }
 
 }  // namespace

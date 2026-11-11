@@ -421,6 +421,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   the ex-date's first quote with no move, and a level above it could no longer be
   reached. Such levels (the order's own, its bracket's and its chained orders') and a
   trail in dollars behind them now take the split, to the cent.
+- **A dividend under half a cent.** A dividend that rounded to $0.00 on the shares held
+  (one share at $0.004, say) failed the rollover, and the account with it: every later
+  batch skipped it and every write, closing the shares and a reset included, answered
+  `TRADING_UNAVAILABLE`, on every restart too. It now pays nothing, and the
+  `EX_DIVIDEND` warning shows the amount in whole cents.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

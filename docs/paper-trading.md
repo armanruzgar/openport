@@ -290,7 +290,10 @@ on or before the new one (`dividends_due`, so a server that was down
 across an ex-date still pays it), after the night's assignments: shares held into the
 ex-date receive `per_share * shares`, rounded to the nearest cent (ties away from
 zero) as brokers pay it, in cash and realised P&L, and short shares pay it, once per
-symbol and date. The record moment is that rollover, not the ex-date's midnight:
+symbol and date. A payment that rounds to nothing (under half a cent on the shares
+held) is not made or recorded, and the `EX_DIVIDEND` warning says so; runs recorded
+with replay driver 8 or earlier failed the rollover, and with it the account.
+The record moment is that rollover, not the ex-date's midnight:
 17:00 ET the business day before the ex-date on a live feed (or the first batch after
 it), and the ex-date's 09:30 open on the demo feed. Shares held at the rollover are
 paid; shares an exercise delivers after it are not, although OCC's 17:30 exercise
@@ -2030,7 +2033,7 @@ in words, and `actual` and `limit` numbers whose meaning depends on the code:
 | `EXPIRY_DELIVERY` | An American equity or ETF option expiring today a cent or more in the money, without a do-not-exercise instruction: held into expiry it is exercised or assigned and delivers shares, together the strike. Before an account's pre-expiry cutoff, names that time and the market close; only contracts still held because a close cannot fill are delivered | Buying power once every option expiring in the money today has delivered at today's price, and zero; `warning` whenever projected buying power is negative, including before the cutoff; otherwise `info` |
 | `EARLY_ASSIGNMENT` | A short American equity or ETF option the rollover may assign (about half of it, as described under early assignment): marked below its exercise value, or a call with less time value than a dividend going ex within a week and before its expiry; `warning` for tonight's rollover | The mark and the exercise value, or the time value and the dividend |
 | `WARNINGS_UNAVAILABLE` | The account's warnings and breach estimate could not be computed (for example, a balance near the largest amount the account can hold overflows the expiry-delivery projection); it stands in for them, with the reason, while trading and the feed carry on | No numeric threshold |
-| `EX_DIVIDEND` | A held underlying (options or shares) goes ex-dividend within a week; `warning` when short shares will pay it | The dividend a share, and null |
+| `EX_DIVIDEND` | A held underlying (options or shares) goes ex-dividend within a week, with what the shares held are paid in whole cents (nothing, when that rounds to less than a cent); `warning` when short shares will pay it | The dividend a share, and null |
 | `PIN_RISK` | Under a plan with `pin_risk`, a short American equity or ETF option expiring today, before its expiry, is within $0.10 of its strike, in or out of the money ([simulated expiry pin risk](#simulated-expiry-pin-risk)); always `warning` | The underlying price less the strike, in dollars, and 0.10 |
 
 Warnings use the account's marks, valuations, limits and the dividend calendar the
