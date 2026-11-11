@@ -510,7 +510,7 @@ RunVerification verify_run(const std::filesystem::path& journal,
       } else if (operation.at("kind") == "source") {
         batches.reset();  // It reads through the reader replaced next.
         reader = open_input(operation.at("input"));
-        batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, instants);
+        batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, options.instant_batches);
         desk.replay_source(operation.at("input").dump(), reader->header());
       } else if (operation.at("kind") == "command") {
         desk.command(operation.at("command").get<TradingCommand>(), [](TradingReply) {},
