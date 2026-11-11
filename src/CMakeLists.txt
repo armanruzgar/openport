@@ -7,6 +7,7 @@ add_library(openport_core
   pricing/normal.cpp
   md/time.cpp
   md/contract.cpp
+  md/files.cpp
   analytics/chain_book.cpp
   analytics/forward.cpp
   analytics/chain_analytics.cpp

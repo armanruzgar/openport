@@ -1,4 +1,5 @@
 #include "openport/server/analysis.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -528,14 +529,7 @@ void AnalysisPortfolios::save(const AnalysisPortfolio& p) const {
   const json body{{"id", p.id}, {"name", p.name}, {"format", p.format}, {"imported", p.imported},
                   {"analysis_only", true}, {"holdings", holdings}, {"skipped", p.skipped}};
   std::filesystem::create_directories(directory_);
-  const auto file = directory_ / (p.id + ".json");
-  const auto temporary = directory_ / (p.id + ".json.tmp");
-  {
-    std::ofstream out(temporary, std::ios::trunc);
-    out << body.dump(2) << '\n';
-    if (!out.flush()) throw std::runtime_error("cannot write " + temporary.string());
-  }
-  std::filesystem::rename(temporary, file);
+  md::write_file_atomic(directory_ / (p.id + ".json"), body.dump(2) + '\n');
 }
 
 AnalysisPortfolio AnalysisPortfolios::add(AnalysisPortfolio portfolio, std::string_view name, md::Timestamp now) {

@@ -1,4 +1,5 @@
 #include "openport/md/recording.hpp"
+#include "openport/md/files.hpp"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -436,23 +437,19 @@ struct RecordingSink::Impl {
       if (::close(fd) != 0) invalid(std::string("close failed: ") + std::strerror(errno));
       // Optional acceleration only: the recording remains usable if its index cannot be saved.
       if (failure.empty() && index_valid) {
-        const auto temporary = path_.string() + ".end.tmp";
         try {
           struct stat info {};
           if (::stat(path_.c_str(), &info) != 0) return;
           struct statvfs space {};
           if (::statvfs(path_.c_str(), &space) == 0 && static_cast<std::uint64_t>(space.f_bavail) * space.f_frsize < 65ull * 1024 * 1024) return;
           const auto modified = std::chrono::duration_cast<std::chrono::nanoseconds>(std::filesystem::last_write_time(path_).time_since_epoch()).count();
-          std::ofstream out(temporary, std::ios::trunc);
+          std::ostringstream out;
           out << "OPENPORT-END-1 " << info.st_dev << ' ' << info.st_ino << ' ' << info.st_size << ' ' << modified << ' ' << snapshots << ' ' << market_ends.size() << '\n';
           for (const auto& [symbol, time] : market_ends) out << symbol << ' ' << time << '\n';
-          out.close();
-          if (out) std::filesystem::rename(temporary, path_.string() + ".end");
-          else std::filesystem::remove(temporary);
+          // Owner-only like the recording; rebuilt by startup discovery, so not synced.
+          md::write_file_atomic(path_.string() + ".end", out.str(), md::Durability::Cache);
         } catch (...) {
           // A missing index falls back to startup discovery.
-          std::error_code ignored;
-          std::filesystem::remove(temporary, ignored);
         }
       }
     } catch (const std::exception& error) {

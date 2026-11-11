@@ -1,4 +1,5 @@
 #include "openport/server/earnings.hpp"
+#include "openport/md/files.hpp"
 #include "openport/md/utf8.hpp"
 
 #include <algorithm>
@@ -179,13 +180,7 @@ void EarningsStore::save() {
     json moves = json::array();
     for (const auto& [key, move] : moves_) moves.push_back(move_json(move));
     if (file_.has_parent_path()) std::filesystem::create_directories(file_.parent_path());
-    const auto temporary = file_.string() + ".tmp";
-    {
-      std::ofstream out(temporary, std::ios::trunc);
-      out << json{{"version", 1}, {"moves", moves}}.dump(1) << '\n';
-      if (!out.flush()) throw std::runtime_error("cannot write " + temporary);
-    }
-    std::filesystem::rename(temporary, file_);
+    md::write_file_atomic(file_, json{{"version", 1}, {"moves", moves}}.dump(1) + '\n');
   } catch (const std::exception& e) {
     error_ = "earnings: " + std::string(e.what());
   }

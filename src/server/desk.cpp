@@ -6,6 +6,7 @@
 #include "openport/pricing/black.hpp"
 #include "openport/providers/demo.hpp"
 #include "openport/trading/format.hpp"
+#include "openport/md/files.hpp"
 #include "openport/md/utf8.hpp"
 #include "openport/server/run.hpp"
 #include "metric_cache.hpp"
@@ -56,15 +57,11 @@ void sync_directory(const std::filesystem::path& path) {
 
 void save_account_file(const std::filesystem::path& path, const std::string& text) {
   check_storage_space(path, text.size());
-  const auto temporary = path.string() + ".tmp";
-  const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-  if (fd < 0) throw TradingError(Reason::JOURNAL_IO, "Cannot write account metadata");
-  const bool written = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
-  const bool synced = written && ::fsync(fd) == 0;
-  ::close(fd);
-  if (!synced) throw TradingError(Reason::JOURNAL_IO, "Cannot sync account metadata");
-  std::filesystem::rename(temporary, path);
-  sync_directory(path.parent_path());
+  try {
+    md::write_file_atomic(path, text);
+  } catch (const std::runtime_error& error) {
+    throw TradingError(Reason::JOURNAL_IO, error.what());
+  }
 }
 
 // A durable destination directory is the deletion tombstone. Startup finishes

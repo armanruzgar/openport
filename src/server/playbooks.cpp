@@ -4,6 +4,7 @@
 #include "paper_json.hpp"
 #include "../trading/state.hpp"
 #include "openport/trading/history.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -522,14 +523,11 @@ void Playbooks::save(const Json& next) {
   const auto text = next.dump(2) + '\n';
   if (text.size() > 8 * 1024 * 1024) invalid("Playbook history exceeds 8 MiB");
   if (!file_.empty()) {
-    const auto temporary = file_.string() + ".tmp";
-    { std::ofstream output(temporary, std::ios::trunc); output << text; output.flush(); if (!output) invalid("Cannot save playbooks.json"); }
-    const int fd = ::open(temporary.c_str(), O_RDONLY);
-    if (fd < 0) invalid("Cannot sync playbooks.json");
-    const bool synced = ::fsync(fd) == 0;
-    ::close(fd);
-    if (!synced) invalid("Cannot sync playbooks.json");
-    std::filesystem::rename(temporary, file_);
+    try {
+      md::write_file_atomic(file_, text);
+    } catch (const std::runtime_error& error) {
+      invalid(std::string("Cannot save playbooks.json: ") + error.what());
+    }
   }
   catalogue_ = next;
   ++revision_;

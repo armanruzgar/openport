@@ -1,4 +1,5 @@
 #include "openport/server/account_groups.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -165,17 +166,7 @@ void AccountGroups::save(const std::map<std::string, AccountGroup>& groups) cons
   if (file_.empty()) return;
   json list = json::array();
   for (const auto& [name, group] : groups) list.push_back(group_json(group));
-  const auto text = json{{"schema", 1}, {"groups", list}}.dump(2) + "\n";
-  const auto temporary = file_.string() + ".tmp";
-  const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
-  if (fd < 0) throw std::runtime_error("Cannot write account groups");
-  const bool written = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
-  const bool synced = written && ::fsync(fd) == 0;
-  ::close(fd);
-  if (!synced) throw std::runtime_error("Cannot sync account groups");
-  std::filesystem::rename(temporary, file_);
-  const int directory = ::open(file_.parent_path().empty() ? "." : file_.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
-  if (directory >= 0) { (void)::fsync(directory); ::close(directory); }
+  md::write_file_atomic(file_, json{{"schema", 1}, {"groups", list}}.dump(2) + "\n");
 }
 
 }  // namespace openport::server

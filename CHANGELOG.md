@@ -517,6 +517,18 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   contract. Each round trip now lists every closure, partial ones included, as
   `closures` (kind, quantity, price, fee and time) in `/api/trades` and as a last
   `closures` column in `trades.csv`, and the trade detail shows each as a row.
+- **State files are replaced whole and synced.** Thirteen stores wrote a temporary
+  file and renamed it over the old one, each in its own way. The equity history's
+  compaction (the only copy of an account's minute curve), imported analysis
+  portfolios, replay metadata, scenario packs, the earnings history and rewritten
+  surface-history months synced nothing before the rename, so a power loss or kernel
+  panic soon after could leave the file empty or cut short, and a new replay's
+  metadata was written in place. The others used `fsync`, which on macOS leaves the
+  data in the drive's cache. One writer now serves them all: it creates the temporary
+  file afresh, owner-only and never through a symlink, syncs it to the drive
+  (`F_FULLFSYNC` on macOS) before the rename and syncs the directory after it.
+  Rebuildable caches (chart candles, replay summaries, recording indexes) skip the
+  syncs.
 
 ## 0.5.1 (2026-10-28)
 

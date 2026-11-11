@@ -1,4 +1,5 @@
 #include "openport/server/candles.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -230,22 +231,13 @@ void CandleStore::persist(const std::string& symbol, Series& series, bool formin
 
 void CandleStore::compact(const std::string& symbol, Series& series) {
   if (options_.directory.empty() || !storable(symbol)) return;
-  const auto file = file_for(symbol);
-  auto temporary = file;
-  temporary += ".tmp";
-  {
-    std::ofstream out(temporary, std::ios::trunc | std::ios::binary);
-    for (const auto& [start, minute] : series.minutes) out << line_of(minute.bar, minute.official);
-    out.flush();
-    if (!out) {
-      error_ = "candles: cannot write " + temporary.string();
-      return;
-    }
-  }
-  std::error_code ec;
-  std::filesystem::rename(temporary, file, ec);
-  if (ec) {
-    error_ = "candles: cannot replace " + file.string() + ": " + ec.message();
+  std::string text;
+  for (const auto& [start, minute] : series.minutes) text += line_of(minute.bar, minute.official);
+  try {
+    // Chart history, rebuilt from samples and refetched bars: replaced whole, not synced.
+    md::write_file_atomic(file_for(symbol), text, md::Durability::Cache);
+  } catch (const std::exception& error) {
+    error_ = std::string("candles: ") + error.what();
     return;
   }
   for (auto& [start, minute] : series.minutes) minute.saved = true;

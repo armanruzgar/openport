@@ -5,6 +5,7 @@ add_executable(openport_tests
   pricing/american_test.cpp
   md/time_test.cpp
   md/utf8_test.cpp
+  md/files_test.cpp
   md/contract_test.cpp
   md/event_queue_test.cpp
   analytics/forward_test.cpp

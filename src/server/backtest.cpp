@@ -16,6 +16,7 @@
 #include "openport/server/plans.hpp"
 #include "openport/trading/history.hpp"
 #include "openport/server/web_policy.hpp"
+#include "openport/md/files.hpp"
 #include "run_json.hpp"
 #include "event_calendar.hpp"
 #include "strategy_template.hpp"
@@ -782,17 +783,8 @@ BacktestRequest parse_backtest(const json& body, const json& catalogue,
 }
 
 void write_backtest_report(const std::filesystem::path& file, const json& report) {
-  const auto temporary = file.string() + ".tmp";
-  std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-  output << report.dump(2) << '\n';
-  output.close();
-  if (!output) throw std::runtime_error("Cannot write backtest report");
   // Synced before the rename, so a crash leaves the old file or the new one, whole.
-  const int fd = ::open(temporary.c_str(), O_RDONLY);
-  const bool synced = fd >= 0 && ::fsync(fd) == 0;
-  if (fd >= 0) ::close(fd);
-  if (!synced) throw std::runtime_error("Cannot sync backtest report");
-  std::filesystem::rename(temporary, file);
+  md::write_file_atomic(file, report.dump(2) + '\n');
 }
 
 json run_backtest(const BacktestRequest& request, const std::filesystem::path& directory,

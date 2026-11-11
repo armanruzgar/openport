@@ -1,4 +1,5 @@
 #include "openport/server/replay_host.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -510,12 +511,7 @@ class ReplayHost::History {
     const auto path = directory_ / (session.id + ".jsonl");
     // The journal's exclusive create also prevents overwriting an earlier run.
     if (std::filesystem::exists(path)) throw std::runtime_error("Replay journal already exists");
-    const auto data = session.state().dump();
-    trading::check_storage_space(path, data.size() + 1);
-    std::ofstream metadata(directory_ / (session.id + ".json"));
-    metadata << data << '\n';
-    metadata.close();
-    if (!metadata) throw std::runtime_error("Cannot write replay metadata for " + session.id);
+    save(session.id, session.state());
     return path;
   }
   /// Rewrites a retired run's metadata with its final playback state, which then
@@ -545,23 +541,12 @@ class ReplayHost::History {
   }
   void save(const std::string& id, const json& value) const {
     const auto file = directory_ / (id + ".json");
-    const auto staged = directory_ / (id + ".json.tmp");
     const auto data = value.dump();
     trading::check_storage_space(file, data.size() + 1);
-    std::error_code ec;
-    {
-      std::ofstream metadata(staged);
-      metadata << data << '\n';
-      metadata.close();
-      if (!metadata) {
-        std::filesystem::remove(staged, ec);
-        throw std::runtime_error("Cannot write replay metadata for " + id);
-      }
-    }
-    std::filesystem::rename(staged, file, ec);
-    if (ec) {
-      std::filesystem::remove(staged, ec);
-      throw std::runtime_error("Cannot replace replay metadata for " + id);
+    try {
+      md::write_file_atomic(file, data + '\n');
+    } catch (const std::runtime_error& error) {
+      throw std::runtime_error("Cannot write replay metadata for " + id + ": " + error.what());
     }
   }
   /// A saved run's metadata as its last start or retirement wrote it, or null.
@@ -957,25 +942,13 @@ class ReplayHost::History {
     if (known.scan) value["scan"] = scan_json(*known.scan);
     if (!value.contains("summary") && !value.contains("scan")) return;
     const auto file = directory_ / (id + ".jsonl.summary");
-    const auto staged = directory_ / (id + ".jsonl.summary.tmp");
-    std::error_code ignored;
     try {
       const auto data = value.dump();
       trading::check_storage_space(file, data.size() + 1);
-      {
-        std::ofstream out(staged);
-        out << data << '\n';
-        out.close();
-        if (!out) {
-          std::filesystem::remove(staged, ignored);
-          return;
-        }
-      }
-      std::filesystem::rename(staged, file, ignored);
-      if (ignored) std::filesystem::remove(staged, ignored);
+      // What reading the journal finds again: replaced whole, not synced.
+      md::write_file_atomic(file, data + '\n', md::Durability::Cache);
     } catch (const std::exception&) {
       // Only a restart's first listing reads the journal again.
-      std::filesystem::remove(staged, ignored);
     }
   }
   mutable std::mutex cache_mutex_;
@@ -1734,10 +1707,11 @@ void ReplayHost::packs(const ApiRequest& request, const ApiCompletion& complete)
     const auto target = directory / (scenario.id + ".pack");
     const auto write = [](const std::filesystem::path& path, const std::string& data) {
       trading::check_storage_space(path, data.size());
-      const auto staged = path.string() + ".tmp";
-      std::ofstream file(staged); file << data; file.close();
-      if (!file) throw std::runtime_error("Cannot save scenario pack");
-      std::filesystem::rename(staged, path);
+      try {
+        md::write_file_atomic(path, data);
+      } catch (const std::runtime_error& error) {
+        throw std::runtime_error(std::string("Cannot save scenario pack: ") + error.what());
+      }
     };
     write(source, scenario.source);
     write(target, pack.dump());

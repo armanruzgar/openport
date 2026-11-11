@@ -1,4 +1,5 @@
 #include "openport/server/equity.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -225,19 +226,11 @@ void EquityStore::compact() {
     if (s.time < old || earlier > 100'000) { --earlier; return true; }
     return false;
   });
-  const auto temporary = file_.string() + ".tmp";
-  std::uint64_t bytes = 0;
-  for (const auto& sample : samples_) bytes += line(sample).size();
-  trading::check_storage_space(file_, bytes);
-  std::ofstream out(temporary, std::ios::trunc);
-  if (!out) throw std::runtime_error("cannot compact equity history");
-  for (const auto& sample : samples_) out << line(sample);
-  out.flush();
-  if (!out) throw std::runtime_error("cannot flush equity history");
-  out.close();
-  std::error_code ec;
-  std::filesystem::rename(temporary, file_, ec);
-  if (ec) throw std::runtime_error("cannot replace equity history: " + ec.message());
+  std::string text;
+  for (const auto& sample : samples_) text += line(sample);
+  trading::check_storage_space(file_, text.size());
+  // The only copy of the history: synced before it replaces the old one.
+  md::write_file_atomic(file_, text);
   lines_ = samples_.size();
 }
 void EquityStore::append(const EquitySample& sample) noexcept {

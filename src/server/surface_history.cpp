@@ -1,5 +1,6 @@
 #include "series_api.hpp"
 #include "metric_cache.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -211,16 +212,8 @@ bool SeriesStore::insert_surface(const std::string& symbol, const SurfaceSnapsho
           }
           if (input.bad()) throw std::runtime_error("cannot read " + path.string());
         }
-        auto temporary = path;
-        temporary += ".tmp";
-        {
-          std::ofstream output(temporary, std::ios::trunc | std::ios::binary);
-          output << kept << j.dump() << '\n'; output.flush();
-          if (!output) throw std::runtime_error("cannot write " + temporary.string());
-        }
-        std::error_code ec;
-        std::filesystem::rename(temporary, path, ec);
-        if (ec) throw std::runtime_error("cannot replace " + path.string() + ": " + ec.message());
+        // Observations that cannot be fetched again: synced before they replace the month.
+        md::write_file_atomic(path, kept + j.dump() + '\n');
       }
     }
     values[key] = snapshot;

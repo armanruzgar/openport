@@ -1,4 +1,5 @@
 #include "openport/server/web_policy.hpp"
+#include "openport/md/files.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -104,17 +105,7 @@ void SignalSecrets::save(const std::map<Key, Secret>& secrets) const {
   for (const auto& [key, secret] : secrets)
     list.push_back({{"playbook", key.first}, {"account", key.second}, {"sha256", hex(secret.digest.data(), secret.digest.size())},
                     {"created_at", secret.created_at}});
-  const auto text = json{{"schema", 1}, {"secrets", list}}.dump(2) + "\n";
-  const auto temporary = file_.string() + ".tmp";
-  const int fd = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, 0600);
-  if (fd < 0) throw std::runtime_error("Cannot write signal secrets");
-  const bool written = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
-  const bool synced = written && ::fchmod(fd, 0600) == 0 && ::fsync(fd) == 0;
-  ::close(fd);
-  if (!synced) throw std::runtime_error("Cannot sync signal secrets");
-  std::filesystem::rename(temporary, file_);
-  const int directory = ::open(file_.parent_path().empty() ? "." : file_.parent_path().c_str(), O_RDONLY | O_DIRECTORY);
-  if (directory >= 0) { (void)::fsync(directory); ::close(directory); }
+  md::write_file_atomic(file_, json{{"schema", 1}, {"secrets", list}}.dump(2) + "\n");
 }
 
 ApiResponse SignalSecrets::issue(const std::string& playbook, const std::string& account) {
