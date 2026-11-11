@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "support/http_stub.hpp"
@@ -257,6 +259,50 @@ TEST(Massive, NextPagesStayOnTheApisHostAndPath) {
   dividends.poll_once(http);
   EXPECT_EQ(http.urls.size(), 1u);
   EXPECT_NE(dividends.error().find("refused a next page"), std::string::npos) << dividends.error();
+}
+
+// Two pages naming each other passed the same-page check and were fetched 2,001 times
+// a poll, every poll, before it failed.
+TEST(Massive, ANextPageAlreadyFetchedEndsThePoll) {
+  const std::string first = providers::massive_chain_url("https://api.massive.com", "SPX");
+  const std::string second = "https://api.massive.com/v3/snapshot/options/I:SPX?cursor=YXA9";  // kPage's next_url
+  providers::MassiveProvider provider({.api_key = "test"});
+  test::HttpStub http;
+  http.respond = [&](std::string_view url) -> net::HttpResponse {
+    std::string body(kPage);
+    if (url == second) body.replace(body.find(second), second.size(), first);
+    return {200, body};
+  };
+  Collector sink;
+  provider.poll_once(http, "SPX", {}, sink);
+  EXPECT_EQ(http.urls, (std::vector<std::string>{first, second}));
+  EXPECT_TRUE(sink.all<md::ContractDefinition>().empty());
+  EXPECT_TRUE(sink.all<md::OptionQuote>().empty());
+  EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
+  const auto statuses = sink.all<md::ProviderStatus>();
+  ASSERT_EQ(statuses.size(), 1u);
+  EXPECT_EQ(statuses[0].state, md::FeedState::Error);
+  EXPECT_EQ(statuses[0].message, "massive SPX: refused a next page this poll already fetched");
+}
+
+TEST(Massive, PaginationEndsAtTwoThousandPages) {
+  providers::MassiveProvider provider({.api_key = "test"});
+  test::HttpStub http;
+  int served = 0;
+  http.respond = [&](std::string_view) -> net::HttpResponse {
+    // A new cursor on every page; the last one after the limit, so a missing limit fails instead of hanging.
+    if (++served > 2005) return {200, R"({"status":"OK","results":[]})"};
+    return {200, R"({"status":"OK","results":[],"next_url":"https://api.massive.com/v3/snapshot/options/I:SPX?cursor=)" +
+                     std::to_string(served) + R"("})"};
+  };
+  Collector sink;
+  provider.poll_once(http, "SPX", {}, sink);
+  EXPECT_EQ(http.urls.size(), 2001u);
+  EXPECT_TRUE(sink.all<md::SnapshotComplete>().empty());
+  const auto statuses = sink.all<md::ProviderStatus>();
+  ASSERT_EQ(statuses.size(), 1u);
+  EXPECT_EQ(statuses[0].state, md::FeedState::Error);
+  EXPECT_EQ(statuses[0].message, "massive SPX: pagination did not end");
 }
 
 TEST(Massive, PublishedContractsSurviveFilterDriftAndRetireWhenMissing) {

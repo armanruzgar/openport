@@ -192,7 +192,10 @@ std::string MassiveProvider::poll(net::HttpClient& http, const std::string& unde
   const auto started = std::chrono::steady_clock::now();
 
   std::string url = massive_chain_url(options_.base_url, underlying);
+  // A next page leading back to one already fetched (A, B, A...) would repeat until the page limit.
+  std::set<std::string> fetched;
   while (!url.empty()) {
+    fetched.insert(url);
     const net::HttpResponse response = http.get(url, headers, options_.timeout, cancellation());
     if (response.status == 401 || response.status == 403) {
       throw std::runtime_error("the API key was rejected, or the plan does not include options");
@@ -210,6 +213,7 @@ std::string MassiveProvider::poll(net::HttpClient& http, const std::string& unde
     for (MassiveContract& contract : page.contracts) contracts.push_back(std::move(contract));
     if (!page.next_url.empty() && !massive_next_url_allowed(url, page.next_url))
       throw std::runtime_error("refused a next page on another host, path or scheme, or the same page again");
+    if (fetched.contains(page.next_url)) throw std::runtime_error("refused a next page this poll already fetched");
     url = std::move(page.next_url);
     if (++pages > 2000) throw std::runtime_error("pagination did not end");
   }

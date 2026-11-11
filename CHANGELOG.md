@@ -1446,6 +1446,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   that the demo's Caddyfile refuses anonymous and spoofed requests and fails closed
   when its auth gateway stalls, ran only by hand. CI's Docker job now runs it, and a
   change under `deploy/` runs that job.
+- **Massive pages that lead back.** A chain poll refused a `next_url` naming the page
+  just fetched but not an earlier one, so two pages naming each other were fetched in
+  turn until the 2,000-page limit: 2,001 requests a poll, every poll. A next page the
+  poll already fetched now ends it with an error at once, and the last chain stays.
 
 ## 0.5.1 (2026-10-28)
 
