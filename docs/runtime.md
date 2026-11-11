@@ -1105,7 +1105,7 @@ be active, stopped or finished; its journal is kept. State and history carry the
 optional `restarted_from:{id,at}`. See [restarting a drill](scenarios.md#restarting-a-drill-with-its-commands)
 for time bounds and refusal conditions. Ordinary starts and playback controls keep
 their existing journal bytes; restart creates a byte-identical prefix on the current
-driver (10).
+driver (11).
 
 ### Verifying a run
 
@@ -1242,6 +1242,15 @@ refusal, and a stop is reached only by a print from its session
 ([paper trading](paper-trading.md#working-share-orders)). Runs recorded with drivers
 1–9 verify with their original share orders; they can no longer be resumed or
 restarted.
+
+Driver 11 applies this build's order and account upkeep fixes: the kill switch, a
+decided attempt, a locked day, flat time and the plan's trading window cancel working
+share orders that could open, a stop exit re-armed for its remainder waits for new
+size instead of triggering on every batch, a pin assignment of an adjusted series pays
+the exact strike amount, a late settlement leaves a newer share price in place, a reset
+after the plan day ended clears that day's personal latches, and an order keeps its
+latest 50 changes ([paper trading](paper-trading.md)). Runs recorded with drivers 1–10
+verify as they were recorded; they can no longer be resumed or restarted.
 
 Authored-halt decisions use New York time, or say "for the rest
 of the day" when the halt reaches the regular close (including early closes).

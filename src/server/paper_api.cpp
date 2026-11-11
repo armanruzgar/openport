@@ -568,7 +568,7 @@ json order_json(const Order& o, const TradingView& view) {
              if (!o.open() || wait == view.snapshot->waiting.end()) return nullptr;
              return {{"code", wait->second.code}, {"message", wait->second.message}};
            }()},
-          {"ended_at", time_or_null(o.ended_at)}, {"modified_at", modified_at(o)}, {"changes", order_changes_json(o)},
+          {"ended_at", time_or_null(o.ended_at)}, {"modified_at", modified_at(o)}, {"changes", order_changes_json(o)}, {"changes_dropped", o.changes_dropped},
           {"attempt", order_attempt(*view.snapshot, o.id)},
           {"origin", o.system ? "system" : "user"}, {"reduce_only", o.reduce_only},
           {"trigger", trigger_json(o.request.trigger)},

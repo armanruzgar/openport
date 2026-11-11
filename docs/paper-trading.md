@@ -94,7 +94,11 @@ at the settlement reference is exercised or assigned: it settles at intrinsic va
 and 100 shares a contract change hands at the settlement reference, bought by long
 calls and short puts, sold by long puts and short calls. Together that costs the
 strike, while the option's own trade records its real result and the shares' P&L is
-their own move from there. `exercise(symbol, contracts, time)` exercises long, in-the-
+their own move from there. The reference also marks the shares, stamped with the time
+it printed (the close the expiry falls in, or an AM series' opening print), unless the
+feed has given a newer price since, which stays: a settlement applied late, after a
+restart or by hand, does not mark Monday's shares at Friday's close. Runs recorded
+with replay driver 10 or earlier stamped it with the settlement's own time. `exercise(symbol, contracts, time)` exercises long, in-the-
 money contracts early in the same way against the underlying's fresh price, so any
 time value left is a cost; it takes the account's checks and, with the
 `buying_power` rule, must fit within it. Shares an exercise opens, or adds to, enter
@@ -126,7 +130,10 @@ day before expiry when a held short is within the band, even if out of the money
 
 Pin-model settlements close the option at zero and deliver only the assigned
 contracts' shares at the strike, marked using the actual settlement reference.
-This records the exact strike cash flow, including out-of-money assignments.
+This records the exact strike cash flow, including out-of-money assignments. An
+adjusted series delivers at its effective strike rounded to the micro-dollar, and the
+cash still moves by the exact amount, 100 times the strike less the cash in lieu a
+contract (runs recorded with replay driver 10 or earlier kept the rounded amount).
 Exercise fees apply only to assigned contracts. Settlement events record
 `pin_risk`, `simulated`, `assigned_contracts` and `seed`; ordinary settlement sources
 keep their original provenance. The warning's ordinary delivery estimate remains
@@ -412,7 +419,13 @@ other accounts' held and working dollar delta as the server supplies it for that
 as an option order's fill does; a refusal there rejects the order with its reason, while
 a stale price, a closed session, a halt or another account's missing valuation only
 makes it wait. Fills record
-the order on their stock fill (`stock_order`).
+the order on their stock fill (`stock_order`). The kill switch, a decided attempt, a
+locked day, flat time and the end of the plan's trading window cancel working share
+orders that could open, as they cancel option orders: one that, with the working
+orders on its side accepted before it (of an OCO pair the larger), would trade past
+the shares held. Bracket exits and orders that only reduce keep working. Runs
+recorded with replay driver 10 or earlier left them working until an execution check
+rejected them.
 
 `bracket: {stop_loss?, take_profit?}` places, once the entry fills, a GTC stop at
 `stop_loss` and a limit at `take_profit` for the shares it traded, each the other's
@@ -1133,7 +1146,10 @@ in place, shrunk to what this bracket still protects even when another entry hol
 the same contract. A stop that fills only in part, because the
 bid shows fewer contracts than it sells or other orders have used them, does not cancel
 its remainder: it re-arms for it (`order_rearmed`) and fires again on the next quote that
-still reaches its level, so a thin book never leaves part of the position bare. If the
+still reaches its level with size to sell into (or buy from), so a thin book never leaves part of the
+position bare. While the quote it used up stands, offered again with later batches, it
+stays armed rather than trigger and re-arm on every transaction (replay driver 10 or
+earlier did that), and so does an exit reached on a side that shows nothing left. If the
 entry still has an unfilled remainder, the first exit fill cancels it with `OCO_FILLED`
 so it cannot reopen after protection has fired. Exits never exceed the position they protect: they shrink when it shrinks
 and are cancelled with `POSITION_CLOSED` once it is flat, so they never open a
@@ -1323,7 +1339,11 @@ record nothing. A positive quantity at or below the filled quantity remains a
 
 Changes with valid request bodies stay on open orders in `Order::changes`, oldest
 first, applied or refused: their market time and actor, the terms requested (each left empty
-kept), the terms the order had then, and the refusal's decision with its numbers.
+kept), the terms the order had then, and the refusal's decision with its numbers. An
+order keeps its latest 50, and `changes_dropped` counts the earlier ones it let go:
+each change journals the whole order, so an unbounded history grew the journal with
+the square of an order's changes (runs recorded with replay driver 10 or earlier keep
+every one).
 A refused change leaves the order's terms as they were. `Order::ended_at` is when an
 order stopped working: the fill that completed it, its cancellation (whatever the
 reason: `USER_CANCEL`, `DAY_END`, `EXPIRED`, `RISK_CHANGED` and the rest) or its
@@ -1635,8 +1655,8 @@ applies its pending limits. Limits themselves never liquidate positions.
 Daily loss is `max(0, start_of_day_equity - equity)` including marks and fees. A loss
 **strictly greater than** the configured allowance trips the latch **before matching**
 on that market batch. Manual `trip_kill` does the same. The account becomes
-**reduce-only**: orders that can open or increase a position are cancelled and new
-ones reject with `KILL_SWITCH`. Closing orders, Flatten, bracket exits, the system's
+**reduce-only**: orders that can open or increase a position are cancelled, working
+share orders among them, and new ones reject with `KILL_SWITCH`. Closing orders, Flatten, bracket exits, the system's
 own closes and share closes keep working. Early exercise rejects with `KILL_SWITCH`
 because it delivers shares. Settlement remains permitted.
 
@@ -1755,6 +1775,10 @@ Enabling a rule, raising a soft floor, lowering a trade/profit/loss threshold or
 lengthening a cooldown applies now. Other changes appear in `pending_guardrails`
 until rollover. Starting a new attempt applies pending settings and keeps today's
 `PROFIT_LOCK` and `TRADE_LIMIT` latches, opening-order count and active `cooldown_until`.
+A reset made after the plan day has ended, before its rollover ran, starts the new
+date as the rollover would: the finished day's latches, count and flags end with it
+and only an unexpired cooldown stays (runs recorded with replay driver 10 or earlier
+kept them through the whole next day).
 Among personal latches, it clears only the old attempt's `SOFT_FLOOR` and re-checks the floor against
 new equity; personal settings persist. Lowering or disabling a daily discipline rule
 through pending settings does not clear its existing latch before rollover.
@@ -2185,8 +2209,8 @@ intraday peak, fails on `equity <= floor` (the floor is breached by touching it)
 then locks the day or fails on the plan's daily loss limit, and otherwise passes
 once the target and every objective are met. Breaches are checked on every
 transaction in every mode; the mode only controls when the floor rises. The decision
-is sticky for the attempt: open user orders cancel with `EVALUATION_CLOSED` and the
-system tries to liquidate every position. After a pass or failure, orders that only
+is sticky for the attempt: open user orders, and working share orders that could
+open, cancel with `EVALUATION_CLOSED` and the system tries to liquidate every position. After a pass or failure, orders that only
 reduce held positions remain allowed, including Flatten (`close_positions`) and
 [disposing of worthless positions](#disposing-of-worthless-positions). Each closing
 leg must oppose a holding and fit within it after working user closes, as under the
@@ -2449,8 +2473,8 @@ end exclusive; `00:00` is valid and `24:00` is valid for the end. The window app
 every day, including overnight and curb sessions; product-session checks still
 apply. Outside it, openings receive `OUTSIDE_PLAN_HOURS`, with the current New York
 `HH:MM` time in `actual`, the nearest window boundary as `HH:MM` in `limit`, and the underlying in
-`scope`. At the first transaction outside the window, working opening orders cancel
-with that reason before matching. A gap into the next day’s window still cancels
+`scope`. At the first transaction outside the window, working opening orders, share
+orders included, cancel with that reason before matching. A gap into the next day’s window still cancels
 orders that crossed the previous window’s end. Reducing orders and bracket exits
 keep working under their normal sessions and expiry rules.
 
@@ -2468,7 +2492,7 @@ Custom plans may set `flat_time` to `HH:MM` New York time (`00:00`–`23:59`),
 strictly before `day_end`, or null/omitted to disable it. Internally it is an
 optional integer minute after New York midnight. The first transaction at or
 past that time on a plan trading date, before its day ends, cancels working
-opening orders with `FLAT_TIME` **before matching**. Empty quote batches and
+opening orders, share orders included, with `FLAT_TIME` **before matching**. Empty quote batches and
 clock advances count, including a day's first transaction already past the time.
 Reducing orders and managed exits remain working, capped to the positions they
 protect, and cancel when those positions close.
@@ -2631,7 +2655,8 @@ fully marked equity high (from its opening equity). Touching the level (`equity 
 level`) either fails the attempt (`Fail`, code `DAILY_LOSS_LIMIT`, liquidated as
 `system:daily_loss:N`) or locks the day (`Lock`). A locked day records
 `Evaluation::day_lock = DAILY_LOSS_LIMIT` with its time and a `day_locked` event,
-cancels every open user order with that code, liquidates every position and share like
+cancels every open user order with that code (of share orders, those that could open),
+liquidates every position and share like
 a decision (`system:daily_loss:N`, retried on later updates until flat), and refuses
 orders that open or add with `DAILY_LOSS_LIMIT` until rollover; closing orders are
 still accepted. The attempt stays active and the drawdown floor still applies. Rollover
@@ -5022,9 +5047,10 @@ rules refused. The preview's `reason`, a payout's `blocked` and a flatten's
 numbers beside the reason.
 
 Orders also report `ended_at` (null while open), `modified_at` (when a change last
-applied, or null), `changes` (each with `time`, `actor`, the requested `quantity`,
+applied, or null), `changes` (the latest 50, each with `time`, `actor`, the requested `quantity`,
 `limit_price` and `trigger_level`, null where kept, the `previous` terms, `applied`
-and the refusal's `reason`) and, while open, `waiting` (`{code, message}` from the
+and the refusal's `reason`), `changes_dropped` (how many earlier ones it no longer
+lists) and, while open, `waiting` (`{code, message}` from the
 table under [changing orders](#changing-cancelling-and-flattening), or null). The
 Orders page's **Details** shows an order's history: accepted, triggered, each change
 and refusal, and how it ended or what it waits for.

@@ -1434,5 +1434,61 @@ TEST(TradingDelivery, FreshOptionMarksWithoutFreshGreeksBlockOpeningShares) {
   EXPECT_EQ(s.trade_stock("SPY", 1, f.time, StockPrice{"SPY", f.time, m("510")}).decision.code, Reason::MISSING_VALUATION);
 }
 
+
+TEST(TradingDelivery, APinAssignmentOfAnAdjustedSeriesPaysTheExactStrikeAmount) {
+  // 3:2 put on 305: 150 shares a contract at 30,500 / 150 = 203.333333 rounded.
+  auto put = *md::parse_osi("SPY260922P00305000");
+  put.root = "SPY1";
+  put.standard = false;
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 11" : "driver 10");
+    Spy f;
+    f.spot = 203.30;
+    auto config = roomy();
+    config.rules.pin_risk = true;
+    config.rules.pin_risk_seed = 42;
+    TradingSession s(config, f.time);
+    s.set_revised_lifecycle(revised);
+    ASSERT_TRUE(s.define(put, f.time, Deliverable{150, {}}).decision.ok());
+    f.quote(s, put, "0.10", "0.11");
+    ASSERT_TRUE(s.submit(f.market("short", put, 5, Side::Sell), f.time).decision.ok());
+    const auto cash = s.snapshot()->account.cash;
+    ASSERT_TRUE(s.settle(put.osi_symbol(), m("203.30"), put.expiry_time()).decision.ok());
+    ASSERT_NE(stock(s, "SPY"), nullptr);
+    const auto shares = stock(s, "SPY")->position.shares;
+    ASSERT_EQ(shares % 150, 0);
+    const auto contracts = shares / 150;
+    ASSERT_GT(contracts, 0);
+    EXPECT_EQ(s.snapshot()->stock_fills.back().price, m("203.333333"));
+    // Drivers 1-10 paid the rounded price for every share, a fraction of a cent short.
+    EXPECT_EQ(s.snapshot()->account.cash, revised ? cash - m("30500") * contracts : cash - m("203.333333") * shares);
+  }
+}
+
+TEST(TradingDelivery, ALateSettlementKeepsANewerSharePrice) {
+  const auto call = *md::parse_osi("SPY260918C00500000");  // Friday
+  const auto monday = md::new_york_to_utc({2026, 9, 21}, 10, 0);
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 11" : "driver 10");
+    Spy f;
+    f.time = md::new_york_to_utc({2026, 9, 18}, 10, 0);
+    f.spot = 505;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_lifecycle(revised);
+    f.define(s, call);
+    f.quote(s, call, "5.00", "5.10");
+    ASSERT_TRUE(s.submit(f.market("long", call, 1), f.time).decision.ok());
+    // Monday's feed prices SPY at 480 before the settlement on Friday's 510 close is applied.
+    const auto printed = monday - 5 * md::kNanosPerSecond;
+    ASSERT_TRUE(s.on_quotes({}, {}, printed, {{"SPY", printed, m("480")}}).decision.ok());
+    ASSERT_TRUE(s.settle(call.osi_symbol(), m("510"), monday).decision.ok());
+    ASSERT_NE(stock(s, "SPY"), nullptr);
+    EXPECT_EQ(stock(s, "SPY")->position.shares, 100);
+    const auto sold = s.trade_stock("SPY", -100, monday + md::kNanosPerSecond, std::nullopt, true);
+    ASSERT_TRUE(sold.decision.ok()) << sold.decision.message;
+    // Drivers 1-10 marked the delivered shares at Friday's close and sold them there.
+    EXPECT_EQ(s.snapshot()->stock_fills.back().price, revised ? m("480") : m("510"));
+  }
+}
 }  // namespace
 }  // namespace openport::trading

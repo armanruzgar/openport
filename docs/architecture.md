@@ -179,10 +179,13 @@ driver 8 fills and order mechanics: queue fills, stop stress, underlying trails,
 walking order's `then` and limit flatten, driver 9 corporate actions and
 financing: prices from before a split's ex-date, option triggers on a split stock,
 dividends on adjusted series and across catch-up rollovers, financing from an
-account's first trading date and portfolio margin on adjusted series, and driver 10
+account's first trading date and portfolio margin on adjusted series, driver 10
 working share orders: client IDs per attempt, OCO pairs counted once and stops
-reached only in their session. Older drivers
-retain their original reducer behavior. The start input records `"driver": 10`: batches of whole market instants, with each
+reached only in their session, and driver 11 order and account upkeep: share orders
+cancelled with the option orders a rule stops, re-armed exits waiting for new size,
+exact pin deliveries, settlement marks, a reset after the day's end and bounded order
+change histories. Older drivers
+retain their original reducer behavior. The start input records `"driver": 11`: batches of whole market instants, with each
 underlying's quotes offered at the market time its own snapshot arrived; a new
 trading date's first batch rolling each account over on the finished day's closing
 marks before that batch's quotes; and each command's input recorded before the

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -248,6 +249,10 @@ inline constexpr std::size_t kMaxChain = 4;  ///< Orders in one request, its cha
 /// Every contract an order or any chained order trades.
 [[nodiscard]] std::vector<std::string> chain_symbols(const OrderRequest& request);
 enum class OrderRole { Normal, StopLoss, TakeProfit };
+/// The most change records an order keeps (replay driver 11 on): each is journaled
+/// with the whole order on every later change, so an unbounded history would grow the
+/// journal with the square of the changes.
+inline constexpr std::size_t kMaxOrderChanges = 50;
 /// A change asked of a resting order: the terms requested (each one left empty
 /// kept), the terms the order had then, who asked and when, and why it was
 /// refused (NONE when it was applied). A refused change leaves the order as it was.
@@ -312,8 +317,10 @@ struct Order {
   /// When it stopped working: filled, cancelled or rejected; zero while open and
   /// for orders that ended before older journals kept it.
   Timestamp ended_at = 0;
-  /// Every change asked of it while it rested, applied or refused, oldest first.
+  /// Every change asked of it while it rested, applied or refused, oldest first: the
+  /// latest kMaxOrderChanges of them, with how many earlier ones were dropped.
   std::vector<OrderChangeRecord> changes;
+  std::uint64_t changes_dropped = 0;
   /// A close the account works for the trader, as a flatten's are: it only reduces,
   /// is kept within the position like a bracket exit and works on later quotes
   /// until it fills, its session ends, the position closes or it is cancelled.

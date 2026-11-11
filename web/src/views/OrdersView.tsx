@@ -140,7 +140,7 @@ function OrdersTable({ orders, all, trading, empty, onDone }: { orders: Order[];
               {order.triggered_at ? " · triggered" : ""}
               {order.note?.startsWith("Playbook automatic ") ? ` · ${order.note}` : ""}
               {describeChain(order) ? ` · ${describeChain(order)}` : ""}
-              {order.changes?.length ? ` · changed ${order.changes.filter((c) => c.applied).length}×${order.changes.some((c) => !c.applied) ? `, ${order.changes.filter((c) => !c.applied).length} refused` : ""}` : ""}</div></td>
+              {order.changes?.length ? ` · changed ${order.changes.filter((c) => c.applied).length}×${order.changes.some((c) => !c.applied) ? `, ${order.changes.filter((c) => !c.applied).length} refused` : ""}${order.changes_dropped ? `, ${order.changes_dropped} earlier not kept` : ""}` : ""}</div></td>
           <td className={order.side === "buy" ? "text-bullish" : order.side === "sell" ? "text-bearish" : "text-accent"}>{order.side ? order.side.toUpperCase() : "NET"}</td>
           <td>{order.type} · {order.time_in_force.toUpperCase()}</td>
           <td>{order.filled_quantity} / {order.quantity}</td>

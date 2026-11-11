@@ -1256,6 +1256,8 @@ Money average_unit_price(const Position& p) {
 }
 Money stock_orders_reserved(const State& s);
 void expire_stock_orders(State& s, Events& events);
+void cancel_opening_stock_orders(State& s, const Decision& reason, Events& events);
+void sweep_opening_stock_orders(State& s, bool skipped_end, Events& events);
 struct PowerDetail {
   BuyingPower total;
   Money focus_reservation;
@@ -1833,6 +1835,9 @@ void trip(State& s, const std::string& reason, Events& events) {
   const auto ids = open_ids(s);
   for (const auto id : ids) cancel_unless_closing(id, false);
   for (auto it = ids.rbegin(); it != ids.rend(); ++it) cancel_unless_closing(*it, true);
+  // Working share orders that could open go too (driver 11; replay drivers 1-10 left
+  // them working until an execution check rejected them).
+  if (s.revised_lifecycle) cancel_opening_stock_orders(s, kill_decision(s), events);
 }
 Decision loss_check(const State& s, const Measures& snapshot) {
   if (snapshot.risk.daily_loss > s.config.limits.max_daily_loss)
@@ -1962,6 +1967,15 @@ void send_to_back(const State& s, Order& o, Timestamp time) {
   o.queue.reset();
   o.rejoined_at = time;
 }
+/// Keeps a change asked of an order: the latest kMaxOrderChanges, counting those it
+/// drops (driver 11; replay drivers 1-10 kept every one).
+void keep_change(const State& s, Order& o, OrderChangeRecord change) {
+  o.changes.push_back(std::move(change));
+  if (!s.revised_lifecycle || o.changes.size() <= kMaxOrderChanges) return;
+  const auto dropped = o.changes.size() - kMaxOrderChanges;
+  o.changes.erase(o.changes.begin(), o.changes.begin() + static_cast<std::ptrdiff_t>(dropped));
+  o.changes_dropped += dropped;
+}
 /// Catch up every elapsed interval, retaining each scheduled step in history.
 /// Execution uses the current observation, never an invented intermediate quote.
 void walk_limits(State& s, Events& events) {
@@ -1980,7 +1994,7 @@ void walk_limits(State& s, Events& events) {
       o.request.limit_price = next->price;
       o.walked_at = next->time;
       send_to_back(s, o, next->time);
-      o.changes.push_back(change);
+      keep_change(s, o, change);
       event(events, "order_walked", Json{{"order_id", id}, {"change", change}});
       for (const auto& symbol : order_symbols(o.request)) s.walked.insert(symbol);
     }
@@ -2080,6 +2094,7 @@ void advance(State& s, Timestamp time, Events& events) {
           ? failure(Reason::GTD_END, "The order reached its good_till timestamp")
           : failure(Reason::DAY_END, "The order's session ended"), events);
   }
+  if (s.revised_lifecycle) sweep_opening_stock_orders(s, skipped_end, events);
   walk_limits(s, events);
   expire_stock_orders(s, events);
 }
@@ -3696,6 +3711,24 @@ void activate(State& s, OrderId id, Events& events) {
   match_symbols(s, {symbols.begin(), symbols.end()}, events, id);
   if (s.config.rules.fill_latency_ms == 0) end_ioc(s, id, "IOC exhausted available displayed liquidity", events);
 }
+/// Whether a stop exit's book has nothing left to fill it: a leg's closing side shows
+/// no size the quote it last offered has not already given. A market stop exit
+/// triggered then would find nothing, re-arm (end_ioc) and trigger again on the next
+/// transaction while the same quote stands, so it waits for new size instead (driver
+/// 11; replay drivers 1-10 triggered and re-armed it on every transaction). Only
+/// without impact or fill latency, which fill beyond displayed size or later; a
+/// stop-limit exit rests as a limit once triggered, so it never re-arms.
+bool exit_without_size(const State& s, const Order& o) {
+  if (!s.revised_lifecycle || o.role == OrderRole::Normal || !immediate(o.request) ||
+      s.config.rules.impact_ticks != 0 || s.config.rules.fill_latency_ms != 0)
+    return false;
+  auto legs = o.request.legs;
+  if (legs.empty()) legs.push_back({o.request.symbol, o.request.side, 1});
+  return std::any_of(legs.begin(), legs.end(), [&](const Leg& leg) {
+    const auto book = s.books.find(leg.symbol);
+    return book != s.books.end() && (leg.side == Side::Buy ? book->second.ask_left : book->second.bid_left) / leg.ratio <= 0;
+  });
+}
 /// Armed orders activate in eligible sessions; only EXTO/GTC_EXTO extend them.
 void check_triggers(State& s, Events& events) {
   const auto visit = [&](OrderId id) {
@@ -3705,7 +3738,7 @@ void check_triggers(State& s, Events& events) {
     // A trail follows what the trigger reads first, in the regular session; it
     // cannot reach the level it sets.
     if (regular(contract, s.time)) trail_level(s, id, events);
-    if (reached(s, s.orders[id - 1])) activate(s, id, events);
+    if (reached(s, s.orders[id - 1]) && !exit_without_size(s, s.orders[id - 1])) activate(s, id, events);
   };
   // The open orders in ID order, then any placed while activating them (a
   // bracket's exits), in order, as one pass over every order would find them.
@@ -3913,6 +3946,7 @@ void decide(State& s, const PlanVerdict& verdict, Money equity, Events& events) 
   event(events, verdict.status == EvaluationStatus::Passed ? "evaluation_passed" : "evaluation_failed", std::move(payload));
   for (const auto id : open_ids(s))
     if (!s.orders[id - 1].system) cancel_order(s, id, failure(Reason::EVALUATION_CLOSED, verdict.message), events);
+  if (s.revised_lifecycle) cancel_opening_stock_orders(s, failure(Reason::EVALUATION_CLOSED, verdict.message), events);
 }
 /// Runs before any executions, including late mandatory closes after a gap.
 void record_holding_boundaries(State& s, Events& events) {
@@ -3976,6 +4010,7 @@ void lock_day(State& s, const PlanVerdict& verdict, Money equity, Events& events
                                    {"level", verdict.level}, {"message", verdict.message}});
   for (const auto id : open_ids(s))
     if (!s.orders[id - 1].system) cancel_order(s, id, failure(verdict.code, verdict.message), events);
+  if (s.revised_lifecycle) cancel_opening_stock_orders(s, failure(verdict.code, verdict.message), events);
 }
 /// What the plan's rules read of the account now, at marked `equity`.
 PlanInputs plan_inputs(const State& s, Money equity) {
@@ -5421,7 +5456,7 @@ CommandResult change_order(State& s, OrderId id, const OrderChange& change, cons
   }
   const auto refuse = [&](Decision decision) {
     record.decision = decision;
-    order.changes.push_back(record);
+    keep_change(s, order, record);
     return CommandResult{std::move(decision), id, 0};
   };
   const bool exit = kept_within(order);
@@ -5490,7 +5525,7 @@ CommandResult change_order(State& s, OrderId id, const OrderChange& change, cons
     order.day_end = order.request.tif == TimeInForce::Gtc ? order_expiry(s, order.request) : day_deadline(s, order.request, s.time);
   if (change.limit_price) order.limit_ticks.reset();
   if (!keeps_queue_place(before.request, order.request)) send_to_back(s, order, s.time);
-  order.changes.push_back(record);
+  keep_change(s, order, record);
   event(events, "order_modified", order);
   const auto symbols = order_symbols(order.request);
   if (order.status != OrderStatus::Armed) match_symbols(s, {symbols.begin(), symbols.end()}, events, id);
@@ -6112,6 +6147,10 @@ void TradingSession::set_revised_corporate_actions(bool revised) {
 }
 void TradingSession::set_revised_share_orders(bool revised) {
   impl_->state.revised_share_orders = revised;
+  impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
+}
+void TradingSession::set_revised_lifecycle(bool revised) {
+  impl_->state.revised_lifecycle = revised;
   impl_->snapshot = std::make_shared<TradingSnapshot>(snapshot_of(impl_->state));
 }
 void TradingSession::set_opening_rule_inputs(std::optional<OpeningRuleInputs> inputs, bool compact) {
@@ -6989,6 +7028,16 @@ CommandResult TradingSession::reset_kill(std::string reason, Timestamp time) {
 }
 namespace {
 std::uint64_t mix(std::uint64_t x);
+/// When a settlement's reference printed, never after the settlement itself: the stock
+/// market's close that the expiry falls at or just after (a quarter-hour ETF series
+/// still settles on the 16:00 close), or the expiry itself for an AM series, whose
+/// reference is the opening print.
+Timestamp settlement_print_time(const md::OptionContract& contract, Timestamp time) {
+  const auto expiry = contract.expiry_time();
+  const auto session = md::stock_session(expiry);
+  const auto printed = session.open || session.market_time == md::kInvalidTimestamp ? expiry : session.market_time;
+  return std::min(printed, time);
+}
 Quantity pin_assignments(const State& s, const md::OptionContract& contract, Quantity contracts, bool in_money) {
   auto seed = mix(static_cast<std::uint64_t>(s.evaluation.started) ^
                   mix(static_cast<std::uint64_t>(s.config.rules.pin_risk_seed)));
@@ -7058,9 +7107,24 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
       const auto underlying = it->second.underlying;
       const auto shares = delivered(s, it->second, assigned);
       const auto delivery_price = pin ? strike : settlement;
-      if (const auto mark = s.stock_marks.find(underlying); mark == s.stock_marks.end() || mark->second.time <= time)
-        s.stock_marks[underlying] = {settlement, time};
+      // The settlement is the stock's price when it printed: the close the expiry
+      // falls in, or an AM series' opening print. It marks the shares only over an
+      // older price, stamped then, so a newer print a late settlement finds stays
+      // (driver 11; replay drivers 1-10 stamped it with the settlement's own time).
+      const auto printed = s.revised_lifecycle ? settlement_print_time(it->second, time) : time;
+      if (const auto mark = s.stock_marks.find(underlying); mark == s.stock_marks.end() || mark->second.time <= printed)
+        s.stock_marks[underlying] = {settlement, printed};
       trade_shares(s, underlying, shares, delivery_price, StockSource::Delivery, symbol);
+      // An adjusted series' effective strike is rounded to the micro-dollar, so a pin
+      // assignment's shares at it can miss the strike amount by a fraction of a cent:
+      // the cash takes the exact amount, 100 times the strike less the cash in lieu a
+      // contract (driver 11; replay drivers 1-10 kept the rounded amount).
+      if (pin && s.revised_lifecycle) {
+        const Money amount = (Money::from_double(it->second.strike) * 100 - deliverable_of(s, symbol).cash) * magnitude(assigned);
+        const Money exact = shares > 0 ? -amount : amount;
+        const Money booked = -(delivery_price * shares);
+        if (exact != booked) s.ledger.accrue(exact - booked);
+      }
       if (s.config.rules.buying_power)
         s.stock_fills.mut(s.stock_fills.size() - 1).buying_power_after = buying_power(s).total.available;
       event(events, "delivery", Json{{"symbol", symbol}, {"underlying", underlying}, {"shares", shares}, {"price", delivery_price}});
@@ -7610,6 +7674,19 @@ CommandResult TradingSession::reset_account(Money initial_cash, AccountRules rul
     s.do_not_exercise = {};
     s.trips.clear();
     s.start_equity = initial_cash;
+    // A reset after the plan day ended, before its rollover ran, starts the new date as
+    // the rollover would have: the finished day's personal latches, opening-trade count
+    // and flags end with it, and only an unexpired cooldown stays (driver 11; replay
+    // drivers 1-10 carried them through the whole of the next day).
+    if (s.revised_lifecycle && plan_trading_date(s.config.rules, s.time) > s.day) {
+      const bool personal_latch = s.guardrails.owns_kill;
+      const auto cooldown_until = s.guardrails.cooldown_until;
+      auto opening_sizes = std::move(s.guardrails.opening_sizes);
+      s.guardrails = {};
+      s.guardrails.owns_kill = personal_latch;
+      s.guardrails.opening_sizes = std::move(opening_sizes);
+      if (cooldown_until > s.time) s.guardrails.cooldown_until = cooldown_until;
+    }
     // The new ledger clears only the equity-based latch. Daily discipline survives the attempt.
     std::erase(s.guardrails.latched, Reason::SOFT_FLOOR);
     if (!s.guardrails.owns_kill || guardrail_reason(s) == Reason::NONE) {

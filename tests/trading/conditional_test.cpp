@@ -1033,5 +1033,35 @@ TEST(TradingConditional, TriggersWaitForTheRegularSessionAndSurviveRecovery) {
   std::filesystem::remove_all(directory);
 }
 
+
+TEST(TradingConditional, AReArmedStopWaitsForNewSizeInsteadOfTriggeringOnEveryBatch) {
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 11" : "driver 10");
+    ScriptedMarket f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_lifecycle(revised);
+    f.seed(s);
+    ASSERT_TRUE(s.submit(with_bracket(f.limit("entry", 3, "4.20"), stop_at("3.50"), target_at("5.00")), f.time).decision.ok());
+    quote(s, f, "3.40", "3.60", 1);  // sells one and re-arms for two
+    ASSERT_EQ(order(s, 2).status, OrderStatus::Armed);
+    ASSERT_EQ(order(s, 2).filled_quantity, 1);
+    const auto triggered = order(s, 2).triggered_at;
+    // The desk offers the same quote again with later batches; its bid is used up.
+    for (int i = 0; i < 3; ++i) {
+      f.time += md::kNanosPerSecond;
+      auto valuation = f.valuation();
+      valuation.spot = 5000;
+      ASSERT_TRUE(s.on_quotes({f.quote("3.40", "3.60", 1)}, {valuation}, f.time).decision.ok());
+    }
+    EXPECT_EQ(order(s, 2).status, OrderStatus::Armed);
+    EXPECT_EQ(order(s, 2).filled_quantity, 1);
+    // Drivers 1-10 triggered and re-armed it on each.
+    EXPECT_EQ(order(s, 2).triggered_at == triggered, revised);
+    // A new quote with size sells the rest.
+    quote(s, f, "3.40", "3.60", 5);
+    EXPECT_EQ(order(s, 2).status, OrderStatus::Filled);
+    EXPECT_TRUE(s.snapshot()->positions.empty());
+  }
+}
 }  // namespace
 }  // namespace openport::trading

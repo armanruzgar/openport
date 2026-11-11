@@ -1089,5 +1089,23 @@ TEST(TradingOrders, AbandonmentCancelsAPendingExpiryClose) {
   EXPECT_EQ(order(s, close).reason.code, Reason::POSITION_CLOSED);
 }
 
+
+TEST(TradingOrders, AnOrderKeepsItsLatestFiftyChanges) {
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 11" : "driver 10");
+    ScriptedMarket f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_lifecycle(revised);
+    f.seed(s);
+    ASSERT_TRUE(s.submit(f.limit("rest", 1, "3.80"), f.time).decision.ok());
+    for (int i = 0; i < 60; ++i) {
+      ASSERT_TRUE(s.modify(1, price(i % 2 == 0 ? "3.90" : "3.80"), f.time).decision.ok());
+    }
+    // Each change is journaled with the whole order: drivers 1-10 kept all of them.
+    EXPECT_EQ(order(s, 1).changes.size(), revised ? kMaxOrderChanges : std::size_t{60});
+    EXPECT_EQ(order(s, 1).changes_dropped, revised ? 10u : 0u);
+    EXPECT_EQ(order(s, 1).changes.back().limit_price, m("3.80"));
+  }
+}
 }  // namespace
 }  // namespace openport::trading

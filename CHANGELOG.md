@@ -35,13 +35,16 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   reserved as one, and stops reached only in their session. Runs recorded with
   drivers 1–9 still pass `--verify-run` with their original share orders; like driver
   9's, they can no longer be resumed or restarted.
+- **Replay driver 11.** New reproducible runs record driver 11, which also applies the
+  order and account upkeep fixes below: share orders cancelled with the option orders
+  a rule stops, re-armed exits waiting for new size, exact pin deliveries, settlement
+  marks, a reset after the day's end and bounded order change histories. Runs recorded
+  with drivers 1–10 still pass `--verify-run` as they were recorded; like driver 10's,
+  they can no longer be resumed or restarted.
 - **Kill-switch and reset reasons are short text.** `POST /api/risk/kill` and
   `POST /api/account/reset` now refuse a `reason` over 200 bytes or with control
   characters (400 `INVALID_REQUEST`); a script that sent long or multi-line reasons
   must shorten them.
-
-### Providers
-
 
 ### Providers
 
@@ -522,6 +525,33 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   are now listed, with Cancel, under Positions → Shares and on the Orders page, Close
   all names the ones it leaves and the short sales they would open, and the reserved
   buying power says it is held by working orders.
+- **Share orders under the kill switch and plan rules.** The kill switch, a passed or
+  failed attempt, a locked day, flat time and the end of the plan's trading window
+  cancelled working option orders that could open but left share orders working and
+  reserving buying power until a price reached them and an execution check rejected
+  them. Share orders that could open are now cancelled with the same code; those that
+  only reduce keep working.
+- **A re-armed stop exit on a used-up quote.** A bracket stop that sold part of its
+  position and re-armed for the rest triggered and re-armed again on every later
+  transaction while the same quote stood with its size used up, adding two
+  whole-order records to the journal each time. It now waits for a quote with size.
+- **Pin-risk deliveries of adjusted series.** A pin assignment delivered shares at the
+  series' effective strike rounded to the micro-dollar, so the cash missed the strike
+  amount by a fraction of a cent and kept sub-cent digits. The cash now moves by the
+  exact amount.
+- **A late settlement and a newer share price.** A settlement applied after the fact
+  (after a restart, or by hand on Monday) marked the delivered shares at Friday's
+  close as if it were current, over the price the feed had just given, and a share
+  close then filled at it. The settlement now marks the shares only over an older
+  price, stamped with the time it printed.
+- **An account reset after the day ended.** A reset made after the plan day's end but
+  before its rollover kept that day's `TRADE_LIMIT` and `PROFIT_LOCK` latches and
+  opening-trade count through the whole next day. They now end with the finished day,
+  as the rollover would have ended them.
+- **Order change histories.** Every change asked of an order stayed on it, and each
+  change journaled the whole order, so re-pricing one order many times grew the
+  journal with the square of its changes. An order now keeps its latest 50 changes
+  and reports how many earlier ones it dropped (`changes_dropped`).
 - **Strategy margin and leg order.** When the exact allocator gave up on a large book,
   the fallback's requirement depended on the order the legs were listed in (by up to
   4% on one book), so `margin_requirement` and `margin_breakdown` could answer

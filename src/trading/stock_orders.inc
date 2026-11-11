@@ -513,6 +513,57 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
   for (auto i = s.stock_indexed; i < s.stock_orders.size(); ++i) work(i);
 }
 
+/// Whether an open share order could open or add to a position: with the working
+/// orders on its side accepted before it filled first (of an OCO pair only the larger
+/// one, once), it would trade past the shares held. Bracket exits only ever reduce.
+bool share_order_opens(const State& s, const StockOrder& o) {
+  if (o.exit()) return false;
+  const bool buy = o.request.side == Side::Buy;
+  const auto held = shares_held(s, o.request.symbol);
+  Quantity room = buy ? std::max<Quantity>(-held, 0) : std::max<Quantity>(held, 0);
+  for (const auto id : open_stock_ids(s)) {
+    if (id >= o.id) break;
+    const auto& other = s.stock_orders[id - 1];
+    if (other.exit() || other.request.symbol != o.request.symbol || other.request.side != o.request.side) continue;
+    Quantity shares = other.request.shares;
+    if (const auto* partner = open_partner(s, other); partner && partner->request.side == other.request.side) {
+      if (partner->id == o.id || partner->id < other.id) continue;  // `o` trades instead of it, or it counted with its partner
+      shares = std::max(shares, partner->request.shares);
+    }
+    room -= shares;
+  }
+  return o.request.shares > room;
+}
+
+/// Ends, with `reason`, the working share orders that could open, as the kill switch,
+/// a decided attempt and a locked day cancel the option orders that would: one at a
+/// time in acceptance order, so an older order keeps the shares it reduces first.
+/// Bracket exits and orders that only reduce keep working.
+void cancel_opening_stock_orders(State& s, const Decision& reason, Events& events) {
+  for (const auto id : open_stock_ids(s)) {
+    const auto& o = s.stock_orders[id - 1];
+    if (o.open() && share_order_opens(s, o)) end_stock_order(s, id, OrderStatus::Cancelled, reason, events);
+  }
+}
+
+/// The plan's entry rules for working share orders that could open, as advance applies
+/// them to option orders: one its trading window, flat time, calendar or underlyings
+/// now refuse ends with that rule's code, and one that waited across the window's end
+/// with OUTSIDE_PLAN_HOURS.
+void sweep_opening_stock_orders(State& s, bool skipped_end, Events& events) {
+  const auto& rules = s.config.rules;
+  for (const auto id : open_stock_ids(s)) {
+    const auto& o = s.stock_orders[id - 1];
+    if (!o.open() || o.exit()) continue;
+    auto d = skipped_end
+        ? Decision{Reason::OUTSIDE_PLAN_HOURS, "Working opening order reached the end of the plan's trading window",
+                   static_cast<double>(md::new_york_time(s.time).seconds / 60), static_cast<double>(*rules.trading_end),
+                   o.request.symbol}
+        : plan_entry_check(rules, o.request.symbol, s.time);
+    if (!d.ok() && share_order_opens(s, o)) end_stock_order(s, id, OrderStatus::Cancelled, std::move(d), events);
+  }
+}
+
 /// Day orders end with their session; every share order ends with a reset or when
 /// its attempt is decided and it would open.
 void expire_stock_orders(State& s, Events& events) {

@@ -631,6 +631,58 @@ TEST(StockOrders, AShortEntrysBracketBuysBackOnlyTheSharesStillShort) {
   EXPECT_TRUE(s.snapshot()->stocks.empty());
 }
 
+TEST(StockOrders, RulesThatStopOpeningsEndOpeningShareOrders) {
+  const auto open = ny(10);
+  // The kill switch ends a resting buy that would open, and keeps a sell that only reduces.
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 11" : "driver 10");
+    TradingSession s(config(), open);
+    s.set_revised_lifecycle(revised);
+    ASSERT_TRUE(s.trade_stock("SPY", 100, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+    ASSERT_TRUE(s.submit_stock_order(order("buy", Side::Buy, StockOrderType::Limit, 10, "495.00"), open).decision.ok());
+    ASSERT_TRUE(s.submit_stock_order(order("sell", Side::Sell, StockOrderType::Limit, 50, "510.00"), open).decision.ok());
+    ASSERT_TRUE(s.trip_kill("pause", ny(10, 1)).decision.ok());
+    // Drivers 1-10 left it working, and reserving, until a price reached it.
+    EXPECT_EQ(stock_order(s, 1).status, revised ? OrderStatus::Cancelled : OrderStatus::Working);
+    EXPECT_EQ(stock_order(s, 1).reason.code, revised ? Reason::KILL_SWITCH : Reason::NONE);
+    EXPECT_EQ(stock_order(s, 2).status, OrderStatus::Working);
+  }
+  // A decided attempt, a locked day, flat time and the plan's trading window end it too.
+  struct Case {
+    const char* name;
+    AccountRules rules;
+    std::string_view print;
+    Timestamp time;
+    Reason code;
+  };
+  AccountRules drawdown;
+  drawdown.max_drawdown = m("100");
+  AccountRules daily;
+  daily.daily_loss_limit = m("200");
+  AccountRules flat;
+  flat.flat_time = 10 * 60 + 1;
+  AccountRules hours;
+  hours.trading_start = 9 * 60 + 30;
+  hours.trading_end = 10 * 60 + 1;
+  for (const auto& c : {Case{"decided", drawdown, "480", ny(10, 1), Reason::EVALUATION_CLOSED},
+                        Case{"locked", daily, "470", ny(10, 1), Reason::DAILY_LOSS_LIMIT},
+                        Case{"flat time", flat, "500", ny(10, 2), Reason::FLAT_TIME},
+                        Case{"plan hours", hours, "500", ny(10, 2), Reason::OUTSIDE_PLAN_HOURS}}) {
+    SCOPED_TRACE(c.name);
+    auto rules = config();
+    rules.rules = c.rules;
+    TradingSession s(rules, open);
+    ASSERT_TRUE(s.trade_stock("SPY", 10, open, StockPrice{"SPY", open, m("500")}).decision.ok());
+    auto rest = order("rest", Side::Buy, StockOrderType::Limit, 5, "450.00");
+    rest.tif = TimeInForce::Gtc;
+    ASSERT_TRUE(s.submit_stock_order(rest, open).decision.ok());
+    ASSERT_TRUE(price(s, c.time, c.print).decision.ok());
+    EXPECT_EQ(stock_order(s, 1).status, OrderStatus::Cancelled);
+    EXPECT_EQ(stock_order(s, 1).reason.code, c.code);
+    EXPECT_EQ(s.snapshot()->buying_power.reserved, Money{});
+  }
+}
+
 TEST(StockOrders, AnOcoPairTakesAClientIdOfUpTo64Bytes) {
   const auto open = ny(10);
   TradingSession s(config(), open);

@@ -18151,7 +18151,12 @@
             "items": {
               "$ref": "#/components/schemas/OrderChangeRecord"
             },
-            "description": "Every change asked of the order while it rested, applied or refused, oldest first."
+            "description": "Every change asked of the order while it rested, applied or refused, oldest first: the latest 50 of them (runs recorded with replay driver 10 or earlier keep every one)."
+          },
+          "changes_dropped": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many earlier changes the order no longer lists in changes, which keeps the latest 50."
           },
           "waiting": {
             "anyOf": [
@@ -21932,7 +21937,7 @@
           },
           "restart": {
             "type": "string",
-            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (10), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
+            "description": "Start a new durable run from a source id, copying settings and re-executing journaled commands through at (inclusive), with a byte-identical prefix. Only at, speed and paused may accompany it. Defaults: source start, source speed, paused true. Source journal is unchanged; active source is replaced. Requires the current replay driver (11), unchanged inputs/calendar and a clean complete source prefix. 404 unknown, 400 outside source time range, 409 REPLAY_NOT_RESTARTABLE or VERIFICATION_RUNNING."
           },
           "at": {
             "type": "string",

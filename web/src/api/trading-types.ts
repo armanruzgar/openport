@@ -1029,7 +1029,10 @@ export interface Order {
   /** An open order: what keeps it from filling now, or null. */
   waiting?: OrderWait | null
   modified_at?: string | null
+  /** The latest 50 changes asked of it, oldest first. */
   changes?: OrderChangeRecord[]
+  /** How many earlier changes `changes` no longer lists; absent on older servers. */
+  changes_dropped?: number
   /** System orders liquidate or auto-close; absent on older servers. */
   origin?: "user" | "system"
   /**

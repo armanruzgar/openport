@@ -164,6 +164,7 @@ inline void to_json(Json& j, const Order& o) {
   // Likewise an order's end and its changes, once it has them.
   if (o.ended_at != 0) j["ended_at"] = o.ended_at;
   if (!o.changes.empty()) j["changes"] = o.changes;
+  if (o.changes_dropped != 0) j["changes_dropped"] = o.changes_dropped;
   if (o.reduce_only) j["reduce_only"] = true;
   if (o.limit_ticks) j["limit_ticks"] = *o.limit_ticks;
   if (o.walked_at != 0) j["walked_at"] = o.walked_at;
@@ -185,6 +186,7 @@ inline void from_json(const Json& j, Order& o) {
   added_field(j, "triggered_at", o.triggered_at); added_field(j, "actor", o.actor);
   added_field(j, "submitted", o.submitted); added_field(j, "reduce_only", o.reduce_only);
   added_field(j, "ended_at", o.ended_at); added_field(j, "changes", o.changes);
+  added_field(j, "changes_dropped", o.changes_dropped);
   added_field(j, "limit_ticks", o.limit_ticks);
   added_field(j, "walked_at", o.walked_at);
   added_field(j, "opening_counted", o.opening_counted);
@@ -1001,6 +1003,9 @@ struct State {
   /// Transient compatibility: false for replay drivers 1–9, which keep their original
   /// share-order retries, OCO pairs and stop triggers (see set_revised_share_orders).
   bool revised_share_orders = true;
+  /// Transient compatibility: false for replay drivers 1–10, which keep their original
+  /// order and account upkeep (see set_revised_lifecycle).
+  bool revised_lifecycle = true;
   std::set<std::string> walked; ///< Transient symbols to match after this transaction's market is in place.
   SessionConfig config;
   Timestamp time = 0;

@@ -465,6 +465,13 @@ class TradingSession {
   /// second sell beside the first, and a stop triggered by a print outside the
   /// session it works in.
   void set_revised_share_orders(bool revised);
+  /// Preserve order and account upkeep when verifying replay drivers 1–10: share
+  /// orders left working by the kill switch, a decision, a locked day, flat time and
+  /// the plan's trading window; a re-armed exit triggered again on a used-up quote; a
+  /// pin assignment of an adjusted series paid at a rounded strike; a settlement
+  /// marking the shares over a newer price; a reset after the day's end keeping the
+  /// finished day's personal latches; and every change an order kept.
+  void set_revised_lifecycle(bool revised);
   /// Owner-thread fill context. Null retains legacy acceptance-only behavior.
   /// This supplies values, never a callback; checks journal the values they use.
   /// Full records are retained only when reproducing runs predating compact inputs.

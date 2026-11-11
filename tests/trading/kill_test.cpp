@@ -373,5 +373,25 @@ TEST(TradingKill, AnAccountResetThatAppliesPendingSettingsSaysWhen) {
   EXPECT_EQ(snap->kill_history.back().previous, "pause");
 }
 
+
+TEST(TradingKill, AResetAfterTheDayEndedStartsTheNextDayWithoutItsLatches) {
+  const auto at = [](md::Date day, int hour, int minute) { return md::new_york_to_utc(day, hour, minute); };
+  const md::Date today{2026, 9, 22}, next{2026, 9, 23};
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 11" : "driver 10");
+    auto c = config();
+    c.guardrails.max_opening_trades = 1;
+    TradingSession s(c, at(today, 10, 0));
+    s.set_revised_lifecycle(revised);
+    ASSERT_TRUE(s.trade_stock("SPY", 10, at(today, 10, 0), StockPrice{"SPY", at(today, 10, 0), m("500")}).decision.ok());
+    EXPECT_EQ(s.trade_stock("SPY", 1, at(today, 10, 1), StockPrice{"SPY", at(today, 10, 1), m("500")}).decision.code,
+              Reason::TRADE_LIMIT);
+    // Reset at 17:05, after the plan day ended at 17:00 and before its rollover ran.
+    ASSERT_TRUE(s.reset_account(m("100000"), {}, "fresh", at(today, 17, 5)).decision.ok());
+    const auto opened = s.trade_stock("SPY", 5, at(next, 9, 45), StockPrice{"SPY", at(next, 9, 45), m("500")});
+    // Drivers 1-10 kept the finished day's latch through the whole next day.
+    EXPECT_EQ(opened.decision.code, revised ? Reason::NONE : Reason::TRADE_LIMIT) << opened.decision.message;
+  }
+}
 }  // namespace
 }  // namespace openport::trading
