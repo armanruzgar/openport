@@ -54,6 +54,9 @@ struct ApiResponse {
 /// A full command inbox frees up as the engine applies commands, so its 503
 /// asks the client to retry after this many seconds.
 inline constexpr int kInboxRetrySeconds = 1;
+/// An underlying the server carries but has no snapshot of yet (just started, or
+/// its feed connecting) answers 503 NOT_READY asking for a retry after this long.
+inline constexpr int kNotReadyRetrySeconds = 5;
 
 using ApiCompletion = std::function<void(ApiResponse)>;
 

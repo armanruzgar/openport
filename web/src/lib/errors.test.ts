@@ -19,4 +19,12 @@ describe("error text", () => {
     expect(marketDataError(missing, "SPX", { as_of: "2026-11-06T14:31:30Z" }, "live")).toBe("no data for SPX yet")
     expect(marketDataError(new ApiError(500, "boom"), "SPX", { as_of: null }, "connecting")).toBe("boom")
   })
+  it("waits while the server says an underlying is not ready yet", () => {
+    const waiting = new ApiError(503, "No data for SPX yet; it is ready once GET /api/status shows it live", "NOT_READY")
+    expect(marketDataError(waiting, "SPX", { as_of: null }, "connecting")).toBe("Waiting for the first SPX snapshot… (feed: connecting)")
+    expect(marketDataError(waiting, "SPX", undefined)).toBe("Waiting for the first SPX snapshot…")
+    // An underlying the server does not carry is no wait.
+    const unknown = new ApiError(404, "ZZZ is not an underlying of this server; GET /api/status lists them", "UNKNOWN_UNDERLYING")
+    expect(marketDataError(unknown, "ZZZ", { as_of: "2026-11-06T14:31:30Z" }, "live")).toBe(unknown.message)
+  })
 })

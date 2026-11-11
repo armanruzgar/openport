@@ -66,6 +66,13 @@ Each of these routes takes only the query parameters shown for it (`/api/status`
 `summary` take none, `volatility` only `account`); any other, a misspelling such as
 `windw=` included, is 400 `INVALID_REQUEST` naming it, rather than ignored.
 
+openportd answers requests before its feed has delivered anything. Until an
+underlying's first snapshot its views answer 503 `NOT_READY` with `Retry-After: 5`,
+which the Python client waits out and retries; `GET /api/status` shows each
+underlying's `state`, `live` once its data flows, which is the check to wait on. An
+underlying the server does not carry (a typo, `spx` for `SPX`, or one never
+subscribed) is 404 `UNKNOWN_UNDERLYING`, which no wait changes.
+
 ## Paper trading
 
 Custom account/reset `rules` optionally accept `time_limit_days`, `inactivity_days`

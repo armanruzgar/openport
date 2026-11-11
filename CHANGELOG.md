@@ -37,6 +37,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **Warming-up and unknown underlyings.** Right after startup, before an underlying's
+  first snapshot, its summary, chain and analytics answered 404 "no data for SPX yet",
+  exactly as for an underlying the server does not carry (`ZZZ`, or `spx` for `SPX`),
+  so a script could not tell "retry" from "typo". A carried underlying without a
+  snapshot now answers 503 `NOT_READY` with `Retry-After: 5`, which the Python client
+  retries, and one the server does not carry 404 `UNKNOWN_UNDERLYING`; the terminal
+  still shows the first as waiting for its snapshot. `GET /api/status`'s underlying
+  `state` is documented as the readiness check.
 - **Misspelt market-data query parameters.** `/api/status` and the underlying's
   summary, chain, exposure, surface, Heston, volatility and candle views ignored a key
   they do not take, so `chain?windw=0.01` answered the full unwindowed chain and

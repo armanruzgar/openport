@@ -930,11 +930,26 @@ ApiResponse probability_response(const UnderlyingMetrics& m, const std::map<std:
                        "touch is the driftless reflection estimate"}});
 }
 
+/// An underlying this source does not carry: no wait brings its data.
+ApiResponse unknown_underlying(const std::string& symbol) {
+  return api_error(404, "UNKNOWN_UNDERLYING", symbol + " is not an underlying of this server; GET /api/status lists them");
+}
+
+/// No analytics for `symbol`: 404 UNKNOWN_UNDERLYING when the source does not carry
+/// it; while a carried one waits for its first snapshot, 503 NOT_READY with
+/// Retry-After, which clients retry (GET /api/status shows its state turn live).
+ApiResponse no_analytics(const MetricsSource& source, const std::string& symbol) {
+  const auto symbols = source.symbols();
+  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return unknown_underlying(symbol);
+  auto waiting = api_error(503, "NOT_READY", "No data for " + symbol + " yet; it is ready once GET /api/status shows it live");
+  waiting.retry_after = kNotReadyRetrySeconds;
+  return waiting;
+}
+
 ApiResponse candles_response(const MetricsSource& source, const std::string& symbol,
                              const std::map<std::string, std::string>& query) {
   const auto symbols = source.symbols();
-  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end())
-    return error(404, "no data for " + symbol + " yet");
+  if (std::find(symbols.begin(), symbols.end(), symbol) == symbols.end()) return unknown_underlying(symbol);
   const auto requested = query.find("interval");
   const auto interval = parse_bar_interval(requested == query.end() ? "5m" : requested->second);
   if (!interval) return error(400, "interval must be 1m, 5m, 15m, 30m, 1h or 1d");
@@ -1031,7 +1046,7 @@ std::optional<ApiResponse> read_api(const ApiRequest& request, const MetricsSour
   if (view == "surface-history") return surface_history_response(source, symbol, query);
   if (view == "flow") return flow_response(source, symbol, query);
   const auto metrics = source.metrics(symbol);
-  if (!metrics) return error(404, "no data for " + symbol + " yet");
+  if (!metrics) return no_analytics(source, symbol);
 
   if (view == "summary") return ok(summary_json(*metrics));
   if (view == "probability") return probability_response(*metrics, query);

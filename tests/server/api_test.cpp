@@ -91,8 +91,12 @@ TEST(Api, CandlesServeStoredBarsBeforeTheFirstAnalysis) {
   get(source, "/api/underlyings/SPX/candles?interval=2m", 400);
   get(source, "/api/underlyings/SPX/candles?limit=0", 400);
   get(source, "/api/underlyings/SPX/candles?limit=5001", 400);
-  get(source, "/api/underlyings/QQQ/candles", 404);
-  get(source, "/api/underlyings/SPX/summary", 404);
+  EXPECT_EQ(get(source, "/api/underlyings/QQQ/candles", 404)["error"]["code"], "UNKNOWN_UNDERLYING");
+  // A carried underlying without a snapshot yet is not missing: it asks for a retry.
+  const auto waiting = server::handle_api({"GET", "/api/underlyings/SPX/summary"}, source);
+  EXPECT_EQ(waiting.status, 503) << waiting.body;
+  EXPECT_EQ(waiting.retry_after, server::kNotReadyRetrySeconds);
+  EXPECT_EQ(json::parse(waiting.body)["error"]["code"], "NOT_READY");
   // A source without a store has no bars.
   StubSource plain;
   EXPECT_TRUE(get(plain, "/api/underlyings/SPX/candles?interval=1d")["bars"].empty());
@@ -440,6 +444,13 @@ TEST(Api, SlowFitsRunOnTheFitWorkerOnePerSnapshot) {
 TEST(Api, ErrorsAreJson) {
   StubSource source;
   EXPECT_TRUE(get(source, "/api/underlyings/QQQ/summary", 404).contains("error"));
+  // An underlying the server does not carry, in any spelling, is not one to wait for.
+  for (const auto* missing : {"/api/underlyings/QQQ/chain", "/api/underlyings/spx/summary", "/api/underlyings/ZZZ"}) {
+    const auto response = server::handle_api({"GET", missing}, source);
+    EXPECT_EQ(response.status, 404) << missing;
+    EXPECT_EQ(response.retry_after, 0) << missing;
+    EXPECT_EQ(json::parse(response.body)["error"]["code"], "UNKNOWN_UNDERLYING") << missing;
+  }
   EXPECT_TRUE(get(source, "/api/underlyings/SPX/chain?expiry=2030-01-01PM", 404).contains("error"));
   EXPECT_TRUE(get(source, "/api/nope", 404).contains("error"));
   const auto post = server::handle_api({"POST", "/api/status"}, source);
