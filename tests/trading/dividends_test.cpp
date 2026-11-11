@@ -43,6 +43,19 @@ TEST(TradingDividends, ReadsAFileOfExDatesAndAmounts) {
   EXPECT_TRUE(dividends_due(all, {2026, 12, 18}, {2026, 12, 18}).empty());
 }
 
+TEST(TradingDividends, AByteOrderMarkBeforeTheFirstLineIsNotPartOfIt) {
+  // Excel's "CSV UTF-8" and Windows editors start the file with one.
+  const auto headed = parse("\xEF\xBB\xBFsymbol,ex_date,amount\r\nSPY,2026-12-18,1.90\r\n");
+  ASSERT_EQ(headed.size(), 1U);
+  EXPECT_EQ(headed[0].symbol, "SPY");
+  EXPECT_EQ(headed[0].per_share, m("1.90"));
+  const auto bare = parse("\xEF\xBB\xBFQQQ,2026-12-21,0.70\n");
+  ASSERT_EQ(bare.size(), 1U);
+  EXPECT_EQ(bare[0].symbol, "QQQ");
+  // Only before the file's first line: one inside a symbol later is still refused.
+  EXPECT_THROW(parse("SPY,2026-12-18,1.90\n\xEF\xBB\xBFQQQ,2026-12-21,0.70\n"), std::invalid_argument);
+}
+
 /// SPY shares through an exercise, then SPY's own price in every batch. The call
 /// expires after the 2026-12-18 ex-date, so it can be assigned the night before.
 struct Held {

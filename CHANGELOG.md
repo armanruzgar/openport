@@ -464,6 +464,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   scenario grid built from it, read an adjusted series' moved smile at its listed
   strike instead of its effective one, so they disagreed with the one-day grid. Both now
   read it at the effective strike.
+- **A byte-order mark in a dividends or corporate-actions file.** A file saved as
+  Excel's "CSV UTF-8", or by a Windows editor, starts with a UTF-8 byte-order mark,
+  which `--dividends` and `--corporate-actions` read as part of the first line: the
+  header became a data line, or the mark joined the first symbol, and openportd would
+  not start, blaming the symbol or the action kind. The mark is now skipped, as the
+  broker-fill import already skipped it.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

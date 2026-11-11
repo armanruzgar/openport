@@ -57,6 +57,18 @@ TEST(CorporateActions, ParsesSplitLinesAndRefusesTheRest) {
   EXPECT_TRUE(corporate_actions_due(actions, kExDate, kExDate).empty());
 }
 
+TEST(CorporateActions, AByteOrderMarkBeforeTheFirstLineIsNotPartOfIt) {
+  // Excel's "CSV UTF-8" and Windows editors start the file with one.
+  std::istringstream headed("\xEF\xBB\xBFsymbol,ex_date,kind,terms\r\nSPY,2026-09-23,split,2:1\r\n");
+  const auto actions = parse_corporate_actions(headed);
+  ASSERT_EQ(actions.size(), 1u);
+  EXPECT_EQ(actions[0], (CorporateAction{"SPY", kExDate, 2, 1}));
+  std::istringstream bare("\xEF\xBB\xBFQQQ,2026-09-24,split,1:10\n");
+  const auto first = parse_corporate_actions(bare);
+  ASSERT_EQ(first.size(), 1u);
+  EXPECT_EQ(first[0].symbol, "QQQ");
+}
+
 TEST(CorporateActions, AForwardSplitKeepsACoveredCallCoveredAndDeliversTheSplitShares) {
   test::RecordingFile file;
   const auto path = (file.directory / "split.jsonl").string();

@@ -18,6 +18,12 @@ std::string trim(std::string text) {
   text.erase(std::find_if_not(text.rbegin(), text.rend(), space).base(), text.end());
   return text;
 }
+/// A file's line, trimmed; the first without the UTF-8 byte-order mark that Excel's
+/// "CSV UTF-8" and Windows editors write before it.
+std::string file_line(std::string line, int number) {
+  if (number == 1 && line.starts_with("\xEF\xBB\xBF")) line.erase(0, 3);
+  return trim(std::move(line));
+}
 }  // namespace
 
 std::vector<Dividend> parse_dividends(std::istream& in) {
@@ -25,7 +31,7 @@ std::vector<Dividend> parse_dividends(std::istream& in) {
   std::set<std::pair<std::string, md::Date>> seen;
   std::string line;
   for (int number = 1; std::getline(in, line); ++number) {
-    line = trim(line);
+    line = file_line(std::move(line), number);
     if (line.empty() || line.front() == '#') continue;
     std::string lower = line;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -83,7 +89,7 @@ std::vector<CorporateAction> parse_corporate_actions(std::istream& in) {
   std::set<std::pair<std::string, md::Date>> seen;
   std::string line;
   for (int number = 1; std::getline(in, line); ++number) {
-    line = trim(line);
+    line = file_line(std::move(line), number);
     if (line.empty() || line.front() == '#') continue;
     std::string lower = line;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
