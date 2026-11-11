@@ -257,6 +257,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   candidate's first expiry, the slice table's BE rows came from the custom date's
   curve, not the expiry's, so they moved or vanished while the chart still drew the
   expiry curve crossing zero. They now always come from the expiry line.
+- **Replay from here on a live trade.** Back on the live account with a replay still
+  running, a live trade's Journal review offered **Replay from here**, which ended
+  the running replay and started a new one before the replay account's trade with
+  the same number, on another contract. The live journal also drew the replay's
+  scenario events on its trades. Both now use a replay only on that replay's own
+  journal.
 
 ## 0.5.1 (2026-10-28)
 

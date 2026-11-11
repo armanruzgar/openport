@@ -211,6 +211,15 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   </LiveContext>
 }
 
+/**
+ * The replay whose account the terminal shows: the one it trades, or an archived
+ * run. Null on the live source, where `replay` is a run playing beside it, which
+ * has nothing to do with the live accounts' trades.
+ */
+export function shownReplay(live: Pick<Live, "source" | "replay">): ReplayState | null {
+  return live.source === "live" ? null : live.replay
+}
+
 /** Replay and simulated feeds use market time; live providers use the wall clock. */
 export function marketNow(live: Pick<Live, "source" | "replay" | "status" | "underlyings">): number {
   const replay = live.source !== "live" && live.replay?.time ? Date.parse(live.replay.time) : Number.NaN

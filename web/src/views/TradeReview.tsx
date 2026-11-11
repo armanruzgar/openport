@@ -7,7 +7,7 @@ import { requestAiReview } from "../lib/ai-review"
 import { TradingError } from "../components/TradingControls"
 import { useQuery } from "@tanstack/react-query"
 import { api } from "../api/client"
-import { marketNow, useLive } from "../api/live"
+import { marketNow, shownReplay, useLive } from "../api/live"
 import type { Attribution, FillContext, Trade, TradeReview } from "../api/trading-types"
 import { LineChart, type Marker, type Series } from "../charts/LineChart"
 import { attributionParts } from "../lib/attribution"
@@ -75,7 +75,7 @@ export function TradeChart({ trade }: { trade: Trade }) {
     { label: "MAE", time: trade.review?.worst?.time, spot: trade.review?.worst?.spot, color: "var(--bearish)" },
     { label: "MFE", time: trade.review?.best?.time, spot: trade.review?.best?.spot, color: "var(--bullish)" },
   ].filter((m) => m.time != null)
-  const markers: Marker[] = [...marks.map((m) => ({ x: Date.parse(m.time!) / 1000, label: m.label, color: m.color })), ...scenarioMarkers(live.replay?.events ?? [], from * 1000, to * 1000, 1000, trade.underlying)]
+  const markers: Marker[] = [...marks.map((m) => ({ x: Date.parse(m.time!) / 1000, label: m.label, color: m.color })), ...scenarioMarkers(shownReplay(live)?.events ?? [], from * 1000, to * 1000, 1000, trade.underlying)]
   const series: Series[] = [{ id: "underlying", label: "1m candle close", color: "var(--muted)", points: bars.map((bar) => ({ x: bar.t, y: bar.c })) },
     ...marks.map((m) => ({ id: m.label, label: m.label, color: m.color, dots: true, points: [{ x: Date.parse(m.time!) / 1000, y: m.spot ?? null }] }))]
   return <section aria-label="Underlying across trade">
@@ -93,7 +93,9 @@ export function TradeCoach({ trade }: { trade: JournalTrade }) {
   const controls = useReplayControls()
   const playbooks = useQuery({ queryKey: ["review-playbooks", live.accountScope, live.trading?.account_version], queryFn: ({ signal }) => api.playbooks(signal) })
   const brokenOrders = new Set(Object.values(playbooks.data?.reports ?? {}).flatMap(report => report.trades.filter(t => Object.values(t.rules).some(v => v === false)).map(t => t.order)))
-  const flags = coachFlags(trade, [...(trades.data?.trades ?? []), ...(trades.data?.share_trades ?? [])], { brokenOrders, events: live.replay?.events })
+  // Only the run this journal belongs to: a replay playing beside a live account is another account's.
+  const run = shownReplay(live)
+  const flags = coachFlags(trade, [...(trades.data?.trades ?? []), ...(trades.data?.share_trades ?? [])], { brokenOrders, events: run?.events })
   const [enabled, setEnabled] = useState(false)
   const [endpoint, setEndpoint] = useState("")
   const [key, setKey] = useState("")
@@ -106,7 +108,7 @@ export function TradeCoach({ trade }: { trade: JournalTrade }) {
     catch (e) { setError(e) } finally { setPending(false) }
   }
   return <section className="space-y-2 text-xs" aria-label="Trade coach">
-    {live.replay?.id && <><button className="trade-button" disabled={controls.blocked || controls.pending} onClick={() => void controls.fromTrade(live.replay!.id!, trade.id, () => live.switchSource("replay", "user"))}>Replay from here</button><p className="text-muted">New paused paper account, five minutes before entry (clamped to the session open), with the source seed, date and plan.</p><TradingError error={controls.error} /></>}
+    {run?.id && <><button className="trade-button" disabled={controls.blocked || controls.pending} onClick={() => void controls.fromTrade(run.id!, trade.id, () => live.switchSource("replay", "user"))}>Replay from here</button><p className="text-muted">New paused paper account, five minutes before entry (clamped to the session open), with the source seed, date and plan.</p><TradingError error={controls.error} /></>}
     <h3 className="font-medium">Coach flags</h3>
     {flags.length ? <ul>{flags.map(flag => <li key={flag}>{flag}</li>)}</ul> : <p className="text-muted">No flags from available data.</p>}
     <p className="text-muted">Size flag: over twice the median peak size of at least three closed trades in this underlying. Missing evidence is not treated as a passed rule.</p>

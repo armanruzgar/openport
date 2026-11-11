@@ -143,6 +143,25 @@ it("saves fixed mistake picks independently of free-text tags", async () => {
   expect(save).toHaveBeenCalledWith(trade.id, { note: trade.note, tags: ["patient"], mistakes: ["chased"] }, trading.write)
 })
 
+it("keeps a replay playing beside the live account out of the live journal", async () => {
+  vi.spyOn(api, "candles").mockResolvedValue({ symbol: "SPX", interval: "1m", bars: [] })
+  const fromTrade = vi.spyOn(api, "replayFromTrade")
+  const replay = { id: "running", events: [{ type: "crush", time: "2026-09-22T14:21:00Z", symbols: ["SPX"] }] } as unknown as import("../api/types").ReplayState
+  const closed = { ...trade, opened: "2026-09-22T14:20:00Z", closed: "2026-09-22T14:23:00Z" }
+  // Back to live with the replay still running: its ticks still arrive, but this is a live trade.
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open", 0, "main", () => {}, "live", replay))
+  await render(<TradeDetail trade={closed} fills={[]} trading={trading} />)
+  expect(host.textContent).not.toContain("Replay from here")
+  expect(host.querySelector('[aria-label="Underlying across trade"]')?.textContent).not.toContain("Scenario crush")
+  expect(host.querySelector('[aria-label="Trade coach"]')?.textContent).not.toContain("Held through scenario event")
+  // The replay's own journal keeps its button and scenario flags.
+  vi.mocked(useLive).mockReturnValue(liveState(status, null, "open", 0, "main", () => {}, "replay", replay))
+  await render(<TradeDetail trade={closed} fills={[]} trading={trading} />)
+  expect(host.textContent).toContain("Replay from here")
+  expect(host.querySelector('[aria-label="Trade coach"]')?.textContent).toContain("Held through scenario event")
+  expect(fromTrade).not.toHaveBeenCalled()
+})
+
 it("retains authored event markers on stamped review prices when archived candles are absent", async () => {
   vi.spyOn(api, "candles").mockResolvedValue({ symbol: "SPX", interval: "1m", bars: [] })
   const replay = { id: "saved", events: [{ type: "crush", time: "2026-09-22T14:21:00Z", symbols: ["SPX"] }] } as unknown as import("../api/types").ReplayState

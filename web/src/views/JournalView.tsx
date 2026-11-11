@@ -3,7 +3,7 @@ import { useActionApi } from "../api/action-client"
 import { FeeAmount } from "../components/FeeAmount"
 import { Fragment, useMemo, useState } from "react"
 import { api, downloadCsv } from "../api/client"
-import { marketNow, useLive } from "../api/live"
+import { marketNow, shownReplay, useLive } from "../api/live"
 import { useAllOrders, useFills, useRefreshTrading, useSettlements, useTrades, useTradingSession } from "../api/trading"
 import type { Order, DayNote, Fill, RunIdentity, SettlementRecord, ShareTrade, Trade, TradingStatus, WholeTrade } from "../api/trading-types"
 import { HBarChart } from "../charts/HBarChart"
@@ -218,7 +218,7 @@ function Reports({ trades }: { trades: JournalTrade[] }) {
   const live = useLive()
   const playbooks = useQuery({ queryKey: ["review-playbooks", live.accountScope, live.trading?.account_version], queryFn: ({ signal }) => api.playbooks(signal) })
   const brokenOrders = new Set(Object.values(playbooks.data?.reports ?? {}).flatMap(r => r.trades.filter(t => Object.values(t.rules).some(v => v === false)).map(t => t.order)))
-  const buckets = tradeBuckets(trades, dimension, side, { events: live.replay?.events, brokenOrders })
+  const buckets = tradeBuckets(trades, dimension, side, { events: shownReplay(live)?.events, brokenOrders })
   const by = dimensions.find(d => d.value === dimension)!.label.toLowerCase()
   return (
     <Panel title="Trade reports" actions={<>

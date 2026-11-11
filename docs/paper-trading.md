@@ -3259,6 +3259,9 @@ running. Source identity is checked against the journal: missing/changed recordi
 missing/changed scenario files, unsupported drivers or changed calendars are
 refused with a clear error. Replays without durable source history cannot use it.
 This is distinct from **Restart from…**, which re-executes the earlier commands.
+The button, the trade chart's scenario markers and the coach's scenario flag appear
+only on a replay's own journal (the replay being traded, or an archived run), never
+on a live account's while a replay plays beside it.
 
 ### Optional AI review
 
