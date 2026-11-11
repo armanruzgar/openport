@@ -174,7 +174,7 @@ int usage(const char* error = nullptr) {
       "        --dry-run reports bytes cut and records kept without changes; --file selects one journal\n"
       "        exit 0: inspected/repaired; 1: a journal failed; 2: invalid options\n"
       "plan: rules for a new journal (presets below); default practice;\n"
-      "      --paper-cash then overrides its starting balance\n"
+      "      --paper-cash sets a practice journal's balance; other presets keep their own\n"
       "fill model: seeds only a new main journal; numeric execution flags override the model\n"
       "            slippage/impact: 0..10 ticks, latency: 0..60000 ms; saved rules win on restart\n"
       "            queue: resting limits wait behind a seeded estimate of the queue at their price\n"
@@ -730,6 +730,13 @@ int run(int argc, char** argv) {
 
   if (settings.paper_enabled && settings.paper_journal.empty())
     return usage("HOME is unavailable; specify --paper-journal or --no-paper");
+  // A preset's name belongs to its own balance, as over HTTP: on another balance its
+  // dollar rules would stay unscaled, and the account could not unlock or reset into it.
+  if (settings.paper_cash && settings.plan->id != "practice" && *settings.paper_cash != settings.plan->initial_cash) {
+    const auto refusal = "--paper-cash sets only a practice balance; " + settings.plan->id + " starts at " +
+                         settings.plan->initial_cash.str();
+    return usage(refusal.c_str());
+  }
   if (!demo) providers::validate_subscription(settings.provider.name, settings.subscription);
   if (settings.crash_log.empty() && !settings.paper_journal.empty())
     settings.crash_log = settings.paper_journal.parent_path() / "crash.log";

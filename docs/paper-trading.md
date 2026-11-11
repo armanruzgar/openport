@@ -3129,8 +3129,9 @@ it names, otherwise `PLAN_LOCKED`: that preset's starting balance and every one 
 rules, with execution, fee schedule, broker margin and program costs free to differ.
 Once entered, the same preset may restart under its reset terms without another prerequisite pass. Custom rules may set `phase`
 freely, but may not take a preset's name unless they are that preset (`INVALID_RULES`),
-so an attempt recorded under a preset's name was that preset; `--plan` can start a new
-journal on a funded preset directly. Preset parameters are this project's own,
+so an attempt recorded under an evaluation or funded preset's name was that preset;
+`--plan` can start a new journal on a funded preset directly, at that preset's
+balance, since `--paper-cash` sets only a practice journal's. Preset parameters are this project's own,
 modelled on common prop-firm terms: the evaluation's drawdown and strategy rules, the
 floor locking at the starting balance, 8 qualifying days of $100, $150 or $200 (25K,
 50K, 100K), up to 50% of profit per payout, 80% to the trader, a minimum of 1% of the
@@ -4767,8 +4768,10 @@ the requirement by underlying with what holds it (see buying power under Account
 (`stop_loss`/`take_profit`/null), `parent`, `oco`, `stop_loss_order`,
 `take_profit_order`, `ended_at`, `modified_at`, `changes` and `waiting` (see below); status and ticks add `trading.plan` and `trading.evaluation`
 (`active`/`passed`/`failed`, null without a target or drawdown rule). `--plan ID`
-chooses the rules for a new journal (default `practice`); `--paper-cash` then overrides
-its starting balance. Recovery keeps the recorded rules. New latency, impact and inside-fill fields default to zero
+chooses the rules for a new journal (default `practice`); `--paper-cash` sets a
+practice journal's starting balance. Another preset keeps its own: a different
+`--paper-cash` beside it is a usage error (exit 2), since an account counts as a
+preset, for unlocks and restarts, only at that preset's balance. Recovery keeps the recorded rules. New latency, impact and inside-fill fields default to zero
 when absent and are omitted from account responses and journals at zero. Pending
 orders recover their acceptance/trigger clocks and consumed depth.
 `POST /api/account/reset` and `POST /api/accounts` accept optional
@@ -4984,8 +4987,8 @@ same routes. All execution remains simulated.
 
 `--paper-journal PATH` defaults to `$HOME/.openport/paper-journal.jsonl`; containing
 directories are created, and named accounts keep their journals in `accounts/` beside
-it. `--paper-cash` defaults to `100000` and `--paper-fee` to
-`0.65`. These seed new journals; recovery restores the recorded configuration. The
+it. `--paper-cash` defaults to the plan's balance (`100000` for practice) and
+`--paper-fee` to `0.65`. These seed new journals; recovery restores the recorded configuration. The
 fee also seeds every new named account and visitor sandbox, whose cash and rules
 come from their plan.
 Existing files are verified, exclusively locked and resumed; an empty one holds no

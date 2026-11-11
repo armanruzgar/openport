@@ -143,6 +143,16 @@ TEST(Cli, EveryPlanReachesProviderValidationWithNewAndEmptyJournals) {
   rejects("openportd", "--provider missing --paper-journal '" + existing.string() + "' --plan two-step-verify-25k", "unknown provider");
 }
 
+// A preset's name belongs to its own balance, so --paper-cash sets only practice's.
+TEST(Cli, PaperCashSetsOnlyAPracticeBalance) {
+  rejects("openportd", "--provider missing --plan funded-intraday-50k --paper-cash 60000",
+          "--paper-cash sets only a practice balance; funded-intraday-50k starts at 50000.00");
+  rejects("openportd", "--provider missing --plan intraday-25k --paper-cash 100000", "intraday-25k starts at 25000.00");
+  // Practice takes any balance, and a preset its own.
+  for (const auto* args : {"--paper-cash 25000", "--plan practice --paper-cash 25000", "--plan eod-50k --paper-cash 50000"})
+    rejects("openportd", std::string("--provider missing ") + args, "unknown provider");
+}
+
 TEST(Cli, DemoRejectsNetworkOptionsUnknownDaysAndUnsupportedSymbols) {
   rejects("openportd", "--provider demo --option speed=max", "demo speed");
   rejects("openportd", "--provider demo --option days=overnight", "not a regular session");

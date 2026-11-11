@@ -27,6 +27,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   flatten it could not tell a lost answer from a bad argument. Every tool now returns
   an error: `UNREACHABLE` when nothing was sent, `NO_RESPONSE` when an answer was lost
   and a command may have been applied, `INVALID_REQUEST` for refused arguments.
+- **`--plan` with `--paper-cash`.** `openportd --plan funded-intraday-50k --paper-cash
+  60000` started an account under the preset's name with its dollar rules unscaled on
+  the other balance, a floor locked at 50,000 under a 60,000 start, that was not that
+  preset: a pass did not unlock the next step, and a funded account could not restart
+  into its own preset (`PLAN_LOCKED`). `--paper-cash` now sets only a practice
+  journal's balance; beside another preset it must be that preset's own, or
+  `openportd` exits with a usage error. It never applied to an existing journal, so a
+  service that passes it can drop it.
 - **MCP equity pages.** The `equity` tool answered with an account's oldest 500
   samples and had no way to ask for the next page, so an account's recent equity was
   out of reach unless the agent guessed a start time. It now takes `cursor`, the
