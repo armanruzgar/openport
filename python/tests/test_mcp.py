@@ -269,7 +269,7 @@ def test_equity_pages_oldest_first_through_to_the_newest_sample(stub):
     assert "cursor" in tool.input_schema["properties"]
     assert "oldest first" in tool.description
     pages, cursor = [], None
-    while True:
+    for _ in samples:  # bounded, so a cursor that is not passed on fails instead of looping
         page = call(server, "equity", account="practice", limit=2, cursor=cursor)["data"]
         pages.append([sample["equity"] for sample in page["samples"]])
         cursor = page["next"]
