@@ -700,6 +700,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   past the grace period) of a container restarted by its restart policy left another
   160-190 MB directory in its writable layer. At startup, before the feed makes its
   own, directories named for that PID are now removed too.
+- **The strategy optimizer searches when asked.** Pressing **Search** again with the
+  same terms made no request, so the candidates kept the prices of the first search
+  for as long as the page stayed open; they now say which quotes they used, and each
+  press searches again. Switching to another symbol whose summary was already loaded
+  kept the form and searched the new symbol at once with the old symbol's target
+  price (SPY valued for 7000); another symbol now starts a new form.
 
 ## 0.5.1 (2026-10-28)
 

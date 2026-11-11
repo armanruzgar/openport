@@ -3,7 +3,7 @@ import { useState } from "react"
 import { api } from "../api/client"
 import type { Expiry, SearchRank, SearchStructure, StrategyCandidate, StrategySearchQuery } from "../api/types"
 import { deliversShares } from "../lib/trading"
-import { expiryLabel, fixed, isNum, pct } from "../lib/format"
+import { clock, expiryLabel, fixed, isNum, pct } from "../lib/format"
 import { TradingError } from "./TradingControls"
 
 const structures: { value: SearchStructure; label: string }[] = [
@@ -29,15 +29,22 @@ export function searchQuery(form: { target: string; budget: string; date: string
     structures: form.structures, rank: form.rank, ...(vol ? { vol_points: vol } : {}), price: form.price, limit: 25 }
 }
 
+interface OptimizerProps {
+  symbol: string; spot: number | null; expiries: Expiry[]
+  onAnalyze: (candidate: StrategyCandidate) => void; onTicket: (candidate: StrategyCandidate) => void
+}
+
 /**
  * The strategy optimizer: candidates on the chosen expiries ranked for a target
  * price and date within a loss budget, searched on the server. Each result can be
- * drawn on the Analyze chart or sent to its ticket.
+ * drawn on the Analyze chart or sent to its ticket. The form and its last search
+ * belong to one underlying, so another symbol starts a new form.
  */
-export function StrategyOptimizer({ symbol, spot, expiries, onAnalyze, onTicket }: {
-  symbol: string; spot: number | null; expiries: Expiry[]
-  onAnalyze: (candidate: StrategyCandidate) => void; onTicket: (candidate: StrategyCandidate) => void
-}) {
+export function StrategyOptimizer(props: OptimizerProps) {
+  return <OptimizerForm key={props.symbol} {...props} />
+}
+
+function OptimizerForm({ symbol, spot, expiries, onAnalyze, onTicket }: OptimizerProps) {
   const [target, setTarget] = useState(spot != null ? spot.toFixed(spot >= 1000 ? 0 : 2) : "")
   const [date, setDate] = useState("")
   const [budget, setBudget] = useState("1000")
@@ -56,7 +63,13 @@ export function StrategyOptimizer({ symbol, spot, expiries, onAnalyze, onTicket 
   const toggle = <T,>(list: T[], value: T) => list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
   const result = search.data
   return <section aria-label="Strategy optimizer" className="space-y-3 text-sm">
-    <form className="flex flex-wrap items-end gap-3 text-xs" onSubmit={(event) => { event.preventDefault(); if (!("reason" in query)) setSubmitted(query) }}>
+    <form className="flex flex-wrap items-end gap-3 text-xs" onSubmit={(event) => {
+      event.preventDefault()
+      if ("reason" in query) return
+      // The same terms are the same query key: search again on the quotes as they are now.
+      if (submitted && JSON.stringify(query) === JSON.stringify(submitted)) void search.refetch()
+      else setSubmitted(query)
+    }}>
       <label className="flex flex-col gap-1 text-muted">Target price
         <input aria-label="Target price" className="trade-input w-28" inputMode="decimal" value={target} onChange={(e) => setTarget(e.target.value)} /></label>
       <label className="flex flex-col gap-1 text-muted">By
@@ -91,7 +104,7 @@ export function StrategyOptimizer({ symbol, spot, expiries, onAnalyze, onTicket 
       <p className="text-xs text-muted">{result.candidates.length} of {result.within_budget} within {dollars(result.budget)} ·
         {" "}{result.evaluated.toLocaleString("en-US")} valued{result.truncated ? ` (an even sample of ${result.considered.toLocaleString("en-US")})` : ""}
         {result.unbounded ? ` · ${result.unbounded} with unlimited loss left out` : ""} · valued by {result.target_date} for {fixed(result.target_price, 2)}
-        {result.skipped.length ? ` · skipped ${result.skipped.map((s) => `${s.expiry} (${s.reason})`).join(", ")}` : ""}</p>
+        {result.skipped.length ? ` · skipped ${result.skipped.map((s) => `${s.expiry} (${s.reason})`).join(", ")}` : ""} · quotes as of {clock(result.as_of)}</p>
       {result.candidates.length ? <div className="relative max-w-full overflow-x-auto" tabIndex={0} role="region" aria-label="Optimizer results">
         <table className="w-full text-right text-xs tabular whitespace-nowrap">
           <thead className="text-muted"><tr>
