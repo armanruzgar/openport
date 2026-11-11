@@ -1021,8 +1021,10 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
         auth.ambiguous_headers = !authorization || request.count(http::field::authorization) > 1 ||
                                  request.count(http::field::sec_websocket_protocol) > 1;
         std::function<bool()> authorized;
+        // A token, scope or query check refuses an upgrade as it would the REST read:
+        // a malformed account is 400 INVALID_REQUEST there, not 403, and JSON.
         if (auto rejection = check_api_write(auth, shared_.write_policy, nullptr, &auth.access, &authorized))
-          return reject_upgrade(request, http::status::forbidden, rejection->body);
+          return refuse_upgrade(request, *rejection);
         std::string account, source = "live";
         if (event_stream) {
           const auto question = target.find('?');
@@ -1038,7 +1040,7 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
           // orders, is seen only with its own token or an authenticated admin's.
           if (const auto& sandboxes = shared_.write_policy.sandboxes;
               sandboxes && auth.access.sandbox != account && !auth.access.admin && sandboxes->contains(account))
-            return reject_upgrade(request, http::status::not_found, api_error(404, "UNKNOWN_ACCOUNT", "Unknown paper account").body);
+            return refuse_upgrade(request, api_error(404, "UNKNOWN_ACCOUNT", "Unknown paper account"));
           if (!shared_.events) return reject_upgrade(request, http::status::service_unavailable, "Event channel unavailable");
         }
         auto slot = shared_.slots.acquire();
@@ -1071,6 +1073,19 @@ class HttpSession : public Session, public std::enable_shared_from_this<HttpSess
     if (retry_after > 0) response.set(http::field::retry_after, std::to_string(retry_after));
     response.keep_alive(false);
     response.body() = std::move(reason);
+    response.prepare_payload();
+    respond(http::message_generator(std::move(response)));
+  }
+
+  /// Refuses an upgrade that an API check refused, as the REST routes answer it: with
+  /// its status and its JSON error.
+  void refuse_upgrade(const http::request<http::string_body>& request, const ApiResponse& refusal) {
+    http::response<http::string_body> response{static_cast<http::status>(refusal.status), request.version()};
+    response.set(http::field::content_type, refusal.content_type);
+    forbid_framing(response);
+    if (refusal.retry_after > 0) response.set(http::field::retry_after, std::to_string(refusal.retry_after));
+    response.keep_alive(false);
+    response.body() = refusal.body;
     response.prepare_payload();
     respond(http::message_generator(std::move(response)));
   }

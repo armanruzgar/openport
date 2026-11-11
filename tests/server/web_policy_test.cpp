@@ -1409,6 +1409,17 @@ TEST(WebServer, EventChannelIsVersionedFilteredAndDoesNotCoalesce) {
   invalid.handshake(upgrade, "localhost", "/ws/events?version=2", error);
   EXPECT_TRUE(error);
   EXPECT_EQ(upgrade.result(), http::status::bad_request);
+  // G-32: an account the REST routes refuse as malformed is refused alike: 400
+  // INVALID_REQUEST as JSON, not 403 with the error as plain text.
+  websocket::stream<tcp::socket> malformed(io);
+  malformed.next_layer().connect({asio::ip::make_address("127.0.0.1"), web.port()});
+  beast::error_code refused;
+  websocket::response_type answer;
+  malformed.handshake(answer, "localhost", "/ws/events?version=1&account=NOPE", refused);
+  EXPECT_TRUE(refused);
+  EXPECT_EQ(answer.result(), http::status::bad_request) << answer.body();
+  EXPECT_EQ(std::string(answer[http::field::content_type]), "application/json");
+  EXPECT_NE(answer.body().find("INVALID_REQUEST"), std::string::npos) << answer.body();
   web.stop();
 }
 

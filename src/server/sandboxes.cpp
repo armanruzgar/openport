@@ -153,7 +153,7 @@ std::optional<ApiResponse> Sandboxes::charge(const std::string& account, bool ex
   const auto found = entries_.find(account);
   auto rejected = api_error(429, "SANDBOX_ORDER_RATE", exit_budget
       ? "Too many sandbox cancel, close and exercise requests. Try again later."
-      : "Too many sandbox order requests. Try again later.");
+      : "Too many sandbox order, alert, note and grouping requests. Try again later.");
   if (found == entries_.end() || !found->second.ready) return rejected;
   auto& times = exit_budget ? found->second.exits : found->second.orders;
   const auto now = options_.clock();
