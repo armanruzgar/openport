@@ -4,7 +4,7 @@ import { expect, it, vi } from "vitest"
 import { account, trading } from "../test/trading-fixtures"
 import { IntradayEquity } from "./IntradayEquity"
 
-vi.mock("../api/live", () => ({ useLive: () => ({ accountScope: 1, trading }) }))
+vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: () => ({ accountScope: 1, trading }) }))
 it.each([false, true])("shows the equity failure time and recovery state %s", (recovered) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
   client.setQueryData(["trading", 1, "equity", trading.account_version], {
