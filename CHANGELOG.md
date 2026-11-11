@@ -20,6 +20,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **MCP equity pages.** The `equity` tool answered with an account's oldest 500
+  samples and had no way to ask for the next page, so an account's recent equity was
+  out of reach unless the agent guessed a start time. It now takes `cursor`, the
+  `next` of the page before, and says samples come oldest first and that `start`
+  selects recent ones.
 - **Strategy runner bars after a quiet start.** `openport.bot.Runner` started on a
   symbol with no bar or one open bar (a fresh paused replay, or live before a bar
   closed) skipped every bar that closed before a poll first saw two, and a hook that

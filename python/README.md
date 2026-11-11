@@ -116,6 +116,8 @@ strikes; a capped response says `truncated: true`. Windows must be in `(0, 0.1]`
 Volatility accepts an account for plan event estimates. Surface history defaults
 to prior-close, week and month comparisons; set `compare=false` for the range list.
 Scanner rows retain individual market timestamps inside the shared source envelope.
+The equity tool returns samples oldest first, at most `limit` (1–2000): give `start`
+for recent ones, and pass a non-null `next` back as `cursor` for the page after it.
 
 Batch tools label simulated trading and leave aggregate market time/feed null;
 each report day retains its own input provenance. Other tool results include `as_of` from market data, `feed` with provider and delay,

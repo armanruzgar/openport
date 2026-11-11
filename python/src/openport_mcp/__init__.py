@@ -469,10 +469,13 @@ def create_server(client: Client, agent_name: str = "openport") -> MCPServer:
         return result(target, lambda: target.trades(status))
 
     @server.tool()
-    def equity(start: str | None = None, end: str | None = None, limit: int = 500, account: str | None = None, replay: bool = False) -> dict:
-        """Account equity samples; money stays decimal text."""
+    def equity(start: str | None = None, end: str | None = None, limit: int = 500, cursor: str | None = None,
+               account: str | None = None, replay: bool = False) -> dict:
+        """Account equity samples, oldest first, at most limit (1–2000); money stays decimal text.
+        start and end are ISO times such as 2026-09-22T13:30:00Z (UTC unless zoned); give start for
+        recent samples. A non-null next means more follow: pass it as cursor with the same start, end and account."""
         target = selected(account, replay)
-        return result(target, lambda: target.equity(start, end, limit=limit))
+        return result(target, lambda: target.equity(start, end, limit=limit, cursor=cursor))
 
     @server.tool()
     def candles(symbol: str, interval: str = "5m", limit: int = 500, account: str | None = None, replay: bool = False) -> dict:

@@ -249,6 +249,36 @@ def test_flow_earnings_and_analysis_tools_only_read(stub):
         assert stub.requests[-1][:2] == ("GET", "/api/analysis/portfolios/ira/risk/" + view)
 
 
+def test_equity_pages_oldest_first_through_to_the_newest_sample(stub):
+    from urllib.parse import parse_qs, urlsplit
+    samples = [{"time": f"2026-09-22T14:0{n}:00Z", "equity": f"10{n}.00"} for n in range(5)]
+    original = stub.respond
+    def respond(method, target, headers, body):
+        status, value = original(method, target, headers, body)
+        request = urlsplit(target)
+        if request.path == "/api/account/equity":
+            # The server's paging: oldest first from the cursor, next while more follow.
+            query = parse_qs(request.query)
+            first = int(query.get("cursor", ["0"])[0])
+            last = first + int(query["limit"][0])
+            value = {"samples": samples[first:last], "next": str(last) if last < len(samples) else None, "error": None}
+        return status, value
+    stub.respond = respond
+    server = create_server(Client(stub.url, "secret"))
+    tool = {tool.name: tool for tool in asyncio.run(server.list_tools())}["equity"]
+    assert "cursor" in tool.input_schema["properties"]
+    assert "oldest first" in tool.description
+    pages, cursor = [], None
+    while True:
+        page = call(server, "equity", account="practice", limit=2, cursor=cursor)["data"]
+        pages.append([sample["equity"] for sample in page["samples"]])
+        cursor = page["next"]
+        if cursor is None:
+            break
+    assert pages == [["100.00", "101.00"], ["102.00", "103.00"], ["104.00"]]
+    assert parse_qs(urlsplit(stub.requests[-1][1]).query) == {"limit": ["2"], "cursor": ["4"], "account": ["practice"]}
+
+
 def test_place_order_returns_the_client_order_id_to_retry_after_an_uncertain_response(stub, monkeypatch):
     server = create_server(Client(stub.url, "secret", retries=0))
     order = {"quantity": 1, "type": "limit", "time_in_force": "day", "symbol": "SPXW  261022P05000000", "side": "buy", "limit_price": "0.05"}
