@@ -3,6 +3,7 @@ import copy
 from http import client as http_client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import socket
 import threading
@@ -231,3 +232,22 @@ def stub(monkeypatch):
         server.shutdown()
         worker.join()
     server.server_close()
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "cpp(path): needs the C++ build product at path, relative to the repository")
+
+
+@pytest.fixture
+def binary(request):
+    """The C++ build product named by the test's cpp marker.
+
+    Without it the test skips, or fails where OPENPORT_REQUIRE_BUILD is set: CI sets
+    it wherever it runs these tests, so a missing build cannot pass as a skip."""
+    path = ROOT / request.node.get_closest_marker("cpp").args[0]
+    if not path.exists():
+        reason = f"Build {path.relative_to(ROOT)} to run this test"
+        if os.environ.get("OPENPORT_REQUIRE_BUILD"):
+            pytest.fail(f"{reason}; OPENPORT_REQUIRE_BUILD is set", pytrace=False)
+        pytest.skip(reason)
+    return path

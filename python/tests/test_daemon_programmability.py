@@ -10,13 +10,11 @@ from urllib.error import URLError
 import pytest
 from openport import ApiError, Client, events
 from openport.bot import Runner, Strategy
-from conftest import ROOT, PLAYBOOK
+from conftest import PLAYBOOK
 
 
-def test_demo_daemon_signals_stream_and_strategy(tmp_path):
-    binary = ROOT / "build/apps/openportd"
-    if not binary.exists():
-        pytest.skip("Build openportd for offline daemon integration")
+@pytest.mark.cpp("build/apps/openportd")
+def test_demo_daemon_signals_stream_and_strategy(tmp_path, binary):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

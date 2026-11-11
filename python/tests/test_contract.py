@@ -149,14 +149,11 @@ def test_a_failed_cleanup_keeps_the_route_that_broke_the_run(stub, monkeypatch, 
                      "contract: cleanup DELETE /api/replay also failed: <urlopen error Connection refused>"]
 
 
-def test_real_cpp_handler_responses_without_network(tmp_path):
+@pytest.mark.cpp("build/tests/openport_tests")
+def test_real_cpp_handler_responses_without_network(tmp_path, binary):
     import json
     import os
     import subprocess
-    from conftest import ROOT
-    binary = ROOT / "build/tests/openport_tests"
-    if not binary.exists():
-        pytest.skip("Build the C++ test executable to check its real handler responses")
     result = subprocess.run([str(binary), "--gtest_filter=Api.ContractFixture:StrategySearch.NetworkRequestsCompleteFromThePool:PaperEngine.RiskProfileLegsAndHedges:Api.EventVolatilityReadsCurrentAccountCalendarsAndDeduplicatesImports:SurfaceHistory.ComparisonsUseExactTargetSessionsAndNeverFutureCloses:PaperEngine.ContractFixture:PaperEngine.SizeScalingAccountViewReportsTheCapitalCreditAndNewReview:PaperEngine.TwoStepProgressionAndProgramCosts:PaperEngine.ProgramCostOverridesAndCustomVerification:PaperEngine.DirectionRulesRoundTripAndHedgingPreviewEvidence:PaperEngine.VolumeRuleRoundTripsAndExplainsUnknownVolumeInPreview:PaperEngine.VolumeFillCancellationReportsRuleEvidenceAndPreservesEarlierFills:ReplayRun.ContractFixture:BacktestApi.ContractFixture:Backtest.AttemptsCarryBalancesDecidePassAndFailureAndLeaveOpenTail:PlaybookApi.LiveForwardPublicationIncludesWindowsAndJournalStats:BacktestApi.ListingSummarizesSavedReportIdentityWithoutCopyingTrades:BacktestApi.ComparisonAcceptsLegacyReportsAndRejectsInvalidSelection:Backtest.JointOpenTradeAttributionUsesOptionMarksAndFees:BacktestApi.JointPostRunsPinnedDefinitionsAndListsEveryMember:PaperEngine.QueueFillsAndStopStressRulesRoundTripAndLeaveThePreset:PaperEngine.FillQualityAndRealFillCalibrationReadWithoutTrading:PaperEngine.CopiedOrdersFanOutAsEachAccountsOwnSubmission"],
                             env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
                             capture_output=True, text=True, timeout=120)
@@ -174,13 +171,10 @@ def test_real_cpp_handler_responses_without_network(tmp_path):
     assert len(contract.checked) >= 30
 
 
-def test_cli_token_validation_never_starts_a_provider_or_logs_secrets(tmp_path):
+@pytest.mark.cpp("build/apps/openportd")
+def test_cli_token_validation_never_starts_a_provider_or_logs_secrets(tmp_path, binary):
     import os
     import subprocess
-    from conftest import ROOT
-    binary = ROOT / "build/apps/openportd"
-    if not binary.exists():
-        pytest.skip("Build openportd to check argument validation")
     env = {key: value for key, value in os.environ.items() if key != "OPENPORT_WRITE_TOKEN"}
     result = subprocess.run([str(binary), "--require-token"], env=env, capture_output=True, text=True, timeout=5)
     assert result.returncode != 0
@@ -207,14 +201,11 @@ def test_archived_run_without_metadata_is_described(stub):
     Contract("", None, SPEC).validate("GET", "/api/replay", 200, listing)
 
 
-def test_real_share_trade_and_preview_responses(tmp_path):
+@pytest.mark.cpp("build/tests/openport_tests")
+def test_real_share_trade_and_preview_responses(tmp_path, binary):
     import json
     import os
     import subprocess
-    from conftest import ROOT
-    binary = ROOT / "build/tests/openport_tests"
-    if not binary.exists():
-        pytest.skip("Build the C++ test executable for share response contracts")
     result = subprocess.run([str(binary), "--gtest_filter=PaperStocks.SharesOpenThroughTheApiAtTheUnderlyingsPrice:PaperStocks.WorkingShareOrdersRestAndFillOnLaterPrices"],
                             env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
                             capture_output=True, text=True, timeout=120)
@@ -255,14 +246,11 @@ def test_replay_recordings_expose_imported_dates_symbols_and_sources(stub):
         contract.validate("GET", "/api/replay", 200, listing)
 
 
-def test_programmability_cpp_responses_match_contract(tmp_path):
+@pytest.mark.cpp("build/tests/openport_tests")
+def test_programmability_cpp_responses_match_contract(tmp_path, binary):
     import json
     import os
     import subprocess
-    from conftest import ROOT
-    binary = ROOT / "build/tests/openport_tests"
-    if not binary.exists():
-        pytest.skip("Build C++ tests for signed signal and sweep response contracts")
     result = subprocess.run([str(binary), "--gtest_filter=PlaybookApi.SignedEvaluationRespectsOffStageAndAutoWithoutChangingMode:BacktestApi.SweepUsesSeparateRoutesAndPreservesNormalListing"],
                             env={**os.environ, "OPENPORT_CONTRACT_OUTPUT": str(tmp_path)},
                             capture_output=True, text=True, timeout=120)

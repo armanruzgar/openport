@@ -6,7 +6,7 @@ from typing import get_type_hints
 
 import jsonschema
 import pytest
-from conftest import ROOT, SPEC
+from conftest import SPEC
 from openport import Client
 from openport.types import AccountRules, OpenLossCap, PayoutReview, PayoutReviewOutcome, ReviewTrade
 from tools.contract_test import Contract
@@ -66,10 +66,8 @@ def test_client_sends_rule_comparisons_packs_and_economics(monkeypatch):
     assert calls[-1][2]["params"]["economics"] is None
 
 
-def test_real_prop_rule_responses_match_the_contract(tmp_path):
-    binary = ROOT / "build/tests/openport_tests"
-    if not binary.exists():
-        pytest.skip("Build C++ tests to check real prop-rule responses")
+@pytest.mark.cpp("build/tests/openport_tests")
+def test_real_prop_rule_responses_match_the_contract(tmp_path, binary):
     result = subprocess.run(
         [str(binary), "--gtest_filter=PaperEngine.PropRulesRoundTripThroughResetAndAccountViews:"
          "PaperEngine.DisciplineGuardrailsAndTiltFlagsAppearOnTheRiskView:PaperEngine.RulesCompareReplaysTheAttemptAgainstPresetsAndCustomRules:"

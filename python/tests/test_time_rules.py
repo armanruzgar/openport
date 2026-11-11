@@ -6,7 +6,7 @@ from typing import get_type_hints
 import jsonschema
 import pytest
 
-from conftest import ROOT, SPEC
+from conftest import SPEC
 from openport.types import Account, AccountRules, Evaluation
 from tools.contract_test import Contract
 
@@ -111,10 +111,8 @@ def test_read_back_rules_remain_valid_create_and_reset_inputs():
         validator.validate({**extra, "initial_cash": "10000.00", "rules": rules})
 
 
-def test_real_time_rule_create_reset_and_error_responses(tmp_path):
-    binary = ROOT / "build/tests/openport_tests"
-    if not binary.exists():
-        pytest.skip("Build C++ tests to check real time-rule responses")
+@pytest.mark.cpp("build/tests/openport_tests")
+def test_real_time_rule_create_reset_and_error_responses(tmp_path, binary):
     result = subprocess.run(
         [str(binary), "--gtest_filter=PaperEngine.TimeRulesRoundTripProgressRefusalsAndValidation:"
          "PaperEngine.TimeAndTradeRulesSurviveCreateResetAndPresetMatching:PaperEngine.FlatRulesRoundTripValidationAndAccountProgress:PaperStocks.FlatTimeRejectsOpeningPreviewsWith422"],

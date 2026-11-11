@@ -64,11 +64,16 @@ scenarios and data; the web job for `web/`; the Python job for `python/` and
 `tools/`; the Docker job for anything in the image. A change to the workflow or
 to `docs/openapi.yaml` runs every job. On `main` every push gets its own complete
 run; on other branches a newer push cancels the run before it.
+The Python tests marked `cpp` run the built `openportd` and C++ test executable.
+When C++ changed, the plain Ubuntu C++ job runs them after CTest on its own build;
+otherwise the Python job builds the two from that job's compiler cache and runs
+them with the rest. CI sets `OPENPORT_REQUIRE_BUILD=1`, so there a missing build
+fails them instead of skipping them.
 
 ## Python and API contract
 
 The Python package uses Python 3.10+. Its tests need pytest, jsonschema, pyyaml,
-pandas, websockets and MCP 2.x. With the prepared development environment:
+pandas, pyarrow, websockets and MCP 2.x. With the prepared development environment:
 
 ```sh
 .venv-py/bin/python -m pytest python/tests
@@ -77,7 +82,9 @@ pandas, websockets and MCP 2.x. With the prepared development environment:
 
 Python tests run a threaded synthetic HTTP server, with local socket pairs when
 TCP binding is denied. A built C++ test binary also supplies real handler responses
-for schema validation without a listener. The web suite compares core TypeScript
+for schema validation without a listener, and a built `openportd` is checked through
+its command line and, in demo mode, through the client and bot. These tests carry the
+`cpp` marker (`-m cpp` selects them) and skip without `build/`. The web suite compares core TypeScript
 wire types with `docs/openapi.yaml`; JSON syntax in that YAML file avoids another
 npm dependency.
 

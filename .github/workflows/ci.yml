@@ -108,6 +108,7 @@ jobs:
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF
       - name: Build
+        id: build
         run: cmake --build build
       - name: Compiler cache statistics
         if: always()
@@ -133,6 +134,20 @@ jobs:
           OPENPORT_VERIFY_REVIEWS: 1
           OPENPORT_VERIFY_JOURNAL: 1
         run: ctest --test-dir build -j 6 --output-on-failure --timeout 1500
+      # The Python tests marked cpp run this build: they check the C++ fixtures'
+      # real handler responses against docs/openapi.yaml and drive openportd
+      # through the Python client. They run even when CTest failed.
+      - uses: actions/setup-python@v7
+        if: ${{ !cancelled() && !matrix.verify && steps.build.outcome == 'success' }}
+        with:
+          python-version: "3.14"
+      - name: Python tests of this build
+        if: ${{ !cancelled() && !matrix.verify && steps.build.outcome == 'success' }}
+        env:
+          OPENPORT_REQUIRE_BUILD: 1
+        run: |
+          pip install './python[pandas,arrow,ws,mcp]' pytest jsonschema pyyaml
+          python -m pytest python/tests -m cpp
 
   cpp-sanitize:
     name: C++ (GCC 13, ASan + UBSan, shard ${{ matrix.shard }}/4)
@@ -288,19 +303,58 @@ jobs:
       - run: npx vitest run
       - run: npx vite build
 
+  # The Python tests marked cpp need openportd and the C++ test executable. When
+  # C++ changed, the Ubuntu C++ job runs them on its own build. Otherwise this
+  # job builds the two from that job's compiler cache, which already holds this
+  # code, and runs them with the rest.
   python:
     name: Python client and MCP
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # A cold compiler cache means a full build.
+    timeout-minutes: 30
+    env:
+      BUILD_CPP: ${{ needs.changes.outputs.cpp != 'true' }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_NOHASHDIR: 'true'
     steps:
       - uses: actions/checkout@v7
+      - name: Install system dependencies
+        if: env.BUILD_CPP == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build ccache libboost-dev libssl-dev zlib1g-dev libzstd-dev
+      - name: Restore compiler cache
+        if: env.BUILD_CPP == 'true'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-release-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-release-${{ runner.os }}-
+      - name: Build openportd and the C++ tests
+        if: env.BUILD_CPP == 'true'
+        # The C++ job's configuration, so that its cache hits.
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DOPENPORT_WERROR=ON -DOPENPORT_BUILD_BENCHMARKS=OFF
+          cmake --build build --target openportd openport_tests
+          ccache -s
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - run: pip install './python[pandas,ws,mcp]' pytest jsonschema pyyaml
-      - run: python -m pytest python/tests
+      - run: pip install './python[pandas,arrow,ws,mcp]' pytest jsonschema pyyaml
+      - name: Tests
+        if: env.BUILD_CPP == 'true'
+        env:
+          OPENPORT_REQUIRE_BUILD: 1
+        run: python -m pytest python/tests
+      - name: Tests (the C++ job runs those marked cpp)
+        if: env.BUILD_CPP != 'true'
+        run: python -m pytest python/tests -m "not cpp"
       - name: Formula updater (offline fixtures)
         run: python tools/update_formula_test.py
       - name: Demo soak tool (scripted replay)

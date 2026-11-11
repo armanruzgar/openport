@@ -51,6 +51,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   its stop was already reached when the entry filled and it closed at once for a loss.
   The example is now 15 points wide with a 3× stop, and a test runs it from the guide
   on the guide's own backtest days.
+- **CI checks real API responses against the contract.** The Python tests that check
+  the C++ fixtures' handler responses against `docs/openapi.yaml`, and drive a built
+  `openportd` through the client, always skipped in CI, because the Python job had no
+  build; so did the Arrow and Parquet export tests, without pyarrow. The Ubuntu C++
+  job now runs them on its build, the Python job builds from its cache when only
+  Python changed, and in CI a missing build fails them instead of skipping them.
 - **A failing web test shows its assertion.** `waitForRender` retried a check for 15
   minutes, as long as CI's whole web job, so a page that never showed what a test
   expected ended as a cancelled job with no message. It now fails after 20 seconds
