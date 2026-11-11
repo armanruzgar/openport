@@ -416,6 +416,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   standard equivalent's pre-split quote. A price printed before the ex-date now marks
   the shares divided by the split's ratio, and a quote given before the ex-date's
   open does not mark or fill the split stock's series.
+- **Option stops on a split stock.** An option order triggered by the stock's price
+  kept its pre-split level, so after a 2:1 split a stop under the old price fired on
+  the ex-date's first quote with no move, and a level above it could no longer be
+  reached. Such levels (the order's own, its bracket's and its chained orders') and a
+  trail in dollars behind them now take the split, to the cent.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.

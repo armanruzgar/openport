@@ -7080,6 +7080,35 @@ void accrue_financing(State& s, const State& closing, std::int64_t days, Events&
     if (mark != closing.stock_marks.end()) post("borrow_fee", symbol, mark->second.price * -stock.shares, rules.stock_borrow_rate_bps, true);
   }
 }
+/// A level on a stock's price set before a split, on the split shares: over the
+/// split's ratio, to the nearest cent and never below one.
+Money split_level(Money level, const CorporateAction& a) {
+  return std::max(Money::from_micros(10'000), nearest_cent(level.prorate(a.denominator, a.numerator)));
+}
+/// Puts an option order's terms on a split stock's shares: each trigger on its
+/// price, the order's own, its bracket's and its chained orders', takes the split, and
+/// so does a trail of dollars behind it. Such a trigger watches the stock as its own
+/// underlying or by name. Whether any moved.
+bool split_request(const State& s, OrderRequest& request, const CorporateAction& a) {
+  const auto symbols = order_symbols(request);
+  const auto contract = symbols.empty() ? s.contracts.end() : s.contracts.find(symbols.front());
+  const auto own = contract == s.contracts.end() ? std::string{} : contract->second.underlying;
+  bool moved = false;
+  const auto rescale = [&](std::optional<Trigger>& t) {
+    if (!t || t->source != TriggerSource::Underlying || (t->symbol.empty() ? own : t->symbol) != a.symbol) return;
+    t->level = split_level(t->level, a);
+    if (t->trail && t->trail->unit == TrailUnit::Amount) t->trail->value = split_level(t->trail->value, a);
+    moved = true;
+  };
+  rescale(request.trigger);
+  if (request.bracket && request.bracket->stop_loss) rescale(request.bracket->stop_loss->trigger);
+  if (request.bracket && request.bracket->take_profit) rescale(request.bracket->take_profit->trigger);
+  for (auto& next : request.then)
+    if (split_request(s, next, a)) moved = true;
+  for (auto& other : request.oco)
+    if (split_request(s, other, a)) moved = true;
+  return moved;
+}
 /// On an ex-date the shares held into it are paid the dividend, and short shares
 /// pay it, in whole cents: once per symbol and date, into the new day's P&L as other.
 /// Splits going ex on the new trading date (and any the server was down for), each
@@ -7087,8 +7116,10 @@ void accrue_financing(State& s, const State& closing, std::int64_t days, Events&
 /// split mark (or the average cost without one) and the mark split with them; every
 /// share-settled series on the underlying that has not expired takes the split
 /// deliverable, whole shares with the fraction as cash at that price (cash only once
-/// a contract delivers less than a whole share, as after a 1:200 reverse split); and working
-/// share orders on the stock are cancelled, their prices no longer applying.
+/// a contract delivers less than a whole share, as after a 1:200 reverse split); working
+/// share orders on the stock are cancelled, their prices no longer applying; and option
+/// orders keep their premium, which is per contract either way, while their levels on
+/// the stock's price take the split (driver 9; drivers 1-8 left them on the old shares).
 void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actions, Events& events) {
   for (const auto& a : actions) {
     if (std::any_of(s.corporate_actions.begin(), s.corporate_actions.end(),
@@ -7143,6 +7174,16 @@ void apply_corporate_actions(State& s, const std::vector<CorporateAction>& actio
       if (s.stock_orders[i].open() && s.stock_orders[i].request.symbol == a.symbol)
         end_stock_order(s, s.stock_orders[i].id, OrderStatus::Cancelled,
                         failure(Reason::CORPORATE_ACTION, "A split went ex on the stock; place the order again on the split shares"), events);
+    if (s.revised_corporate_actions)
+      for (const auto id : open_ids(s)) {
+        auto request = s.orders[id - 1].request;
+        if (!split_request(s, request, a)) continue;
+        auto& order = s.orders.mut(id - 1);
+        // A retry of the submission still finds the order the split moved.
+        if (!order.submitted && order.parent == 0) order.submitted = order.request;
+        order.request = std::move(request);
+        event(events, "order_adjusted", order);
+      }
     s.corporate_actions.push_back(record);
     event(events, "corporate_action", s.corporate_actions.back());
   }

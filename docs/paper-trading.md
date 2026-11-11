@@ -238,7 +238,14 @@ assignments and before the day's dividends:
   forward splits (twice the contracts at half the strike); the adjusted series pays
   exactly the same.
 - Working share orders on the stock are cancelled with `CORPORATE_ACTION`; working option
-  orders stay, their premium being per contract either way.
+  orders stay, their premium being per contract either way. A level on the stock's
+  price is on the old shares, though, so it takes the split: an underlying trigger
+  that watches the stock (its own underlying or one it names), on the order itself,
+  its bracket's exits and its chained orders, is divided by the split's ratio to the
+  nearest cent, and so is a trail in dollars behind it. Each order moved is journaled
+  with event `order_adjusted`, and a retry of its submission still finds it. Runs
+  recorded with replay driver 8 or earlier left such levels where they were, so a
+  stop under the old price fired on the ex-date's first quote with no move.
 
 An adjusted series settles, is exercised and is assigned on its deliverable: one unit is
 worth its shares (and cash) over 100 against the strike, so a 2:1-adjusted 500 call with

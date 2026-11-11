@@ -338,5 +338,53 @@ TEST(CorporateActions, PricesFromBeforeTheExDateDoNotRevalueTheSplitShares) {
   }
 }
 
+TEST(CorporateActions, OptionOrdersTriggeredByTheStocksPriceTakeTheSplit) {
+  const auto call = *md::parse_osi("SPY261016C00500000");
+  for (const bool revised : {false, true}) {
+    SCOPED_TRACE(revised ? "driver 9" : "drivers 1-8");
+    Spy f;
+    TradingSession s(roomy(), f.time);
+    s.set_revised_corporate_actions(revised);
+    ASSERT_TRUE(s.define(call, f.time).decision.ok());
+    f.quote(s, call, "14.00", "14.20");
+    ASSERT_TRUE(s.submit(f.market("long", call, 1, Side::Buy), f.time).decision.ok());
+    // A stop that sells the call once SPY trades at $480, trailing it by $30, and a
+    // resting entry whose bracket would stop out under $470.
+    auto stop = f.market("stop", call, 1, Side::Sell);
+    stop.tif = TimeInForce::Gtc;
+    stop.trigger = Trigger{TriggerSource::Underlying, TriggerDirection::AtOrBelow, m("480")};
+    stop.trigger->trail = Trail{TrailUnit::Amount, m("30")};
+    const auto armed = s.submit(stop, f.time);
+    ASSERT_TRUE(armed.decision.ok()) << armed.decision.message;
+    OrderRequest entry{"entry", call.osi_symbol(), Side::Buy, OrderType::Limit, TimeInForce::Gtc, 1, m("1.00"), {}, {}, {}};
+    entry.bracket = Bracket{ExitSpec{Trigger{TriggerSource::Underlying, TriggerDirection::AtOrBelow, m("470")}, {}}, {}};
+    const auto resting = s.submit(entry, f.time);
+    ASSERT_TRUE(resting.decision.ok()) << resting.decision.message;
+    ASSERT_TRUE(s.roll_day(at(kExDate, 9), {}, {{"SPY", kExDate, 2, 1}}).decision.ok());
+    const auto rolled = s.snapshot();
+    const auto& moved = rolled->recent_orders[*armed.order_id - 1];
+    const auto& bracketed = rolled->recent_orders[*resting.order_id - 1];
+    // SPY at $255 is the same value as $510 was: the stop holds.
+    f.time = at(kExDate);
+    f.spot = 255;
+    f.quote(s, call, "14.00", "14.20");
+    const auto quoted = s.snapshot();
+    const auto& after = quoted->recent_orders[*armed.order_id - 1];
+    if (!revised) {
+      EXPECT_EQ(moved.request.trigger->level, m("480"));
+      EXPECT_EQ(after.status, OrderStatus::Filled);
+      continue;
+    }
+    EXPECT_EQ(moved.request.trigger->level, m("240"));
+    EXPECT_EQ(moved.request.trigger->trail->value, m("15"));
+    ASSERT_TRUE(moved.submitted);  // a retry of the submission still finds it
+    EXPECT_EQ(moved.submitted->trigger->level, m("480"));
+    EXPECT_EQ(bracketed.request.bracket->stop_loss->trigger->level, m("235"));
+    EXPECT_EQ(after.status, OrderStatus::Armed);
+    ASSERT_EQ(s.snapshot()->positions.size(), 1u);
+    EXPECT_EQ(s.snapshot()->positions[0].position.quantity, 1);
+  }
+}
+
 }  // namespace
 }  // namespace openport::trading
