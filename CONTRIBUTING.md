@@ -148,9 +148,12 @@ workflow skips the deployment with a notice. Link previews use
 Publishing a GitHub release builds the image for amd64 and arm64 and pushes it to
 `ghcr.io/armanruzgar/openport`, and attaches Linux archives plus `.deb`/`.rpm` packages
 for amd64 and arm64. The packages include the web terminal and a private systemd
-service, which is not started automatically. The release-assets workflow builds
-them with CPack, inspects both formats and runs the extracted native binary before
-upload. Checksums cover archives and packages. Ubuntu 24.04's glibc baseline
+service, which is not started automatically. On each architecture the release-assets
+workflow first runs the image it built through CI's Docker smoke test (the API
+contract and a paper fill), since CI itself tests only amd64 Linux and arm64 macOS,
+and attaches nothing if it fails. It then builds the packages with CPack, inspects both
+formats and runs the extracted native binary before upload. Checksums cover archives
+and packages: the workflow rewrites `SHA256SUMS` once everything is attached. Ubuntu 24.04's glibc baseline
 applies to the RPM too; do not advertise older enterprise distro compatibility.
 On a matching Linux machine, `python3 tools/package_test.py PACKAGE_DIRECTORY
 --arch amd64` (or `arm64`) checks locally built packages without installing them.

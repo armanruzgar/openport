@@ -38,6 +38,28 @@ jobs:
           ref: ${{ env.TAG }}
       - name: Build the image
         run: docker build --build-arg OPENPORT_BUILD_REVISION="$(git rev-parse HEAD)" -t openport:release .
+      # CI builds and tests only amd64 Linux and arm64 macOS, so on each architecture the
+      # image must start, answer the API contract and fill a paper order, as CI's Docker
+      # job checks on amd64, before anything built from it is attached.
+      - name: Smoke test the image on this architecture
+        run: |
+          docker run -d --rm --name openport -p 127.0.0.1:8080:8080 openport:release
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8080/api/status > /dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/api/status > /dev/null
+          test "$(curl -s --path-as-is -o /dev/null -w '%{http_code}' http://127.0.0.1:8080//etc/passwd)" = 400
+          token="$(docker exec openport cat /var/lib/openport/write-token)"
+          python3 tools/smoke_trade.py http://127.0.0.1:8080 "$token"
+          # The contract check needs jsonschema and pyyaml, which the system Python keeps out.
+          python3 -m venv "$RUNNER_TEMP/venv" || {
+            sudo apt-get update && sudo apt-get install -y python3-venv && python3 -m venv --clear "$RUNNER_TEMP/venv"; }
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet jsonschema pyyaml
+          "$RUNNER_TEMP/venv/bin/python" tools/contract_test.py http://127.0.0.1:8080 --token "$token" --spec docs/openapi.yaml
+      - name: Stop the smoke server
+        if: always()
+        run: docker stop openport || true
       - name: Package the archive
         run: |
           name="openport-${TAG#v}-linux-${{ matrix.arch }}"

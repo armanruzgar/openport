@@ -50,3 +50,17 @@ def test_workflows_that_publish_pin_their_actions_by_commit():
             assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", action), f"{name}: {action}"
             assert re.fullmatch(r"\s+# v\d+(\.\d+)*", rest), f"{name}: {action} needs its version in a comment"
     assert "package-ecosystem: github-actions" in (ROOT / ".github/dependabot.yml").read_text()
+
+
+def test_each_linux_release_image_is_smoke_tested_before_anything_is_attached():
+    # CI tests only amd64 Linux and arm64 macOS; the arm64 Linux release must still start.
+    workflow = (ROOT / ".github/workflows/release-assets.yml").read_text()
+    linux = workflow.split("\n  linux:\n", 1)[1].split("\n  macos:\n", 1)[0]
+    assert "runner: ubuntu-24.04-arm" in linux
+    smoke = linux.split("- name: Smoke test the image on this architecture\n", 1)[1].split("\n      - name:", 1)[0]
+    for check in ("curl -fsS http://127.0.0.1:8080/api/status", "python3 tools/smoke_trade.py http://127.0.0.1:8080",
+                  "tools/contract_test.py http://127.0.0.1:8080"):
+        assert check in smoke, check
+    assert linux.index("Smoke test the image on this architecture") < linux.index("gh release upload")
+    assert "if: always()" not in smoke
+

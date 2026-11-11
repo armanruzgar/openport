@@ -959,6 +959,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   nothing, kept the portfolio and left Delete clickable while the request was out. The
   failure is now shown beside the portfolio, Delete waits for the request, and a
   portfolio another tab already deleted leaves the list.
+- **Linux release builds run on their own architecture before they ship.** CI builds
+  and tests only amd64 Linux and arm64 macOS, and the release workflow packaged and
+  attached the arm64 Linux archive, `.deb` and `.rpm` without ever starting the
+  binary. Each architecture's image now goes through CI's Docker smoke test (status,
+  the path check, a paper fill and the API contract) on its own runner first, and
+  nothing built from it is attached if that fails.
 
 ## 0.5.1 (2026-10-28)
 
