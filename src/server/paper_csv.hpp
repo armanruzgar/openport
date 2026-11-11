@@ -21,15 +21,33 @@ inline std::optional<md::Date> csv_date(std::string_view text) {
       !md::valid_date(date) || md::format_date(date) != text) return {};
   return date;
 }
+/// Whether `text` is a sign and then a decimal number: digits, optionally a dot and
+/// digits, optionally an exponent (e or E, an optional sign, digits). JSON prints a
+/// double below 1e-4 or from 1e15 in exponent form, such as -5e-05.
+inline bool csv_signed_number(std::string_view text) {
+  std::size_t at = 1;
+  const auto digit_run = [&] {
+    const auto start = at;
+    while (at < text.size() && text[at] >= '0' && text[at] <= '9') ++at;
+    return at > start;
+  };
+  if (text.size() < 2 || (text.front() != '-' && text.front() != '+') || !digit_run()) return false;
+  if (at < text.size() && text[at] == '.') {
+    ++at;
+    if (!digit_run()) return false;
+  }
+  if (at < text.size() && (text[at] == 'e' || text[at] == 'E')) {
+    ++at;
+    if (at < text.size() && (text[at] == '-' || text[at] == '+')) ++at;
+    if (!digit_run()) return false;
+  }
+  return at == text.size();
+}
 /// A cell a spreadsheet would run as a formula (a note or tag starting = + - @, tab
-/// or CR) gets a leading apostrophe; signed numbers stay numbers.
+/// or CR) gets a leading apostrophe; signed numbers stay numbers, exponents included.
 inline std::string csv_neutral(std::string_view text) {
   if (text.empty() || std::string_view("=+-@\t\r").find(text.front()) == std::string_view::npos) return std::string(text);
-  const auto digits = text.substr(1);
-  const bool number = (text.front() == '-' || text.front() == '+') && !digits.empty() &&
-      digits.find_first_not_of("0123456789.") == std::string_view::npos && std::count(digits.begin(), digits.end(), '.') <= 1 &&
-      digits.front() != '.' && digits.back() != '.';
-  return number ? std::string(text) : "'" + std::string(text);
+  return csv_signed_number(text) ? std::string(text) : "'" + std::string(text);
 }
 inline std::string csv_quote(std::string_view raw) {
   const auto neutral = csv_neutral(raw);

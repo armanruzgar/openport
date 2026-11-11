@@ -169,6 +169,14 @@ TEST(TradeReviewApi, CsvDateUsesNewYorkCalendarDateIncludingDst) {
   EXPECT_EQ(server::csv_quote("-12.50"), "-12.50");
   EXPECT_EQ(server::csv_quote("+3"), "+3");
   EXPECT_EQ(server::csv_quote("-"), "'-");
+  // JSON prints small and large doubles with an exponent; they stay numbers too.
+  EXPECT_EQ(server::csv_quote("-5e-05"), "-5e-05");
+  EXPECT_EQ(server::csv_quote("-1.5e+20"), "-1.5e+20");
+  EXPECT_EQ(server::csv_quote("+2E3"), "+2E3");
+  EXPECT_EQ(server::csv_quote(server::csv_value(json{{"context", {{"delta", -0.00005}}}}, "context.delta")), "-5e-05");
+  for (const auto* formula : {"-1e", "-1e+", "-1.e5", "-.5", "-1.5.2", "-1e5+A1", "-1e5e5", "+e5"}) {
+    EXPECT_EQ(server::csv_quote(formula), std::string("'") + formula) << formula;
+  }
   const std::vector<std::string> fill_columns = {"account", "account_version", "provider", "prices", "new_york_date",
       "run_id", "scenario", "seed", "recording", "id", "attempt", "order_id", "actor", "symbol", "underlying", "side", "quantity", "price", "fee", "quote_time", "time", "context.spot",
       "context.spot_source", "context.iv", "context.delta", "context.years", "context.equity", "context.floor_room", "context.buying_power",

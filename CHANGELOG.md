@@ -32,6 +32,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 
 ### Fixes
 
+- **CSV exports of small and large negative numbers.** JSON prints a double below
+  1e-4 or from 1e15 with an exponent, and the formula guard of `/api/fills.csv` and
+  `/api/trades.csv` took `-5e-05` for text, so a far out-of-the-money put's delta, or
+  a small negative return, heat or attribution, reached a spreadsheet as text behind
+  an apostrophe. Signed numbers with an exponent now stay numbers.
 - **Commands on a quiet feed.** A trading command did not wake the engine thread, so
   on a quiet feed (the demo between its batches, a paused replay, a polling feed
   between polls) each order, cancel or preview waited out the engine's 50 ms wait for
