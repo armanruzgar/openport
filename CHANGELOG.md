@@ -983,6 +983,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   into it, so typing 30 after a Backspace gave 130, and **Halt underlying** sent that.
   The field now keeps what is typed, and the button waits for whole minutes from 1 to
   390.
+- **The header says which underlying is shown.** The underlying buttons marked the
+  current symbol only by colour, so a screen reader heard a row of identical buttons.
+  The current one now carries `aria-current`.
 
 ## 0.5.1 (2026-10-28)
 

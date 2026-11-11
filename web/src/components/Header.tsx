@@ -52,6 +52,8 @@ export function Header({
           {underlyings.map((u) => (
             <button
               key={u.symbol}
+              type="button"
+              aria-current={u.symbol === symbol ? "true" : undefined}
               onClick={() => onSymbol(u.symbol)}
               className={`min-w-0 rounded-md px-2 py-1 text-sm tabular [overflow-wrap:anywhere] ${u.symbol === symbol ? "bg-raised text-foreground" : "text-muted hover:text-foreground"}`}
             >
