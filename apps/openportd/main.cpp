@@ -79,6 +79,7 @@ struct Settings {
   std::filesystem::path web_root;
   std::filesystem::path scenario_dir;
   unsigned backtest_keep = 20;
+  std::uint64_t backtest_keep_bytes = 20'000'000'000;
   std::filesystem::path record_file;
   std::filesystem::path record_dir;
   unsigned record_keep_days = 0;
@@ -145,6 +146,7 @@ int usage(const char* error = nullptr) {
       "                 [--fallback-provider NAME [--fallback-seconds N] [--fallback-option KEY=VALUE]...]\n"
       "                 [--allowed-host NAME]... [--token-file FILE] [--require-token]\n"
       "                 [--notify-config FILE] [--backtest-keep N] (default 20, 0 unlimited)\n"
+      "                 [--backtest-keep-gb X] (default 20, 0 unlimited)\n"
       "                 [--paper-journal PATH] [--plan ID] [--paper-cash DECIMAL] [--paper-fee DECIMAL]\n"
       "                 [--paper-fill-model as_displayed|conservative|midpoint|queue] [--paper-queue-seed N]\n"
       "                 [--paper-slippage-ticks N] [--paper-fill-latency-ms N] [--paper-impact-ticks N]\n"
@@ -652,6 +654,15 @@ int run(int argc, char** argv) {
       }
     } else if (arg == "--backtest-keep") {
       settings.backtest_keep = providers::parse_integer(value, "--backtest-keep");
+    } else if (arg == "--backtest-keep-gb") {
+      double gb = 0;
+      std::istringstream input(value);
+      input.imbue(std::locale::classic());
+      input >> std::noskipws >> gb;
+      if (!input || input.peek() != std::char_traits<char>::eof() || !std::isfinite(gb) || gb < 0 || gb > 1'000'000)
+        return usage("--backtest-keep-gb must be a finite number in [0, 1000000]");
+      settings.backtest_keep_bytes = static_cast<std::uint64_t>(gb * 1'000'000'000);
+      if (gb > 0 && settings.backtest_keep_bytes == 0) return usage("--backtest-keep-gb must be at least one byte");
     } else if (arg == "--scenario-dir") {
       settings.scenario_dir = value;
     } else if (arg == "--web-root") {
@@ -1012,7 +1023,7 @@ int run(int argc, char** argv) {
   server::ReplayHost replays(replay_options);
   server::BacktestHost backtests({settings.paper_journal.parent_path() / "backtests", replay_options.recordings,
       settings.scenario_dir, engine_options.analytics, engine_options.dividends,
-      settings.paper_enabled && engine_options.write_mode != "disabled", settings.backtest_keep});
+      settings.paper_enabled && engine_options.write_mode != "disabled", settings.backtest_keep, settings.backtest_keep_bytes});
   // Dividends from Massive reach the live engine and replays started after them.
   std::unique_ptr<providers::MassiveDividends> dividends;
   if (settings.massive_dividends) {

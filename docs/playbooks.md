@@ -609,6 +609,12 @@ active runs never do. Thus a completed new run can leave N+1 unpinned reports un
 the next start. Pins survive restart. Keep important reports before starting more
 runs. CLI output directories are outside this server retention policy.
 
+A run keeps every day's and every attempt's journal beside its report: about 2 to 7
+MB per simulated day, so a 252-day run can take 0.5 to 2 GB and a sweep that much per
+variant. `--backtest-keep-gb X` (decimal GB, default **20**, **0 = unlimited**) also
+holds the finished unpinned runs to X: before a start, the oldest go until the rest
+fit, though the newest always stays. Pinned runs are not counted.
+
 Comparison returns each run's playbook@version (or ordered joint playbooks), full plan configuration in the
 report's existing journal encoding, input identities and summary. `daily` aligns
 independent daily P&L over the union of supplied dates; a missing or unfinished day

@@ -1948,8 +1948,10 @@ restart is needed and sandboxes remain alive. `GET /api/status` reports
 
 API backtests save reports, journals and progress under `backtests/ID/` beside the
 main paper journal. `--backtest-keep N` (default 20; 0 unlimited) prunes the oldest
-finished unpinned runs beyond N before a new start. Pinned runs are exempt and do
-not count toward N. The newly started run can bring the total to N+1 until the
+finished unpinned runs beyond N before a new start, and `--backtest-keep-gb X`
+(decimal GB, default 20; 0 unlimited) then prunes the oldest until the rest take at
+most X, the newest always kept: each simulated day keeps 2 to 7 MB of journals. Pinned
+runs are exempt and count toward neither limit. The newly started run can bring the total to N+1 until the
 next start. Cancelled, failed and interrupted runs count as finished; active runs
 are never purged. `PUT /api/backtests/ID {"keep":true}` persists a pin across
 restart. Listings expose logical directory `bytes`, including journals and reports.

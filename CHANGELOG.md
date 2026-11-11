@@ -1374,6 +1374,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   and parsed that month's whole CSV twice per minute it wrote, so ten sessions into a
   series directory that had been recording live took minutes instead of
   milliseconds. Such a month is now parsed once and kept while its file is unchanged.
+- **Backtest retention has a byte budget.** A run keeps every day's and attempt's
+  journal, 2 to 7 MB per simulated day, and retention only counted runs, so the
+  default 20 runs of 252 days could take tens of GB, more with sweeps. Before a start,
+  the oldest finished unpinned runs now also go until the rest take at most
+  `--backtest-keep-gb` (decimal GB, default 20, 0 unlimited); the newest always stays.
 
 ## 0.5.1 (2026-10-28)
 

@@ -133,14 +133,24 @@ struct BacktestHost::Impl {
     if (!current.is_null() && current.at("id") == id) current = nullptr;
   }
   void retain() {
-    if (!options.keep) return;
-    std::vector<std::string> removable;
+    if (!options.keep && !options.keep_bytes) return;
+    std::vector<std::pair<std::string, std::uintmax_t>> removable;  // oldest first, with its bytes
     for (const auto& id : ids()) {
       const auto state = saved(id, false);
-      if (finished(state) && !state.at("keep").get<bool>()) removable.push_back(id);
+      if (finished(state) && !state.at("keep").get<bool>()) removable.emplace_back(id, state.at("bytes").get<std::uintmax_t>());
     }
-    if (removable.size() <= options.keep) return;
-    for (std::size_t index = 0; index < removable.size() - options.keep; ++index) purge(removable[index]);
+    std::size_t purged = 0;
+    if (options.keep && removable.size() > options.keep)
+      for (; purged < removable.size() - options.keep; ++purged) purge(removable[purged].first);
+    // A run keeps every day's and attempt's journal, a few MB a simulated day, so a
+    // count alone could keep tens of GB: the oldest go until the rest fit the bytes.
+    if (!options.keep_bytes) return;
+    std::uintmax_t total = 0;
+    for (std::size_t index = purged; index < removable.size(); ++index) total += removable[index].second;
+    for (; purged + 1 < removable.size() && total > options.keep_bytes; ++purged) {
+      total -= removable[purged].second;
+      purge(removable[purged].first);
+    }
   }
 
 };

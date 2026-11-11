@@ -995,6 +995,25 @@ TEST(BacktestApi, RetentionRemovesOldestUnpinnedAndKeepsInterruptedPinsAcrossRes
   EXPECT_EQ(json::parse(started.body).at("id"), "000006");
   EXPECT_TRUE(std::filesystem::exists(directory / "000004"));
 }
+// I-25: finished unpinned runs are also held to a byte budget, oldest first; the newest
+// stays whatever its size, and pinned runs are not counted.
+TEST(BacktestApi, RetentionAlsoKeepsFinishedRunsWithinAByteBudget) {
+  test::RecordingFile storage;
+  const auto directory = storage.directory / "reports";
+  for (const std::string id : {"000001", "000002", "000003", "000004"}) {
+    saved_fixture(directory, id, id == "000001");
+    std::ofstream(directory / id / "days.bin") << std::string(4000, 'x');
+  }
+  const server::BacktestHost::Options options{directory, storage.directory, {}, {}, {}, true, 20, 9000};
+  server::BacktestHost host(options);
+  const auto started = call(host, {"POST", "/api/backtests", json{{"playbook", "batch"}, {"plan", "eod-50k"},
+      {"days", {{{"file", recorded_day(storage.directory, {2026, 9, 14}).filename().string()}}}}}.dump()});
+  ASSERT_EQ(started.status, 202) << started.body;
+  EXPECT_TRUE(std::filesystem::exists(directory / "000001"));
+  EXPECT_FALSE(std::filesystem::exists(directory / "000002"));
+  EXPECT_TRUE(std::filesystem::exists(directory / "000003"));
+  EXPECT_TRUE(std::filesystem::exists(directory / "000004"));
+}
 TEST(BacktestApi, PurgeAndKeepRefuseSymlinkEscapesAndUnknownRuns) {
   test::RecordingFile storage;
   const auto directory = storage.directory / "reports";

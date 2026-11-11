@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <nlohmann/json.hpp>
@@ -54,6 +55,9 @@ class BacktestHost {
     std::vector<trading::Dividend> dividends;
     bool enabled = true;
     unsigned keep = 20;  ///< Finished unpinned runs retained on start; zero is unlimited.
+    /// Logical bytes the finished unpinned runs may take on start, the newest kept
+    /// whatever its size; zero is unlimited. A simulated day keeps a few MB of journals.
+    std::uint64_t keep_bytes = 20'000'000'000;
   };
   explicit BacktestHost(Options options);
   ~BacktestHost();
