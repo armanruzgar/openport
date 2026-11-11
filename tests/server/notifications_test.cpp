@@ -146,6 +146,29 @@ TEST(Notifications, RetriesServerErrorsButNotAuthenticationOrRedirects) {
     EXPECT_EQ(h.state()["channels"][0]["failures"], 1);
   }
 }
+// Telegram answers a refused message (a wrong chat, a blocked bot) in its body, often
+// with HTTP 200: it is a failure, not a delivery, under the body's own error code, and
+// it is not retried.
+TEST(Notifications, TelegramRefusalsInTheBodyAreFailuresAndAreNotRetried) {
+  struct Reply { int status; std::string body, error; };
+  for (const auto& reply : std::vector<Reply>{{200, R"({"ok":false})", "INVALID_RESPONSE"},
+                                              {200, "not json", "INVALID_RESPONSE"},
+                                              {200, R"({"ok":false,"error_code":403})", "HTTP_403"},
+                                              {400, R"({"ok":false,"error_code":400})", "HTTP_400"}}) {
+    SCOPED_TRACE(reply.body);
+    Harness h(json::array({channel("telegram")}));
+    h.http->responses.push_back({reply.status, reply.body});
+    h.emit();
+    EXPECT_TRUE(h.notifications->deliver_one());
+    h.advance();
+    EXPECT_FALSE(h.notifications->deliver_one());
+    EXPECT_EQ(h.http->calls.size(), 1U);
+    EXPECT_EQ(h.state()["queue_depth"], 0);
+    EXPECT_EQ(h.state()["channels"][0]["delivered"], 0);
+    EXPECT_EQ(h.state()["channels"][0]["failures"], 1);
+    EXPECT_EQ(h.state()["channels"][0]["last_error"], json(reply.error));
+  }
+}
 TEST(Notifications, EnforcesProviderRatesAcrossDuplicateDestinations) {
   for (const std::string type : {"discord", "telegram", "webhook"}) {
     Harness h(json::array({channel(type), channel(type, "same")}));
