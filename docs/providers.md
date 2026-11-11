@@ -21,8 +21,11 @@ Set credentials in the usual environment variables; never put them in the comman
 ```
 
 The new directory (default `provider-report`) contains `conformance.json` and
-`conformance.md`. Existing directories are refused so earlier evidence is not
-overwritten. Without `--seconds`, polling stops after one cycle and streaming
+`conformance.md`, and the probe ends by printing the outcome and the directory's full
+path, as `certification incomplete: conformance.json and conformance.md in
+/home/you/tradier-report (exit 1)`. Existing directories are refused so earlier
+evidence is not overwritten. `openport-probe --help` prints the usage to stdout and
+exits 0. Without `--seconds`, polling stops after one cycle and streaming
 runs for 60 seconds. `--seconds N` observes a duration for either kind of provider;
 `--snapshot` selects one polling cycle with N as its deadline. A stream cannot
 use `--snapshot`. `--quotes N` sets streaming readiness (default 100 per

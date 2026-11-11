@@ -1342,6 +1342,28 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   or a journal that cannot be written) still counted as one of the visitor's 3 and the
   demo's 30 creations an hour: three such failures locked a visitor out for an hour,
   and thirty every visitor, though no sandbox was made. It no longer counts.
+- **openportd's errors stay in view and name what is wrong.** A usage error printed
+  its one-line reason and then the whole 140-line help, so the reason scrolled away;
+  it now prints the reason and `Run openportd --help for usage.`. A missing
+  `DATABENTO_API_KEY` or `MASSIVE_API_KEY` for `--import-day` was reported as a usage
+  error after progress lines; it is now said first, alone, with exit status 1.
+  `--verify-run` with more than one argument says it takes exactly one journal. The
+  `--backtest` command reported raw JSON library errors for a non-numeric
+  `--scenarios` or `--workers` and a malformed or wrong playbooks file, and an unknown
+  `--plan` as `Cannot read nope`; each now names the flag or file and what it must be.
+- **openportd says what it is running.** An `--allowed-origin` the web server would
+  refuse was found only after the crash log, the journal (seeded with the given plan)
+  and the feed had started, so the corrected command ran the first one's plan; it is
+  now refused while the flags are read. Plan, cash, fee and fill flags given for a
+  journal that already holds another account were ignored silently; startup now names
+  each one it ignored. The banner's link uses brackets for an IPv6 address and
+  `localhost` for a wildcard bind, startup names the paper journal, says on stderr
+  when writes are off because a non-loopback bind has no token, and warns when the
+  web root has no built terminal instead of announcing it as served.
+- **`openport-probe --help` is an answer.** It printed the usage to stderr with exit
+  status 2; it now goes to stdout with status 0, a missing provider or symbol is
+  named, and `--certify` ends by printing the outcome and the report directory's full
+  path.
 
 ## 0.5.1 (2026-10-28)
 

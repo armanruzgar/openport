@@ -29,6 +29,7 @@
 #include "openport/md/recording.hpp"
 #include "openport/providers/factory.hpp"
 #include "openport/providers/options.hpp"
+#include <nlohmann/json.hpp>
 #include "state.hpp"
 #include "certification.hpp"
 
@@ -47,9 +48,13 @@ struct Chain {
       expiries;
 };
 
-int usage() {
+/// Without a reason this is --help's answer: stdout and status 0. With one, the reason
+/// and the usage go to stderr with status 2.
+int usage(const char* reason = nullptr) {
+  auto* out = reason ? stderr : stdout;
+  if (reason) std::fprintf(stderr, "openport-probe: %s\n\n", reason);
   std::fprintf(
-      stderr,
+      out,
       "usage: openport-probe <provider> <underlying>... [--expiries N] [--window F] "
       "[--seconds S] [--quotes N] [--analyze] [--compare-mfiv] [--comparison-dir DIR] [--record FILE] [--option KEY=VALUE]...\n"
       "certify: openport-probe --certify <provider> <underlying>... [--seconds S] [--snapshot] [--report-dir DIR]\n"
@@ -59,10 +64,10 @@ int usage() {
       "databento: --expiries and --window must be 0 (whole-chain upstream "
       "subscription)\nproviders:");
   for (auto name : providers::provider_names()) {
-    std::fprintf(stderr, " %.*s", static_cast<int>(name.size()), name.data());
+    std::fprintf(out, " %.*s", static_cast<int>(name.size()), name.data());
   }
-  std::fprintf(stderr, "\n");
-  return 2;
+  std::fprintf(out, "\n");
+  return reason ? 2 : 0;
 }
 
 std::string env_key_for(std::string name) {
@@ -177,10 +182,12 @@ struct VolComparison {
 }  // namespace
 
 int run(int argc, char** argv) {
-  if (argc < 3) return usage();
-  const bool certify = std::string_view(argv[1]) == "--certify";
+  for (int i = 1; i < argc; ++i)
+    if (std::string_view(argv[i]) == "--help" || std::string_view(argv[i]) == "-h") return usage();
+  const bool certify = argc > 1 && std::string_view(argv[1]) == "--certify";
   const int provider_arg = certify ? 2 : 1;
-  if (argc <= provider_arg + 1) return usage();
+  if (argc <= provider_arg) return usage("name a provider and at least one underlying symbol");
+  if (argc <= provider_arg + 1) return usage("missing underlying symbol");
   md::ProviderConfig config{argv[provider_arg], env_key_for(argv[provider_arg]), {}};
   bool duration = false, snapshot = false;
   std::filesystem::path report_dir = "provider-report";
@@ -230,7 +237,7 @@ int run(int argc, char** argv) {
       subscription.underlyings.push_back(std::move(symbol));
     }
   }
-  if (subscription.underlyings.empty()) return usage();
+  if (subscription.underlyings.empty()) return usage("missing underlying symbol");
 
   if (compare_mfiv && std::find(subscription.underlyings.begin(), subscription.underlyings.end(), "SPX") == subscription.underlyings.end())
     throw std::invalid_argument("--compare-mfiv requires SPX");
@@ -242,7 +249,16 @@ int run(int argc, char** argv) {
       throw std::invalid_argument("certification cannot be combined with analysis or raw recording");
     const int result = probe::certify(config, subscription, seconds, duration, snapshot,
                                       static_cast<std::size_t>(minimum_quotes), report_dir);
-    std::printf("certification report written: conformance.json and conformance.md (exit %d)\n", result);
+    // Where the report went and what it found, read back from the report itself.
+    const auto written = std::filesystem::absolute(report_dir);
+    std::string outcome = "unknown";
+    try {
+      std::ifstream report(written / "conformance.json");
+      outcome = nlohmann::json::parse(report).at("outcome").get<std::string>();
+    } catch (const std::exception&) {
+    }
+    std::printf("certification %s: conformance.json and conformance.md in %s (exit %d)\n", outcome.c_str(),
+                written.c_str(), result);
     return result;
   }
   auto provider = providers::make_provider(config);

@@ -45,7 +45,7 @@ std::string isolated_home() {
 }
 
 void rejects(const std::string& application, const std::string& args, const std::string& reason,
-             const std::string& environment = "") {
+             const std::string& environment = "", int expected = 2) {
   const auto command = environment + isolated_home() + "\"" + OPENPORT_APPS_DIR + "/" + application + "\" " +
                        args + " 2>&1";
   FILE* pipe = popen(command.c_str(), "r");
@@ -55,17 +55,17 @@ void rejects(const std::string& application, const std::string& args, const std:
   while (fgets(buffer, sizeof buffer, pipe)) output += buffer;
   const auto status = pclose(pipe);
   ASSERT_TRUE(WIFEXITED(status)) << output;
-  EXPECT_EQ(WEXITSTATUS(status), 2) << output;
+  EXPECT_EQ(WEXITSTATUS(status), expected) << output;
   EXPECT_NE(output.find(reason), std::string::npos) << output;
 }
 
 TEST(Cli, ImportValidatesDatesSymbolsCredentialsAndFlagsWithoutStartingTheDaemon) {
-  rejects("openportd", "--import-day databento --date 2026-09-22 --symbols SPX", "DATABENTO_API_KEY", "DATABENTO_API_KEY='' ");
+  rejects("openportd", "--import-day databento --date 2026-09-22 --symbols SPX", "DATABENTO_API_KEY", "DATABENTO_API_KEY='' ", 1);
   rejects("openportd", "--import-day thetadata --symbols SPX", "requires --date");
   rejects("openportd", "--import-day thetadata --date 2026-09-22", "select 1..32 symbols");
   rejects("openportd", "--import-day thetadata --date 2026-02-30 --symbols SPX", "invalid --date");
   rejects("openportd", "--import-day thetadata --date 2099-01-02 --symbols SPX", "future");
-  rejects("openportd", "--import-day massive --date 2026-09-22 --symbols SPY", "MASSIVE_API_KEY", "MASSIVE_API_KEY='' ");
+  rejects("openportd", "--import-day massive --date 2026-09-22 --symbols SPY", "MASSIVE_API_KEY", "MASSIVE_API_KEY='' ", 1);
   rejects("openportd", "--import-day massive --import-days 2026-09-22..2026-09-21 --symbols SPY", "ascending");
   rejects("openportd", "--import-day massive --date 2026-09-22 --date 2099-01-02 --symbols SPY", "future");
   rejects("openportd", "--import-day cboe --date 2026-09-22 --symbols SPX", "provider must be");
@@ -243,7 +243,7 @@ TEST(Cli, CertificationWritesRedactedReportsFromReplayAndRejectsUnsafeCombinatio
 }
 
 TEST(Cli, BrokerNamesHelpSandboxAndCredentialFlagsAreValidatedOffline) {
-  rejects("openport-probe", "--help", "tradier tastytrade");
+  rejects("openport-probe", "tradier", "tradier tastytrade");
   rejects("openportd", "--provider tastytrade --option sandbox=true", "funded production");
   rejects("openport-probe", "tastytrade SPX --option sandbox=true", "funded production");
   rejects("openportd", "--provider tradier --option access_token=fake", "unknown provider option");
@@ -520,8 +520,8 @@ TEST(Cli, DaemonHelpGoesToStdoutAndExitsZero) {
       EXPECT_NE(output.find(expected), std::string::npos) << expected << '\n' << output;
     EXPECT_NE(usage.find("--no-series"), std::string::npos) << usage;
   }
-  // An error still goes to stderr with status 2.
-  rejects("openportd", "--no-such-flag", "usage: openportd");
+  // An error goes to stderr with status 2, naming where the usage is rather than all of it.
+  rejects("openportd", "--no-such-flag", "Run openportd --help for usage.");
 }
 
 TEST(Cli, DaemonCompactsJournalsFromEarlierBuildsAndKeepsTheOriginals) {
@@ -1054,5 +1054,182 @@ TEST(Cli, DaemonSaysWhyPaperTradingIsOffBeforeWebStartupFails) {
   const auto off = start("--no-paper");
   EXPECT_EQ(off.status, 2) << off.output;
   EXPECT_EQ(off.output.find("paper trading is off"), std::string::npos) << off.output;
+}
+
+// I-89: a usage error is its reason and a pointer to --help, not the whole usage text
+// with the reason scrolled above it.
+TEST(Cli, AUsageErrorIsItsReasonAndWhereTheUsageIs) {
+  const auto unknown = run_daemon("--provider demo --bogus x");
+  EXPECT_EQ(unknown.status, 2) << unknown.output;
+  EXPECT_EQ(unknown.output, "openportd: unknown option --bogus\nRun openportd --help for usage.\n");
+  const auto missing = run_daemon("--provider demo --bogus");
+  EXPECT_EQ(missing.status, 2) << missing.output;
+  EXPECT_EQ(missing.output, "openportd: missing value for --bogus\nRun openportd --help for usage.\n");
+  const auto verify = run_daemon("--verify-run journal.jsonl extra");
+  EXPECT_EQ(verify.status, 2) << verify.output;
+  EXPECT_EQ(verify.output, "openportd: --verify-run takes exactly one JOURNAL\n");
+  // A missing key is said alone, before any progress, and is not a usage error.
+  const auto keyless = run_daemon("--import-day databento --date 2026-09-22 --symbols SPX", "DATABENTO_API_KEY='' ");
+  EXPECT_EQ(keyless.status, 1) << keyless.output;
+  EXPECT_EQ(keyless.output, "openportd: import: set DATABENTO_API_KEY to import from databento\n");
+}
+
+// B-169: an origin the web server would refuse is refused before the crash log, the
+// journal or the feed exist, so a corrected start is not handed the first one's plan.
+TEST(Cli, AnInvalidAllowedOriginIsRefusedBeforeAnythingIsCreated) {
+  openport::test::RecordingFile file;
+  const auto journal = file.directory / "journal.jsonl";
+  const auto result = run_daemon("--provider demo --plan intraday-25k --paper-journal '" + journal.string() +
+                                 "' --allowed-origin https://host/path");
+  EXPECT_EQ(result.status, 2) << result.output;
+  EXPECT_NE(result.output.find("invalid allowed origin https://host/path"), std::string::npos) << result.output;
+  EXPECT_FALSE(std::filesystem::exists(journal)) << result.output;
+  EXPECT_FALSE(std::filesystem::exists(file.directory / "crash.log")) << result.output;
+}
+
+// I-94: the backtest command names what is wrong with its input, not a JSON library error.
+TEST(Cli, BacktestInputErrorsNameTheFlagOrFile) {
+  openport::test::RecordingFile file;
+  const auto malformed = file.directory / "malformed.json";
+  const auto listing = file.directory / "listing.json";
+  { std::ofstream out(malformed); out << "{\"definitions\": "; }
+  { std::ofstream out(listing); out << "{\"playbooks\": []}"; }
+  const auto out = (file.directory / "report.json").string();
+  const auto backtest = [&](const std::string& flags, const std::filesystem::path& playbooks) {
+    return "--backtest morning --out '" + out + "' --playbooks '" + playbooks.string() + "' " + flags;
+  };
+  rejects("openportd", backtest("--plan practice --scenarios abc --seed 1", listing), "--scenarios must be an integer in [1, 252]");
+  rejects("openportd", backtest("--plan practice --scenarios 2 --seed 1 --workers x", listing),
+          "--workers must be an integer in [1, 16]");
+  rejects("openportd", backtest("--plan nope --scenarios 2 --seed 1", listing),
+          "--plan nope is neither a plan preset (openportd --help lists them) nor a JSON rules file");
+  rejects("openportd", backtest("--plan practice --scenarios 2 --seed 1", malformed), malformed.string() + " is not valid JSON");
+  rejects("openportd", backtest("--plan practice --scenarios 2 --seed 1", listing),
+          listing.string() + " is not a playbook catalogue (it has no \"definitions\")");
+  EXPECT_FALSE(std::filesystem::exists(out));
+}
+
+// I-95: the probe's help is an answer on stdout; a missing argument is named.
+TEST(Cli, ProbeHelpIsAnAnswerAndMissingArgumentsAreNamed) {
+  for (const auto* flag : {"--help", "-h"}) {
+    const auto command = isolated_home() + "\"" + OPENPORT_APPS_DIR + "/openport-probe\" " + flag + " 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+    ASSERT_NE(pipe, nullptr);
+    std::string output;
+    char buffer[512];
+    while (fgets(buffer, sizeof buffer, pipe)) output += buffer;
+    const auto status = pclose(pipe);
+    ASSERT_TRUE(WIFEXITED(status)) << output;
+    EXPECT_EQ(WEXITSTATUS(status), 0) << output;
+    EXPECT_NE(output.find("usage: openport-probe"), std::string::npos) << output;
+    EXPECT_NE(output.find("tradier tastytrade"), std::string::npos) << output;
+  }
+  rejects("openport-probe", "", "openport-probe: name a provider and at least one underlying symbol");
+  rejects("openport-probe", "--certify", "openport-probe: name a provider and at least one underlying symbol");
+  rejects("openport-probe", "cboe", "openport-probe: missing underlying symbol");
+  rejects("openport-probe", "--certify demo", "openport-probe: missing underlying symbol");
+}
+
+// I-95: certification names where its report went and the outcome it holds.
+TEST(Cli, CertificationNamesItsReportDirectoryAndOutcome) {
+  using namespace openport;
+  test::RecordingFile source;
+  const auto time = md::parse_datetime("2026-09-22T14:30:00Z", md::Zone::Utc).value();
+  test::record_events(source.path, {md::ContractDefinition{0, *md::parse_osi("SPXW991218C05000000")},
+      md::OptionQuote{0, time, 100, 101, 1, 1}, md::SnapshotComplete{"SPX", time},
+      md::ProviderStatus{time, md::FeedState::Live, "connected", "SPX"}});
+  const auto directory = source.directory / "report";
+  const auto command = isolated_home() + "\"" + OPENPORT_APPS_DIR +
+      "/openport-probe\" --certify replay SPX --option file='" + source.path.string() +
+      "' --option speed=max --snapshot --seconds 1 --report-dir '" + directory.string() + "' 2>&1";
+  FILE* pipe = popen(command.c_str(), "r");
+  ASSERT_NE(pipe, nullptr);
+  std::string output;
+  char buffer[512];
+  while (fgets(buffer, sizeof buffer, pipe)) output += buffer;
+  const auto status = pclose(pipe);
+  ASSERT_TRUE(WIFEXITED(status)) << output;
+  std::ifstream report_file(directory / "conformance.json");
+  const auto report = nlohmann::json::parse(report_file);
+  EXPECT_NE(output.find("certification " + report.at("outcome").get<std::string>() +
+                        ": conformance.json and conformance.md in " + std::filesystem::absolute(directory).string() +
+                        " (exit " + std::to_string(WEXITSTATUS(status)) + ")"),
+            std::string::npos) << output;
+}
+
+// I-90: plan, cash, fee and fill flags seed only a new journal. Restarted with ones
+// the journal does not hold, the server names each as ignored instead of running the
+// recorded account as if they had taken.
+TEST(WebServer, SeedFlagsAnExistingJournalIgnoresAreNamed) {
+  openport::test::RecordingFile source;
+  openport::test::record_events(source.path, {});
+  const auto journal = source.directory / "paper.jsonl";
+  const auto command = [&](const std::string& flags) {
+    return "export " + isolated_home() + "; exec '" + std::string(OPENPORT_APPS_DIR) +
+           "/openportd' --provider replay --symbols SPX,SPY --option file='" + source.path.string() +
+           "' --option speed=max --option loop=off --paper-journal '" + journal.string() + "' --port " +
+           std::to_string(free_port()) + flags;
+  };
+  {
+    Background created(command(""), source.directory);
+    ASSERT_TRUE(created.line("web terminal: ", 60s).has_value()) << created.output;
+    created.send(SIGTERM);
+    ASSERT_TRUE(created.wait_exit(60s).has_value()) << created.output;
+  }
+  ASSERT_TRUE(std::filesystem::exists(journal));
+  {
+    Background restarted(command(" --plan eod-50k --paper-fee 9.99 --paper-fill-model conservative"), source.directory);
+    ASSERT_TRUE(restarted.line("web terminal: ", 60s).has_value()) << restarted.output;
+    EXPECT_NE(restarted.output.find("openportd: ignored --plan eod-50k, --paper-fee 9.99, --paper-fill-model conservative: " +
+                                    journal.string() + " already holds a Practice account"),
+              std::string::npos) << restarted.output;
+    restarted.send(SIGTERM);
+    ASSERT_TRUE(restarted.wait_exit(60s).has_value()) << restarted.output;
+  }
+  {
+    // Flags that ask for what the journal holds are not named.
+    Background same(command(" --plan practice --paper-fee 0.65 --paper-fill-model as_displayed"), source.directory);
+    ASSERT_TRUE(same.line("web terminal: ", 60s).has_value()) << same.output;
+    EXPECT_EQ(same.output.find("openportd: ignored"), std::string::npos) << same.output;
+    same.send(SIGTERM);
+    ASSERT_TRUE(same.wait_exit(60s).has_value()) << same.output;
+  }
+}
+
+// I-92 and I-93: the banner's link opens in a browser, the journal is named, and a
+// terminal that was never built is said to be missing.
+TEST(WebServer, TheBannerNamesALinkTheJournalAndAMissingTerminal) {
+  openport::test::RecordingFile source;
+  openport::test::record_events(source.path, {});
+  const auto journal = source.directory / "paper.jsonl";
+  const auto missing = source.directory / "no-web";
+  const auto start = [&](unsigned short port, const std::string& paper) {
+    return "export " + isolated_home() + "; exec '" + std::string(OPENPORT_APPS_DIR) +
+           "/openportd' --provider replay --symbols SPX,SPY --option file='" + source.path.string() +
+           "' --option speed=max --option loop=off --web-root '" + missing.string() + "' --port " +
+           std::to_string(port) + " " + paper;
+  };
+  {
+    const auto port = free_port();
+    Background daemon(start(port, "--paper-journal '" + journal.string() + "'"), source.directory);
+    const auto banner = daemon.line("OpenPort on ", 60s);
+    ASSERT_TRUE(banner.has_value()) << daemon.output;
+    EXPECT_TRUE(banner->starts_with("http://127.0.0.1:" + std::to_string(port) + "/  (provider ")) << *banner;
+    const auto named = daemon.line("paper journal: ", 60s);
+    ASSERT_TRUE(named.has_value()) << daemon.output;
+    EXPECT_EQ(*named, journal.string());
+    EXPECT_NE(daemon.output.find("openportd: no web terminal at " + missing.string() + " (no index.html)"),
+              std::string::npos) << daemon.output;
+    daemon.send(SIGTERM);
+    ASSERT_TRUE(daemon.wait_exit(60s).has_value()) << daemon.output;
+  }
+  {
+    Background daemon(start(free_port(), "--no-paper"), source.directory);
+    const auto paper = daemon.line("paper trading: ", 60s);
+    ASSERT_TRUE(paper.has_value()) << daemon.output;
+    EXPECT_EQ(*paper, "off (--no-paper)");
+    daemon.send(SIGTERM);
+    ASSERT_TRUE(daemon.wait_exit(60s).has_value()) << daemon.output;
+  }
 }
 }  // namespace

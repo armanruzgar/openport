@@ -122,12 +122,19 @@ struct Settings {
   pricing::AmericanModel american_model = pricing::AmericanModel::LeisenReimer;
   std::vector<std::string> allowed_origins;
   std::vector<std::string> allowed_hosts;
+  /// The flags given that seed only a new main journal (plan, cash, fee, fills), as typed.
+  std::vector<std::pair<std::string, std::string>> seed_flags;
 };
 
-/// Without an error this is --help's answer: it goes to stdout and exits 0.
+/// Without an error this is --help's answer: it goes to stdout and exits 0. With one,
+/// only the reason and a pointer to --help go to stderr, with status 2, so the reason
+/// does not scroll away above the whole usage text.
 int usage(const char* error = nullptr) {
-  auto* out = error ? stderr : stdout;
-  if (error) std::fprintf(stderr, "openportd: %s\n\n", error);
+  if (error) {
+    std::fprintf(stderr, "openportd: %s\nRun openportd --help for usage.\n", error);
+    return 2;
+  }
+  auto* out = stdout;
   std::fprintf(
       out,
       "usage: openportd [--provider NAME] [--symbols SPX,SPY,QQQ,IWM,DIA] [--address ADDR] [--port N]\n"
@@ -249,7 +256,7 @@ int usage(const char* error = nullptr) {
     if (!plan.unlocked_by.empty()) std::fprintf(out, " (after %s)", plan.unlocked_by.c_str());
     std::fprintf(out, "\n");
   }
-  return error ? 2 : 0;
+  return 0;
 }
 
 std::vector<std::string> split(const std::string& list) {
@@ -432,10 +439,29 @@ int import_command(int argc, char** argv) {
   }
   const auto selected = providers::import_dates(dates);
   const auto today = md::new_york_time(md::now()).date;
-  std::fprintf(stderr, "Importing %s; data stays in %s\n", request.provider.c_str(), request.output.c_str());
+  // A day the market was open is read from the provider, with its key: a missing key
+  // is not a usage error, and is said before any progress. Closed days need none.
+  const char* key_variable = request.provider == "databento" ? "DATABENTO_API_KEY"
+                           : request.provider == "massive" ? "MASSIVE_API_KEY" : nullptr;
+  const bool reads_provider = std::any_of(selected.begin(), selected.end(), [](md::Date date) {
+    return md::stock_session(md::new_york_to_utc(date, 12, 0)).open;
+  });
+  if (key_variable && reads_provider) {
+    const char* key = std::getenv(key_variable);
+    if (!key || !*key) {
+      std::fprintf(stderr, "openportd: import: set %s to import from %s\n", key_variable, request.provider.c_str());
+      return 1;
+    }
+  }
+  // Announced with the first day's progress, after every date has been checked.
+  bool announced = false;
   try {
     providers::import_days(request, selected, today, [&] { return providers::make_history_source(request.provider); },
-        [](const providers::ImportDayProgress& update) {
+        [&](const providers::ImportDayProgress& update) {
+          if (!announced) {
+            std::fprintf(stderr, "Importing %s; data stays in %s\n", request.provider.c_str(), request.output.c_str());
+            announced = true;
+          }
           if (update.state != "importing" || update.windows <= 1 || update.windows % 20 == 0 || update.windows == update.total_windows)
             std::fprintf(stderr, "import: day %zu/%zu %s %s; %zu/%zu windows, %llu events\n",
                 update.day, update.days, md::format_date(update.date).c_str(), update.state.c_str(),
@@ -504,6 +530,9 @@ int run(int argc, char** argv) {
       settings.port =
           static_cast<unsigned short>(providers::parse_integer(value, "--port", 1, 65535));
     } else if (arg == "--allowed-origin") {
+      // As the web server will check it, before anything is created or started.
+      if (!server::normalize_origin(value))
+        return usage(("invalid allowed origin " + value + ": --allowed-origin takes http[s]://host[:port]").c_str());
       settings.allowed_origins.push_back(value);
     } else if (arg == "--allowed-host") {
       if (!server::host_allowed(value, {}, {value})) return usage("--allowed-host takes a host name");
@@ -515,27 +544,37 @@ int run(int argc, char** argv) {
       const auto* plan = server::find_plan(value);
       if (!plan) return usage("--plan must be practice or an evaluation or funded plan ID (see --help)");
       settings.plan = plan;
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-cash") {
       settings.paper_cash = trading::Money::parse(value);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-fee") {
       settings.paper.fee_per_contract = trading::Money::parse(value);
       if (settings.paper.fee_per_contract < trading::Money{}) return usage("--paper-fee must be nonnegative");
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-fill-model") {
       if (value != "as_displayed" && value != "conservative" && value != "midpoint" && value != "queue")
         return usage("--paper-fill-model must be as_displayed, conservative, midpoint or queue");
       settings.paper_fill_model = value;
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-slippage-ticks") {
       settings.paper_slippage_ticks = providers::parse_integer(value, "--paper-slippage-ticks", 0, 10);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-fill-latency-ms") {
       settings.paper_fill_latency_ms = providers::parse_integer(value, "--paper-fill-latency-ms", 0, 60000);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-impact-ticks") {
       settings.paper_impact_ticks = providers::parse_integer(value, "--paper-impact-ticks", 0, 10);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-queue-seed") {
       settings.paper_queue_seed = providers::parse_integer(value, "--paper-queue-seed", 0, 2147483647);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-stop-stress-ticks") {
       settings.paper_stop_stress_ticks = providers::parse_integer(value, "--paper-stop-stress-ticks", 0, 10);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--paper-stop-stress-percent") {
       settings.paper_stop_stress_percent = providers::parse_integer(value, "--paper-stop-stress-percent", 101, 1000);
+      settings.seed_flags.emplace_back(arg, value);
     } else if (arg == "--write-token") {
       if (value.empty()) return usage("--write-token requires a nonempty token");
       settings.write_token = value;
@@ -926,6 +965,39 @@ int run(int argc, char** argv) {
   if (settings.paper_enabled && !trading_status.enabled && !trading_status.reason.empty())
     std::fprintf(stderr, "openportd: paper trading is off (%s): %s\n", settings.paper_journal.c_str(),
                  trading_status.reason.c_str());
+  // Plan, cash, fee and fill flags seed only a new journal; one that exists keeps what it
+  // recorded. Name each flag that asked for something else rather than run the account
+  // the journal holds as if the flags had taken.
+  if (const auto main_view = engine.trading_view(); main_view && trading_status.enabled) {
+    const auto& kept = main_view->config;
+    const auto& wanted = settings.paper;
+    const auto& held = kept.rules;
+    const auto& asked = wanted.rules;
+    std::string ignored;
+    for (const auto& [flag, given] : settings.seed_flags) {
+      bool differs = false;
+      if (flag == "--plan") differs = trading_status.plan_id != settings.plan->id;
+      else if (flag == "--paper-cash") differs = kept.initial_cash != wanted.initial_cash;
+      else if (flag == "--paper-fee") differs = kept.fee_per_contract != wanted.fee_per_contract;
+      else if (flag == "--paper-fill-model")
+        differs = held.inside_fill_percent != asked.inside_fill_percent || held.queue_fills != asked.queue_fills ||
+                  held.slippage_ticks != asked.slippage_ticks || held.fill_latency_ms != asked.fill_latency_ms ||
+                  held.impact_ticks != asked.impact_ticks;
+      else if (flag == "--paper-slippage-ticks") differs = held.slippage_ticks != asked.slippage_ticks;
+      else if (flag == "--paper-fill-latency-ms") differs = held.fill_latency_ms != asked.fill_latency_ms;
+      else if (flag == "--paper-impact-ticks") differs = held.impact_ticks != asked.impact_ticks;
+      else if (flag == "--paper-queue-seed") differs = held.queue_seed != asked.queue_seed;
+      else if (flag == "--paper-stop-stress-ticks") differs = held.stop_stress_ticks != asked.stop_stress_ticks;
+      else if (flag == "--paper-stop-stress-percent") differs = held.stop_stress_percent != asked.stop_stress_percent;
+      if (differs) ignored += (ignored.empty() ? "" : ", ") + flag + " " + given;
+    }
+    if (!ignored.empty())
+      std::fprintf(stderr, "openportd: ignored %s: %s already holds a %s account (cash %s, fee %s a contract), and "
+                   "these flags seed only a new journal; reset the account (Account page, or POST /api/account/reset) "
+                   "to change its rules\n", ignored.c_str(), settings.paper_journal.c_str(),
+                   trading_status.plan.empty() ? "custom" : trading_status.plan.c_str(),
+                   trading_status.initial_cash.str().c_str(), trading_status.fee_per_contract.str().c_str());
+  }
   // Recorded days replay beside the live feed, each with its own paper account.
   server::ReplayHost::Options replay_options;
   replay_options.engine = engine_options;
@@ -991,9 +1063,18 @@ int run(int argc, char** argv) {
   for (const auto& symbol : settings.subscription.underlyings) {
     symbols += (symbols.empty() ? "" : ", ") + symbol;
   }
-  std::printf("OpenPort on http://%s:%u  (provider %s: %s)\n", settings.address.c_str(), web.port(),
+  // A link a browser opens: an IPv6 address in brackets, a wildcard bind as localhost.
+  std::printf("OpenPort on %s  (provider %s: %s)\n", startup::terminal_url(settings.address, web.port(), "").c_str(),
               std::string(provider->name()).c_str(), symbols.c_str());
   std::printf("web terminal: %s\n", settings.web_root.string().c_str());
+  if (std::error_code missing; !std::filesystem::exists(settings.web_root / "index.html", missing))
+    std::fprintf(stderr, "openportd: no web terminal at %s (no index.html), so only the API answers; build it "
+                 "with npm run build in web/, or pass --web-root DIR\n", settings.web_root.c_str());
+  if (settings.paper_enabled) std::printf("paper journal: %s\n", settings.paper_journal.c_str());
+  else std::printf("paper trading: off (--no-paper)\n");
+  if (engine_options.write_mode == "disabled")
+    std::fprintf(stderr, "openportd: writes are off: on %s, which is not loopback, orders need a write token; "
+                 "pass --write-token-file PATH or --token-file FILE\n", settings.address.c_str());
   if (token_from_file)
     std::fputs(startup::token_file_notice(settings.write_token_file, settings.address, web.port(),
                                           settings.write_token, settings.token_link).c_str(), stdout);
@@ -1077,7 +1158,11 @@ int backtest_cli(int argc, char** argv) {
   const auto read = [](const std::filesystem::path& file) {
     std::ifstream input(file);
     if (!input) throw std::invalid_argument("Cannot read " + file.string());
-    return json::parse(input);
+    try {
+      return json::parse(input);
+    } catch (const json::exception& error) {
+      throw std::invalid_argument(file.string() + " is not valid JSON: " + error.what());
+    }
   };
   std::filesystem::path catalogue;
   if (args.contains("--playbooks")) catalogue = args.at("--playbooks");
@@ -1097,8 +1182,14 @@ int backtest_cli(int argc, char** argv) {
       start = end + 1;
     } while (start <= selectors.size());
   }
-  if (!server::find_plan(args.at("--plan"))) body["plan"] = read(args.at("--plan"));
-  if (args.contains("--workers")) body["workers"] = json::parse(args.at("--workers"));
+  if (!server::find_plan(args.at("--plan"))) {
+    std::error_code missing;
+    if (!std::filesystem::is_regular_file(args.at("--plan"), missing))
+      throw std::invalid_argument("--plan " + args.at("--plan") +
+                                  " is neither a plan preset (openportd --help lists them) nor a JSON rules file");
+    body["plan"] = read(args.at("--plan"));
+  }
+  if (args.contains("--workers")) body["workers"] = providers::parse_integer(args.at("--workers"), "--workers", 1, 16);
   std::filesystem::path base;
   if (args.contains("--days")) {
     body["days"] = read(args.at("--days"));
@@ -1115,12 +1206,15 @@ int backtest_cli(int argc, char** argv) {
     body["days"] = json::array();
     for (const auto& [time, file] : files) { (void)time; body["days"].push_back({{"file", file}}); }
   } else {
-    body["scenarios"] = json::parse(args.at("--scenarios"));
+    body["scenarios"] = providers::parse_integer(args.at("--scenarios"), "--scenarios", 1, 252);
     if (!args.contains("--seed")) throw std::invalid_argument("--scenarios requires --seed");
     body["seed"] = args.at("--seed");
   }
   if (args.contains("--seed") && !args.contains("--scenarios")) throw std::invalid_argument("Use per-day seeds in --days");
-  const auto request = server::parse_backtest(body, read(catalogue),
+  const auto playbooks = read(catalogue);
+  if (!playbooks.is_object() || !playbooks.contains("definitions"))
+    throw std::invalid_argument(catalogue.string() + " is not a playbook catalogue (it has no \"definitions\")");
+  const auto request = server::parse_backtest(body, playbooks,
       providers::load_scenarios(args.contains("--scenario-dir") ? std::filesystem::path(args.at("--scenario-dir")) : std::filesystem::path{}), base, false);
   const auto output = std::filesystem::absolute(args.at("--out"));
   // A hangup cancels the run as SIGINT and SIGTERM do, and still writes its report.
@@ -1133,6 +1227,10 @@ int backtest_cli(int argc, char** argv) {
 }
 
 int main(int argc, char** argv) {
+  if (argc > 1 && std::string_view(argv[1]) == "--verify-run" && argc != 3) {
+    std::fprintf(stderr, "openportd: --verify-run takes exactly one JOURNAL\n");
+    return 2;
+  }
   if (argc == 3 && std::string_view(argv[1]) == "--verify-run") {
     std::error_code ec;
     (void)std::filesystem::file_size(argv[2], ec);
