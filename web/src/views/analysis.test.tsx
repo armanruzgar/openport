@@ -8,7 +8,8 @@ import type { AnalysisPortfolio, AnalysisPortfolios } from "../api/types"
 import { waitForRender } from "../test/render"
 import { AnalysisView } from "./AnalysisView"
 
-vi.mock("../api/live", () => ({ useLive: () => ({ version: () => 1, status: { trading: { write: "open" } } }) }))
+vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(),
+  useLive: () => ({ version: () => 1, status: { trading: { write: "open" } } }) }))
 
 const portfolio: AnalysisPortfolio = { portfolio: "ira", id: "ira", name: "IRA", analysis_only: true, read_only: true,
   note: "Imported for analysis only.", as_of: null, unpriced: [], complete: true, format: "schwab", imported: "2026-10-21T14:00:00.000Z",
