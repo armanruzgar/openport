@@ -6171,7 +6171,7 @@
       },
       "post": {
         "summary": "POST /api/analysis/portfolios",
-        "description": "Import a positions CSV (generic, tastytrade, Schwab or IBKR layout) as an analysis-only portfolio. It is not a paper account and no order can reach it.",
+        "description": "Import a positions CSV (generic, tastytrade, Schwab or IBKR layout) as an analysis-only portfolio. It is not a paper account and no order can reach it. The server keeps at most 32 analysis portfolios: another import is refused with 400 INVALID_IMPORT until one is deleted.",
         "x-scope": "admin",
         "requestBody": {
           "required": true,
