@@ -698,6 +698,34 @@ TEST(CboeCharts, HistoryFetchesWhatIsDueAndBacksOffFromMissingFiles) {
   EXPECT_EQ(history.error().find("SPX"), std::string::npos) << history.error();
   EXPECT_EQ(next, clock + 15 * md::kNanosPerMinute);
 }
+
+TEST(CboeCharts, HistoryRetriesAServerErrorAfterAMinute) {
+  // One 503 for the daily chart at startup left charts and the realized-vol fallback
+  // without daily bars for an hour, while a parse error retried after a minute.
+  md::Timestamp clock = md::new_york_to_utc({2026, 9, 22}, 11, 0);
+  std::size_t received = 0;
+  providers::CboeChartHistory::Options options;
+  options.daily_only = true;
+  options.clock = [&] { return clock; };
+  providers::CboeChartHistory history(
+      {"SPX"}, [&](const std::string&, providers::CboeChart, std::vector<md::Bar>) { ++received; }, options);
+  test::HttpStub http;
+  for (const int status : {500, 502, 503, 429}) {
+    SCOPED_TRACE(status);
+    http.respond = [status](std::string_view) { return net::HttpResponse{status, "unavailable"}; };
+    EXPECT_EQ(history.poll_once(http), clock + md::kNanosPerMinute);
+    EXPECT_NE(history.error().find("cboe SPX daily bars: HTTP " + std::to_string(status)), std::string::npos)
+        << history.error();
+    clock += md::kNanosPerMinute;
+  }
+  EXPECT_EQ(received, 0u);
+  // It answers again: the bars arrive and the next fetch is the hourly one.
+  http.respond = [](std::string_view) { return net::HttpResponse{200, std::string(kDaily)}; };
+  EXPECT_EQ(history.poll_once(http), clock + 3600 * md::kNanosPerSecond);
+  EXPECT_EQ(received, 1u);
+  EXPECT_TRUE(history.error().empty()) << history.error();
+  EXPECT_EQ(http.urls.size(), 5u);
+}
 }  // namespace
 
 namespace {

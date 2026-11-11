@@ -567,6 +567,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   five minutes, taking quotes and spot back to the file's time. A failed page now
   reports its own status and is read again 45 seconds later, the hold on the page goes
   on, and a chain older than the one already published is never published.
+- **Cboe chart history after a server error.** A 500, 502, 503 or 429 for a daily
+  chart file left the next attempt an hour away, so one error at startup cost charts
+  and the realized-vol fallback their daily bars for an hour, while a network or parse
+  error retried after a minute. Every failure but a missing file (403, 404) now
+  retries after a minute.
 - **Open terminals stop re-downloading the fill history with every quote batch.**
   While an account held a position, each new account version made every open tab
   fetch the account's whole fill list and current-attempt trades again for its fill

@@ -89,7 +89,8 @@ enum class CboeChart : std::uint8_t { Intraday, Daily };
 /// Keeps chart history current from Cboe's free chart files on its own thread: the
 /// latest session's minute bars every minute while a regular session is open or
 /// just closed (every 15 minutes otherwise), and daily bars every hour. Files Cboe
-/// does not have (403/404) are retried hourly.
+/// does not have (403/404) are retried hourly; any other failed request (another
+/// HTTP error, a network error, an unreadable file) after session_interval.
 class CboeChartHistory {
  public:
   using Sink = std::function<void(const std::string& underlying, CboeChart chart,

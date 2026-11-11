@@ -175,7 +175,10 @@ md::Timestamp CboeChartHistory::poll_once(net::HttpClient& http) {
             due = now + seconds(options_.missing_interval);
             failure = "Cboe publishes no chart (HTTP " + std::to_string(response.status) + ")";
           } else if (response.status != 200) {
+            // A server error is passing, as a failed request or unreadable file is: an
+            // hour without daily bars after one 503 at startup was too long.
             failure = "HTTP " + std::to_string(response.status);
+            due = now + seconds(std::min(options_.session_interval, options_.daily_interval));
           } else {
             auto bars = chart == CboeChart::Intraday ? parse_cboe_intraday(response.body)
                                                      : parse_cboe_daily(response.body);
