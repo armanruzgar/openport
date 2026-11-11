@@ -684,8 +684,10 @@ RiskProfile risk_profile(const Ledger& ledger, const Valuations& valuations, con
         const double scale = config.term_scaled ? std::sqrt(30.0 / std::max(1.0, life * 365.0)) : 1;
         double sigma = v.smile_iv + config.vol_points * scale / 100;
         if (surface) {
-          // The surface moves the smile; the (term-scaled) shock applies on top.
-          const auto moved = scenario_vol(config.smile, surface, v.smile_iv, p.contract.strike, v.forward, v.years,
+          // The surface moves the smile; the (term-scaled) shock applies on top. An
+          // adjusted series moves as its standard equivalent, on that one's smile, as
+          // in scenario_grid.
+          const auto moved = scenario_vol(config.smile, surface, v.smile_iv, e.strike, v.forward, v.years,
               forward * move, life, config.vol_points * scale / 100);
           if (!moved) return it->second;
           sigma = *moved;

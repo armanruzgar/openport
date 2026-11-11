@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <optional>
+#include <string>
 
 #include "openport/analytics/ssvi.hpp"
 #include "openport/trading/risk.hpp"
@@ -250,6 +251,37 @@ TEST(SmileDynamics, TimeBetaAndTermScaledGridsMoveSmilesAsTheProfileDoes) {
   EXPECT_EQ(fallback.surface_fallback, std::vector<std::string>{"SPX"});
   ASSERT_EQ(fallback.cells.size(), sticky.cells.size());
   for (std::size_t i = 0; i < sticky.cells.size(); ++i) EXPECT_EQ(fallback.cells[i].pnl, sticky.cells[i].pnl);
+}
+
+// An adjusted series moves as its standard equivalent, on that one's smile, in the risk
+// profile as in the scenario grid: a 3:2-adjusted 100 call is 1.5 standard calls struck
+// at 66.67, and the moved smile is read there, not at its listed 100.
+TEST(SmileDynamics, AnAdjustedSeriesProfileReadsTheSmileAtItsEffectiveStrike) {
+  const auto call = *md::parse_osi("AAPL261218C00100000");
+  const auto time = md::new_york_to_utc({2026, 9, 22}, 10, 0);
+  const SharedMap<std::string, Deliverable> deliverables{{call.osi_symbol(), Deliverable{150, {}}}};
+  const DeliverablesScope adjusted(&deliverables);
+  Ledger ledger;
+  ledger.fill(call, 10, Money::parse("8.00"), {});
+  const Valuations values{{call.osi_symbol(), Valuation{call.osi_symbol(), time, 0.6, 0.02, 0.2, -0.03, 70, 70, 0.99,
+                                                       md::years_between(time, call.expiry_time()), 0.3, true}}};
+  const SmileSurfaces surfaces{{"AAPL", skewed()}};
+  ScenarioConfig grid;
+  grid.spot_percent = {-10, 0, 10};
+  grid.vol_points = {0};
+  ProfileConfig profile;
+  profile.percent = grid.spot_percent;
+  profile.betas = {{"AAPL", 1}};
+  for (const auto dynamics : {SmileDynamics::StickyStrike, SmileDynamics::StickyMoneyness, SmileDynamics::StickyDelta}) {
+    SCOPED_TRACE(std::string(to_string(dynamics)));
+    profile.smile = {dynamics, &surfaces};
+    const auto cells = scenario_grid(ledger, values, grid, time, md::kNanosPerMinute, {}, profile.smile);
+    const auto curve = risk_profile(ledger, values, profile, 70, Money::parse("100000"), {}, {}, time, md::kNanosPerMinute);
+    ASSERT_TRUE(cells.complete);
+    ASSERT_TRUE(curve.complete);
+    ASSERT_EQ(cells.cells.size(), grid.spot_percent.size());
+    for (std::size_t i = 0; i < grid.spot_percent.size(); ++i) EXPECT_DOUBLE_EQ(curve.curves[0].pnl[i], cells.cells[i].pnl) << i;
+  }
 }
 
 }  // namespace

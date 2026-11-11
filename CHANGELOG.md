@@ -445,6 +445,11 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   long adjusted option counted back as buying power, so the account could buy them on
   unlimited credit, and a short one's buy-back was charged twice. Only what the scan
   covers is now taken from equity.
+- **Risk profiles of adjusted series under smile dynamics.** Under sticky moneyness or
+  sticky delta, the risk profile, and the multi-day, beta-weighted and term-scaled
+  scenario grid built from it, read an adjusted series' moved smile at its listed
+  strike instead of its effective one, so they disagreed with the one-day grid. Both now
+  read it at the effective strike.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
