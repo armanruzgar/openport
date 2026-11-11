@@ -161,6 +161,29 @@ describe("Playbooks page and staged actions", { timeout: renderTimeout }, () => 
     expect(host.textContent).toContain("Followed rules")
     expect(host.textContent).toContain("Version 1")
   })
+  it("archives a playbook only once its confirmation, which says it cannot be undone, is accepted", async () => {
+    const archived = catalogue()
+    archived.definitions["put-spread"]!.deleted = true
+    archived.modes = {}
+    archived.staged = []
+    vi.spyOn(api, "deletePlaybook").mockImplementation(async () => { vi.mocked(api.playbooks).mockResolvedValue(archived); return archived })
+    await render(<PlaybooksView />)
+    await waitForRender(() => expect(host.textContent).toContain("Morning put spread · v1"))
+    await click("Archive Morning put spread")
+    expect(api.deletePlaybook).not.toHaveBeenCalled()
+    const dialog = host.querySelector("dialog")!
+    for (const text of ["Archive Morning put spread?", "cannot be undone", "put-spread", "switches to Off"]) expect(dialog.textContent).toContain(text)
+    await click("Cancel")
+    expect(host.querySelector("dialog")).toBeNull()
+    expect(api.deletePlaybook).not.toHaveBeenCalled()
+    await click("Archive Morning put spread")
+    await click("Archive playbook")
+    expect(api.deletePlaybook).toHaveBeenCalledOnce()
+    expect(api.deletePlaybook).toHaveBeenCalledWith("put-spread", 1, "open")
+    await waitForRender(() => expect(host.textContent).toContain("Morning put spread · archived stats and versions"))
+    expect(host.querySelector("dialog")).toBeNull()
+    expect(host.querySelector('select[aria-label="Mode for Morning put spread"]')).toBeNull()
+  })
   it("saves an edited version and displays JSON errors without losing the editor", async () => {
     await render(<PlaybooksView />)
     await waitForRender(() => expect(host.textContent).toContain("Morning put spread"))

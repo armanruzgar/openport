@@ -75,6 +75,7 @@ function Playbooks() {
   const backtests = useQuery({ queryKey: ["forward-backtests"], queryFn: ({ signal }) => api.backtests(signal),
     enabled: live.source === "live" && live.trading?.enabled === true, refetchInterval: 10000, retry: false })
   const [confirmAuto, setConfirmAuto] = useState<Playbook | null>(null)
+  const [confirmArchive, setConfirmArchive] = useState<Playbook | null>(null)
   const client = useQueryClient()
   const token = useWriteToken()
   const [selected, setSelected] = useState("")
@@ -116,7 +117,7 @@ function Playbooks() {
         </select></label>
         <button className="trade-button" onClick={() => setSelected(definition.id)}>Stats and versions</button>
         <button className="trade-button" disabled={!!blocked || busy} onClick={() => { setEditing(JSON.stringify(definition, null, 2)); setError(null) }}>Edit {definition.name}</button>
-        <button className="trade-button" disabled={!!blocked || busy} onClick={() => void mutate(() => api.deletePlaybook(definition.id, definition.version!, trading.write))}>Archive {definition.name}</button>
+        <button className="trade-button" disabled={!!blocked || busy} onClick={() => { setError(null); setConfirmArchive(definition) }}>Archive {definition.name}</button>
       </div>
       {Object.entries(data.reasons).filter(([key]) => key.startsWith(`${definition.id}:`)).map(([key, reason]) => <p key={key} className="mt-2 text-xs text-muted">{key.split(":")[1]}: {reason}</p>)}
       {live.source === "live" && <ForwardTestPanel definition={definition} forward={data.forward_tests?.[definition.id]} runs={backtests.data?.runs ?? []} error={!!backtests.error} />}
@@ -131,6 +132,13 @@ function Playbooks() {
       {error != null && <TradingError error={error} />}
       <div className="flex gap-2"><button className="trade-button" disabled={!!blocked || busy} onClick={() => void mutate(async () => { await api.playbookMode(confirmAuto.id, "auto", trading.write); setConfirmAuto(null) })}>Enable Auto</button>
         <button className="trade-button" disabled={busy} onClick={() => setConfirmAuto(null)}>Cancel</button></div>
+    </Dialog>}
+    {confirmArchive && <Dialog title="Archive playbook" onClose={() => { if (!busy) setConfirmArchive(null) }}>
+      <p className="text-sm">Archive {confirmArchive.name}? This cannot be undone, and no playbook can take its ID, {confirmArchive.id}, again. Every live paper account running it switches to Off, which ends its forward tests.</p>
+      <p className="text-xs text-muted">Its saved versions and statistics stay readable under Archived playbooks.</p>
+      {error != null && <TradingError error={error} />}
+      <div className="flex gap-2"><button className="trade-button" disabled={!!blocked || busy} onClick={() => void mutate(async () => { await api.deletePlaybook(confirmArchive.id, confirmArchive.version!, trading.write); setConfirmArchive(null) })}>Archive playbook</button>
+        <button className="trade-button" disabled={busy} onClick={() => setConfirmArchive(null)}>Cancel</button></div>
     </Dialog>}
     {editing != null && <Panel title="Edit playbook definition">
       <p className="mb-3 text-xs text-muted">This JSON contains the complete rules. Saving an edit creates a new version; old versions remain readable.

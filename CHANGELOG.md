@@ -1393,6 +1393,10 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   `null` rules (a hand-edited or damaged entry) was still offered, and listing its
   plans to start from then failed. Such a pack is now dropped when read, like other
   malformed entries.
+- **Archiving a playbook asks first.** Archive on the Playbooks page archived the
+  playbook at once, though archiving cannot be undone: its ID cannot be used again,
+  and every live account running it switches to Off, which ends its forward tests.
+  It now asks for confirmation and says so, as enabling Auto does.
 
 ## 0.5.1 (2026-10-28)
 
