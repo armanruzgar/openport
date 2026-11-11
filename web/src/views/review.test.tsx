@@ -8,7 +8,7 @@ import { liveState, useLive } from "../api/live"
 import type { Trade, TradeReview } from "../api/trading-types"
 import { activeAccount } from "../lib/active-account"
 import { dataSource } from "../lib/data-source"
-import { strategyResults } from "../lib/journal"
+import { exitLabel, strategyResults } from "../lib/journal"
 import { tradeGroups } from "../lib/positions"
 import { fill, order, status, trades, trading } from "../test/trading-fixtures"
 import { Calendar, CsvDownloads, DayNoteEditor, StrategyRow, TradeDetail } from "./JournalView"
@@ -126,6 +126,22 @@ describe("trade review", () => {
     expect(save).toHaveBeenCalledWith("2026-09-22", { plan: "Wait", review: "Review" }, trading.write)
     expect(host.textContent).toContain("2,000 bytes")
   })
+})
+
+it.each([
+  ["drawdown", "Closed by the simulator's drawdown liquidation, not by your order.", "liquidated: drawdown"],
+  ["flat_time", "Closed by the simulator at the plan's mandatory flat time, not by your order.", "flattened: flat time"],
+  ["news", "Closed by the simulator for a news blackout, not by your order.", "flattened: news blackout"],
+  ["daily_loss", "Closed by the simulator's daily-loss liquidation, not by your order.", "liquidated: daily loss"],
+  ["expiry", "Closed by the simulator before expiry, not by your order.", "auto-closed before expiry"],
+  ["constructor", "Closed by the simulator (constructor), not by your order.", "closed by the simulator: constructor"],
+  [null, "Closed by the simulator, not by your order.", "closed by the simulator"],
+] as const)("says why the simulator closed a trade: %s", async (reason, sentence, badge) => {
+  const closed: Trade = { ...trade, closed_by: "system", system_reason: reason }
+  await render(<TradeDetail trade={closed} fills={[]} trading={trading} />)
+  expect(host.textContent).toContain(sentence)
+  expect(host.textContent).not.toMatch(/simulator's {2}|simulator's liquidation/)
+  expect(exitLabel(closed)).toBe(badge)
 })
 
 it("shows fill actors in the trade review", async () => {

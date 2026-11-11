@@ -728,6 +728,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   before its quote kept an empty cap; and a strategy whose legs changed kept the old
   combo tick as the step, which the server refuses with `INVALID_TICK`. Until you type
   them, the step and cap now follow the ticket's side, quote and legs.
+- **The Journal names every reason the simulator closed a trade.** An expanded trade
+  closed by the plan's flat time, a news or holding window, the no-overnight rule, the
+  open-loss cap, a daily-loss lock, a time limit or inactivity read "Closed by the
+  simulator's  liquidation", with the reason left blank, and its row badge showed the
+  server's raw label. Each reason now has its own words, a flatten is no longer called
+  a liquidation, and a reason this build does not know is shown as sent.
 
 ## 0.5.1 (2026-10-28)
 

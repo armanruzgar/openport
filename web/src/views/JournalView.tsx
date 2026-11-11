@@ -12,7 +12,7 @@ import { TradingError, WriteAccess, writeBlocked } from "../components/TradingCo
 import { Empty, PageHeader, Panel, Segmented, Tile, toneOf, toneText } from "../components/ui"
 import { signedPercent } from "../lib/format"
 import { timestampET } from "../lib/freshness"
-import { dimensions, mistakePicks, mistakeCosts, contractLabel, dailyResults, exitLabel, formatDuration, journalLabel, journalStats, monthWeeks, newYorkDate, parseTags, shareSourceLabel, strategyResults, tradeBuckets, tradeNet, tradeTags, wholeEntries, type Dimension, type JournalTrade, type Side } from "../lib/journal"
+import { dimensions, mistakePicks, mistakeCosts, contractLabel, dailyResults, exitLabel, formatDuration, journalLabel, journalStats, monthWeeks, newYorkDate, parseTags, shareSourceLabel, strategyResults, systemClose, tradeBuckets, tradeNet, tradeTags, wholeEntries, type Dimension, type JournalTrade, type Side } from "../lib/journal"
 import { tradeGroups, type TradeGroup } from "../lib/positions"
 import { formatMoney, signedMoney } from "../lib/trading"
 import { useWriteToken } from "../lib/write-token"
@@ -572,7 +572,7 @@ export function TradeDetail({ trade, fills, trading, orders = [] }: { trade: Tra
         </tr>)
           : trade.closure && <tr className="border-t border-border/40"><td className="px-2 py-1 text-left" colSpan={7}>Closed by {trade.closure} at {formatMoney(trade.average_close)}<SettlementPrint trade={trade} /></td></tr>}
         {trade.closed_by === "system" && <tr className="border-t border-border/40"><td className="px-2 py-1 text-left text-warn" colSpan={7}>
-          {trade.system_reason === "expiry" ? "Closed by the simulator before expiry, not by your order." : `Closed by the simulator's ${trade.system_reason === "soft_floor" ? "soft-floor" : trade.system_reason === "target" ? "profit-target" : trade.system_reason === "drawdown" ? "drawdown" : ""} liquidation, not by your order.`}</td></tr>}
+          {systemClose(trade.system_reason).sentence}</td></tr>}
         </tbody>
       </table>
     </div>

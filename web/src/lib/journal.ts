@@ -301,6 +301,36 @@ export function shareSourceLabel(source: ShareSource | null, option: string | nu
   }
 }
 
+/**
+ * Why the simulator closed a trade, by the label its closing order carries
+ * ("system:<label>:<id>"): the journal row's badge and the trade detail's sentence.
+ * The plan liquidates an account it decided, locked or floored; it flattens positions
+ * under a rule that applies to them (flat time, a news or holding window, the
+ * no-overnight rule, the open-loss cap).
+ */
+const systemCloses: Record<string, [badge: string, sentence: string]> = {
+  expiry: ["auto-closed before expiry", "Closed by the simulator before expiry"],
+  soft_floor: ["liquidated: soft floor", "Closed by the simulator's soft-floor liquidation"],
+  target: ["liquidated: target", "Closed by the simulator's profit-target liquidation"],
+  drawdown: ["liquidated: drawdown", "Closed by the simulator's drawdown liquidation"],
+  daily_loss: ["liquidated: daily loss", "Closed by the simulator's daily-loss liquidation"],
+  day_lock: ["liquidated: day locked", "Closed by the simulator's liquidation of a locked day"],
+  time_limit: ["liquidated: time limit", "Closed by the simulator's time-limit liquidation"],
+  inactivity: ["liquidated: inactivity", "Closed by the simulator's inactivity liquidation"],
+  flat_time: ["flattened: flat time", "Closed by the simulator at the plan's mandatory flat time"],
+  news: ["flattened: news blackout", "Closed by the simulator for a news blackout"],
+  hold: ["flattened: holding restriction", "Closed by the simulator under a holding restriction"],
+  overnight: ["flattened: no overnight holds", "Closed by the simulator under the plan's no-overnight rule"],
+  open_loss: ["flattened: open-loss cap", "Closed by the simulator at the plan's open-loss cap"],
+}
+/** The simulator's reason for closing a trade: its badge and sentence, the raw label for one this build does not know. */
+export function systemClose(reason: string | null | undefined): { badge: string; sentence: string } {
+  const known = reason && Object.hasOwn(systemCloses, reason) ? systemCloses[reason] : undefined
+  if (known) return { badge: known[0], sentence: `${known[1]}, not by your order.` }
+  return reason ? { badge: `closed by the simulator: ${reason}`, sentence: `Closed by the simulator (${reason}), not by your order.` }
+    : { badge: "closed by the simulator", sentence: "Closed by the simulator, not by your order." }
+}
+
 /** How a closed option trade ended when the trader's own order did not close it: "stop", "liquidated: drawdown", "settlement"... */
 export function exitLabel(trade: Trade): string | null {
   switch (trade.closed_by ?? trade.closure) {
@@ -308,8 +338,7 @@ export function exitLabel(trade: Trade): string | null {
     case "take_profit": return "target"
     case "flatten": return "flatten"
     case "playbook": return "playbook time stop"
-    case "system": return trade.system_reason === "expiry" ? "auto-closed before expiry"
-      : trade.system_reason === "soft_floor" ? "liquidated: soft floor" : `liquidated${trade.system_reason ? `: ${trade.system_reason}` : ""}`
+    case "system": return systemClose(trade.system_reason).badge
     case "settlement": case "exercise": case "assignment": case "abandon": case "reset": return trade.closed_by ?? trade.closure
     default: return null
   }
