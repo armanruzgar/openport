@@ -1192,40 +1192,39 @@ TEST(Cli, CertificationNamesItsReportDirectoryAndOutcome) {
 
 // I-90: plan, cash, fee and fill flags seed only a new journal. Restarted with ones
 // the journal does not hold, the server names each as ignored instead of running the
-// recorded account as if they had taken.
+// recorded account as if they had taken. The demo market keeps its journal across
+// restarts, as a live feed does (a replay's run needs a new one), and needs no network.
 TEST(WebServer, SeedFlagsAnExistingJournalIgnoresAreNamed) {
-  openport::test::RecordingFile source;
-  openport::test::record_events(source.path, {});
-  const auto journal = source.directory / "paper.jsonl";
+  openport::test::RecordingFile directory;
+  const auto journal = directory.directory / "paper.jsonl";
   const auto command = [&](const std::string& flags) {
     return "export " + isolated_home() + "; exec '" + std::string(OPENPORT_APPS_DIR) +
-           "/openportd' --provider replay --symbols SPX,SPY --option file='" + source.path.string() +
-           "' --option speed=max --option loop=off --paper-journal '" + journal.string() + "' --port " +
+           "/openportd' --provider demo --symbols SPX --paper-journal '" + journal.string() + "' --port " +
            std::to_string(free_port()) + flags;
   };
   {
-    Background created(command(""), source.directory);
-    ASSERT_TRUE(created.line("web terminal: ", 60s).has_value()) << created.output;
+    Background created(command(""), directory.directory);
+    ASSERT_TRUE(created.line("web terminal: ", 180s).has_value()) << created.output;
     created.send(SIGTERM);
-    ASSERT_TRUE(created.wait_exit(60s).has_value()) << created.output;
+    ASSERT_TRUE(created.wait_exit(120s).has_value()) << created.output;
   }
   ASSERT_TRUE(std::filesystem::exists(journal));
   {
-    Background restarted(command(" --plan eod-50k --paper-fee 9.99 --paper-fill-model conservative"), source.directory);
-    ASSERT_TRUE(restarted.line("web terminal: ", 60s).has_value()) << restarted.output;
+    Background restarted(command(" --plan eod-50k --paper-fee 9.99 --paper-fill-model conservative"), directory.directory);
+    ASSERT_TRUE(restarted.line("web terminal: ", 180s).has_value()) << restarted.output;
     EXPECT_NE(restarted.output.find("openportd: ignored --plan eod-50k, --paper-fee 9.99, --paper-fill-model conservative: " +
                                     journal.string() + " already holds a Practice account"),
               std::string::npos) << restarted.output;
     restarted.send(SIGTERM);
-    ASSERT_TRUE(restarted.wait_exit(60s).has_value()) << restarted.output;
+    ASSERT_TRUE(restarted.wait_exit(120s).has_value()) << restarted.output;
   }
   {
     // Flags that ask for what the journal holds are not named.
-    Background same(command(" --plan practice --paper-fee 0.65 --paper-fill-model as_displayed"), source.directory);
-    ASSERT_TRUE(same.line("web terminal: ", 60s).has_value()) << same.output;
+    Background same(command(" --plan practice --paper-fee 0.65 --paper-fill-model as_displayed"), directory.directory);
+    ASSERT_TRUE(same.line("web terminal: ", 180s).has_value()) << same.output;
     EXPECT_EQ(same.output.find("openportd: ignored"), std::string::npos) << same.output;
     same.send(SIGTERM);
-    ASSERT_TRUE(same.wait_exit(60s).has_value()) << same.output;
+    ASSERT_TRUE(same.wait_exit(120s).has_value()) << same.output;
   }
 }
 
