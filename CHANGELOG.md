@@ -1175,6 +1175,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   bar that collects a strategy's legs on the chain spanned the whole window, and the
   sidebar covered its left part, which holds the strategy's name and leg count, so
   only Clear and Review showed. The bar now starts beside the sidebar.
+- **The replay banner no longer talks over everything.** The banner at the top of
+  every page while trading a replay was one polite live region, and its clock changes
+  every second or two, so a screen reader was asked to read the whole banner, file
+  name, seed and buttons included, again and again. The banner is now a named region,
+  and only a change in what the replay is doing (playing, paused, stepping, finished,
+  a skip queued) is announced.
 
 ## 0.5.1 (2026-10-28)
 

@@ -11,8 +11,13 @@ export function ReplayBanner() {
   if (live.source === "live" || !replay) return null
   const sessions = replay.sessions ?? []
   const at = sessions.length > 1 ? sessionAt(sessions, replay.time) : null
+  // Announced as it changes: what the run is doing. The clock moves every second or two,
+  // so it, the file and the buttons stay outside any live region.
+  const state = replay.fast_forwarding ? "Preparing start state…" : replay.stepping ? "Stepping…" : replay.finished ? "Replay finished"
+    : replay.paused ? "Replay paused" : `Playing, ${speedLabel(replay.speed)}`
+  const announcement = live.source.startsWith("history:") ? "" : [state, replay.skip_pending ? "Skip queued for next resume" : ""].filter(Boolean).join(". ")
   return (
-    <div role="status" aria-label="Replay" className="border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-xs">
+    <div role="region" aria-label="Replay" className="border-b border-warn/40 bg-warn/10 px-4 py-1.5 text-xs">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Badge tone={replay.demo ? "accent" : "warn"}>{replay.demo ? "Demo" : "Replay"}</Badge>
         <span className="font-medium tabular">{replayClock(replay.time)}</span>
@@ -32,6 +37,7 @@ export function ReplayBanner() {
           <button type="button" className="trade-button !py-0.5" onClick={() => live.switchSource("live", "user")}>Back to live</button>
         </span>
       </div>
+      <p role="status" className="sr-only">{announcement}</p>
       <TradingError error={controls.error} />
     </div>
   )
