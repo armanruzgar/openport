@@ -252,11 +252,13 @@ bool given_away(const State& s, const Order& o, const Leg& leg) { return leg.sid
 bool closing_only(const State& s, const Order& o, bool include_working = true, bool include_armed = true);
 /// The same for a single contract: a buy that only closes a short takes an ask-only
 /// quote within its size (a short quoted 0.00/0.05 can be bought back), and a
-/// reduce-only market close gives a long nobody bids for away at zero.
+/// reduce-only market close gives a long nobody bids for away at zero. So does a
+/// limit flatten's close while it follows the touch (`limit_ticks`), as its combo
+/// closes give such a leg away (driver 8; replay drivers 1-7 left it at 0.00).
 bool ask_only_single(const State& s, const Order& o) {
   if (multi_leg(o.request) || !asks_only(s, o.request.symbol)) return false;
   if (o.request.side == Side::Buy) return kept_within(o) || closing_only(s, o, false);
-  return o.reduce_only && o.request.type == OrderType::Market;
+  return o.reduce_only && (o.request.type == OrderType::Market || (s.revised_fills && o.limit_ticks));
 }
 /// The price band around the quote's mid, or around `center` (a stop-limit's trigger level).
 Decision price_check(const State& s, const QuoteObservation& q, Money price, std::optional<Money> center = {}) {

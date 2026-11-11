@@ -1347,7 +1347,10 @@ product session. `limit_ticks` defaults to 0 and must be an integer from 0 to 10
 it is forbidden with market flatten. The offset is adverse from each leg's touch:
 ask plus ticks to buy, bid minus ticks to sell, rounded outward to a valid price tick
 (and floored at the minimum positive tick for a single sell). A combo's net limit
-sums those signed leg prices. Limits cap the normal fill model; they reprice on each
+sums those signed leg prices. A long nobody bids for is given away at 0.00 with the
+usual fee, alone as in a spread, while its close follows the touch (its limit then reads
+0.00); runs recorded with replay driver 7 or earlier left a single one working at
+0.00 for a bid. Limits cap the normal fill model; they reprice on each
 fresh executable quote, recording `order_repriced`, and work until that trading
 date's last session ends. Missing quotes leave them working until a price is available.
 Manual limit modification disables automatic repricing (`limit_ticks` becomes null);

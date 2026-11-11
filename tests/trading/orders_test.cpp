@@ -658,6 +658,41 @@ TEST(TradingOrders, AFlattenBuysBackAShortQuotedOnlyOnTheAskAndGivesAWorthlessLo
   EXPECT_EQ(s.submit(f.market("opening", 1), f.time).decision.code, Reason::INVALID_QUOTE);
 }
 
+TEST(TradingOrders, ALimitFlattenGivesASingleLongNobodyBidsForAwayAsAMarketFlattenDoes) {
+  for (const bool revised : {true, false}) {
+    ScriptedMarket f;
+    f.contract = *md::parse_osi("SPXW261022C06000000");
+    TradingSession s(roomy(), f.time);
+    s.set_revised_fills(revised);
+    f.seed(s, "0.05", "0.10");
+    ASSERT_TRUE(s.submit(f.market("long", 2), f.time).decision.ok());
+    // Nobody bids for it now: 0.00/0.05.
+    f.next();
+    s.on_quotes({{f.symbol(), f.observation, f.time, std::nullopt, m("0.05"), 0, 10}}, {f.valuation()}, f.time);
+    const auto result = s.close_positions(std::nullopt, f.time, {}, {true, 3});
+    ASSERT_TRUE(result.decision.ok()) << result.decision.message;
+    const auto close = s.snapshot()->recent_orders.back();
+    EXPECT_TRUE(close.reduce_only);
+    EXPECT_EQ(close.request.limit_price, Money{});
+    if (revised) {
+      // Given away at 0.00 with the usual fee, as a market flatten and a spread's close give it.
+      EXPECT_EQ(close.status, OrderStatus::Filled);
+      EXPECT_TRUE(s.snapshot()->positions.empty());
+      EXPECT_TRUE(result.residuals.empty());
+      const auto gift = s.snapshot()->recent_fills.back();
+      EXPECT_EQ(gift.symbol, f.symbol());
+      EXPECT_EQ(gift.price, Money{});
+      EXPECT_EQ(gift.quantity, 2);
+      EXPECT_EQ(gift.fee, m("1.30"));
+    } else {
+      // Replay drivers 1-7 leave it working at 0.00 until a bid returns.
+      EXPECT_EQ(close.status, OrderStatus::Working);
+      EXPECT_EQ(s.snapshot()->waiting.at(close.id).code, "INVALID_QUOTE");
+      EXPECT_EQ(held(s, f.symbol()), 2);
+    }
+  }
+}
+
 TEST(TradingOrders, AWorkingFlattenCloseRecoversFromTheJournal) {
   std::string pattern = (std::filesystem::temp_directory_path() / "openport-orders-XXXXXX").string();
   ASSERT_NE(::mkdtemp(pattern.data()), nullptr);

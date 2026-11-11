@@ -316,6 +316,9 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
 - **A walking order's `then`.** A walking limit whose step came due at another
   command's market time (a definition, or a day's rollover ahead of its quotes) and
   filled there never placed its `then` order. It now places it in that transaction.
+- **Limit flatten of a long nobody bids for.** A limit flatten left a single long whose
+  quote showed only an ask working at 0.00 for a bid, while a market flatten and a
+  spread's close give such a long away at 0.00. A limit flatten now gives it away too.
 - **Saving personal guardrails after gains.** An unchanged absolute soft floor can
   be saved when the trailing plan floor has overtaken it, including with unrelated
   guardrail tightening. A newly requested soft floor still must exceed the plan floor.
