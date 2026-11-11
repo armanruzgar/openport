@@ -1252,6 +1252,12 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   status and the replay listing included, on every load and reload. The socket's first
   open now leaves them alone; a reconnect, or an open after a failed attempt, still
   refreshes everything, since the server may have restarted.
+- **One replay driver number.** The current driver was a literal in four places (the
+  start input's nested ternary, verification's accepted range, resume's check and
+  archives' opening-settlement test), each edited by hand for every new driver; one
+  missed would have made every new run refuse to resume or fail `--verify-run`. It is
+  now `kReplayDriver`, and one table maps each driver to its option for recording,
+  verification, resume and archives.
 
 ## 0.5.1 (2026-10-28)
 

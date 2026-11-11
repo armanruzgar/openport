@@ -34,6 +34,14 @@ struct OpeningQuotation {
   std::string url;
 };
 
+/// The replay driver this build records in a reproducible run's start input. Each
+/// driver keeps every behaviour of the ones before it and adds one, an option of
+/// Desk::Options; a run re-executes (to verify, resume or restart) with the options of
+/// the driver it recorded, so its fills and hashes reproduce. A new driver raises this
+/// and adds its option to the table set_replay_driver and replay_driver read
+/// (desk.cpp), and nothing else.
+inline constexpr int kReplayDriver = 8;
+
 /// Single-owner market-to-account kernel. The caller supplies both clocks and
 /// drain boundaries; this class has no threads, queue, HTTP or clock reads.
 class Desk {
@@ -298,5 +306,13 @@ class Desk {
   std::map<std::string, std::shared_ptr<const analytics::DiscountCurve>> discount_curves_;
   std::shared_ptr<const analytics::DiscountCurve> discount_curve_;
 };
+
+/// Sets the driver options of `options` as driver `driver` ran (see kReplayDriver); a
+/// run that recorded no driver is driver 1. Throws std::invalid_argument for a driver
+/// this build does not know.
+void set_replay_driver(Desk::Options& options, int driver);
+/// The driver `options` record: the last one whose option, and every earlier one's, is
+/// set; 1 without instant batches.
+[[nodiscard]] int replay_driver(const Desk::Options& options);
 
 }  // namespace openport::server

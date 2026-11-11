@@ -19,6 +19,7 @@
 #include <fstream>
 #include <limits>
 #include <set>
+#include <iterator>
 #include <stdexcept>
 #include <tuple>
 #include <nlohmann/json.hpp>
@@ -770,7 +771,8 @@ void Desk::start_trading() {
         {"calendar", md::scheduled_days()}, {"analytics", options_.analytics}, {"dividends", dividends_}, {"symbols", subscription_.underlyings}};
     // Written only when a run has splits, so other runs keep their bytes.
     if (!corporate_actions_.empty()) start["corporate_actions"] = corporate_actions_;
-    if (options_.instant_batches) start["driver"] = !options_.closing_rollover ? 2 : inputs_first() ? (options_.opening_settlement ? (options_.playbook_cancel_labels ? (options_.revised_evaluation ? (options_.revised_fills ? 8 : 7) : 6) : 5) : 4) : 3;
+    // A run without instant batches is driver 1 and records none.
+    if (const auto driver = replay_driver(options_); driver > 1) start["driver"] = driver;
     if (options_.exact_margin) start["exact_margin"] = true;
     if (options_.run_start_at) start["start_at"] = *options_.run_start_at;
     if (options_.opening_rule_checks) start["opening_rule_checks"] = true;
@@ -2311,8 +2313,8 @@ Desk::Desk(std::string provider, md::Capabilities capabilities, md::Subscription
     if (!inputs.empty()) {
       const auto start = nlohmann::json::parse(inputs.front());
       options_.exact_margin = start.value("exact_margin", false);
-      options_.revised_evaluation = start.value("driver", 1) >= 7;
-      options_.revised_fills = start.value("driver", 1) >= 8;
+      // It re-executes with its recorded driver's options (a resume needs the current one).
+      set_replay_driver(options_, std::clamp(start.value("driver", 1), 1, kReplayDriver));
       options_.opening_rule_checks = start.value("opening_rule_checks", false);
       options_.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);
       options_.run_start_at = start.contains("start_at") ? std::optional(start.at("start_at").get<md::Timestamp>()) : std::nullopt;
@@ -2646,6 +2648,35 @@ bool Desk::refresh_analytics() {
   }
   analysed_dividends_version_ = dividends_version;
   return recomputed;
+}
+
+namespace {
+/// Each driver's option in driver order: driver N runs with the first N - 1 set.
+constexpr bool Desk::Options::* kDriverOptions[] = {
+    &Desk::Options::instant_batches,       // 2: whole market instants
+    &Desk::Options::closing_rollover,      // 3: roll over on the closing marks
+    &Desk::Options::inputs_first,          // 4: a command's input before its transactions
+    &Desk::Options::opening_settlement,    // 5: AM settlement on the opening print
+    &Desk::Options::playbook_cancel_labels,  // 6: labelled playbook time stops
+    &Desk::Options::revised_evaluation,    // 7: evaluation and payout rules
+    &Desk::Options::revised_fills,         // 8: fills, stops, walks and flatten closes
+};
+static_assert(std::size(kDriverOptions) == kReplayDriver - 1, "each driver after the first adds one option");
+}  // namespace
+
+void set_replay_driver(Desk::Options& options, int driver) {
+  if (driver < 1 || driver > kReplayDriver) throw std::invalid_argument("Unsupported run driver version");
+  int next = 2;
+  for (const auto option : kDriverOptions) options.*option = driver >= next++;
+}
+
+int replay_driver(const Desk::Options& options) {
+  int driver = 1;
+  for (const auto option : kDriverOptions) {
+    if (!(options.*option)) break;
+    ++driver;
+  }
+  return driver;
 }
 
 }  // namespace openport::server

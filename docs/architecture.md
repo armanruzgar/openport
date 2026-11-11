@@ -181,7 +181,10 @@ recorded with `"driver": 3` recorded command inputs after their transactions; on
 with `"driver": 2` also rolled over after the new day's quotes; one recorded without
 a driver batched each snapshot alone and offered every current quote at the latest
 market time. Each verifies with the driver it was made with, so its fills and hashes
-reproduce exactly.
+reproduce exactly. The current driver is `kReplayDriver` in
+`include/openport/server/desk.hpp`, and each driver's option is one entry of the
+table in `src/server/desk.cpp` that recording, verification, resume and archives all
+read: a new driver raises the one and adds to the other.
 
 Underlying override removal needs no new replay driver. Older runs cannot contain
 overrides, so dropping redundant entries leaves their journal bytes unchanged;

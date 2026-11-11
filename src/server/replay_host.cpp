@@ -453,7 +453,10 @@ class ArchivedReplay final : public MetricsSource {
         if (input.at("kind") == "start") {
           playbooks = std::make_unique<Playbooks>(std::filesystem::path{}, input.value("playbooks", json(nullptr)));
           view_->run = run_identity(input.at("input").dump(), file.stem().string());
-          view_->opening_settlement = input.value("driver", 1) >= 5;
+          // Its own driver's options; a newer build's driver keeps every one this build knows.
+          Desk::Options driven;
+          set_replay_driver(driven, std::clamp(input.value("driver", 1), 1, kReplayDriver));
+          view_->opening_settlement = driven.opening_settlement;
         } else if (input.at("kind") == "command" && playbooks) {
           const auto& request = input.at("command");
           if (request.at("kind").get<int>() != static_cast<int>(TradingCommand::Kind::Playbook)) continue;
@@ -1424,7 +1427,7 @@ void ReplayHost::resume(const std::string& id, int speed, bool paused, const Api
     if (inputs.empty() || inputs.front().at("kind") != "start") return refuse("The journal has no reproducible-run metadata");
     const auto& start = inputs.front();
     // The run re-executes on this build's driver; one recorded on an older driver would differ.
-    if (start.value("driver", 1) != 8) return refuse("The run was recorded by an older build's driver; verify it with --verify-run");
+    if (start.value("driver", 1) != kReplayDriver) return refuse("The run was recorded by an older build's driver; verify it with --verify-run");
     md::Timestamp target = 0;
     for (const auto& input : inputs) {
       if (input.at("kind") == "source") return refuse("A run that changed its recording part way cannot resume yet");

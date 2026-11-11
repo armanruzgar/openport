@@ -470,29 +470,18 @@ RunVerification verify_run(const std::filesystem::path& journal,
     auto reader = open_input(input);
     if (cancelled_now()) throw std::runtime_error("Verification cancelled");
     const md::Subscription subscription{start.at("symbols").get<std::vector<std::string>>(), 0, 0};
-    // Driver 2 batches each market instant whole, driver 3 also rolls the day over on the
-    // closing marks before a new date's quotes, and driver 4 also records each command's
-    // input before its transactions. Driver 5 settles AM options on opening prints.
-    // Driver 6 also labels playbook time-stop cancellations, driver 7 fixes evaluation
-    // and payout rules, and driver 8 fills, stops, walks and flatten closes.
-    // Older runs replay as they were recorded.
+    // Each run replays with the options of the driver it recorded (set_replay_driver):
+    // older runs replay as they were made.
     const auto driver = start.value("driver", 1);
-    if (driver < 1 || driver > 8) throw std::runtime_error("Unsupported run driver version");
-    const bool instants = driver >= 2;
-    auto batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, instants);
+    if (driver < 1 || driver > kReplayDriver) throw std::runtime_error("Unsupported run driver version");
+    Desk::Options options;
+    options.replay = true;
+    set_replay_driver(options, driver);
+    auto batches = std::make_unique<providers::ReplayBatches>(*reader, subscription, options.instant_batches);
     // Every build that writes a driver version also attributes every record, so only a
     // driver 1 run whose first record has no actor predates actors.
     const bool attributed = driver != 1 || json::parse(expected.records.front().payload).contains("actor");
     auto comparison = std::make_shared<ComparisonJournal>(expected, attributed);
-    Desk::Options options;
-    options.replay = true;
-    options.instant_batches = instants;
-    options.closing_rollover = driver >= 3;
-    options.inputs_first = driver >= 4;
-    options.opening_settlement = driver >= 5;
-    options.playbook_cancel_labels = driver >= 6;
-    options.revised_evaluation = driver >= 7;
-    options.revised_fills = driver >= 8;
     options.exact_margin = start.value("exact_margin", false);
     options.opening_rule_checks = start.value("opening_rule_checks", false);
     options.compact_opening_rule_inputs = start.value("compact_opening_rule_inputs", false);

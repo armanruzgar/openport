@@ -3082,7 +3082,7 @@ TEST(ReproducibleRun, OverrideRemovalVerifiesWithDriverSix) {
     }
     const auto inputs = server::run_inputs(trading::FileJournal::read(journal.string()));
     ASSERT_FALSE(inputs.empty());
-    EXPECT_EQ(json::parse(inputs.front()).at("driver"), 8);
+    EXPECT_EQ(json::parse(inputs.front()).at("driver"), server::kReplayDriver);
     const auto verified = server::verify_run(journal);
     EXPECT_TRUE(verified.matched) << verified.message;
   }
@@ -3552,7 +3552,7 @@ TEST(ReproducibleRun, CalendarRulesCaptureResetCalendarAndVerifyWithoutDriverCha
   }
   const auto recovery = trading::FileJournal::read(journal.string());
   const auto inputs = server::run_inputs(recovery);
-  ASSERT_FALSE(inputs.empty()); EXPECT_EQ(json::parse(inputs.front()).at("driver"), 8);
+  ASSERT_FALSE(inputs.empty()); EXPECT_EQ(json::parse(inputs.front()).at("driver"), server::kReplayDriver);
   const auto verified = server::verify_run(journal);
   EXPECT_TRUE(verified.matched) << verified.message;
   auto recovered = trading::TradingSession::recover(recovery);
@@ -3733,5 +3733,26 @@ TEST(ReplayRun, JournalAndVerificationWarningsHaveDocumentedThresholds) {
   EXPECT_NE(server::journal_warning(1, server::kLargeJournalRecords, true).find("breaks exact"), std::string::npos);
   EXPECT_EQ(server::verification_cost(1).at("warning"), nullptr);
   EXPECT_FALSE(server::verification_cost(300ull * 1024 * 1024).at("warning").is_null());
+}
+
+// I-28: one table maps each replay driver to its options and back, so a new driver is
+// one constant and one table entry, and a new run records the current driver.
+TEST(Desk, EveryReplayDriverRoundTripsThroughItsOptions) {
+  for (int driver = 1; driver <= server::kReplayDriver; ++driver) {
+    server::Desk::Options options;
+    server::set_replay_driver(options, driver);
+    EXPECT_EQ(server::replay_driver(options), driver);
+    EXPECT_EQ(options.instant_batches, driver >= 2) << driver;
+    EXPECT_EQ(options.inputs_first, driver >= 4) << driver;
+    EXPECT_EQ(options.opening_settlement, driver >= 5) << driver;
+  }
+  server::Desk::Options current;
+  EXPECT_EQ(server::replay_driver(current), server::kReplayDriver);
+  // Every later option counts only after the earlier ones, as inputs_first() requires.
+  current.closing_rollover = false;
+  EXPECT_EQ(server::replay_driver(current), 2);
+  for (const int unknown : {0, -1, server::kReplayDriver + 1}) {
+    EXPECT_THROW(server::set_replay_driver(current, unknown), std::invalid_argument) << unknown;
+  }
 }
 }  // namespace
