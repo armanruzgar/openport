@@ -4,13 +4,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <future>
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <nlohmann/json.hpp>
 #include <sys/stat.h>
@@ -215,6 +218,23 @@ server::ApiResponse call(server::ReplayHost& host, std::string method, std::stri
   return future.get();
 }
 
+/// How long a start that generates a demo day may take. The sanitizers run the
+/// generator several times slower, ThreadSanitizer about elevenfold.
+constexpr auto kGeneration = test::sanitizer_scale<std::chrono::seconds>(60s, 10min);
+
+/// Engine::Options::launch that holds each engine thread until `release` is ready, so a
+/// test sees a replay as its start left it, before the engine has taken a batch: the
+/// replay's provider waits for every batch it hands over. A promise destroyed unset
+/// releases it too.
+std::function<std::thread(std::function<void()>)> held_until(std::shared_future<void> release) {
+  return [release](std::function<void()> run) {
+    return std::thread([release, body = std::move(run)] {
+      release.wait();
+      body();
+    });
+  };
+}
+
 TEST(ReplayHost, ListsStartsTradesControlsAndStopsARecordedSession) {
   using nlohmann::json;
   test::RecordingFile file;
@@ -349,6 +369,7 @@ TEST(ReplayHost, DemoDaysGoToAFreshPrivateDirectoryNeverAGuessableOne) {
 }
 
 TEST(ReplayHost, PlaysTheSimulatedDemoMarketWithItsOwnAccount) {
+  const test::SanitizerScenarioScale scale;
   using nlohmann::json;
   test::RecordingFile file;
   server::Engine::Options base;
@@ -368,7 +389,7 @@ TEST(ReplayHost, PlaysTheSimulatedDemoMarketWithItsOwnAccount) {
   EXPECT_EQ(call(host, "POST", "/api/replay", R"({"demo": 1})").status, 400);
 
   // Generated on start; at 1x the opening snapshot plays at once and the next waits 15 seconds.
-  const auto started = call(host, "POST", "/api/replay", R"({"demo": true, "seed": "scenario", "plan": "intraday-25k"})", 60s);
+  const auto started = call(host, "POST", "/api/replay", R"({"demo": true, "seed": "scenario", "plan": "intraday-25k"})", kGeneration);
   ASSERT_EQ(started.status, 201) << started.body;
   const auto replay = json::parse(started.body)["replay"];
   EXPECT_EQ(replay["demo"], true);
@@ -399,8 +420,8 @@ TEST(ReplayHost, PlaysTheSimulatedDemoMarketWithItsOwnAccount) {
   ASSERT_EQ(call(host, "DELETE", "/api/replay").status, 200);
   // Started again, the day is already generated.
   const auto again = std::chrono::steady_clock::now();
-  ASSERT_EQ(call(host, "POST", "/api/replay", R"({"demo": true, "seed": "scenario"})", 60s).status, 201);
-  EXPECT_LT(std::chrono::steady_clock::now() - again, 500ms);
+  ASSERT_EQ(call(host, "POST", "/api/replay", R"({"demo": true, "seed": "scenario"})", kGeneration).status, 201);
+  EXPECT_LT(std::chrono::steady_clock::now() - again, test::sanitizer_scale<std::chrono::milliseconds>(500ms, 5s));
   host.stop();
 
   server::ReplayHost off({file.directory, base, false});
@@ -608,6 +629,10 @@ TEST(ReplayHost, DrillsReachTheEngineBeforeTradingAndKeepTheirJournalsAcrossRest
   drill_recording(file.path);
   server::Engine::Options base;
   base.paper_journal = file.directory / "main.jsonl";
+  // Until this is released the run below is still fast-forwarding, however the threads
+  // are scheduled: its engine has not taken the first batch.
+  std::promise<void> fast_forward;
+  base.launch = held_until(fast_forward.get_future().share());
   std::string id;
   json expected;
   const auto check_exports = [&](server::ReplayHost& host, const std::string& prefix) {
@@ -635,6 +660,9 @@ TEST(ReplayHost, DrillsReachTheEngineBeforeTradingAndKeepTheirJournalsAcrossRest
   };
   {
     server::ReplayHost host({file.directory, base, false});
+    // Declared after the host, it ends first: the host's engine joins its thread, so an
+    // early return still releases it, unset.
+    auto release = std::move(fast_forward);
     for (const auto* time : {"9:30", "24:00", "15:60", "garbage", "08:00", "17:00", ""}) {
       const json body{{"file", "session.oprec"}, {"start_at", time}};
       EXPECT_EQ(call(host, "POST", "/api/replay", body.dump()).status, 400) << time;
@@ -644,10 +672,12 @@ TEST(ReplayHost, DrillsReachTheEngineBeforeTradingAndKeepTheirJournalsAcrossRest
     const auto state = json::parse(started.body)["replay"];
     id = state["id"];
     EXPECT_TRUE(state["durable"]);
+    EXPECT_TRUE(state["fast_forwarding"]);
     EXPECT_NE(id.find("2026-09-16-recording-15-00"), std::string::npos);
     const json order{{"client_order_id", "drill"}, {"symbol", md::parse_osi("SPXW261022C06000000")->osi_symbol()},
                      {"side", "buy"}, {"type", "market"}, {"quantity", 1}, {"time_in_force", "ioc"}};
     const auto early = call(host, "POST", "/api/replay/orders", order.dump());
+    release.set_value();
     ASSERT_EQ(early.status, 409) << early.body;
     EXPECT_EQ(json::parse(early.body)["error"]["code"], "REPLAY_FAST_FORWARD");
     ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(call(host, "GET", "/api/replay").body)["replay"]["fast_forwarding"].get<bool>(); }));
@@ -878,8 +908,15 @@ TEST(ReplayHost, FinishedRunsListTheirFinalPlaybackStateAndPlanId) {
   drill_recording(file.path);
   server::Engine::Options base;
   base.paper_journal = file.directory / "main.jsonl";
+  // Its engine waits for this, so the start answers while the run is still fast-forwarding.
+  std::promise<void> fast_forward;
+  base.launch = held_until(fast_forward.get_future().share());
   server::ReplayHost host({file.directory, base, false});
+  // Declared after the host, it ends first: the host's engine joins its thread, so an
+  // early return still releases it, unset.
+  auto release = std::move(fast_forward);
   const auto started = call(host, "POST", "/api/replay", R"({"file":"session.oprec","start_at":"15:50","paused":true,"speed":0,"plan":"intraday-25k"})");
+  release.set_value();
   ASSERT_EQ(started.status, 201) << started.body;
   const auto start_state = json::parse(started.body)["replay"];
   EXPECT_TRUE(start_state["fast_forwarding"]);
@@ -1232,13 +1269,14 @@ TEST(ReplayHost, PaperDisabledAndReadOnlyNeverCreateReplayJournals) {
 
 
 TEST(ReplayHost, FreshAndExplicitSeedsAndScenarioDrillsUseABoundedCache) {
+  const test::SanitizerScenarioScale scale;
   using nlohmann::json;
   test::RecordingFile file;
   server::Engine::Options base;
   server::ReplayHost host({file.directory, base});
   std::vector<std::string> fresh;
   for (int i = 0; i < 2; ++i) {
-    const auto started = call(host, "POST", "/api/replay", R"({"scenario":"overnight","paused":true})", 60s);
+    const auto started = call(host, "POST", "/api/replay", R"({"scenario":"overnight","paused":true})", kGeneration);
     ASSERT_EQ(started.status, 201) << started.body;
     const auto state = json::parse(started.body)["replay"];
     fresh.push_back(state["seed"]);
@@ -1248,7 +1286,7 @@ TEST(ReplayHost, FreshAndExplicitSeedsAndScenarioDrillsUseABoundedCache) {
   EXPECT_NE(fresh[0], fresh[1]);
   for (const auto* seed : {"0", "18446744073709551615", "scenario"}) {
     const json body{{"scenario", "overnight"}, {"seed", seed}, {"paused", true}};
-    const auto started = call(host, "POST", "/api/replay", body.dump(), 60s);
+    const auto started = call(host, "POST", "/api/replay", body.dump(), kGeneration);
     ASSERT_EQ(started.status, 201) << started.body;
     EXPECT_EQ(json::parse(started.body)["replay"]["seed"], std::string(seed) == "scenario" ? "2026091600" : seed);
   }
@@ -1261,13 +1299,13 @@ TEST(ReplayHost, FreshAndExplicitSeedsAndScenarioDrillsUseABoundedCache) {
   for (const auto& seed : {json(-1), json(1.5), json("18446744073709551616"), json("fresh")})
     EXPECT_EQ(call(host, "POST", "/api/replay", json{{"scenario", "overnight"}, {"seed", seed}}.dump()).status, 400);
   EXPECT_EQ(call(host, "POST", "/api/replay", R"({"scenario":"overnight","start_at":"19:00"})").status, 400);
-  const auto started = call(host, "POST", "/api/replay", R"({"scenario":"overnight","seed":"scenario","start_at":"21:00","paused":true})", 60s);
+  const auto started = call(host, "POST", "/api/replay", R"({"scenario":"overnight","seed":"scenario","start_at":"21:00","paused":true})", kGeneration);
   ASSERT_EQ(started.status, 201) << started.body;
   ASSERT_TRUE(test::recording_eventually([&] { return !json::parse(host.tick())["replay"]["fast_forwarding"].get<bool>(); }));
   EXPECT_EQ(json::parse(host.tick())["replay"]["time"], "2026-09-16T01:00:00.000Z");
   EXPECT_TRUE(json::parse(host.tick())["replay"]["paused"]);
   // U3: scenario: true plays the default scenario, as demo: true does.
-  const auto default_day = call(host, "POST", "/api/replay", R"({"scenario":true,"seed":"scenario","paused":true})", 60s);
+  const auto default_day = call(host, "POST", "/api/replay", R"({"scenario":true,"seed":"scenario","paused":true})", kGeneration);
   ASSERT_EQ(default_day.status, 201) << default_day.body;
   EXPECT_EQ(json::parse(default_day.body)["replay"]["scenario"], "reversal");
   EXPECT_EQ(call(host, "POST", "/api/replay", R"({"scenario":7})").status, 400);
