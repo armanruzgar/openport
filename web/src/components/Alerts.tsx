@@ -2,7 +2,7 @@ import { notificationHistory, useNotificationHistory } from "../lib/notification
 import { useOutsideClose } from "../lib/outside-close"
 import { useEffect, useRef, useState } from "react"
 import { useLive } from "../api/live"
-import { useAccount, useRisk, useFills, useTrades } from "../api/trading"
+import { useAccount, useRisk, useFills, useDeliveries } from "../api/trading"
 import { alertStore, describeAlert, directionFor, dividendMessage, deliveryMessage, fillMessage, newestFill, newFills, priceAlertMessage, reached, unordered, useAlertSettings, type PriceAlert } from "../lib/alerts"
 import { useActiveAccount } from "../lib/active-account"
 import { ruleAlerts, ruleAlertStore } from "../lib/rule-alerts"
@@ -62,7 +62,7 @@ function RuleWatcher({ sound }: { sound: boolean }) {
  * overnight: each new one is announced once, whatever the fill setting. */
 function DeliveryWatcher({ sound }: { sound: boolean }) {
   const { accountScope, trading, source, account } = useLive()
-  const data = useTrades("current").data
+  const data = useDeliveries().data
   const seen = useRef<{ scope: number; fill: number; dividends: number } | null>(null)
   useEffect(() => {
     if (!data || !trading?.enabled) return

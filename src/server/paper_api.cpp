@@ -2950,6 +2950,7 @@ json order_request_json(const OrderRequest& order) {
 json trading_status_json(const TradingStatus& status) {
   return {{"enabled", status.enabled}, {"reason", nullable(status.reason)},
           {"account_version", std::to_string(status.account_version)},
+          {"history_version", std::to_string(status.history_version)},
           {"kill_latched", status.kill_latched}, {"write", status.write},
           {"fee_per_contract", status.fee_per_contract.str()},
           {"initial_cash", status.initial_cash.str()},

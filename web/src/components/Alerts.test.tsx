@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { liveState, useLive } from "../api/live"
-import { useFills, useTrades } from "../api/trading"
+import { useDeliveries, useFills } from "../api/trading"
 import type { DividendPaid, Fill, StockFill } from "../api/trading-types"
 import { alertStore, noAlerts } from "../lib/alerts"
 import { notificationHistory } from "../lib/notification-history"
@@ -13,7 +13,7 @@ import { fill, status } from "../test/trading-fixtures"
 import { AlertsDialog, AlertWatcher, Toasts } from "./Alerts"
 
 vi.mock("../api/live", async (original) => ({ ...await original<typeof import("../api/live")>(), useLive: vi.fn() }))
-vi.mock("../api/trading", async (original) => ({ ...await original<typeof import("../api/trading")>(), useFills: vi.fn(), useTrades: vi.fn() }))
+vi.mock("../api/trading", async (original) => ({ ...await original<typeof import("../api/trading")>(), useFills: vi.fn(), useDeliveries: vi.fn() }))
 
 let root: Root
 let host: HTMLDivElement
@@ -32,7 +32,7 @@ function fills(list: Fill[] | undefined) {
   vi.mocked(useFills).mockReturnValue({ data: list ? { account_version: "1", fills: list } : undefined } as ReturnType<typeof useFills>)
 }
 function deliveries(stock_fills: StockFill[] | undefined, dividends: DividendPaid[] = []) {
-  vi.mocked(useTrades).mockReturnValue({ data: stock_fills ? { account_version: "1", attempt: 1, trades: [], stock_fills, dividends } : undefined } as ReturnType<typeof useTrades>)
+  vi.mocked(useDeliveries).mockReturnValue({ data: stock_fills ? { account_version: "1", attempt: 1, trades: [], stock_fills, dividends } : undefined } as ReturnType<typeof useDeliveries>)
 }
 const exercised: StockFill = { id: "1", symbol: "SPY", shares: 100, price: "501.00", time: "2026-09-22T20:15:00Z", source: "expiry_exercise", option: "SPY   260922C00500000" }
 const sold: StockFill = { id: "2", symbol: "SPY", shares: -100, price: "503.00", time: "2026-09-23T14:00:00Z", source: "trade", option: null }

@@ -481,6 +481,7 @@ class ArchivedReplay final : public MetricsSource {
     out.trading.reason = "REPLAY_READ_ONLY";
     out.trading.write = "disabled";
     out.trading.account_version = view_->snapshot->account_version;
+    out.trading.history_version = view_->snapshot->account_version;  // an archive never changes
     out.trading.initial_cash = view_->config.initial_cash;
     out.trading.fee_per_contract = view_->config.fee_per_contract;
     out.trading.plan = view_->config.rules.plan;

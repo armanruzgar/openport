@@ -12231,6 +12231,10 @@
           "account_version": {
             "type": "string"
           },
+          "history_version": {
+            "type": "string",
+            "description": "The account version at which its orders, fills, share orders and fills, dividends, cash flows or settlements last changed. A market transaction that only moves marks and the clock leaves it, so a client can refetch fills when it changes rather than with every account version."
+          },
           "kill_latched": {
             "type": "boolean"
           },

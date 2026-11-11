@@ -73,6 +73,9 @@ struct TradingStatus {
   bool enabled = false;
   std::string reason = "PAPER_DISABLED";
   std::uint64_t account_version = 0;
+  /// The account version at which its order, fill, share, dividend, cash-flow or
+  /// settlement history last changed (TradingView::history_version).
+  std::uint64_t history_version = 0;
   bool kill_latched = false;
   std::string write = "disabled";
   trading::Money fee_per_contract;
@@ -130,6 +133,11 @@ struct TradingView {
   std::vector<std::string> published_opening_quotations;
   std::optional<RunIdentity> run;  ///< The replay run, for replay accounts.
   md::Timestamp replay_start = 0, replay_end = 0;  ///< Risk-setting rollover horizon; zero for live accounts.
+  /// The account version at which the snapshot's orders, fills, share orders and fills,
+  /// dividends, cash flows or settlements last changed. A market transaction that moves
+  /// only marks and the clock leaves it, so clients can refetch that history when it
+  /// moves rather than with every account version. Zero where nothing tracks it.
+  std::uint64_t history_version = 0;
 };
 
 /// How an expired position awaiting settlement settles: on the closing print, recorded

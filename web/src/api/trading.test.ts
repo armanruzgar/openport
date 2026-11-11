@@ -90,6 +90,22 @@ describe("account live updates", () => {
     expect(fetcher).toHaveBeenCalledTimes(8)
     expect(observer.getCurrentResult().data?.account_version).toBe("18")
   })
+  it("keys the fill history and delivery alerts on the account's history, not on every marked batch", () => {
+    const filled = tradingQueries(1, "17", true, "17")
+    // A market batch moves the account version, not its history: no fill list is fetched again.
+    const marked = tradingQueries(1, "18", true, "17")
+    expect(marked.fills.queryKey).toEqual(filled.fills.queryKey)
+    expect(marked.deliveries.queryKey).toEqual(filled.deliveries.queryKey)
+    // What carries marks or live order state still follows every version.
+    expect(marked.portfolio.queryKey).not.toEqual(filled.portfolio.queryKey)
+    expect(marked.allOrders.queryKey).not.toEqual(filled.allOrders.queryKey)
+    expect(marked.trades("current").queryKey).not.toEqual(filled.trades("current").queryKey)
+    const closed = tradingQueries(1, "19", true, "19")
+    expect(closed.fills.queryKey).not.toEqual(filled.fills.queryKey)
+    expect(closed.deliveries.queryKey).not.toEqual(filled.deliveries.queryKey)
+    // A server without history_version: the history follows the account version.
+    expect(tradingQueries(1, "18", true).fills.queryKey).toEqual(["trading", 1, "fills", "18"])
+  })
   it("allows placeholders only in the same account connection", () => {
     expect(sameAccountPlaceholder(portfolio, ["trading", 1, "portfolio", "17"], 1)).toBe(portfolio)
     expect(sameAccountPlaceholder(portfolio, ["trading", 1, "portfolio", "17"], 2)).toBeUndefined()

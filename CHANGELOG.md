@@ -446,6 +446,14 @@ Notable changes in each release. Older releases: https://github.com/armanruzgar/
   five minutes, taking quotes and spot back to the file's time. A failed page now
   reports its own status and is read again 45 seconds later, the hold on the page goes
   on, and a chain older than the one already published is never published.
+- **Open terminals stop re-downloading the fill history with every quote batch.**
+  While an account held a position, each new account version made every open tab
+  fetch the account's whole fill list and current-attempt trades again for its fill
+  and delivery alerts: about 4.5 MB a batch for an account with 1,500 round trips. The
+  trading status in `/api/status`, ticks and the account list now carries
+  `history_version`, the account version at which its orders, fills, share fills,
+  dividends, cash flows or settlements last changed, and the terminal refetches the
+  fills and the delivery alerts' trades only when it moves.
 
 ## 0.5.1 (2026-10-28)
 

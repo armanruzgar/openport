@@ -221,6 +221,14 @@ bool account_id(std::string_view id) {
 bool by_account_id(const std::filesystem::path& a, const std::filesystem::path& b) {
   return a.stem().string() < b.stem().string();
 }
+/// Whether two publications of an account hold the same order, fill, share, dividend,
+/// cash-flow and settlement history. A transaction that leaves one of them shares its
+/// storage, so this is a pointer comparison each.
+bool same_history(const TradingSnapshot& a, const TradingSnapshot& b) {
+  return a.recent_orders.same(b.recent_orders) && a.recent_fills.same(b.recent_fills) &&
+         a.stock_orders.same(b.stock_orders) && a.stock_fills.same(b.stock_fills) &&
+         a.dividends.same(b.dividends) && a.cash_flows.same(b.cash_flows) && a.settlements.same(b.settlements);
+}
 }  // namespace
 
 bool valid_account_name(std::string_view name) {
@@ -1032,6 +1040,12 @@ void Desk::publish_trading() {
         clocked->time = market_time_;
         view->snapshot = std::move(clocked);
       }
+      // Clients refetch the order and fill history when this moves; a market transaction
+      // that moves only marks and the clock leaves it.
+      const auto previous = trading_views_.find(account.id);
+      view->history_version = previous != trading_views_.end() && previous->second->history_version != 0 &&
+          same_history(*previous->second->snapshot, *view->snapshot) ? previous->second->history_version
+                                                                     : view->snapshot->account_version;
       view->config = session.config();
       view->contracts = session.contracts();
       view->valuations = session.valuations();
@@ -1111,6 +1125,7 @@ void Desk::publish_trading() {
       status.plan_id = preset_id(config.initial_cash,
           trading::original_program_rules(config.rules, e.starting_balance, e.size_scaling));
       status.account_version = view->snapshot->account_version;
+      status.history_version = view->history_version;
       status.kill_latched = view->snapshot->risk.kill_latched;
       if (config.rules.evaluation()) {
         constexpr const char* names[] = {"active", "passed", "failed"};

@@ -3,7 +3,10 @@ import { useEffect, useRef } from "react"
 import { api } from "./client"
 import { useLive } from "./live"
 
-export function tradingQueries(scope: number, version: string | undefined, enabled: boolean) {
+/** `history` is the account's history_version: it moves only when its orders, fills,
+ * share fills, dividends, cash flows or settlements change, not with every marked batch.
+ * Servers that do not publish one key the history on the account version. */
+export function tradingQueries(scope: number, version: string | undefined, enabled: boolean, history: string | undefined = version) {
   // The contract has one account per server and no account ID. A connection
   // epoch isolates potentially different accounts, even when versions repeat.
   const common = { enabled, placeholderData: <T,>(previous: T | undefined, query: { queryKey: readonly unknown[] } | undefined) => sameAccountPlaceholder(previous, query?.queryKey, scope), gcTime: 60_000 }
@@ -11,7 +14,12 @@ export function tradingQueries(scope: number, version: string | undefined, enabl
     portfolio: queryOptions({ ...common, queryKey: ["trading", scope, "portfolio", version], queryFn: ({ signal }) => api.portfolio(signal) }),
     orders: queryOptions({ ...common, queryKey: ["trading", scope, "orders", version], queryFn: ({ signal }) => api.orders("open", signal) }),
     settlements: queryOptions({ ...common, queryKey: ["trading", scope, "settlements", version], queryFn: ({ signal }) => api.settlements(signal) }),
-    fills: queryOptions({ ...common, queryKey: ["trading", scope, "fills", version], queryFn: ({ signal }) => api.fills(signal) }),
+    // Fills carry nothing that moves with the market, so they wait for the history.
+    fills: queryOptions({ ...common, queryKey: ["trading", scope, "fills", history], queryFn: ({ signal }) => api.fills(signal) }),
+    // The share fills and dividends the delivery alerts read; trades also carry open
+    // trades' marks, so the pages showing them keep `trades` below.
+    deliveries: queryOptions({ ...common, queryKey: ["trading", scope, "deliveries", history],
+      queryFn: ({ signal }) => api.trades("all", "current", signal) }),
     risk: queryOptions({ ...common, queryKey: ["trading", scope, "risk", version], queryFn: ({ signal }) => api.risk(signal) }),
     account: queryOptions({ ...common, queryKey: ["trading", scope, "account", version], queryFn: ({ signal }) => api.account(signal) }),
     allOrders: queryOptions({ ...common, queryKey: ["trading", scope, "orders-all", version], queryFn: ({ signal }) => api.orders("all", signal) }),
@@ -27,7 +35,8 @@ export function sameAccountPlaceholder<T>(data: T | undefined, key: readonly unk
 }
 function useOptions() {
   const { trading, accountScope } = useLive()
-  return tradingQueries(accountScope, trading?.account_version, trading?.enabled === true || trading?.reason?.startsWith("ACCOUNT_DAMAGED:") === true)
+  return tradingQueries(accountScope, trading?.account_version, trading?.enabled === true || trading?.reason?.startsWith("ACCOUNT_DAMAGED:") === true,
+    trading?.history_version ?? trading?.account_version)
 }
 export function useTradingQueries() {
   const options = useOptions()
@@ -41,6 +50,8 @@ export const useSettlements = () => useQuery(useOptions().settlements)
 export const useFills = () => useQuery(useOptions().fills)
 export const useRisk = () => useQuery(useOptions().risk)
 export const useTrades = (attempt: "current" | "all" = "current") => useQuery(useOptions().trades(attempt))
+/** The current attempt's trades, refetched only when the account's history changes. */
+export const useDeliveries = () => useQuery(useOptions().deliveries)
 export const useServerAlerts = () => useQuery(useOptions().alerts)
 export const useFillQuality = (attempt: "current" | "all" = "current") => useQuery(useOptions().fillQuality(attempt))
 /** Presets never change while the server runs. */

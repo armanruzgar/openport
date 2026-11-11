@@ -4541,13 +4541,16 @@ so settlement uses the first qualifying print.
 Each market batch and command publishes an immutable trading view per account. GET
 endpoints read that view without touching the reducer. `/api/status` and WebSocket
 ticks include the main account's `trading: {enabled, reason, account_version,
-kill_latched, write, fee_per_contract, initial_cash}` and `accounts: [{id, name,
-trading}]` for every account. The fee and original session cash are exact money
+history_version, kill_latched, write, fee_per_contract, initial_cash}` and
+`accounts: [{id, name, trading}]` for every account. The fee and original session cash are exact money
 strings (defaults `"0.65"` and `"100000.00"`), taken from the active/recovered session
 configuration; `initial_cash` is not the current balance or daily equity baseline.
 Versions are decimal strings and `write` is `open`, `token`, or `disabled` (see
 [write protection](#write-protection)). Clients refetch
-portfolio, orders and risk when the version changes. Chain option objects include
+portfolio, orders and risk when the version changes. `history_version` is the account
+version at which its orders, fills, share orders and fills, dividends, cash flows or
+settlements last changed; a market transaction that only moves marks and the clock
+leaves it, so the terminal refetches the fill history only when it moves. Chain option objects include
 canonical padded `symbol`, whole `bid_size`/`ask_size` (null when unavailable),
 `tradable` and `untradable_reason`, using the core eligibility policy, and
 `executable`: whether paper orders can fill on the displayed quote, a positive,

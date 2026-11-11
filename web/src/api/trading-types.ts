@@ -10,6 +10,9 @@ export interface TradingStatus {
   enabled: boolean
   reason: string | null
   account_version: string
+  /** The account version at which its orders, fills, share fills, dividends, cash flows
+   * or settlements last changed; absent on older servers. */
+  history_version?: string
   kill_latched: boolean
   write: WriteMode
   fee_per_contract?: Money

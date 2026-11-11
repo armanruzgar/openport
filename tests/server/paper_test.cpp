@@ -6837,4 +6837,27 @@ TEST(PaperCadence, ARestingOrderJournalsWhatItTradesOnNotEveryDrain) {
   }
   std::filesystem::remove_all(path.parent_path());
 }
+
+TEST_F(PaperEngine, HistoryVersionMovesWithTheOrderAndFillHistoryNotWithMarks) {
+  seed();
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", order(market, "open", "4.20")).status, 201);
+  engine->synchronize().get();
+  const auto filled = read(*engine, "/api/status")["trading"];
+  EXPECT_EQ(filled["history_version"], filled["account_version"]);
+  // New marks move the account, not its history: the terminal refetches no fills.
+  market.next();
+  quote("4.10", "4.30");
+  const auto marked = read(*engine, "/api/status")["trading"];
+  EXPECT_NE(marked["account_version"], filled["account_version"]);
+  EXPECT_EQ(marked["history_version"], filled["history_version"]);
+  EXPECT_EQ(read(*engine, "/api/status")["accounts"][0]["trading"]["history_version"], filled["history_version"]);
+  // A fill moves both.
+  auto close = order(market, "close", "4.10");
+  close["side"] = "sell";
+  ASSERT_EQ(write(*engine, "POST", "/api/orders", close).status, 201);
+  engine->synchronize().get();
+  const auto closed = read(*engine, "/api/status")["trading"];
+  EXPECT_EQ(closed["history_version"], closed["account_version"]);
+  EXPECT_NE(closed["history_version"], filled["history_version"]);
+}
 }  // namespace
