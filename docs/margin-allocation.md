@@ -167,3 +167,14 @@ driver 13's budget, the costliest 109 million units. The prior pairing alone too
 1.05 ms for the 80-leg mixed book and 0.42 ms for the fragmented book in the same run.
 The operation cap remains necessary for harder integer books; capped results are
 explicitly distinguished from certified ones.
+
+Since commit `1b684ef3` the exact solver is compiled on its own, as
+`src/trading/margin_exact.cpp`, rather than with `margin.cpp`. Built by GCC 13 this
+costs the stress books above time for the same work: run alternately with the build
+of the commit before on one AMD EPYC 7763 Ubuntu runner (`bench.yml` with
+`-f baseline=70633686`, 12 November 2026), they took 4% longer at the median and up to
+14%, at most 0.28 ms a solve under driver 13 and 2.8 ms under driver 12. The smallest
+irregular books did not change, and the regular books and the trading benchmarks
+moved less than 2%. The simplex compiles to the same code in both builds, and keeping
+the rational arithmetic out of line, as GCC did before, left the slowdown the same
+book by book (on an EPYC 9V74), so where the time goes is not yet known.
