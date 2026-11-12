@@ -76,14 +76,7 @@ class ExactMargin {
   void incumbent(Money requirement, Parts parts) {
     if (requirement.micros() < best_) { best_ = requirement.micros(); incumbent_ = std::move(parts); }
   }
-  Money solve(Parts* parts) {
-    if (!columns_.empty() || !pairs_.empty()) search(0);
-    if (parts) {
-      if (!incumbent_.empty()) *parts = incumbent_;
-      else explain(parts);
-    }
-    return Money::from_micros(best_);
-  }
+  Money solve(Parts* parts);
  private:
   bool short_unit(const Unit& u) const { return std::find(shorts_.begin(), shorts_.end(), &u) != shorts_.end(); }
   bool is_short(std::size_t i) const { return short_unit(*units_[i]); }
@@ -115,16 +108,20 @@ class ExactMargin {
     if (units > work_) { work_ = 0; throw detail::MarginWorkLimit{}; }
     work_ -= units;
   }
-  Rational bound(std::vector<Rational> y, bool feasible, bool& price_pairs);
-  std::vector<Rational> basis_prices(const detail::MarginSimplex& lp,
+  // The solver's recursion: defined in margin_exact.cpp, the only file that calls
+  // them, and inline, as they were in the class body. The trading library is built
+  // position-independent, where the compiler may neither inline nor specialize an
+  // exported function that is not inline, even within its own file.
+  inline Rational bound(std::vector<Rational> y, bool feasible, bool& price_pairs);
+  inline std::vector<Rational> basis_prices(const detail::MarginSimplex& lp,
       const std::vector<std::size_t>& active, const std::vector<std::size_t>& rows);
   std::int64_t lower_bound(const Rational& upper_saving) const {
     if (!lattice_) return (base_ - upper_saving).ceil();
     const auto steps = -Rational((-upper_saving * Rational(1, savings_step_)).ceil());
     return (base_ - steps * Rational(savings_step_)).ceil();
   }
-  void search(int stage = 2);
-  void explain(Parts* parts) const;
+  inline void search(int stage = 2);
+  inline void explain(Parts* parts) const;
   const MarginStock* stock_;
   MarginPolicy policy_;
   std::vector<const Unit*> units_, shorts_;

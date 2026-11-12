@@ -134,6 +134,14 @@ ExactMargin::ExactMargin(const Book& book, const MarginStock* stock, const Margi
   best_ = base_.ceil();
   best_x_.assign(columns_.size(), 0);
 }
+Money ExactMargin::solve(Parts* parts) {
+  if (!columns_.empty() || !pairs_.empty()) search(0);
+  if (parts) {
+    if (!incumbent_.empty()) *parts = incumbent_;
+    else explain(parts);
+  }
+  return Money::from_micros(best_);
+}
 ExactMargin::Rational ExactMargin::bound(std::vector<Rational> y, bool feasible, bool& price_pairs) {
   {
     // The only columns without a capacity row are reserves. Their dual
