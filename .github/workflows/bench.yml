@@ -8,7 +8,9 @@ name: Margin benchmark
 # other benchmarks); never on pushes or pull requests. With `-f baseline=COMMIT` it
 # also builds that commit and runs the two builds alternately on the one runner, a
 # repetition each per round, so that the load a shared runner sees at different
-# times of day falls on both alike; the summary compares their medians.
+# times of day falls on both alike; the summary compares their medians. With
+# `-f disassemble=REGEX` it saves the machine code of the functions whose names
+# match, from each build, with the results: what a difference compiled to.
 on:
   workflow_dispatch:
     inputs:
@@ -28,6 +30,10 @@ on:
         default: '5'
       baseline:
         description: A commit of this history to compare with, run alternately on the same runner (optional)
+        required: false
+        default: ''
+      disassemble:
+        description: Save the machine code of the functions whose demangled names match this regex (optional)
         required: false
         default: ''
 
@@ -113,6 +119,21 @@ jobs:
       - name: Build the baseline
         if: inputs.baseline
         run: cmake --build baseline/build --target openport_bench_trading
+      # Each build's code for the matching functions, one file per build: a function
+      # inlined into its callers has no entry of its own.
+      - name: Disassemble
+        if: inputs.disassemble
+        env:
+          PATTERN: ${{ inputs.disassemble }}
+        run: |
+          for side in current baseline; do
+            binary=./build/bench/openport_bench_trading
+            if [ "$side" = baseline ]; then binary=./baseline/build/bench/openport_bench_trading; fi
+            [ -x "$binary" ] || continue
+            objdump -d -C --no-show-raw-insn "$binary" |
+              awk '/^[0-9a-f]+ <.*>:$/ { keep = ($0 ~ ENVIRON["PATTERN"]) } keep' > "disassembly-$side.txt"
+            echo "$side: $(grep -c '>:$' "disassembly-$side.txt") functions"
+          done
       - name: Runner
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -211,4 +232,5 @@ jobs:
           path: |
             bench.json
             ab-*.json
+            disassembly-*.txt
           if-no-files-found: ignore
