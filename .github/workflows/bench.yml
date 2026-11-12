@@ -5,7 +5,10 @@ name: Margin benchmark
 # docs/margin-allocation.md. CI compiles the benchmarks but never runs them. This
 # runs only on demand, from the Actions tab or with `gh workflow run bench.yml`
 # (optionally `-f os=macos-15` for the Apple Silicon runner, `-f filter=REGEX` for
-# other benchmarks); never on pushes or pull requests.
+# other benchmarks); never on pushes or pull requests. With `-f baseline=COMMIT` it
+# also builds that commit and runs the two builds alternately on the one runner, a
+# repetition each per round, so that the load a shared runner sees at different
+# times of day falls on both alike; the summary compares their medians.
 on:
   workflow_dispatch:
     inputs:
@@ -23,6 +26,10 @@ on:
         description: Repetitions; the summary reports their median
         required: false
         default: '5'
+      baseline:
+        description: A commit of this history to compare with, run alternately on the same runner (optional)
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -46,6 +53,9 @@ jobs:
       REPETITIONS: ${{ inputs.repetitions || '5' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # A baseline is an earlier commit of the same history.
+          fetch-depth: ${{ inputs.baseline && '0' || '1' }}
       - name: Install system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -78,6 +88,31 @@ jobs:
           -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
       - name: Build
         run: cmake --build build --target openport_bench_trading
+      # The baseline's worktree sits inside the workspace, where CCACHE_BASEDIR makes
+      # its paths those of this build, so its unchanged files hit the cache.
+      - name: Check out the baseline
+        if: inputs.baseline
+        env:
+          BASELINE: ${{ inputs.baseline }}
+        run: |
+          git worktree add --detach baseline "$(git rev-parse --verify "$BASELINE^{commit}")"
+          git -C baseline log -1 --format='Baseline: %H %s'
+      - name: Configure the baseline
+        if: inputs.baseline && runner.os == 'Linux'
+        run: >
+          cmake -S baseline -B baseline/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DOPENPORT_WERROR=ON
+      - name: Configure the baseline
+        if: inputs.baseline && runner.os == 'macOS'
+        run: >
+          cmake -S baseline -B baseline/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DOPENPORT_WERROR=ON -DOPENPORT_STATIC_DEPS=ON
+          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl@3)"
+      - name: Build the baseline
+        if: inputs.baseline
+        run: cmake --build baseline/build --target openport_bench_trading
       - name: Runner
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -86,6 +121,7 @@ jobs:
             sysctl -n machdep.cpu.brand_string hw.ncpu || true
           fi
       - name: Benchmark
+        if: ${{ !inputs.baseline }}
         run: >
           ./build/bench/openport_bench_trading
           --benchmark_filter="$FILTER"
@@ -93,6 +129,20 @@ jobs:
           --benchmark_report_aggregates_only=true
           --benchmark_counters_tabular=true
           --benchmark_out=bench.json --benchmark_out_format=json
+      # Each round runs the baseline, then this commit, a repetition each.
+      - name: Benchmark beside the baseline
+        if: inputs.baseline
+        run: |
+          for round in $(seq 1 "$REPETITIONS"); do
+            for side in baseline current; do
+              binary=./build/bench/openport_bench_trading
+              if [ "$side" = baseline ]; then binary=./baseline/build/bench/openport_bench_trading; fi
+              echo "::group::Round $round of $REPETITIONS: $side"
+              "$binary" --benchmark_filter="$FILTER" --benchmark_counters_tabular=true \
+                --benchmark_out="ab-$side-$round.json" --benchmark_out_format=json
+              echo "::endgroup::"
+            done
+          done
       - name: Summary
         if: always()
         run: |
@@ -112,10 +162,53 @@ jobs:
               print(f"| {b['run_name']} | {b['cpu_time']:.3f} {b['time_unit']} | {counters} |")
           EOF
           fi
+      # Each benchmark's CPU time per round (the median of a run's samples), the
+      # median of the rounds for each build, their ratio, and the range of the
+      # rounds' own ratios. Also printed to the log.
+      - name: Comparison with the baseline
+        if: always() && inputs.baseline
+        run: |
+          python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, re, statistics
+
+          def rounds(side):
+              times, units = {}, {}
+              for path in glob.glob(f"ab-{side}-*.json"):
+                  index = int(re.search(r"-(\d+)\.json$", path).group(1))
+                  samples = {}
+                  for b in json.load(open(path))["benchmarks"]:
+                      if b.get("run_type") != "iteration" or b.get("error_occurred"):
+                          continue
+                      samples.setdefault(b["run_name"], []).append(b["cpu_time"])
+                      units[b["run_name"]] = b["time_unit"]
+                  for name, values in samples.items():
+                      times.setdefault(name, {})[index] = statistics.median(values)
+              return times, units
+
+          base, units = rounds("baseline")
+          head, _ = rounds("current")
+          print("| Benchmark | Baseline | This commit | This / baseline | Rounds' ratios |")
+          print("| --- | ---: | ---: | ---: | --- |")
+          ratios = []
+          for name, before in base.items():
+              after = head.get(name, {})
+              common = sorted(set(before) & set(after))
+              if not common:
+                  continue
+              a = statistics.median(before[i] for i in common)
+              b = statistics.median(after[i] for i in common)
+              paired = sorted(after[i] / before[i] for i in common)
+              ratios.append(b / a)
+              print(f"| {name} | {a:.3f} {units[name]} | {b:.3f} {units[name]} | {b / a:.3f} | {paired[0]:.3f} to {paired[-1]:.3f} |")
+          if ratios:
+              print(f"\nMedian ratio over {len(ratios)} benchmarks: {statistics.median(ratios):.3f}")
+          EOF
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bench-margin-${{ inputs.os || 'ubuntu-24.04' }}
-          path: bench.json
+          path: |
+            bench.json
+            ab-*.json
           if-no-files-found: ignore

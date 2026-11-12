@@ -38,7 +38,10 @@ and UndefinedBehaviorSanitizer with GCC 13, the web checks, the Python client an
 Docker smoke test. The Ubuntu build also compiles the benchmarks (without running
 them); the Margin benchmark workflow runs the margin benchmarks on a GitHub runner
 on demand (`gh workflow run bench.yml`, `-f os=macos-15` for macOS), for the timings
-in [docs/margin-allocation.md](docs/margin-allocation.md). A GCC build with `-DOPENPORT_BUILD_PROVIDERS=OFF` checks that the pricing,
+in [docs/margin-allocation.md](docs/margin-allocation.md). With `-f baseline=COMMIT`
+it also builds that commit and runs the two builds alternately on the one runner,
+comparing each benchmark's median: a shared runner's load changes through the day, so
+runs at different times cannot show a difference of a few percent. A GCC build with `-DOPENPORT_BUILD_PROVIDERS=OFF` checks that the pricing,
 analytics and trading libraries and their tests still build without the providers. A second Ubuntu job runs the same suite at the same time with
 `OPENPORT_VERIFY_REVIEWS=1` and `OPENPORT_VERIFY_JOURNAL=1`. Every C++ job runs
 each test in its own process through CTest, in parallel, starting the expensive
