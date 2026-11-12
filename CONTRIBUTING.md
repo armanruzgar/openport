@@ -133,6 +133,11 @@ and HTTP scheduling. Offline tests: `python3 tools/demo_soak_test.py`.
 - Keep each change to one purpose, with tests for the behaviour it adds or fixes.
   The simulator is a deterministic reducer: test it through `TradingSession` with
   explicit market times rather than the wall clock.
+- A helper the reducer's files share lives in `src/trading/session_internal.hpp`
+  (strategy margin's in `margin_internal.hpp`, the paper API's in
+  `src/server/paper_internal.hpp`); one that a single file uses stays in an anonymous
+  namespace in that file. [docs/architecture.md](docs/architecture.md#the-pieces) says
+  which file holds what.
 - Update the documentation in `docs/` and the README when behaviour, an API field or
   a rule changes.
 - Match the surrounding code: its naming, comment density and idioms.

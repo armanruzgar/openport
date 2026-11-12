@@ -43,6 +43,23 @@ flowchart LR
 | Server | `src/server` | The live and replay drivers, the JSON API and WebSocket ticks, paper accounts, persisted account-equity samples, one-minute candles, and the replay host that runs recorded days beside the live feed |
 | Terminal | `web/` | React 19, TanStack Query and Tailwind, with its own SVG charts; no chart or UI library |
 
+The simulator and the paper API are split by concern. In `src/trading`, `session.cpp`
+holds `TradingSession`'s commands, and the reducer's rules sit beside it, sharing the
+private `session_internal.hpp`: `session_state.cpp` (when an order may trade, quotes
+and marks, positions and their attribution, fees, shares, closing capacity and fill
+prices), `session_margin.cpp` (margin, buying power, the measures rules read and the
+published snapshot), `session_admission.cpp` (the order checks),
+`session_matching.cpp` (the queue model, fills and bracket exits),
+`session_triggers.cpp` (stops and trailing triggers), `session_monitor.cpp`
+(guardrails, the clock, flattening, the plan's calendar and rules),
+`session_warnings.cpp` (why orders wait, breach risk, warnings and alerts),
+`session_orders.cpp` (placing, changing and previewing orders), `stock_orders.cpp`
+(working share orders) and `session_journal.cpp` (journal records and recovery).
+`margin.cpp` allocates strategy margin, and `margin_exact.cpp` certifies its joint
+optimum. In `src/server`, `paper_api.cpp` routes the paper-trading API, `paper_json.cpp`
+encodes its answers and `paper_parse.cpp` parses its requests, sharing
+`paper_internal.hpp`.
+
 ## Threads and data flow
 
 - **Provider threads** publish events into the queue. Polling providers (Cboe, Massive,
