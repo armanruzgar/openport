@@ -45,6 +45,15 @@ add_library(openport_trading
   trading/stress.cpp
   trading/journal.cpp
   trading/session.cpp
+  trading/session_state.cpp
+  trading/session_margin.cpp
+  trading/session_admission.cpp
+  trading/session_matching.cpp
+  trading/session_triggers.cpp
+  trading/session_monitor.cpp
+  trading/session_warnings.cpp
+  trading/session_orders.cpp
+  trading/session_journal.cpp
   trading/stock_orders.cpp
   trading/state_delta.cpp
   trading/history.cpp

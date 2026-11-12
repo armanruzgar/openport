@@ -74,7 +74,7 @@ function expiryTime(position: Position): number {
 /**
  * Contracts of longs a flatten leaves alone, by symbol, because they cover a short that
  * has expired: they stay until it settles. Pairs shorts with their covers as the server
- * does (plan_closes in src/trading/session.cpp): per underlying and type, the
+ * does (plan_closes in src/trading/session_monitor.cpp): per underlying and type, the
  * latest-expiring shorts first, each taking longs that expire with it or later, the
  * nearest expiry and then the nearest strike first.
  */
