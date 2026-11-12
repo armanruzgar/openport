@@ -200,6 +200,8 @@ if(OPENPORT_BUILD_PROVIDERS)
     server/notifications.cpp
     server/paper_engine.cpp
     server/paper_api.cpp
+    server/paper_json.cpp
+    server/paper_parse.cpp
     server/fill_calibration.cpp
     server/plans.cpp
     server/api.cpp
