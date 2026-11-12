@@ -7,43 +7,19 @@
 #include <type_traits>
 #include <vector>
 
-#include "margin_detail.hpp"
-#include "margin_optimizer.hpp"
+#include "margin_internal.hpp"
 
 #include "openport/trading/evaluation.hpp"
 #include "openport/trading/risk.hpp"
 
 namespace openport::trading {
+namespace margin_internal {
 namespace {
-using pricing::OptionType;
-constexpr Quantity kLot = 100;  ///< Shares one contract delivers, and so covers.
-/// Strikes are validated to whole thousandths of a dollar.
-std::int64_t milli(double strike) { return std::llround(strike * 1000); }
-Quantity magnitude(Quantity q) { return q < 0 ? -q : q; }
-/// One contract's intrinsic value at expiry, times the multiplier, at a spot in thousandths.
-Money intrinsic(const md::OptionContract& c, std::int64_t spot) {
-  const auto strike = milli(c.strike);
-  const auto amount = std::max<std::int64_t>(0, c.type == OptionType::Call ? spot - strike : strike - spot);
-  return Money::from_micros(amount * 1000) * 100;
-}
 /// `shares` of a short stock position hold their value and half again, as a
 /// short sale does, the half raised by any house percentage.
 Money short_shares(const MarginStock& stock, Quantity shares, std::int64_t house) {
   return stock.value.prorate(shares, magnitude(stock.shares)).prorate(300 + house, 200);
 }
-/// A position as strategy margin pairs it: an option leg, or whole lots of 100
-/// shares. Long shares cover a short call and short shares a short put, whatever
-/// either expires; short shares are also a short of their own that a long call
-/// can protect.
-struct Unit {
-  const MarginLeg* leg = nullptr;      ///< Null for shares.
-  const MarginStock* stock = nullptr;  ///< The shares, for lots.
-  Quantity size = 0;                   ///< Contracts, or lots.
-  Money requirement_one;               ///< An option short's naked requirement for one contract, without its value.
-  Money naked_one;                     ///< What one contract or lot of a short holds unpaired.
-  Money secured_one;                   ///< A cash account's or IRA's short put: its strike, held in cash instead.
-  std::int64_t house = 0;              ///< Short shares: the house percentage on their margin.
-};
 /// The buy-back value of `n` of a short option's contracts.
 Money value(const Unit& u, Quantity n) { return u.leg->value.prorate(n, -u.leg->quantity); }
 /// What `n` contracts or lots of a short hold unpaired: an option its buy-back
@@ -53,6 +29,7 @@ Money naked(const Unit& u, Quantity n) {
   if (u.secured_one > Money{}) return u.secured_one * n;
   return value(u, n) + u.requirement_one * n;
 }
+}  // namespace
 /// What `n` of short `s` hold with the long or shares that cover them: a put
 /// long below or a call long above its short the strikes' distance (nothing when
 /// the long is at or beyond the short's strike), a long call protecting short
@@ -66,6 +43,7 @@ Money covered(const Unit& s, const Unit& cover, Quantity n) {
   const auto points = std::max<std::int64_t>(0, put ? a - b : b - a);
   return Money::from_micros(points * 1000) * 100 * n;
 }
+namespace {
 /// Whether `cover` can pair with short `s`: shares cover an option whatever it
 /// expires, a long call protects short shares while it lasts, and a long option
 /// covers a short of its type that expires with it or earlier.
@@ -99,11 +77,6 @@ Money cost(const Pair& p) {
   if (p.straddle) return straddle(*p.short_unit, *p.cover, p.n);
   return std::min(covered(*p.short_unit, *p.cover, p.n), naked(*p.short_unit, p.n));
 }
-/// One underlying's positions, sorted for pairing. Short shares sit both among
-/// the short calls (a short a long call protects) and the long puts (a cover).
-struct Book {
-  std::vector<Unit> short_puts, long_calls, short_calls, long_puts;
-};
 Book book_of(const std::vector<const MarginLeg*>& legs, const MarginStock* stock, const MarginPolicy& policy) {
   Book book;
   for (const auto* leg : legs) {
@@ -268,15 +241,17 @@ std::optional<Money> worst_loss(const std::vector<const MarginLeg*>& group) {
   }
   return -worst;
 }
-using Parts = std::vector<MarginPart>;
+}  // namespace
 /// An unpaired short option: naked, or a cash account's or IRA's put secured with its strike.
 MarginPartKind unpaired_kind(const Unit& u) { return u.secured_one > Money{} ? MarginPartKind::CashSecured : MarginPartKind::Naked; }
 std::pair<std::string, Quantity> shares_leg(const MarginStock& stock, Quantity shares) {
   return {stock.underlying, stock.shares < 0 ? -shares : shares};
 }
+namespace {
 std::pair<std::string, Quantity> option_leg(const Unit& u, Quantity n) {
   return {u.leg->contract.osi_symbol(), u.leg->quantity < 0 ? -n : n};
 }
+}  // namespace
 /// One leg of a part: an option's contracts, or a lot's shares.
 std::pair<std::string, Quantity> leg_of(const Unit& u, Quantity n) {
   return u.stock ? shares_leg(*u.stock, n * kLot) : option_leg(u, n);
@@ -292,6 +267,7 @@ void add(Parts* parts, MarginPartKind kind, std::vector<std::pair<std::string, Q
   }
   parts->push_back({kind, std::move(merged), requirement});
 }
+namespace {
 /// Longs no part holds: their premium is paid in full, as long shares are.
 void add_longs(Parts* parts, const std::vector<std::pair<const Unit*, Quantity>>& longs) {
   for (const auto& [unit, n] : longs)
@@ -785,8 +761,6 @@ class JointAllocation {
   std::vector<Score> scores_;
   Parts fixed_;
 };
-#include "margin_exact.inc"
-
 /// First certify the joint integer optimum. Older drivers and capped solves
 /// retain the previous allocator below: the least of pairing across expiries,
 /// verticals and share covers alone (a condor's shared worst loss may hold less
@@ -957,6 +931,7 @@ std::vector<MarginUnderlying> strategy(const std::vector<MarginLeg>& legs, const
   return result;
 }
 }  // namespace
+}  // namespace margin_internal
 
 Quantity naked_shorts(const std::vector<MarginLeg>& legs) {
   // Per underlying and type, the latest-expiring shorts take the earliest long

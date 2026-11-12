@@ -49,6 +49,7 @@ add_library(openport_trading
   trading/history.cpp
   trading/review.cpp
   trading/margin.cpp
+  trading/margin_exact.cpp
   trading/fill_quality.cpp
 )
 add_library(openport::trading ALIAS openport_trading)
