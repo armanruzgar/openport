@@ -1,17 +1,12 @@
 // Working share orders: resting limits, stops and stop-limits on stocks and ETFs,
-// with extended hours, brackets and OCO. Included by session.cpp inside its
-// anonymous namespace, after the share and account checks it reuses.
+// with extended hours, brackets and OCO. They reuse the share and account checks
+// in session_internal.hpp.
 
-/// How a share trade came about, for the checks trade_shares_checked applies.
-struct ShareTerms {
-  bool reduce_only = false;  ///< Only reduce the shares held (a stock close or a bracket exit).
-  bool protective = false;   ///< A bracket exit: it bypasses the minimum hold, as option exits do.
-  /// An entry's bracket stop: the plan's stop requirement is met, and its trade risk
-  /// is the move to the stop rather than the shares' whole value.
-  std::optional<Money> stop;
-  std::uint64_t order = 0;   ///< The working order it fills, recorded with the fill.
-  bool exercise = false;     ///< Shares an exercise delivers: no bracket can protect them.
-};
+#include "session_internal.hpp"
+
+namespace openport::trading {
+namespace session_internal {
+namespace {
 
 /// Shares whose open loss is at the plan's open-loss cap can be reduced but not added to.
 Decision share_open_loss_check(const State& s, const std::string& symbol, Quantity held, Quantity signed_shares) {
@@ -22,6 +17,7 @@ Decision share_open_loss_check(const State& s, const std::string& symbol, Quanti
   return {Reason::OPEN_LOSS_CAP, "These shares' open loss is at the plan's open-loss cap; they can be reduced, "
           "but not added to, until they are back within the cap", {}, {}, symbol};
 }
+}  // namespace
 
 /// The checks a share trade takes before the market's: the account type, the minimum
 /// hold, the account and plan entry checks, buy-only and defined risk.
@@ -77,41 +73,6 @@ bool reduces_shares(const State& s, const std::string& symbol, Quantity signed_s
          (shares > 0 ? -signed_shares <= shares : signed_shares <= -shares);
 }
 
-/// The checks shares that open or add to a holding take at their price, after
-/// share_entry_checks: the stop requirement, hedging, the other accounts' positions,
-/// complete marks, the loss and trade-risk limits, and exposure once `project` has
-/// applied the whole trade to a copy of the state. Exercise delivers shares through
-/// the same checks as a share trade, since the plan's share-entry rules are the same.
-template <class Project>
-Decision opening_share_rules_check(State& s, const std::string& symbol, Quantity signed_shares, Money price,
-                                   const ShareTerms& terms, Events& events, const Project& project) {
-  if (s.config.rules.require_stop_loss && !terms.stop)
-    return failure(Reason::STOP_REQUIRED, terms.exercise ? "This plan requires a stop-loss: exercise would open shares without one; sell the option instead"
-                                          : terms.order ? "This plan requires a stop-loss: enter shares with a bracket stop_loss"
-                                                        : "This plan requires a stop-loss; share entries do not support brackets");
-  if (const auto d = hedging_direction_check(s, symbol, static_cast<double>(signed_shares) * price.dollars()); !d.ok()) return d;
-  if (const auto d = opening_share_check(s, symbol, signed_shares, price, terms, events); !d.ok()) return d;
-  const auto before = measure(s);
-  if (!before.valuation_complete)
-    return failure(Reason::STALE_QUOTE, "All held positions need fresh marks before opening shares");
-  if (const auto d = loss_check(s, before); !d.ok()) return d;
-  if (const auto limit = trade_risk_limit(s, before.equity)) {
-    const auto magnitude_shares = signed_shares < 0 ? -signed_shares : signed_shares;
-    // To its stop, a bracketed entry risks the move there; without one, a long
-    // risks its whole value and a short an unlimited loss.
-    std::optional<Money> loss;
-    if (terms.stop) loss = (signed_shares > 0 ? std::max(Money{}, price - *terms.stop) : std::max(Money{}, *terms.stop - price)) * magnitude_shares;
-    else if (signed_shares > 0) loss = price * signed_shares;
-    if (!loss || *loss > *limit)
-      return {Reason::MAX_TRADE_RISK, terms.exercise ? "Exercise delivers shares whose risk before fees exceeds the plan's trade limit"
-                                                     : "Share entry risk before fees exceeds the plan limit",
-              loss ? std::optional(loss->dollars()) : std::nullopt, limit->dollars(), "trade"};
-  }
-  State projected = s;
-  project(projected);
-  return check_exposure(measure(projected).risk, before.risk);
-}
-
 /// Trade shares at `price` after the entry checks and those an opening trade takes at
 /// its price: the stop requirement, hedging, complete marks, the loss and trade-risk
 /// limits and exposure, and then buying power. The caller has checked the session and
@@ -156,6 +117,7 @@ Decision trade_shares_checked(State& s, const std::string& symbol, Quantity sign
   event(events, "stock_trade", traded);
   return {};
 }
+namespace {
 
 Quantity signed_shares_of(const StockOrderRequest& r) { return r.side == Side::Buy ? r.shares : -r.shares; }
 bool stops(const StockOrderRequest& r) { return r.type == StockOrderType::Stop || r.type == StockOrderType::StopLimit; }
@@ -197,6 +159,7 @@ const StockOrder* open_partner(const State& s, const StockOrder& o) {
   const auto& partner = s.stock_orders.at(static_cast<std::size_t>(o.oco - 1));
   return partner.open() && !partner.exit() ? &partner : nullptr;
 }
+}  // namespace
 
 /// The shares the open share orders other than `except` would sell beyond the longs
 /// held, and the shares they would buy beyond the shorts: bracket exits excluded, as
@@ -217,6 +180,7 @@ Quantity pending_short_shares(const State& s, const std::string& symbol, OrderId
   position += extra;
   return std::min(lowest, position);
 }
+namespace {
 
 /// The price bound a working share order is reserved at: its limit, or for market and
 /// stop orders the underlying's price, fresh or last (a buy stop at least its stop, a
@@ -233,6 +197,7 @@ std::optional<Money> stock_order_bound(const State& s, const StockOrder& o) {
                                           : *o.request.stop_price;
   return price;
 }
+}  // namespace
 
 /// What the open share orders reserve: each, in acceptance order after those before it,
 /// what filling it at its bound would take from buying power (the change in the
@@ -291,13 +256,7 @@ void end_stock_order(State& s, OrderId id, OrderStatus status, Decision reason, 
   event(events, status == OrderStatus::Rejected ? "stock_order_rejected" : "stock_order_cancelled",
         Json{{"id", id}, {"symbol", o.request.symbol}, {"reason", o.reason}});
 }
-
-/// Add a validated order (and an OCO partner) after the acceptance checks, and work it
-/// at once: a limit that crosses the current price fills now, a stop that is already
-/// reached activates. Returns the refusal, if any, and the new order's ID.
-std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest request, OrderRole role, OrderId parent,
-                                                Events& events, OrderId pair = 0);
-void work_stock_orders(State& s, Events& events, std::optional<OrderId> only = std::nullopt);
+namespace {
 
 /// The acceptance checks: the price's freshness only for an order that executes now,
 /// the account, the plan and the account type for opening orders, which sees the
@@ -333,6 +292,7 @@ Decision stock_acceptance_check(const State& s, const StockOrderRequest& r, Orde
     return failure(Reason::STALE_QUOTE, "A market share order needs a price for " + r.symbol + " to reserve buying power against");
   return {};
 }
+}  // namespace
 
 std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest request, OrderRole role, OrderId parent,
                                                 Events& events, OrderId pair) {
@@ -394,6 +354,7 @@ std::pair<Decision, OrderId> accept_stock_order(State& s, StockOrderRequest requ
   }
   return {{}, id};
 }
+namespace {
 
 /// After an entry fills, its bracket: a stop and a target for the shares it traded,
 /// each the other's OCO, good until cancelled and always within the position.
@@ -436,6 +397,7 @@ bool share_data_gap(Reason code) {
   return code == Reason::STALE_QUOTE || code == Reason::SESSION_CLOSED || code == Reason::MARKET_HALTED ||
          code == Reason::MISSING_VALUATION;
 }
+}  // namespace
 
 void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
   const auto work = [&](std::size_t i) {
@@ -512,6 +474,7 @@ void work_stock_orders(State& s, Events& events, std::optional<OrderId> only) {
   for (const auto id : indexed) work(static_cast<std::size_t>(id - 1));
   for (auto i = s.stock_indexed; i < s.stock_orders.size(); ++i) work(i);
 }
+namespace {
 
 /// Whether an open share order could open or add to a position: with the working
 /// orders on its side accepted before it filled first (of an OCO pair only the larger
@@ -534,6 +497,7 @@ bool share_order_opens(const State& s, const StockOrder& o) {
   }
   return o.request.shares > room;
 }
+}  // namespace
 
 /// Ends, with `reason`, the working share orders that could open, as the kill switch,
 /// a decided attempt and a locked day cancel the option orders that would: one at a
@@ -573,3 +537,5 @@ void expire_stock_orders(State& s, Events& events) {
       end_stock_order(s, o.id, OrderStatus::Cancelled, failure(Reason::DAY_END, "The order's session ended"), events);
   }
 }
+}  // namespace session_internal
+}  // namespace openport::trading

@@ -1,27 +1,6 @@
 #include "openport/trading/session.hpp"
-#include "openport/trading/contracts.hpp"
-#include "openport/trading/events.hpp"
 
-#include <algorithm>
-#include <array>
-#include <cctype>
-#include <charconv>
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <functional>
-#include <iterator>
-#include <limits>
-#include <optional>
-#include <set>
-#include <stdexcept>
-#include <utility>
-
-#include "openport/trading/format.hpp"
-#include "openport/trading/history.hpp"
-#include "state.hpp"
-#include "review.hpp"
-#include "state_delta.hpp"
+#include "session_internal.hpp"
 
 namespace openport::trading {
 Decision counter_position_check(const std::map<std::string, double>& direction,
@@ -72,10 +51,9 @@ Decision minute_volume_check(const std::string& symbol, Quantity opening, std::i
       "% of the last minute's volume " + std::to_string(*volume), static_cast<double>(opening),
       static_cast<double>(*volume) * static_cast<double>(percent) / 100, symbol, evidence};
 }
-namespace {
-using detail::State;
-using Events = std::vector<Json>;
+namespace session_internal {
 Decision failure(Reason code, std::string message) { return {code, std::move(message), {}, {}, {}}; }
+namespace {
 /// Appends an order; its client order ID keeps naming the first order that used it
 /// in the current attempt, so an account reset frees the IDs earlier attempts used.
 void add_order(State& s, const Order& order) {
@@ -84,9 +62,11 @@ void add_order(State& s, const Order& order) {
     s.clients[key] = order.id;
   s.orders.push_back(order);
 }
+}  // namespace
 void event(Events& events, std::string_view type, Json payload) {
   events.push_back(Json{{"type", type}, {"payload", std::move(payload)}});
 }
+namespace {
 SettlementRecord settlement_record(const Position& position, Money value, Money intrinsic, Money fee,
                                    Timestamp time, std::optional<SettlementSource> source) {
   const auto proceeds = (intrinsic * 100) * position.quantity;
@@ -188,12 +168,14 @@ Money mid(const QuoteObservation& q) {
 }
 /// A markable quote's mark: its mid, or halfway to the ask when nobody bids.
 Money mark_of(const QuoteObservation& q) { return q.bid ? mid(q) : q.ask->prorate(1, 2); }
+}  // namespace
 Timestamp halt_end(const State& s, const std::string& underlying) {
   Timestamp end = 0;
   for (const auto& symbol : {underlying, std::string("*")})
     if (const auto it = s.market_halts.find(symbol); it != s.market_halts.end()) end = std::max(end, it->second);
   return end;
 }
+namespace {
 Decision quote_check(const State& s, const std::string& symbol) {
   const auto contract = s.contracts.find(symbol);
   const auto end = contract == s.contracts.end() ? 0 : halt_end(s, contract->second.underlying);
@@ -412,10 +394,12 @@ Money exercise_fee(const State& s, Quantity contracts) {
 bool physical(const md::OptionContract& c) {
   return c.style == pricing::ExerciseStyle::American && !md::is_index_underlying(c.underlying);
 }
+}  // namespace
 Quantity shares_held(const State& s, const std::string& symbol) {
   const auto it = s.ledger.stocks().find(symbol);
   return it == s.ledger.stocks().end() ? 0 : it->second.shares;
 }
+namespace {
 /// A payment in whole cents, as brokers pay one: nearest cent, ties away from zero.
 Money nearest_cent(Money amount) {
   constexpr std::int64_t cent = 10'000;
@@ -446,12 +430,13 @@ bool before_split(const State& s, const std::string& underlying, Timestamp time)
         return r.symbol == underlying && time < md::new_york_to_utc(r.ex_date, 9, 30);
       });
 }
+}  // namespace
 /// The underlying's price if fresh at `at`: within max_quote_age of it while the
 /// stock market is open, or of its last close while it is not (the 16:00 close
 /// stays current while the options trade on to 16:15, and overnight). `extended`
 /// measures it against the session with premarket and after hours instead, as an
 /// extended-hours share order fills in it: at 18:30 the 16:00 close is stale.
-std::optional<Money> stock_price(const State& s, const std::string& symbol, Timestamp at, bool extended = false) {
+std::optional<Money> stock_price(const State& s, const std::string& symbol, Timestamp at, bool extended) {
   const auto end = halt_end(s, symbol);
   if (at < end) return std::nullopt;
   const auto it = s.stock_marks.find(symbol);
@@ -463,6 +448,7 @@ std::optional<Money> stock_price(const State& s, const std::string& symbol, Time
 }
 /// The underlying's price if fresh at the market time.
 std::optional<Money> stock_price(const State& s, const std::string& symbol) { return stock_price(s, symbol, s.time); }
+namespace {
 /// Whether a held stock's mark is its last print before a simulated halt still in
 /// force at the regular close the account is valued at, printed in that session.
 /// Prints during the halt are not taken, so the mark is the pre-halt print.
@@ -486,11 +472,12 @@ void start_stock_stretch(State& s, const std::string& symbol) {
   if (shares == 0 || mark == s.stock_marks.end()) return;
   s.references[symbol] = {shares, mark->second.price, std::nullopt};
 }
+}  // namespace
 /// Trade shares at `price`: the stretch before ends at the underlying's mark,
 /// any difference from it is a cost, and a stretch at the new size starts. The
 /// fill goes into the trade history with how it came about.
 void trade_shares(State& s, const std::string& symbol, Quantity signed_shares, Money price, StockSource source,
-                  const std::string& option = {}) {
+                  const std::string& option) {
   const auto mark = s.stock_marks.find(symbol);
   const Money value = mark == s.stock_marks.end() ? price : mark->second.price;
   if (const auto it = s.references.find(symbol); it != s.references.end()) {
@@ -504,6 +491,7 @@ void trade_shares(State& s, const std::string& symbol, Quantity signed_shares, M
   s.stock_fills.push_back({s.stock_fills.size() + 1, symbol, signed_shares, price, s.time, source, option});
   start_stock_stretch(s, symbol);
 }
+namespace {
 /// What one contract of `symbol` delivers: its adjusted deliverable, or 100 shares.
 Deliverable deliverable_of(const State& s, const std::string& symbol) {
   const auto it = s.deliverables.find(symbol);
@@ -698,6 +686,7 @@ Decision opening_fill_check(const State& s, const Order& order, Quantity quantit
   }
   return {};
 }
+}  // namespace
 Decision hedging_direction_check(const State& s, const std::string& underlying, double delta) {
   if (!s.config.rules.no_hedging || delta == 0) return {};
   const auto held_delta = held_direction(s, underlying);
@@ -707,6 +696,7 @@ Decision hedging_direction_check(const State& s, const std::string& underlying, 
       " opposes held dollar delta " + format_dollar_delta(*held_delta), delta, *held_delta, underlying,
       RuleEvidence{underlying, delta, *held_delta}};
 }
+namespace {
 Decision hedging_check(const State& s, const Order& order) {
   if (!s.config.rules.no_hedging || order.system || kept_within(order) || closing_only(s, order, false)) return {};
   auto request = order.request;
@@ -936,9 +926,7 @@ bool latency_ready(const State& s, const Order& o) {
   }
   return true;
 }
-/// Positions for margin by symbol: signed contracts and, for shorts, their
-/// buy-back value.
-using MarginBook = std::map<std::string, std::pair<Quantity, Money>>;
+}  // namespace
 /// The held positions; a short's buy-back value is its mark, or its entry credit without one.
 MarginBook held_book(const State& s) {
   MarginBook book;
@@ -953,6 +941,7 @@ MarginBook held_book(const State& s) {
   }
   return book;
 }
+namespace {
 /// Trade `change` contracts of `symbol` in the book: shorts that remain keep
 /// their share of the buy-back value, and contracts newly sold are valued at `price`.
 void trade(MarginBook& book, const std::string& symbol, Quantity change, Money price) {
@@ -1140,7 +1129,9 @@ Margin margin_of(const State& s, const MarginBook& book) {
   const auto strategy = margin_requirement(legs, margin_stocks(s), allocation_policy(s)) + minimum;
   return {strategy, strategy};
 }
+}  // namespace
 Money requirement(const State& s, const MarginBook& book) { return margin_of(s, book).held; }
+namespace {
 /// The held positions' requirement by underlying, with what holds it, as
 /// margin_of reckons it: an incomplete portfolio scan falls back to strategy
 /// margin's parts, each underlying adding the option minimum.
@@ -1215,8 +1206,10 @@ std::vector<MarginUnderlying> margin_detail(const State& s) {
           item.requirement = item.requirement + Money::from_double(0.375 * leg.contract.multiplier) * magnitude(leg.quantity);
   return detail;
 }
+}  // namespace
 /// Buying power that positions do not hold: cash less their margin requirement.
 Money free_power(const State& s) { return s.ledger.account().cash - requirement(s, held_book(s)); }
+namespace {
 struct Use {
   Money reservation;   ///< Fees plus any net cost, never less than the fees.
   bool uses = false;   ///< Filling would reduce free buying power.
@@ -1256,16 +1249,7 @@ Money average_unit_price(const Position& p) {
   if (size == 0) return {};
   return (p.basis < Money{} ? -p.basis : p.basis).prorate(1, size * 100);
 }
-Money stock_orders_reserved(const State& s);
-void expire_stock_orders(State& s, Events& events);
-void cancel_opening_stock_orders(State& s, const Decision& reason, Events& events);
-void sweep_opening_stock_orders(State& s, bool skipped_end, Events& events);
-struct PowerDetail {
-  BuyingPower total;
-  Money focus_reservation;
-  Quantity focus_opening = 0;  ///< Contracts the focus order opens beyond earlier orders' claims.
-  bool focus_uses = false;     ///< The focus order would reduce free buying power.
-};
+}  // namespace
 /// Positions hold their margin requirement (margin_requirement, spreads netted).
 /// Each working order reserves what filling it now would cost (use_of): fees,
 /// the change in margin on the held positions and the premium it pays, less
@@ -1275,7 +1259,7 @@ struct PowerDetail {
 /// within their position and reserve only fees. Orders without a limit use
 /// market_slices; a marketable buy limit reserves its expected fill there, without
 /// fill latency, and an armed buy stop at least its trigger level.
-PowerDetail buying_power(const State& s, OrderId focus = 0) {
+PowerDetail buying_power(const State& s, OrderId focus) {
   PowerDetail out;
   const auto book = held_book(s);
   const auto margin = margin_of(s, book);
@@ -1360,6 +1344,7 @@ PowerDetail buying_power(const State& s, OrderId focus = 0) {
   out.total.available = s.ledger.account().cash - margin.held - reserved;
   return out;
 }
+namespace {
 struct ProjectedFill {
   Money premium;  ///< Paid, negative when received.
   Money fees;
@@ -1429,21 +1414,6 @@ std::optional<Money> soft_floor_at(const Guardrails& personal, const AccountRule
   return floor;
 }
 std::optional<Money> soft_floor_of(const State& s) { return soft_floor_at(s.config.guardrails, s.config.rules, s.evaluation.floor); }
-/// What rules and checks read of the account now: its equity at the marks and
-/// the positions behind it, risk, the soft floor and buying power. Unlike a
-/// snapshot it copies no history and builds no scenario grid or attribution,
-/// so it costs the open positions and orders, not the account's past.
-struct Measures {
-  Money equity;
-  Money unrealised;
-  bool valuation_complete = true;
-  std::vector<MarkedPosition> positions;
-  std::vector<MarkedStock> stocks;
-  std::map<std::string, double> stock_prices;
-  RiskSnapshot risk;
-  std::optional<Money> soft_floor;
-  BuyingPower buying_power;
-};
 std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
   std::map<std::string, std::vector<std::string>> result;
   if (s.config.limits.tag_overrides.empty() && s.config.limits.playbook_overrides.empty()) return result;
@@ -1497,6 +1467,7 @@ std::map<std::string, std::vector<std::string>> risk_tags(const State& s) {
   }
   return result;
 }
+}  // namespace
 Measures measure(const State& s) {
   const DeliverablesScope adjusted(&s.deliverables);
   Measures out;
@@ -1554,6 +1525,7 @@ Measures measure(const State& s) {
   out.buying_power = buying_power(s).total;
   return out;
 }
+namespace {
 std::optional<OrderWait> waiting_for(const State& s, const Order& o, bool data_complete);
 Decision reset_check(const State& s, const Measures& m);
 /// The equity closing every position now would leave (TradingSnapshot::exit_equity).
@@ -1844,12 +1816,14 @@ void trip(State& s, const std::string& reason, Events& events) {
   // them working until an execution check rejected them).
   if (s.revised_lifecycle) cancel_opening_stock_orders(s, kill_decision(s), events);
 }
+}  // namespace
 Decision loss_check(const State& s, const Measures& snapshot) {
   if (snapshot.risk.daily_loss > s.config.limits.max_daily_loss)
     return {Reason::DAILY_LOSS, "Marked loss from start-of-day equity exceeds limit",
         snapshot.risk.daily_loss.dollars(), s.config.limits.max_daily_loss.dollars(), "aggregate"};
   return {};
 }
+namespace {
 /// Why reset_kill cannot clear the latch now, and when it can: a personal
 /// guardrail until its expiry, a daily loss until it is back within the limit or
 /// the next trading day's baseline; NONE when a reset would clear it.
@@ -1874,6 +1848,7 @@ Decision reset_check(const State& s, const Measures& m) {
 void monitor_loss(State& s, Events& events) {
   if (!loss_check(s, measure(s)).ok()) trip(s, "DAILY_LOSS", events);
 }
+}  // namespace
 void latch_guardrail(State& s, Reason reason, Events& events) {
   auto& latched = s.guardrails.latched;
   if (reason != Reason::COOLDOWN && std::find(latched.begin(), latched.end(), reason) == latched.end()) {
@@ -1882,6 +1857,7 @@ void latch_guardrail(State& s, Reason reason, Events& events) {
   }
   trip(s, std::string(to_string(guardrail_reason(s))), events);
 }
+namespace {
 void refresh_guardrail_latch(State& s, Events& events) {
   const auto reason = guardrail_reason(s);
   if (reason != Reason::NONE) trip(s, std::string(to_string(reason)), events);
@@ -1893,6 +1869,7 @@ void refresh_guardrail_latch(State& s, Events& events) {
     event(events, "guardrail_released", Json::object());
   }
 }
+}  // namespace
 void begin_cooldown(State& s, Events& events) {
   if (s.config.guardrails.cooldown_minutes == 0) return;
   const auto duration = s.config.guardrails.cooldown_minutes * md::kNanosPerMinute;
@@ -1902,6 +1879,7 @@ void begin_cooldown(State& s, Events& events) {
   event(events, "guardrail_latched", Json{{"reason", Reason::COOLDOWN}, {"until", s.guardrails.cooldown_until}});
   latch_guardrail(s, Reason::COOLDOWN, events);
 }
+namespace {
 /// A discipline guardrail's flag: kept for the day (the latest 50) and journaled.
 void flag_tilt(State& s, Reason code, std::string message, Events& events) {
   auto& tilt = s.guardrails.tilt;
@@ -1909,6 +1887,7 @@ void flag_tilt(State& s, Reason code, std::string message, Events& events) {
   if (tilt.size() > 50) tilt.erase(tilt.begin());
   event(events, "tilt_flag", tilt.back());
 }
+}  // namespace
 /// A close's realised P&L for the losing-streak guardrail: losses in a row reaching
 /// loss_streak start the cooldown and flag tilt; a winning close ends the streak.
 void count_close(State& s, Money realised, Events& events) {
@@ -1921,6 +1900,7 @@ void count_close(State& s, Money realised, Events& events) {
   s.guardrails.losing_closes = 0;
   begin_cooldown(s, events);
 }
+namespace {
 /// A triggered close is a stop only when the watched move hurts the held position.
 bool closing_stop(const State& s, const Order& order) {
   if (order.role == OrderRole::StopLoss) return true;
@@ -2140,8 +2120,9 @@ Quantity disallowed(const State& s, const std::vector<std::pair<std::string, Qua
 /// Pending orders' sells reserve their covers, just as for defined risk.
 std::vector<std::pair<std::string, Quantity>> pending_sells(const State& s, OrderId except,
     std::vector<std::pair<std::string, Quantity>> extra);
+}  // namespace
 Decision account_type_check(const State& s, const std::vector<std::pair<std::string, Quantity>>& order,
-                            const std::map<std::string, Quantity>& shares = {}, OrderId except = 0) {
+                            const std::map<std::string, Quantity>& shares, OrderId except) {
   const auto type = s.config.rules.account_type;
   if (type == AccountType::Margin) return {};
   // Delivery can leave a short share position. It may be bought back, but a
@@ -2159,6 +2140,7 @@ Decision account_type_check(const State& s, const std::vector<std::pair<std::str
                    "cancel the order that needs its cover first, or trade the spread as one order");
   return {};
 }
+namespace {
 /// A defined-risk plan refuses an order that would leave more shorts uncovered.
 Decision defined_risk_check(const State& s, const std::vector<std::pair<std::string, Quantity>>& order,
                             std::string_view message = "This plan allows defined risk only: cover each short option with a "
@@ -2232,7 +2214,8 @@ Decision walk_check(const Order& o, Money tick, Money cap_tick) {
     return failure(Reason::INVALID_ORDER, "A walk takes at most 1000 steps to its cap");
   return {};
 }
-Decision account_check(const State& s, bool reducing = false, OrderId id = 0) {
+}  // namespace
+Decision account_check(const State& s, bool reducing, OrderId id) {
   if (s.config.rules.evaluation() && s.evaluation.status != EvaluationStatus::Active && !reducing)
     return failure(Reason::EVALUATION_CLOSED, std::string("The evaluation has ") +
         (s.evaluation.status == EvaluationStatus::Passed ? "passed" : "failed") +
@@ -2243,6 +2226,7 @@ Decision account_check(const State& s, bool reducing = false, OrderId id = 0) {
     return failure(s.evaluation.day_lock, day_lock_message(s.evaluation.day_lock));
   return {};
 }
+namespace {
 /// Both contract caps reserve closing capacity once per side across working
 /// orders. Shares and managed exits never reserve option contracts.
 Quantity projected_contracts_held(const State& s, const Order& candidate) {
@@ -2315,6 +2299,7 @@ std::optional<Money> expiry_loss(const State& s, const OrderRequest& request, Mo
 bool trade_rules_on(const AccountRules& rules) {
   return rules.require_stop_loss || rules.max_trade_risk > Money{} || rules.max_trade_risk_percent > 0;
 }
+}  // namespace
 std::optional<Money> trade_risk_limit(const State& s, Money equity) {
   const auto& r = s.config.rules;
   std::optional<Money> limit;
@@ -2328,6 +2313,7 @@ std::optional<Money> trade_risk_limit(const State& s, Money equity) {
   }
   return limit;
 }
+namespace {
 const Trigger* protective_stop(const OrderRequest& r) {
   if (!r.bracket || !r.bracket->stop_loss || !r.bracket->stop_loss->trigger) return nullptr;
   const auto& t = *r.bracket->stop_loss->trigger;
@@ -2575,6 +2561,7 @@ Decision group_check(const State& s, const OrderRequest& r) {
   }
   return failure(Reason::INVALID_GROUP, "group must name an open round trip, or a whole trade holding one, by its trade ID");
 }
+}  // namespace
 Decision hold_age_check(const State& s, Timestamp opened, const std::string& symbol) {
   const auto required = s.config.rules.min_hold_seconds;
   const auto elapsed = std::max<Timestamp>(0, s.time - opened);
@@ -2588,6 +2575,7 @@ Decision hold_age_check(const State& s, Timestamp opened, const std::string& sym
           std::to_string(required) + (required == 1 ? " second" : " seconds") + " before a user reduction",
           seconds, static_cast<double>(required), symbol};
 }
+namespace {
 bool reached(const State& s, const Order& o);
 bool marketable(const Order& o, const QuoteObservation& q);
 Decision min_hold_check(const State& s, const Order& o, Stage stage) {
@@ -2858,6 +2846,7 @@ void annotate_opening(State& s, const OrderRequest& r, const std::string& symbol
   store_annotation(s, std::to_string(s.fills.size() + 1), std::move(a), events);
 }
 void observe_equity(State& s, Events& events);
+}  // namespace
 /// One trade of the trader's own, counted toward the day's trading while a rule reads
 /// it: an execution of their order (a bracket exit included, the account's own closes
 /// not), or a sale or buy-back of delivered shares.
@@ -2865,6 +2854,7 @@ void count_trade(State& s) {
   if (counts_executions(s.config.rules)) ++s.evaluation.day_executions;
   if (s.config.rules.inactivity_days > 0) s.evaluation.last_activity = s.time;
 }
+namespace {
 void count_execution(State& s, const Order& order) {
   if (!order.system) count_trade(s);
 }
@@ -5842,8 +5832,8 @@ Json walk_states(const std::vector<JournalRecord>& records, Visit&& visit,
   }
   return state;
 }
-#include "stock_orders.inc"
 }  // namespace
+}  // namespace session_internal
 
 PlanInputs plan_inputs(const TradingSnapshot& s) {
   PlanInputs in;
@@ -6651,6 +6641,7 @@ CommandResult TradingSession::cancel_all(std::optional<std::string> underlying, 
     return CommandResult{};
   });
 }
+namespace session_internal {
 namespace {
 /// Accept or reject one of a flatten's reduce-only closes. The integration's gate,
 /// the account and the session can refuse it whatever the price; missing or stale
@@ -6694,6 +6685,7 @@ Decision place_close(State& s, OrderRequest request, const Decision& rejection, 
   return {};
 }
 }  // namespace
+}  // namespace session_internal
 CommandResult TradingSession::cancel_orders(const std::vector<OrderId>& ids, Timestamp time) {
   return impl_->transact(time, "cancel_orders", [&](State& s, Events& events) {
     if (ids.empty()) return CommandResult{failure(Reason::INVALID_ORDER, "Name at least one order to cancel"), {}, 0};
@@ -7044,6 +7036,7 @@ CommandResult TradingSession::reset_kill(std::string reason, Timestamp time) {
     return CommandResult{};
   });
 }
+namespace session_internal {
 namespace {
 std::uint64_t mix(std::uint64_t x);
 /// When a settlement's reference printed, never after the settlement itself: the stock
@@ -7068,6 +7061,7 @@ Quantity pin_assignments(const State& s, const md::OptionContract& contract, Qua
   return assigned;
 }
 }  // namespace
+}  // namespace session_internal
 CommandResult TradingSession::settle(const std::string& symbol, Money settlement, Timestamp time,
                                      std::optional<SettlementSource> source) {
   return impl_->transact(time, "settlement", [&](State& s, Events& events) {
@@ -7150,6 +7144,7 @@ CommandResult TradingSession::settle(const std::string& symbol, Money settlement
     return CommandResult{};
   }, source);
 }
+namespace session_internal {
 namespace {
 /// Overnight, short American equity and ETF options that the market valued below
 /// their exercise value at the close are assigned: a holder then does better
@@ -7369,10 +7364,9 @@ void pay_dividends(State& s, const std::vector<Dividend>& dividends, Events& eve
                                    {"shares", shares}, {"amount", amount}});
   }
 }
-}  // namespace
-namespace {
 std::string close_key(const std::string& underlying, md::Date date) { return underlying + " " + md::format_date(date); }
 }  // namespace
+}  // namespace session_internal
 CommandResult TradingSession::record_close(const std::string& underlying, md::Date date, Money price, Timestamp print_time,
                                            Timestamp time) {
   if (underlying.empty() || price <= Money{} || !md::valid_date(date))
@@ -7797,6 +7791,7 @@ std::map<std::string, SizeLeft> TradingSession::sizes_left() const {
 }
 md::Date TradingSession::trading_day() const { return impl_->state.day; }
 md::Date TradingSession::trading_date(Timestamp time) const { return plan_trading_date(impl_->state.config.rules, time); }
+namespace session_internal {
 namespace {
 /// Records (or, empty, clears) a trade's note and tags under `key`.
 void store_annotation(State& s, const std::string& key, Annotation annotation, Events& events) {
@@ -7811,6 +7806,7 @@ void store_annotation(State& s, const std::string& key, Annotation annotation, E
   }
 }
 }  // namespace
+}  // namespace session_internal
 CommandResult TradingSession::annotate(std::uint64_t trade, std::string note, std::vector<std::string> tags, Timestamp time, std::vector<std::string> mistakes) {
   auto annotation = clean_annotation(std::move(note), tags);
   for (const auto& mistake : mistakes) {

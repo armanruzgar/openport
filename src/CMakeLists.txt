@@ -45,6 +45,7 @@ add_library(openport_trading
   trading/stress.cpp
   trading/journal.cpp
   trading/session.cpp
+  trading/stock_orders.cpp
   trading/state_delta.cpp
   trading/history.cpp
   trading/review.cpp
