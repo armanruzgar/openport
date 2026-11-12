@@ -34,12 +34,7 @@ class MarginRational {
     if (d_ <= 0 || n_ == std::numeric_limits<MarginWide>::min()) throw MarginWorkLimit{};
     if (d_ != 1) { const auto g = gcd(n_, d_); n_ /= g; d_ /= g; }
   }
-  // +, * and < are called, never inlined. Inlined at each of the exact solver's many
-  // uses (margin_exact.cpp), their 128-bit overflow checks and gcd loops quadruple its
-  // code, as GCC did once the solver left margin.cpp's much larger translation unit,
-  // and on AMD Zen 3 runners that larger code ran the solver's stress books 4% slower
-  // (bench.yml's baseline mode).
-  [[gnu::noinline]] friend MarginRational operator+(const MarginRational& a, const MarginRational& b) {
+  friend MarginRational operator+(const MarginRational& a, const MarginRational& b) {
     if (a.n_ == 0) return b;
     if (b.n_ == 0) return a;
     if (a.d_ == b.d_) return {sum(a.n_, b.n_), a.d_};
@@ -48,7 +43,7 @@ class MarginRational {
   }
   friend MarginRational operator-(const MarginRational& a, const MarginRational& b) { return a + -b; }
   MarginRational operator-() const { return {-n_, d_}; }
-  [[gnu::noinline]] friend MarginRational operator*(const MarginRational& a, const MarginRational& b) {
+  friend MarginRational operator*(const MarginRational& a, const MarginRational& b) {
     if (a.n_ == 0 || b.n_ == 0) return {};
     if (a.d_ == 1 && b.d_ == 1) return {product(a.n_, b.n_), 1};
     const auto g = gcd(a.n_, b.d_), h = gcd(b.n_, a.d_);
@@ -58,7 +53,7 @@ class MarginRational {
     if (b.n_ == 0) throw MarginWorkLimit{};
     return a * MarginRational(b.n_ < 0 ? -b.d_ : b.d_, b.n_ < 0 ? -b.n_ : b.n_);
   }
-  [[gnu::noinline]] friend bool operator<(const MarginRational& a, const MarginRational& b) {
+  friend bool operator<(const MarginRational& a, const MarginRational& b) {
     if (a.d_ == b.d_) return a.n_ < b.n_;
     const auto g = gcd(a.d_, b.d_);
     return product(a.n_, b.d_ / g) < product(b.n_, a.d_ / g);
