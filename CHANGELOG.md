@@ -1,6 +1,11 @@
 Notable changes in each release. Older releases: https://github.com/armanruzgar/openport/releases.
 
-## Unreleased
+## 0.6.0 (2026-11-13)
+
+Fixes for 435 problems found in a full audit, among them crashes, hangs and lost data in the
+server, fills and evaluation rules that could decide an account wrongly, and gaps at the
+public-demo boundary; underlyings added while openportd runs; and a notification history.
+Recorded runs keep verifying: changed reducer behaviour is gated behind replay drivers 7 to 13.
 
 ### Upgrading
 

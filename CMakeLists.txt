@@ -10,7 +10,7 @@ if(CMAKE_HOST_APPLE AND OPENPORT_STATIC_DEPS AND NOT DEFINED CMAKE_OSX_DEPLOYMEN
 endif()
 
 project(openport
-  VERSION 0.5.1
+  VERSION 0.6.0
   DESCRIPTION "Options pricing, volatility surfaces, matching and real-time risk"
   LANGUAGES CXX)
 
