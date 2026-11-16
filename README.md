@@ -38,7 +38,7 @@ command with the [quick start](#quick-start).
 - **A prop-firm-style simulator**: orders fill against the quotes the feed displays,
   under evaluation rules, with optional latency and simulated size impact, and a
   hash-chained journal that survives restarts.
-- **2,163 C++, 1,316 web and 238 Python tests** (CI, 11 November 2026), built with
+- **2,307 C++, 1,420 web and 253 Python tests** (CI, 13 November 2026), built with
   GCC 13 on Ubuntu and Apple Clang on macOS, warnings as errors.
 
 Timings are medians on an Apple M2 Max: the IV solve from `openport_bench`, and the SPX
@@ -86,7 +86,8 @@ with generated prices labelled as simulated on every page:
 - **Replay and playbooks**: multi-day runs, stepping, in-app verification and stress
   scenarios; versioned setups, joint backtests and live paper forward tests.
 - **Scripting and alerts**: an OpenAPI contract, a Python client and an MCP server;
-  account alerts in the terminal and to Discord, Telegram, ntfy or a webhook.
+  account alerts in the terminal and to Discord, Telegram, ntfy or a webhook, with a
+  [notification history](docs/api.md#notification-history) for a terminal opened later.
 
 The [full feature list](docs/features.md) has every rule, order type and report.
 On delayed data, a pass is practice, not proof of real-time performance.
@@ -103,7 +104,8 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
 ```
 
 The last command opens the terminal with its saved token. For a foreground
-session, use `openportd --open`.
+session, use `openportd --open`. The service's own flags and provider keys go in
+[two settings files](docs/install.md#homebrew).
 
 Anywhere with Docker (Cboe delayed SPX, SPY, QQQ, IWM and DIA, no key needed):
 
@@ -155,6 +157,9 @@ and attach its redacted JSON/Markdown reports to a
 The broker adapters read market data only.
 `--fallback-provider NAME` keeps a second feed ready to take over an underlying while
 the main one is stale or failing.
+On a polled feed (every provider but Databento, tastytrade, Demo and Replay, and
+without a fallback), the terminal's symbol search adds an underlying
+[while openportd runs](docs/api.md#subscribing-while-running), until it restarts.
 [Configuration](docs/configuration.md) has each provider's details and the main
 flags; `openportd --help` lists every flag.
 
