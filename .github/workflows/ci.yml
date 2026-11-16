@@ -428,6 +428,8 @@ jobs:
         run: python tools/macos_floor_test.py
       - name: Homebrew service command (no Homebrew)
         run: python tools/formula_service_test.py
+      - name: Landing page tape's weekly expiries (offline)
+        run: python tools/site_tape_data_test.py
       - name: Install system dependencies
         if: ${{ !cancelled() && env.BUILD_CPP == 'true' }}
         run: |

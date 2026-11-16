@@ -6,7 +6,12 @@ on:
     paths:
       - 'site/**'
       - 'docs/screenshots/**'
+      - 'tools/site_tape_data.py'
       - '.github/workflows/pages.yml'
+  # After each weekday close (16:30 EST, 17:30 EDT), so the tape quotes the next two
+  # weekly expiries rather than a snapshot whose expiries have passed.
+  schedule:
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -64,6 +69,11 @@ jobs:
           fi
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         if: steps.pages.outputs.enabled == 'true'
+      # Fresh Cboe closing quotes on the next two weekly expiries. If Cboe cannot be
+      # reached, the committed snapshot ships instead.
+      - name: Refresh the tape's quotes
+        if: steps.pages.outputs.enabled == 'true'
+        run: python3 tools/site_tape_data.py || echo "::warning::Cboe quotes unavailable; deploying the committed tape snapshot."
       - name: Copy terminal screenshots and demo
         if: steps.pages.outputs.enabled == 'true'
         run: |

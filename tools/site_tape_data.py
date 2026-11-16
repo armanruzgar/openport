@@ -3,12 +3,14 @@
 """Write site/tape-data.js, the quote snapshot behind the landing page's tape.
 
 Fetches Cboe's free delayed option chains for SPX, SPY and QQQ and keeps the
-near-the-money quotes of the next two listed expiries, or the ones passed with
+near-the-money quotes of the next two weekly expiries, or the ones passed with
 --expiries. The page simulates prints at these quotes; it never fetches data.
+The Pages workflow runs this after every close, so the tape's expiries stay ahead.
 """
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import json
 from pathlib import Path
 import re
@@ -26,11 +28,22 @@ def fetch(name: str) -> dict:
         return json.load(response)
 
 
+def weeklies(listed: list[str]) -> list[str]:
+    """The last listed expiry of each week, kept when it falls on a Friday, or on a
+    Thursday when that Friday is an exchange holiday: the expiries a tape trades most
+    after 0DTE. Monday to Wednesday dailies are dropped."""
+    weeks: dict[tuple[int, int], str] = {}
+    for e in sorted(listed):
+        d = date(2000 + int(e[:2]), int(e[2:4]), int(e[4:]))
+        weeks[d.isocalendar()[:2]] = e
+    return [e for e in weeks.values() if date(2000 + int(e[:2]), int(e[2:4]), int(e[4:])).weekday() in (3, 4)]
+
+
 def snapshot(doc: dict, root: str, band: float, expiries: list[str] | None) -> dict:
     data = doc['data']
     close = data['close']
     listed = sorted({m.group(2) for o in data['options'] if (m := OPTION.match(o['option'])) and m.group(1) == root})
-    chosen = expiries or listed[:2]
+    chosen = expiries or weeklies(listed)[:2]
     quotes = []
     for o in data['options']:
         m = OPTION.match(o['option'])
@@ -53,7 +66,7 @@ def snapshot(doc: dict, root: str, band: float, expiries: list[str] | None) -> d
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--expiries', nargs='+', metavar='YYMMDD', help='expiries to keep (default: next two listed)')
+    parser.add_argument('--expiries', nargs='+', metavar='YYMMDD', help='expiries to keep (default: next two weekly expiries)')
     parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'site' / 'tape-data.js')
     args = parser.parse_args()
     chains = {}
