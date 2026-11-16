@@ -34,7 +34,8 @@
       { root: 'SPY', weight: 0.35, beta: 1, lot: [1, 60], block: [150, 2000] },
       { root: 'QQQ', weight: 0.2, beta: 1.25, lot: [1, 50], block: [100, 1500] },
     ];
-    const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    // Title case, so a day before OCT never reads as 120CT in a font whose zero is unslashed.
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     for (const s of SYMBOLS) {
       const c = CH[s.root];
       s.spot0 = c.spot;
