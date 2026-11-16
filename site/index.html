@@ -110,9 +110,11 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
           <div><dt>rules</dt><dd>daily loss · static or trailing floor · consistency · minimum days and trades</dd></div>
           <div><dt>custom plans</dt><dd>flat times · news · holding · instruments · opening hours</dd></div>
           <div><dt>evaluations</dt><dd>one or two steps · simulated funded payouts and scaling · costs recorded separately</dd></div>
+          <div><dt>strategies</dt><dd>up to four opening legs · rolls · multi-leg tickets</dd></div>
+          <div><dt>shares</dt><dd>delta hedges · covered calls · collars · buying-power and risk previews</dd></div>
           <div><dt>orders</dt><dd>trailing stop · stop-limit · OCO/OTO · brackets on partial remainders · conditions on another symbol, a study or the time</dd></div>
           <div><dt>flatten</dt><dd>spreads close as one order · limit flatten overnight and in curb</dd></div>
-          <div><dt>accounts</dt><dd>cash · IRA · margin · fill models · itemized fees</dd></div>
+          <div><dt>accounts</dt><dd>cash · IRA · margin · strategy or portfolio margin · fill models · itemized fees</dd></div>
         </dl>
         <p>On the default delayed feed, a pass is practice, not proof: a real-time chart shows where the market went next. Funded plans stay hidden in the terminal unless already funded or explicitly enabled; OpenPort funds no one.</p>
         <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/paper-trading.md">Rules, fills and simulation limits ↗</a>
@@ -123,7 +125,7 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
       <p class="addr">00000400<b>Analytics</b></p>
       <div class="body">
         <h2 id="analytics-title">Analytics you can audit</h2>
-        <p>OpenPort computes its own implied volatility and Greeks, fits SVI surfaces, and shows gamma and vanna exposure. The forward and discount factor come from put-call parity; the provider’s IV stays alongside for comparison.</p>
+        <p>OpenPort computes its own implied volatility and Greeks, fits SVI surfaces, and maps gamma, vanna, delta, charm and vomma exposure, with flips, walls and 0DTE slices. The forward and discount factor come from put-call parity; the provider’s IV stays alongside for comparison.</p>
         <dl class="kv num">
           <div><dt>iv solve</dt><dd>about 0.4 µs · 5.4 Newton iterations per option</dd></div>
           <div><dt>spx pass</dt><dd>about 40 ms · 30,182 options, 63 expiries</dd></div>
@@ -143,6 +145,7 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
         <h2 id="practice-title">Practise, replay and compare</h2>
         <p>Replay recorded or simulated sessions across several days, then compare playbooks on one account.</p>
         <dl class="kv">
+          <div><dt>demo market</dt><dd>twenty simulated days · SPX, SPY, QQQ, XSP, NDX, RUT and VIX options · fresh or repeatable seed</dd></div>
           <div><dt>replay</dt><dd>pause · step · verify saved runs</dd></div>
           <div><dt>stress</dt><dd>quote stalls · gaps · halts</dd></div>
           <div><dt>playbooks</dt><dd>backtests on one account · compared with live paper forward tests</dd></div>
@@ -162,6 +165,8 @@ openportd --print-url --open --write-token-file "$(brew --prefix)/var/openport/w
         <dl class="kv">
           <div><dt>free</dt><dd>Cboe, 15-minute delayed</dd></div>
           <div><dt>adapters</dt><dd>Databento · Massive · ThetaData · Tradier · tastytrade · Schwab · Alpaca · Interactive Brokers market data</dd></div>
+          <div><dt>scripting</dt><dd>OpenAPI contract · Python client · MCP server</dd></div>
+          <div><dt>alerts</dt><dd>in the terminal · Discord · Telegram · ntfy · webhook</dd></div>
         </dl>
         <p>The adapters follow their documented APIs and are tested against sample responses, but have not yet been run live with a key or account. The broker adapters read market data only; they never send orders.</p>
         <a class="more" href="https://github.com/armanruzgar/openport/blob/main/docs/providers.md">Write a provider adapter ↗</a>
